@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   createMediaTask,
+  requestMediaTaskCancel,
   transitionMediaTask,
+  updateMediaTaskProgress,
 } from "./task-contract";
 
 describe("media task contract", () => {
@@ -65,5 +67,25 @@ describe("media task contract", () => {
       ),
     ).not.toThrow();
     expect(() => transitionMediaTask(failed, { type: "retry" })).not.toThrow();
+  });
+
+  it("tracks progress and requests cancellation without changing a running task", () => {
+    const task = transitionMediaTask(
+      createMediaTask({
+        id: "task-progress",
+        kind: "video",
+        provider: "ark",
+        protocol: "volcengine-ark",
+        model: "video-model",
+        request: {},
+      }),
+      { type: "start", at: "2026-01-01T00:00:01.000Z" },
+    );
+    const progress = updateMediaTaskProgress(task, 42, "Rendering", "2026-01-01T00:00:02.000Z");
+    const cancel = requestMediaTaskCancel(progress, "2026-01-01T00:00:03.000Z");
+    expect(progress.progress).toBe(42);
+    expect(progress.progressMessage).toBe("Rendering");
+    expect(cancel.status).toBe("running");
+    expect(cancel.cancelRequestedAt).toBe("2026-01-01T00:00:03.000Z");
   });
 });

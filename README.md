@@ -15,6 +15,7 @@ Cyanyi Drama 是一个面向 AI 漫剧和短剧创作的智能工作台。
 - 多渠道配置，每个渠道独立保存 Base URL、协议、多个 API Key 和模型
 - 选中模型后自动根据所属渠道路由请求
 - 图片、视频媒体任务状态持久化和查询
+- 统一媒体任务系统：幂等创建、队列重试、进度、取消、事件记录和失败恢复
 - 匿名用户 Session，以及注册、登录、退出接口
 - API Key 加密保存，MySQL 数据库持久化
 - 漫剧项目、项目配置和剧集数据持久化
@@ -133,6 +134,14 @@ AI_GATEWAY_API_KEY=
 - `/api/agent`：LangGraph HITL 示例运行时
 
 图片和视频任务会经过统一状态机，记录 queued、running、succeeded 和 failed 等状态，并按用户隔离查询。火山方舟的视频生成支持异步创建、轮询和结果处理。
+
+媒体任务接口还支持：
+
+- `POST /api/media/tasks`：创建并入队任务，支持 `idempotencyKey`
+- `GET /api/media/tasks/:taskId`：读取任务及事件流水
+- `POST /api/media/tasks/:taskId`：使用 `{ "action": "cancel" }` 取消任务，或使用 `{ "action": "retry" }` 重试失败任务
+
+Worker 不会在没有实际服务商处理器时伪造成功状态；未接入的任务类型会明确失败并保留可重试错误，避免媒体任务出现假成功。
 
 ## 项目接口
 

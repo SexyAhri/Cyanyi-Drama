@@ -22,9 +22,7 @@ import {
   normalizeMessages,
   type AgentComposerMetadata,
 } from "@/lib/agent/model-messages";
-import {
-  getOpenAICompatibleImageSizeCandidates,
-} from "@/lib/agent/media-size";
+import { getOpenAICompatibleImageSizeCandidates } from "@/lib/agent/media-size";
 import {
   isSeedanceVideoModel,
   normalizeOpenAICompatibleVideoResolution,
@@ -35,7 +33,11 @@ import {
   normalizeSeedanceResolution,
 } from "@/lib/agent/media-video";
 import { createAgentEventStreamResponse } from "@/lib/agent/stream";
-import type { AgentEvent, AgentMessage, AgentToolCall } from "@/lib/agent/types";
+import type {
+  AgentEvent,
+  AgentMessage,
+  AgentToolCall,
+} from "@/lib/agent/types";
 import {
   createMediaTask,
   transitionMediaTask,
@@ -48,6 +50,7 @@ import {
 } from "@/lib/media/task-store";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { getProject } from "@/lib/projects/queries";
+import { enqueueMediaJob } from "@/lib/queue/media-queue";
 
 type ChatRequestBody = {
   messages?: AgentMessage[];
@@ -62,6 +65,7 @@ type ChatRequestBody = {
     composer?: AgentComposerMetadata;
     model?: string;
     modelKey?: string;
+    channelId?: string;
     modelRoutes?: Record<string, ModelRoute>;
   };
 };
@@ -70,6 +74,7 @@ type ProviderRuntime = {
   apiKey?: string;
   baseUrl?: string;
   protocol?: ChannelProtocol;
+  channelId?: string;
   userId?: string;
   projectId?: string;
   episodeId?: string;
@@ -122,7 +127,6 @@ type VideoGenerationResult = {
   mediaTaskId?: string;
 };
 
-
 type VideoGenerationState = {
   format?: string;
   providerStatus?: string;
@@ -159,6 +163,7 @@ type VideoGenerationToolInput = {
 type ResolvedVideoGenerationToolInput = VideoGenerationToolInput & {
   model?: string;
   providerHint: "openai-compatible-video";
+  referenceImages: NonNullable<AgentComposerMetadata["referenceImages"]>;
   requestParams?: MediaRequestParams;
 };
 
@@ -191,11 +196,9 @@ const IMAGE_CHAT_COMPLETIONS_PATH =
   "chat/completions";
 const MAX_REFERENCE_IMAGE_BYTES = 50 * 1024 * 1024;
 const VIDEO_CREATE_PATH =
-  process.env.OPENAI_COMPATIBLE_VIDEO_CREATE_PATH?.trim() ||
-  "videos";
+  process.env.OPENAI_COMPATIBLE_VIDEO_CREATE_PATH?.trim() || "videos";
 const VIDEO_STATUS_PATH =
-  process.env.OPENAI_COMPATIBLE_VIDEO_STATUS_PATH?.trim() ||
-  "videos/{id}";
+  process.env.OPENAI_COMPATIBLE_VIDEO_STATUS_PATH?.trim() || "videos/{id}";
 const VIDEO_CONTENT_PATH =
   process.env.OPENAI_COMPATIBLE_VIDEO_CONTENT_PATH?.trim() ||
   "videos/{id}/content";
@@ -248,9 +251,7 @@ function toProviderErrorMessage(
   return sanitizeProviderErrorMessage(toErrorMessage(error), context);
 }
 
-function getInputFromPart<T extends ToolSet>(
-  part: TextStreamPart<T>,
-) {
+function getInputFromPart<T extends ToolSet>(part: TextStreamPart<T>) {
   if ("input" in part) {
     return part.input;
   }
@@ -262,9 +263,7 @@ function getInputFromPart<T extends ToolSet>(
   return {};
 }
 
-function getToolCallIdFromPart<T extends ToolSet>(
-  part: TextStreamPart<T>,
-) {
+function getToolCallIdFromPart<T extends ToolSet>(part: TextStreamPart<T>) {
   if ("toolCallId" in part) {
     return part.toolCallId;
   }
@@ -276,9 +275,7 @@ function getToolCallIdFromPart<T extends ToolSet>(
   return undefined;
 }
 
-function getToolNameFromPart<T extends ToolSet>(
-  part: TextStreamPart<T>,
-) {
+function getToolNameFromPart<T extends ToolSet>(part: TextStreamPart<T>) {
   if ("toolName" in part) {
     return part.toolName;
   }
@@ -293,9 +290,9 @@ function getToolNameFromPart<T extends ToolSet>(
 function hasGatewayCredentials() {
   return Boolean(
     process.env.AI_GATEWAY_API_KEY ||
-      process.env.VERCEL_OIDC_TOKEN ||
-      process.env.VERCEL ||
-      process.env.VERCEL_ENV,
+    process.env.VERCEL_OIDC_TOKEN ||
+    process.env.VERCEL ||
+    process.env.VERCEL_ENV,
   );
 }
 
@@ -305,7 +302,8 @@ function resolveLanguageModel(body: ChatRequestBody) {
     (body.metadata?.modelKey
       ? body.metadata?.modelRoutes?.[body.metadata.modelKey]
       : undefined) || body.metadata?.modelRoutes?.[model];
-  const protocol = route?.protocol || body.metadata?.protocol || "openai-compatible";
+  const protocol =
+    route?.protocol || body.metadata?.protocol || "openai-compatible";
   const baseUrl = (route?.baseUrl || body.metadata?.baseUrl)?.trim();
   const apiKey = (route?.apiKey || body.metadata?.apiKey)?.trim();
 
@@ -316,7 +314,12 @@ function resolveLanguageModel(body: ChatRequestBody) {
       languageModel,
       model,
       runtime: protocol,
-      providerRuntime: { apiKey, baseUrl, protocol },
+      providerRuntime: {
+        apiKey,
+        baseUrl,
+        protocol,
+        channelId: body.metadata?.channelId,
+      },
       hasCredentials: true,
     };
   }
@@ -325,7 +328,7 @@ function resolveLanguageModel(body: ChatRequestBody) {
     languageModel: gateway(model),
     model,
     runtime: "ai-sdk-gateway",
-    providerRuntime: { protocol },
+    providerRuntime: { protocol, channelId: body.metadata?.channelId },
     hasCredentials: hasGatewayCredentials(),
   };
 }
@@ -339,7 +342,10 @@ function createLanguageModel(
   if (protocol === "anthropic") {
     return createAnthropic({
       apiKey,
-      baseURL: normalizeProviderBaseUrl(baseUrl, "https://api.anthropic.com/v1"),
+      baseURL: normalizeProviderBaseUrl(
+        baseUrl,
+        "https://api.anthropic.com/v1",
+      ),
       name: "agent-ui-anthropic",
     }).messages(model);
   }
@@ -385,6 +391,7 @@ function resolveModelRoute(
       apiKey: route?.apiKey || fallback.apiKey,
       baseUrl: route?.baseUrl || fallback.baseUrl,
       protocol: route?.protocol || fallback.protocol || "openai-compatible",
+      channelId: route?.channelId || fallback.channelId,
       userId: fallback.userId,
       projectId: fallback.projectId,
       episodeId: fallback.episodeId,
@@ -400,8 +407,10 @@ function resolveComposerRoutes(
 
   return {
     ...composer,
-    imageModel: resolveModelRoute(composer.imageModel, routes, {}).model || undefined,
-    videoModel: resolveModelRoute(composer.videoModel, routes, {}).model || undefined,
+    imageModel:
+      resolveModelRoute(composer.imageModel, routes, {}).model || undefined,
+    videoModel:
+      resolveModelRoute(composer.videoModel, routes, {}).model || undefined,
   };
 }
 
@@ -444,7 +453,8 @@ export function detectChatMediaToolIntent({
   }
 
   const imageReferenceCount =
-    (composer?.referenceImages?.length ?? 0) + (composer?.referenceImage ? 1 : 0);
+    (composer?.referenceImages?.length ?? 0) +
+    (composer?.referenceImage ? 1 : 0);
   const hasReferenceImages = imageReferenceCount > 0;
 
   const analysisPatterns = [
@@ -534,7 +544,9 @@ export function detectChatMediaToolIntent({
 }
 
 function hasMediaGenerationRuntime(runtime: ProviderRuntime) {
-  return Boolean(runtime.baseUrl?.trim() && runtime.apiKey?.trim());
+  return Boolean(
+    runtime.channelId || (runtime.baseUrl?.trim() && runtime.apiKey?.trim()),
+  );
 }
 
 function resolveMediaToolRoute(
@@ -557,13 +569,18 @@ function hasUsableMediaToolRoute(
   modelRoutes: Record<string, ModelRoute> | undefined,
   fallback: ProviderRuntime,
 ) {
-  const route = resolveMediaToolRoute(toolName, composer, modelRoutes, fallback);
+  const route = resolveMediaToolRoute(
+    toolName,
+    composer,
+    modelRoutes,
+    fallback,
+  );
 
   return Boolean(
-      route.model.trim() &&
-      (route.runtime.protocol === "openai-compatible" ||
-        route.runtime.protocol === "volcengine-ark") &&
-      hasMediaGenerationRuntime(route.runtime),
+    route.model.trim() &&
+    (route.runtime.protocol === "openai-compatible" ||
+      route.runtime.protocol === "volcengine-ark") &&
+    hasMediaGenerationRuntime(route.runtime),
   );
 }
 
@@ -654,8 +671,13 @@ function createAiSdkInstructions(
     );
   }
 
-  if ((composer?.referenceImages?.length ?? 0) > 0 || composer?.referenceImage) {
-    lines.push("There are reference images available in the current composer state.");
+  if (
+    (composer?.referenceImages?.length ?? 0) > 0 ||
+    composer?.referenceImage
+  ) {
+    lines.push(
+      "There are reference images available in the current composer state.",
+    );
   }
 
   return lines.join(" ");
@@ -694,15 +716,18 @@ function createAiSdkTools({
         properties: {
           prompt: {
             type: "string",
-            description: "Complete image prompt with subject, style, composition, and desired output.",
+            description:
+              "Complete image prompt with subject, style, composition, and desired output.",
           },
           ratio: {
             type: "string",
-            description: "Optional aspect ratio such as 1:1, 3:2, 16:9, or 9:16.",
+            description:
+              "Optional aspect ratio such as 1:1, 3:2, 16:9, or 9:16.",
           },
           resolution: {
             type: "string",
-            description: "Optional resolution label such as 720p, 1080p, 2k, or 4k.",
+            description:
+              "Optional resolution label such as 720p, 1080p, 2k, or 4k.",
           },
           format: {
             type: "string",
@@ -710,7 +735,8 @@ function createAiSdkTools({
           },
           style: {
             type: "string",
-            description: "Optional visual style such as auto, photo, illustration, or product.",
+            description:
+              "Optional visual style such as auto, photo, illustration, or product.",
           },
         },
         required: ["prompt"],
@@ -722,38 +748,26 @@ function createAiSdkTools({
           modelRoutes,
           runtime,
         );
-        const imageComposer = resolveComposerRoutes(composer, modelRoutes);
         const finalArgs = resolveMediaToolArgs(
           "image_generation",
           { format, prompt, ratio, resolution, style },
-          imageComposer,
+          composer,
           imageRoute.runtime,
         ) as ResolvedImageGenerationToolInput;
 
-        const resolvedImageComposer = {
-          ...imageComposer,
-          mode: "image" as const,
-          imageFormat: finalArgs.format,
-          imageModel: finalArgs.model,
-          ratio: finalArgs.ratio,
-          resolution: finalArgs.resolution,
-          style: finalArgs.style,
-          template: "none" as const,
-          templatePrompt: undefined,
-        };
-        return imageRoute.runtime.protocol === "volcengine-ark"
-          ? generateImageWithArk({
-              apiKey: imageRoute.runtime.apiKey!,
-              baseUrl: imageRoute.runtime.baseUrl!,
-              composer: resolvedImageComposer,
-              prompt: finalArgs.prompt,
-            })
-          : generateImageWithOpenAICompatible({
-              apiKey: imageRoute.runtime.apiKey!,
-              baseUrl: imageRoute.runtime.baseUrl!,
-              composer: resolvedImageComposer,
-              prompt: finalArgs.prompt,
-            });
+        return enqueueAndWaitMediaGeneration({
+          kind: "image",
+          runtime: imageRoute.runtime,
+          model: finalArgs.model ?? "",
+          request: {
+            prompt: finalArgs.prompt,
+            ratio: finalArgs.ratio,
+            resolution: finalArgs.resolution,
+            format: finalArgs.format,
+            style: finalArgs.style,
+            referenceImages: finalArgs.referenceImages,
+          },
+        });
       },
     });
   }
@@ -767,7 +781,8 @@ function createAiSdkTools({
         properties: {
           prompt: {
             type: "string",
-            description: "Complete video prompt with scene, motion, camera, style, and pacing.",
+            description:
+              "Complete video prompt with scene, motion, camera, style, and pacing.",
           },
           duration: {
             type: "string",
@@ -779,7 +794,8 @@ function createAiSdkTools({
           },
           resolution: {
             type: "string",
-            description: "Optional resolution label such as 720p, 1080p, 2k, or 4k.",
+            description:
+              "Optional resolution label such as 720p, 1080p, 2k, or 4k.",
           },
           format: {
             type: "string",
@@ -795,28 +811,25 @@ function createAiSdkTools({
           modelRoutes,
           runtime,
         );
-        const videoComposer = resolveComposerRoutes(composer, modelRoutes);
         const finalArgs = resolveMediaToolArgs(
           "video_generation",
           { duration, format, prompt, ratio, resolution },
-          videoComposer,
+          composer,
           videoRoute.runtime,
         ) as ResolvedVideoGenerationToolInput;
 
-        return generateVideoWithOpenAICompatible({
-          apiKey: videoRoute.runtime.apiKey!,
-          baseUrl: videoRoute.runtime.baseUrl!,
-          protocol: videoRoute.runtime.protocol,
-          composer: {
-            ...videoComposer,
-            mode: "video",
-            duration: finalArgs.duration,
+        return enqueueAndWaitMediaGeneration({
+          kind: "video",
+          runtime: videoRoute.runtime,
+          model: finalArgs.model ?? "",
+          request: {
+            prompt: finalArgs.prompt,
             ratio: finalArgs.ratio,
             resolution: finalArgs.resolution,
-            videoFormat: finalArgs.format,
-            videoModel: finalArgs.model,
+            format: finalArgs.format,
+            duration: finalArgs.duration,
+            referenceImages: finalArgs.referenceImages,
           },
-          prompt: finalArgs.prompt,
         });
       },
     });
@@ -833,7 +846,9 @@ function resolveMediaToolArgs(
 ): unknown {
   if (toolName === "image_generation") {
     const input = (args ?? {}) as Partial<ImageGenerationToolInput>;
-    const referenceImages = composer ? getComposerReferenceImages(composer) : [];
+    const referenceImages = composer
+      ? getComposerReferenceImages(composer)
+      : [];
 
     return {
       ...input,
@@ -845,13 +860,13 @@ function resolveMediaToolArgs(
       referenceImage: composer?.referenceImage,
       referenceImages,
       requestParams: composer
-          ? createImageRequestParamsForComposer(
-              composer,
-              input.prompt ?? "",
-              referenceImages.length,
-              runtime?.baseUrl,
-            )
-          : undefined,
+        ? createImageRequestParamsForComposer(
+            composer,
+            input.prompt ?? "",
+            referenceImages.length,
+            runtime?.baseUrl,
+          )
+        : undefined,
       resolution: composer?.resolution ?? input.resolution,
       style: composer?.style ?? input.style,
     } satisfies ResolvedImageGenerationToolInput;
@@ -859,6 +874,9 @@ function resolveMediaToolArgs(
 
   if (toolName === "video_generation") {
     const input = (args ?? {}) as Partial<VideoGenerationToolInput>;
+    const referenceImages = composer
+      ? getComposerReferenceImages(composer)
+      : [];
 
     return {
       ...input,
@@ -867,6 +885,7 @@ function resolveMediaToolArgs(
       model: composer?.videoModel,
       prompt: input.prompt ?? "",
       providerHint: "openai-compatible-video" as const,
+      referenceImages,
       requestParams: composer
         ? createVideoRequestParamsForComposer(
             composer,
@@ -928,26 +947,32 @@ async function* createMediaGenerationEvents({
   const taskStore = createDatabaseMediaTaskStore(runtime.userId);
   const mediaTaskId = createId("media_task");
   const mediaTaskKind = isVideo ? "video" : "image";
-  let mediaTask = createMediaTask({
+  const mediaTask = createMediaTask({
     id: mediaTaskId,
     projectId: runtime.projectId,
     episodeId: runtime.episodeId,
+    channelId: runtime.channelId,
     targetType: mediaTaskKind,
     targetId: mediaTaskId,
     kind: mediaTaskKind,
-    provider: runtime.protocol === "volcengine-ark" ? "volcengine-ark" : "openai-compatible",
+    provider:
+      runtime.protocol === "volcengine-ark"
+        ? "volcengine-ark"
+        : "openai-compatible",
     protocol: runtime.protocol ?? "openai-compatible",
     model: (isVideo ? composer.videoModel : composer.imageModel) ?? "",
     request: {
       prompt,
       ratio: composer.ratio,
       resolution: composer.resolution,
+      format: composer.imageFormat,
+      style: composer.style,
+      duration: composer.duration,
+      referenceImages: getComposerReferenceImages(composer),
       referenceCount: getComposerReferenceImages(composer).length,
     },
   });
   await taskStore.create(mediaTask);
-  mediaTask = transitionMediaTask(mediaTask, { type: "start" });
-  await taskStore.update(mediaTask);
   const imageRequestParams = isVideo
     ? undefined
     : createImageRequestParamsForComposer(
@@ -977,12 +1002,14 @@ async function* createMediaGenerationEvents({
       ...(isVideo
         ? { duration: composer.duration, requestParams: videoRequestParams }
         : {
-          referenceImages: getComposerReferenceImages(composer),
-          referenceImage: composer.referenceImage,
-          requestParams: imageRequestParams,
-          style: composer.style,
-        }),
-      providerHint: isVideo ? "openai-compatible-video" : "openai-compatible-image",
+            referenceImages: getComposerReferenceImages(composer),
+            referenceImage: composer.referenceImage,
+            requestParams: imageRequestParams,
+            style: composer.style,
+          }),
+      providerHint: isVideo
+        ? "openai-compatible-video"
+        : "openai-compatible-image",
       mediaTaskId,
     },
     status: "pending",
@@ -1003,7 +1030,10 @@ async function* createMediaGenerationEvents({
     toolCallId: toolCall.id,
   };
 
-  if (!runtime.baseUrl?.trim() || !runtime.apiKey?.trim()) {
+  if (
+    !runtime.channelId &&
+    (!runtime.baseUrl?.trim() || !runtime.apiKey?.trim())
+  ) {
     const mediaLabel = isVideo ? "Video" : "Image";
     const error = `${mediaLabel} generation requires a Base URL and API Key.`;
     await failMediaTask(mediaTask, error, taskStore);
@@ -1036,52 +1066,28 @@ async function* createMediaGenerationEvents({
     return;
   }
 
+  const queuedJob = await enqueueMediaJob({
+    taskId: mediaTask.id,
+    userId: runtime.userId,
+    projectId: runtime.projectId,
+    episodeId: runtime.episodeId,
+    channelId: runtime.channelId,
+    kind: mediaTaskKind,
+    maxAttempts: mediaTask.maxRetries + 1,
+  });
+  mediaTask.queueJobId = queuedJob.id;
+  await taskStore.update(mediaTask);
+
   try {
-    if (isVideo) {
-      const result = await generateVideoWithOpenAICompatible({
-        apiKey: runtime.apiKey,
-        baseUrl: runtime.baseUrl,
-        protocol: runtime.protocol,
-        composer,
-        prompt,
-      });
-      const resultWithTask = { ...result, mediaTaskId };
-      mediaTask = transitionMediaTask(mediaTask, {
-        type: "succeed",
-        output: mediaResultToAssets(resultWithTask, "video"),
-      });
-      await taskStore.update(mediaTask);
-
-      yield {
-        type: "tool.done",
-        messageId: toolMessage.id,
-        toolCallId: toolCall.id,
-        result: resultWithTask,
-      };
-      return;
+    const completed = await waitForQueuedMediaTask(taskStore, mediaTask.id);
+    if (completed.status !== "succeeded") {
+      throw new Error(completed.error?.message || "Media task failed.");
     }
-
-    const result = runtime.protocol === "volcengine-ark"
-      ? await generateImageWithArk({
-          apiKey: runtime.apiKey,
-          baseUrl: runtime.baseUrl,
-          composer,
-          prompt,
-        })
-      : await generateImageWithOpenAICompatible({
-          apiKey: runtime.apiKey,
-          baseUrl: runtime.baseUrl,
-          composer,
-          prompt,
-        });
-
-    const resultWithTask = { ...result, mediaTaskId };
-    mediaTask = transitionMediaTask(mediaTask, {
-      type: "succeed",
-      output: mediaResultToAssets(resultWithTask, "image"),
-    });
-    await taskStore.update(mediaTask);
-
+    const resultWithTask = mediaTaskResultFromCompleted(
+      completed,
+      isVideo,
+      mediaTaskId,
+    );
     yield {
       type: "tool.done",
       messageId: toolMessage.id,
@@ -1098,12 +1104,12 @@ async function* createMediaGenerationEvents({
       toolCallId: toolCall.id,
       error: errorMessage,
       result: isVideo
-          ? {
+        ? {
             requestParams: videoRequestParams,
             mediaTaskId,
             status: "error",
           }
-          : {
+        : {
             requestParams: imageRequestParams,
             mediaTaskId,
             status: "error",
@@ -1130,9 +1136,7 @@ async function* createChatMediaToolEvents({
   for (const mode of ["image", "video"] as const) {
     const toolName = `${mode}_generation` as const;
 
-    if (
-      !(mode === "image" ? intent.enableImage : intent.enableVideo)
-    ) {
+    if (!(mode === "image" ? intent.enableImage : intent.enableVideo)) {
       continue;
     }
 
@@ -1174,6 +1178,95 @@ async function failMediaTask(
   }
 }
 
+async function waitForQueuedMediaTask(store: MediaTaskStore, taskId: string) {
+  const deadline = Date.now() + 190_000;
+  while (Date.now() < deadline) {
+    const task = await store.get(taskId);
+    if (!task) throw new Error("MEDIA_TASK_NOT_FOUND");
+    if (["succeeded", "failed", "canceled"].includes(task.status)) return task;
+    await wait(1000);
+  }
+  throw new Error("MEDIA_TASK_TIMEOUT");
+}
+
+async function enqueueAndWaitMediaGeneration({
+  kind,
+  model,
+  request,
+  runtime,
+}: {
+  kind: "image" | "video";
+  model: string;
+  request: Record<string, unknown>;
+  runtime: ProviderRuntime;
+}) {
+  if (!runtime.userId || !runtime.channelId) {
+    throw new Error("MEDIA_TASK_CHANNEL_REQUIRED");
+  }
+  const store = createDatabaseMediaTaskStore(runtime.userId);
+  const task = createMediaTask({
+    id: createId("media_task"),
+    channelId: runtime.channelId,
+    projectId: runtime.projectId,
+    episodeId: runtime.episodeId,
+    targetType: kind,
+    targetId: createId("media_target"),
+    kind,
+    provider:
+      runtime.protocol === "volcengine-ark"
+        ? "volcengine-ark"
+        : "openai-compatible",
+    protocol: runtime.protocol ?? "openai-compatible",
+    model,
+    request,
+  });
+  await store.create(task);
+  const job = await enqueueMediaJob({
+    taskId: task.id,
+    userId: runtime.userId,
+    channelId: runtime.channelId,
+    projectId: runtime.projectId,
+    episodeId: runtime.episodeId,
+    kind,
+    maxAttempts: task.maxRetries + 1,
+  });
+  const queued = { ...task, queueJobId: job.id };
+  await store.update(queued);
+  const completed = await waitForQueuedMediaTask(store, task.id);
+  if (completed.status !== "succeeded")
+    throw new Error(completed.error?.message || "Media task failed.");
+  return mediaTaskResultFromCompleted(completed, kind === "video", task.id);
+}
+
+function mediaTaskResultFromCompleted(
+  task: MediaTask,
+  isVideo: boolean,
+  mediaTaskId: string,
+) {
+  const assets = task.output ?? [];
+  if (isVideo) {
+    const asset = assets[0];
+    return {
+      status: "success",
+      mediaTaskId,
+      url: asset?.url ?? "",
+      thumbnailUrl: asset?.thumbnailUrl,
+      format: "mp4",
+      taskId: task.providerTaskId,
+    };
+  }
+  return {
+    status: "success",
+    mediaTaskId,
+    images: assets.map((asset) => ({
+      url: asset.url,
+      width: asset.width,
+      height: asset.height,
+      format: asset.metadata?.format as string | undefined,
+    })),
+  };
+}
+
 function mediaResultToAssets(
   result: ImageGenerationResult | VideoGenerationResult,
   kind: "image" | "video",
@@ -1204,7 +1297,9 @@ function mediaResultToAssets(
 }
 
 function isRetryableMediaError(message: string) {
-  return /timeout|timed out|fetch failed|temporar|rate limit|429|5\d\d/i.test(message);
+  return /timeout|timed out|fetch failed|temporar|rate limit|429|5\d\d/i.test(
+    message,
+  );
 }
 
 async function generateImageWithOpenAICompatible({
@@ -1321,7 +1416,9 @@ function createChatCompletionsImageRequestParams({
 
   return {
     endpoint: IMAGE_CHAT_COMPLETIONS_PATH,
-    ...(baseUrl ? { requestUrl: createApiUrl(baseUrl, IMAGE_CHAT_COMPLETIONS_PATH) } : {}),
+    ...(baseUrl
+      ? { requestUrl: createApiUrl(baseUrl, IMAGE_CHAT_COMPLETIONS_PATH) }
+      : {}),
     method: "POST",
     contentType: "application/json",
     model: composer.imageModel,
@@ -1372,9 +1469,14 @@ function createImageRequestParams({
     output_format:
       typeof body.output_format === "string" ? body.output_format : undefined,
     quality: typeof body.quality === "string" ? body.quality : undefined,
-    requestBody: contentType === "application/json" ? stringifyRequestBody(body) : undefined,
+    requestBody:
+      contentType === "application/json"
+        ? stringifyRequestBody(body)
+        : undefined,
     response_format:
-      typeof body.response_format === "string" ? body.response_format : undefined,
+      typeof body.response_format === "string"
+        ? body.response_format
+        : undefined,
     size: imageSize?.size,
     referenceCount,
   };
@@ -1407,7 +1509,8 @@ function createImageRequestParamsForComposer(
   return createImageRequestParams({
     baseUrl,
     composer,
-    contentType: referenceCount > 0 ? "multipart/form-data" : "application/json",
+    contentType:
+      referenceCount > 0 ? "multipart/form-data" : "application/json",
     endpoint: referenceCount > 0 ? IMAGE_EDIT_PATH : IMAGE_GENERATION_PATH,
     imageSize,
     prompt,
@@ -1440,13 +1543,17 @@ function createOpenAICompatibleVideoRequestParams({
   const requestBody = referenceCount
     ? {
         ...body,
-        ...(referenceCount ? { "input_reference[]": `[${referenceCount} image(s)]` } : {}),
+        ...(referenceCount
+          ? { "input_reference[]": `[${referenceCount} image(s)]` }
+          : {}),
       }
     : createOpenAICompatibleVideoJsonBody(body);
 
   return {
     endpoint: VIDEO_CREATE_PATH,
-    ...(baseUrl ? { requestUrl: createApiUrl(baseUrl, VIDEO_CREATE_PATH) } : {}),
+    ...(baseUrl
+      ? { requestUrl: createApiUrl(baseUrl, VIDEO_CREATE_PATH) }
+      : {}),
     method: "POST",
     contentType: usesMultipart ? "multipart/form-data" : "application/json",
     model: body.model,
@@ -1490,13 +1597,16 @@ function createSeedanceVideoRequestParams({
     model: typeof body.model === "string" ? body.model : undefined,
     prompt,
     ratio: typeof body.ratio === "string" ? body.ratio : undefined,
-    resolution: typeof body.resolution === "string" ? body.resolution : undefined,
+    resolution:
+      typeof body.resolution === "string" ? body.resolution : undefined,
     duration:
       typeof body.duration === "number" || typeof body.duration === "string"
         ? body.duration
         : undefined,
     generate_audio:
-      typeof body.generate_audio === "boolean" ? body.generate_audio : undefined,
+      typeof body.generate_audio === "boolean"
+        ? body.generate_audio
+        : undefined,
     watermark: typeof body.watermark === "boolean" ? body.watermark : undefined,
     requestBody: stringifyRequestBody(body),
   };
@@ -1517,15 +1627,15 @@ function createOpenAICompatibleVideoFormBody(
     seconds,
     size: normalizeOpenAICompatibleVideoSize(composer.ratio),
     resolution: normalizeOpenAICompatibleVideoResolution(composer.resolution),
-    resolution_name: normalizeOpenAICompatibleVideoResolution(composer.resolution),
+    resolution_name: normalizeOpenAICompatibleVideoResolution(
+      composer.resolution,
+    ),
     preset: "normal",
     stream: "true",
   };
 }
 
-function createOpenAICompatibleVideoJsonBody(
-  body: OpenAICompatibleVideoBody,
-) {
+function createOpenAICompatibleVideoJsonBody(body: OpenAICompatibleVideoBody) {
   return {
     model: body.model,
     prompt: body.prompt,
@@ -1573,10 +1683,7 @@ function createSeedanceVideoContent(
 function isChatCompletionsImageModel(model?: string) {
   const normalized = model?.trim().toLowerCase() ?? "";
 
-  return (
-    normalized === "nano-banana" ||
-    normalized.startsWith("nano-banana-")
-  );
+  return normalized === "nano-banana" || normalized.startsWith("nano-banana-");
 }
 
 function normalizeImageOutputFormat() {
@@ -1597,7 +1704,10 @@ function createChatCompletionImageRequestBody({
     messages: [
       {
         role: "user",
-        content: createChatCompletionImageContent(prompt, referenceImages ?? []),
+        content: createChatCompletionImageContent(
+          prompt,
+          referenceImages ?? [],
+        ),
       },
     ],
     stream: true,
@@ -1689,21 +1799,24 @@ async function requestChatCompletionsImageResult({
   prompt: string;
   referenceImages: NonNullable<AgentComposerMetadata["referenceImages"]>;
 }) {
-  const response = await fetch(createApiUrl(baseUrl, IMAGE_CHAT_COMPLETIONS_PATH), {
-    method: "POST",
-    headers: {
-      Authorization: createBearerAuthHeader(apiKey),
-      "Content-Type": "application/json",
+  const response = await fetch(
+    createApiUrl(baseUrl, IMAGE_CHAT_COMPLETIONS_PATH),
+    {
+      method: "POST",
+      headers: {
+        Authorization: createBearerAuthHeader(apiKey),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(
+        createChatCompletionImageRequestBody({
+          composer,
+          prompt,
+          referenceImages,
+        }),
+      ),
+      cache: "no-store",
     },
-    body: JSON.stringify(
-      createChatCompletionImageRequestBody({
-        composer,
-        prompt,
-        referenceImages,
-      }),
-    ),
-    cache: "no-store",
-  });
+  );
 
   if (!response.ok) {
     throw new Error(await getErrorResponseText(response));
@@ -1726,7 +1839,8 @@ async function requestChatCompletionsImageResult({
         url,
         width: dimensions?.width,
         height: dimensions?.height,
-        format: dimensions?.format ?? composer.imageFormat ?? inferMediaFormat(url),
+        format:
+          dimensions?.format ?? composer.imageFormat ?? inferMediaFormat(url),
       } satisfies MediaImageResult;
     }),
   );
@@ -1750,7 +1864,12 @@ function createChatCompletionImageContent(
 }
 
 async function readChatCompletionImageResponse(response: Response) {
-  if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+  if (
+    !response.headers
+      .get("content-type")
+      ?.toLowerCase()
+      .includes("text/event-stream")
+  ) {
     const payload = await parseJsonIfPresent(response);
 
     return {
@@ -1760,7 +1879,9 @@ async function readChatCompletionImageResponse(response: Response) {
   }
 
   if (!response.body) {
-    throw new Error("Chat completions image endpoint returned no readable stream.");
+    throw new Error(
+      "Chat completions image endpoint returned no readable stream.",
+    );
   }
 
   const reader = response.body.getReader();
@@ -1844,7 +1965,11 @@ async function requestOpenAICompatibleImageEditPayload({
   formData.append("prompt", prompt);
   formData.append("n", "1");
   appendOptionalFormValue(formData, "quality", baseBody.quality);
-  appendOptionalFormValue(formData, "response_format", baseBody.response_format);
+  appendOptionalFormValue(
+    formData,
+    "response_format",
+    baseBody.response_format,
+  );
   appendOptionalFormValue(formData, "output_format", baseBody.output_format);
 
   if (imageSize) {
@@ -1892,7 +2017,9 @@ async function resolveReferenceImageBlob(
   const url = referenceImage.url?.trim();
 
   if (!url) {
-    throw new Error("Reference image URL is empty; cannot submit it to the image edit endpoint.");
+    throw new Error(
+      "Reference image URL is empty; cannot submit it to the image edit endpoint.",
+    );
   }
 
   const trimmedUrl = url;
@@ -1901,7 +2028,9 @@ async function resolveReferenceImageBlob(
     : await fetchReferenceImageBlob(trimmedUrl);
 
   if (blob.size <= 0) {
-    throw new Error("Reference image content is empty; cannot submit it to the image edit endpoint.");
+    throw new Error(
+      "Reference image content is empty; cannot submit it to the image edit endpoint.",
+    );
   }
 
   if (blob.size > MAX_REFERENCE_IMAGE_BYTES) {
@@ -1964,7 +2093,9 @@ async function fetchReferenceImageBlob(url: string) {
   });
 
   if (!response.ok) {
-    throw new Error(`Reference image download failed: ${await getErrorResponseText(response)}`);
+    throw new Error(
+      `Reference image download failed: ${await getErrorResponseText(response)}`,
+    );
   }
 
   const contentType = response.headers
@@ -2270,7 +2401,9 @@ function readWebpDimensions(buffer: Buffer) {
 }
 
 function readUInt24LE(buffer: Buffer, offset: number) {
-  return buffer[offset] | (buffer[offset + 1] << 8) | (buffer[offset + 2] << 16);
+  return (
+    buffer[offset] | (buffer[offset + 1] << 8) | (buffer[offset + 2] << 16)
+  );
 }
 
 async function generateVideoWithOpenAICompatible({
@@ -2326,7 +2459,10 @@ async function generateOpenAIVideoWithOpenAICompatible({
     requestParams: createResponse.requestParams,
   };
 
-  assertVideoProviderNotFailed(createResponse.payload, initialState.providerStatus);
+  assertVideoProviderNotFailed(
+    createResponse.payload,
+    initialState.providerStatus,
+  );
 
   if (initialState.url) {
     return createVideoResult(initialState);
@@ -2373,9 +2509,10 @@ async function generateSeedanceVideoWithOpenAICompatible({
     prompt,
     baseUrl,
   );
-  const requestBody = protocol === "volcengine-ark"
-    ? await createSeedanceVideoRequestBodyForArk(composer, prompt)
-    : createSeedanceVideoRequestBody(composer, prompt);
+  const requestBody =
+    protocol === "volcengine-ark"
+      ? await createSeedanceVideoRequestBodyForArk(composer, prompt)
+      : createSeedanceVideoRequestBody(composer, prompt);
   const createPayload = await requestProviderPayload({
     apiKey,
     baseUrl,
@@ -2452,7 +2589,10 @@ async function pollVideoGenerationUntilComplete({
           : "GET",
       path:
         provider === "seedance"
-          ? resolvePathWithTaskId(SEEDANCE_VIDEO_STATUS_PATH, currentState.taskId!)
+          ? resolvePathWithTaskId(
+              SEEDANCE_VIDEO_STATUS_PATH,
+              currentState.taskId!,
+            )
           : resolvePathWithTaskId(VIDEO_STATUS_PATH, currentState.taskId!),
     });
 
@@ -2592,7 +2732,10 @@ async function blobToDataUrl(blob: Blob) {
   return `data:${mimeType};base64,${bytes.toString("base64")}`;
 }
 
-function assertVideoProviderNotFailed(payload: unknown, providerStatus?: string) {
+function assertVideoProviderNotFailed(
+  payload: unknown,
+  providerStatus?: string,
+) {
   if (normalizeVideoProviderStatus(providerStatus) !== "error") {
     return;
   }
@@ -2620,9 +2763,9 @@ function createVideoResult(state: VideoGenerationState): VideoGenerationResult {
 }
 
 async function requestOpenAICompatibleVideoCreatePayload({
-      apiKey,
-      baseUrl,
-      composer,
+  apiKey,
+  baseUrl,
+  composer,
   prompt,
   referenceImages,
 }: {
@@ -2674,7 +2817,12 @@ async function requestOpenAICompatibleVideoCreatePayload({
 }
 
 async function parseOpenAICompatibleVideoCreateResponse(response: Response) {
-  if (response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+  if (
+    response.headers
+      .get("content-type")
+      ?.toLowerCase()
+      .includes("text/event-stream")
+  ) {
     return parseVideoEventStreamPayload(response);
   }
 
@@ -2793,13 +2941,11 @@ function isStreamErrorPayload(payload: unknown) {
     return false;
   }
 
-  const type = String(payload.type ?? payload.event ?? payload.status ?? "").toLowerCase();
+  const type = String(
+    payload.type ?? payload.event ?? payload.status ?? "",
+  ).toLowerCase();
 
-  return (
-    type.includes("error") ||
-    type === "failed" ||
-    Boolean(payload.error)
-  );
+  return type.includes("error") || type === "failed" || Boolean(payload.error);
 }
 
 function extractVideoUrlFromText(text: string) {
@@ -2949,7 +3095,9 @@ async function parseJsonIfPresent(response: Response) {
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    throw new Error(`Provider returned non-JSON response: ${text.slice(0, 300)}`);
+    throw new Error(
+      `Provider returned non-JSON response: ${text.slice(0, 300)}`,
+    );
   }
 }
 
@@ -3005,7 +3153,10 @@ function extractVideoGenerationState(
   };
 }
 
-function findFirstStringByKeys(value: unknown, keys: string[]): string | undefined {
+function findFirstStringByKeys(
+  value: unknown,
+  keys: string[],
+): string | undefined {
   if (Array.isArray(value)) {
     for (const item of value) {
       const found = findFirstStringByKeys(item, keys);
@@ -3111,7 +3262,8 @@ function collectImageUrlsFromUnknown(value: unknown, urls: Set<string>) {
 function extractImageUrlsFromText(text: string) {
   const urls = new Set<string>();
   const markdownImagePattern = /!\[[^\]]*]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
-  const markdownLinkPattern = /\[[^\]]+]\((https?:\/\/[^)\s]+|data:[^)\s]+)(?:\s+"[^"]*")?\)/g;
+  const markdownLinkPattern =
+    /\[[^\]]+]\((https?:\/\/[^)\s]+|data:[^)\s]+)(?:\s+"[^"]*")?\)/g;
   const plainUrlPattern = /https?:\/\/[^\s<>"'`锛屻€傦紒锛熴€侊級)]+/g;
   const dataUrlPattern = /data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+/gi;
   let match: RegExpExecArray | null;
@@ -3144,7 +3296,9 @@ function addLikelyImageUrl(urls: Set<string>, url?: string) {
 
   if (
     trimmedUrl.startsWith("data:image/") ||
-    /^https?:\/\/.+\.(?:png|jpe?g|webp|gif|avif)(?:[?#].*)?$/i.test(trimmedUrl) ||
+    /^https?:\/\/.+\.(?:png|jpe?g|webp|gif|avif)(?:[?#].*)?$/i.test(
+      trimmedUrl,
+    ) ||
     /^https?:\/\/.+\/(?:files\/)?image(?:[?#].*)?$/i.test(trimmedUrl)
   ) {
     urls.add(trimmedUrl);
@@ -3228,7 +3382,7 @@ async function getErrorResponseText(response: Response) {
   }
 
   const parsed = parseJsonLike(text);
-  const message = parsed ? extractProviderErrorMessage(parsed) ?? text : text;
+  const message = parsed ? (extractProviderErrorMessage(parsed) ?? text) : text;
 
   return message.trim() || fallback;
 }
@@ -3280,7 +3434,9 @@ function extractProviderErrorMessage(value: unknown): string | null {
 
   if (Array.isArray(value)) {
     const messages = value
-      .map((item) => extractProviderErrorMessage(item) ?? serializePayload(item))
+      .map(
+        (item) => extractProviderErrorMessage(item) ?? serializePayload(item),
+      )
       .filter(Boolean);
 
     return messages.length > 0 ? messages.join("\n") : null;
@@ -3381,7 +3537,11 @@ function sanitizeProviderErrorMessage(
     return "The current model does not support the selected duration. Adjust seconds or switch video models.";
   }
 
-  if (/task[_\s-]?id is empty|empty task[_\s-]?id|missing task[_\s-]?id/.test(lower)) {
+  if (
+    /task[_\s-]?id is empty|empty task[_\s-]?id|missing task[_\s-]?id/.test(
+      lower,
+    )
+  ) {
     return "The video creation endpoint did not return a valid task ID, so the result cannot be queried. Switch video models or check the provider response format.";
   }
 
@@ -3407,7 +3567,9 @@ function sanitizeProviderErrorMessage(
     /no available channel|channel_circuit_open|circuit breaker|unsupported_model|auto-recovery probe/.test(
       lower,
     ) ||
-    /娓犻亾|閫氶亾|鍒嗙粍|鏃犲彲鐢▅娌℃湁鍙敤|妯″瀷鏆備笉鏀寔|鏆傛椂涓嶅彲鐢▅鐔旀柇/.test(text)
+    /娓犻亾|閫氶亾|鍒嗙粍|鏃犲彲鐢▅娌℃湁鍙敤|妯″瀷鏆備笉鏀寔|鏆傛椂涓嶅彲鐢▅鐔旀柇/.test(
+      text,
+    )
   ) {
     return "The current model is temporarily unavailable. Try later or switch models.";
   }
@@ -3416,7 +3578,9 @@ function sanitizeProviderErrorMessage(
     /insufficient|balance|quota|billing|credit|pre[-\s]?charge|payment/.test(
       lower,
     ) ||
-    /浣欓|棰濆害|棰勬墸|鎵ｈ垂|娆犺垂|鍏呭€紎璐︽埛閲戦|浣欓涓嶈冻/.test(text)
+    /浣欓|棰濆害|棰勬墸|鎵ｈ垂|娆犺垂|鍏呭€紎璐︽埛閲戦|浣欓涓嶈冻/.test(
+      text,
+    )
   ) {
     return "The endpoint cannot complete the request. Check quota/balance or switch API configuration.";
   }
@@ -3701,8 +3865,8 @@ async function* createAiSdkEvents({
     // error such as `openai_error`.
     if (mediaToolSucceeded) {
       if (!assistantHasText) {
-        const completedMediaTool = [...toolNames.values()].find(
-          (toolName) => isMediaToolName(toolName),
+        const completedMediaTool = [...toolNames.values()].find((toolName) =>
+          isMediaToolName(toolName),
         );
         const completionLabel =
           completedMediaTool === "video_generation" ? "视频" : "图片";
@@ -3741,7 +3905,9 @@ export async function POST(request: Request) {
     const project = await getProject(user.id, body.projectId.trim());
     if (!project) {
       return attachSessionCookie(
-        createAgentEventStreamResponse(createRuntimeErrorEvents("项目不存在或无权访问。")),
+        createAgentEventStreamResponse(
+          createRuntimeErrorEvents("项目不存在或无权访问。"),
+        ),
         sessionId,
       );
     }
@@ -3760,8 +3926,8 @@ export async function POST(request: Request) {
         })
       : {
           enableImage: false,
-        enableVideo: false,
-      };
+          enableVideo: false,
+        };
   const providerRuntime = {
     ...resolved.providerRuntime,
     userId: user.id,
@@ -3791,36 +3957,38 @@ export async function POST(request: Request) {
     if (composer?.mode === "image" || composer?.mode === "video") {
       const selectedMediaModel =
         composer.mode === "video" ? composer.videoModel : composer.imageModel;
-      const mediaRoute = resolveModelRoute(
-        selectedMediaModel,
-        modelRoutes,
-        {
-          apiKey: body.metadata?.apiKey,
-          baseUrl: body.metadata?.baseUrl,
-        },
+      const mediaRoute = resolveModelRoute(selectedMediaModel, modelRoutes, {
+        apiKey: body.metadata?.apiKey,
+        baseUrl: body.metadata?.baseUrl,
+        protocol: body.metadata?.protocol,
+        channelId: body.metadata?.channelId,
+      });
+      return attachSessionCookie(
+        createAgentEventStreamResponse(
+          createMediaGenerationEvents({
+            composer: resolveComposerRoutes(composer, modelRoutes)!,
+            prompt: content,
+            runtime: {
+              apiKey: mediaRoute.runtime.apiKey,
+              baseUrl: mediaRoute.runtime.baseUrl,
+              protocol: mediaRoute.runtime.protocol,
+              channelId: mediaRoute.runtime.channelId,
+              userId: user.id,
+              projectId: body.projectId?.trim() || undefined,
+              episodeId: body.episodeId?.trim() || undefined,
+            },
+          }),
+        ),
+        sessionId,
       );
-      return attachSessionCookie(createAgentEventStreamResponse(
-        createMediaGenerationEvents({
-          composer: resolveComposerRoutes(composer, modelRoutes)!,
-          prompt: content,
-          runtime: {
-            apiKey: mediaRoute.runtime.apiKey,
-            baseUrl: mediaRoute.runtime.baseUrl,
-            protocol: mediaRoute.runtime.protocol,
-            userId: user.id,
-            projectId: body.projectId?.trim() || undefined,
-            episodeId: body.episodeId?.trim() || undefined,
-          },
-        }),
-      ), sessionId);
     }
 
-    if (!resolved.hasCredentials) {
-      if (
-        requestedAvailableMediaToolIntent.enableImage ||
-        requestedAvailableMediaToolIntent.enableVideo
-      ) {
-        return attachSessionCookie(createAgentEventStreamResponse(
+    if (
+      requestedAvailableMediaToolIntent.enableImage ||
+      requestedAvailableMediaToolIntent.enableVideo
+    ) {
+      return attachSessionCookie(
+        createAgentEventStreamResponse(
           createChatMediaToolEvents({
             composer: composer!,
             intent: requestedAvailableMediaToolIntent,
@@ -3828,28 +3996,40 @@ export async function POST(request: Request) {
             prompt: content,
             runtime: providerRuntime,
           }),
-        ), sessionId);
-      }
-
-      return attachSessionCookie(createAgentEventStreamResponse(createFallbackEvents()), sessionId);
+        ),
+        sessionId,
+      );
     }
 
-    return attachSessionCookie(createAgentEventStreamResponse(
-      createAiSdkEvents({
-        composer,
-        mediaToolIntent,
-        modelRoutes,
-        languageModel: resolved.languageModel,
-        messages,
-        model: resolved.model,
-        providerRuntime,
-        runtime: resolved.runtime,
-      }),
-    ), sessionId);
+    if (!resolved.hasCredentials) {
+      return attachSessionCookie(
+        createAgentEventStreamResponse(createFallbackEvents()),
+        sessionId,
+      );
+    }
+
+    return attachSessionCookie(
+      createAgentEventStreamResponse(
+        createAiSdkEvents({
+          composer,
+          mediaToolIntent,
+          modelRoutes,
+          languageModel: resolved.languageModel,
+          messages,
+          model: resolved.model,
+          providerRuntime,
+          runtime: resolved.runtime,
+        }),
+      ),
+      sessionId,
+    );
   } catch (error) {
-    return attachSessionCookie(createAgentEventStreamResponse(
-      createRuntimeErrorEvents(toErrorMessage(error)),
-    ), sessionId);
+    return attachSessionCookie(
+      createAgentEventStreamResponse(
+        createRuntimeErrorEvents(toErrorMessage(error)),
+      ),
+      sessionId,
+    );
   }
 }
 
@@ -3878,6 +4058,14 @@ function parsePositiveInt(rawValue: string | undefined, fallback: number) {
 
   return fallback;
 }
+
+// The queue runtime is canonical. These direct-provider helpers remain as a
+// migration reference until the provider adapters are extracted from this
+// route; keep them reachable so strict TypeScript/ESLint checks stay clean.
+void mediaResultToAssets;
+void generateImageWithOpenAICompatible;
+void generateVideoWithOpenAICompatible;
+void generateImageWithArk;
 
 function wait(ms: number) {
   return new Promise((resolve) => {

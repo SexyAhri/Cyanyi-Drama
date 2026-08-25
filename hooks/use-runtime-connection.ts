@@ -262,6 +262,7 @@ export function useRuntimeConnection(initialModels: ModelOption[]) {
             model.id,
             {
               model: model.modelId || model.id,
+              channelId: modelRoute.channelId,
               protocol: modelRoute.protocol,
               baseUrl: modelRoute.baseUrl,
               apiKey: getPrimaryApiKey(modelRoute),

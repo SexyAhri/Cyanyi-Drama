@@ -35,8 +35,10 @@ export type MediaTask = {
   id: string;
   projectId?: string;
   episodeId?: string;
+  channelId?: string;
   targetType?: string;
   targetId?: string;
+  idempotencyKey?: string;
   kind: MediaTaskKind;
   status: MediaTaskStatus;
   provider: string;
@@ -48,6 +50,11 @@ export type MediaTask = {
   providerTaskId?: string;
   retryCount: number;
   maxRetries: number;
+  progress: number;
+  progressMessage?: string;
+  queueJobId?: string;
+  cancelRequestedAt?: string;
+  heartbeatAt?: string;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
@@ -61,12 +68,35 @@ export type MediaTaskEvent =
   | { type: "cancel"; at?: string }
   | { type: "retry"; at?: string };
 
+export type MediaTaskEventRecord = {
+  id: string;
+  taskId: string;
+  type:
+    | "created"
+    | "queued"
+    | "running"
+    | "progress"
+    | "heartbeat"
+    | "retry_scheduled"
+    | "succeeded"
+    | "failed"
+    | "cancel_requested"
+    | "canceled";
+  status?: MediaTaskStatus;
+  progress?: number;
+  message?: string;
+  payload?: Record<string, unknown>;
+  createdAt: string;
+};
+
 export function createMediaTask(input: {
   id: string;
   projectId?: string;
   episodeId?: string;
+  channelId?: string;
   targetType?: string;
   targetId?: string;
+  idempotencyKey?: string;
   kind: MediaTaskKind;
   provider: string;
   protocol: ChannelProtocol;
@@ -81,8 +111,10 @@ export function createMediaTask(input: {
     id: input.id,
     projectId: input.projectId,
     episodeId: input.episodeId,
+    channelId: input.channelId,
     targetType: input.targetType,
     targetId: input.targetId,
+    idempotencyKey: input.idempotencyKey,
     kind: input.kind,
     status: "queued",
     provider: input.provider,
@@ -92,8 +124,43 @@ export function createMediaTask(input: {
     providerTaskId: input.providerTaskId,
     retryCount: 0,
     maxRetries: Math.max(0, input.maxRetries ?? 2),
+    progress: 0,
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+export function updateMediaTaskProgress(
+  task: MediaTask,
+  progress: number,
+  message?: string,
+  at = new Date().toISOString(),
+): MediaTask {
+  if (!["queued", "running"].includes(task.status)) {
+    throw new Error(`MEDIA_TASK_PROGRESS_INVALID_STATUS:${task.status}`);
+  }
+
+  return {
+    ...task,
+    progress: Math.min(100, Math.max(0, Math.round(progress))),
+    progressMessage: message,
+    heartbeatAt: at,
+    updatedAt: at,
+  };
+}
+
+export function requestMediaTaskCancel(
+  task: MediaTask,
+  at = new Date().toISOString(),
+): MediaTask {
+  if (!["queued", "running"].includes(task.status)) {
+    throw new Error(`MEDIA_TASK_CANCEL_INVALID_STATUS:${task.status}`);
+  }
+
+  return {
+    ...task,
+    cancelRequestedAt: at,
+    updatedAt: at,
   };
 }
 
@@ -108,7 +175,10 @@ export function transitionMediaTask(
     return {
       ...task,
       status: "running",
+      progress: Math.max(task.progress, 1),
       startedAt: task.startedAt ?? at,
+      heartbeatAt: at,
+      cancelRequestedAt: undefined,
       updatedAt: at,
       error: undefined,
     };
@@ -119,20 +189,24 @@ export function transitionMediaTask(
     return {
       ...task,
       status: "succeeded",
+      progress: 100,
+      progressMessage: undefined,
       output: event.output,
       error: undefined,
       completedAt: at,
+      heartbeatAt: at,
       updatedAt: at,
     };
   }
 
   if (event.type === "fail") {
-    assertStatus(task, ["running"], "fail");
+    assertStatus(task, ["queued", "running"], "fail");
     return {
       ...task,
       status: "failed",
       error: event.error,
       completedAt: at,
+      heartbeatAt: at,
       updatedAt: at,
     };
   }
@@ -142,7 +216,9 @@ export function transitionMediaTask(
     return {
       ...task,
       status: "canceled",
+      progressMessage: undefined,
       completedAt: at,
+      heartbeatAt: at,
       updatedAt: at,
     };
   }
@@ -154,6 +230,8 @@ export function transitionMediaTask(
   return {
     ...task,
     status: "queued",
+    progressMessage: undefined,
+    cancelRequestedAt: undefined,
     retryCount: task.retryCount + 1,
     updatedAt: at,
     completedAt: undefined,

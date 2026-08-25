@@ -128,6 +128,8 @@ model Episode {
 model MediaTask {
   id             String        @id
   userId         String        @map("user_id")
+  channelId      String?       @map("channel_id")
+  idempotencyKey  String?       @map("idempotency_key")
   projectId      String?       @map("project_id")
   episodeId      String?       @map("episode_id")
   targetType     String?       @map("target_type")
@@ -142,6 +144,11 @@ model MediaTask {
   error          Json?
   retryCount     Int           @default(0) @map("retry_count")
   maxRetries     Int           @default(2) @map("max_retries")
+  progress       Int           @default(0)
+  progressMessage String?      @map("progress_message") @db.Text
+  queueJobId     String?       @map("queue_job_id")
+  cancelRequestedAt DateTime?  @map("cancel_requested_at")
+  heartbeatAt    DateTime?     @map("heartbeat_at")
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
   startedAt      DateTime?     @map("started_at")
@@ -150,11 +157,29 @@ model MediaTask {
   project        Project?      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   episode        Episode?      @relation(fields: [episodeId], references: [id], onDelete: Cascade)
   assets         MediaAsset[]
+  events         MediaTaskEvent[]
 
+  @@unique([userId, idempotencyKey])
   @@index([userId, updatedAt])
   @@index([projectId, updatedAt])
   @@index([episodeId, updatedAt])
+  @@index([channelId, updatedAt])
   @@map("media_tasks")
+}
+
+model MediaTaskEvent {
+  id         String    @id @default(uuid())
+  taskId     String    @map("task_id")
+  type       String
+  status     String?
+  progress   Int?
+  message    String?   @db.Text
+  payload    Json?
+  createdAt  DateTime  @default(now()) @map("created_at")
+  task       MediaTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, createdAt])
+  @@map("media_task_events")
 }
 
 model MediaAsset {
