@@ -7,7 +7,12 @@ import {
 } from "@/lib/media/project-asset-tasks";
 
 type Context = { params: Promise<{ projectId: string; episodeId: string }> };
-type PanelItem = { panelId: string; prompt?: string };
+type PanelItem = {
+  panelId: string;
+  prompt?: string;
+  mode?: "reference" | "first-last";
+  lastFramePanelId?: string;
+};
 
 export async function POST(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
@@ -38,6 +43,10 @@ export async function POST(request: Request, context: Context) {
         ratio: stringValue(body.ratio) || undefined,
         resolution: stringValue(body.resolution) || undefined,
         duration: stringValue(body.duration) || undefined,
+        mode:
+          item.mode ??
+          (body.mode === "first-last" ? "first-last" : "reference"),
+        lastFramePanelId: item.lastFramePanelId,
       });
       results.push({ item, ...result });
     } catch (error) {
@@ -59,8 +68,16 @@ export async function POST(request: Request, context: Context) {
 function isPanelItem(value: unknown): value is PanelItem {
   if (!value || typeof value !== "object") return false;
   const item = value as Record<string, unknown>;
-  return typeof item.panelId === "string" && item.panelId.trim().length > 0 &&
-    (item.prompt === undefined || typeof item.prompt === "string");
+  return (
+    typeof item.panelId === "string" &&
+    item.panelId.trim().length > 0 &&
+    (item.prompt === undefined || typeof item.prompt === "string") &&
+    (item.mode === undefined ||
+      item.mode === "reference" ||
+      item.mode === "first-last") &&
+    (item.lastFramePanelId === undefined ||
+      typeof item.lastFramePanelId === "string")
+  );
 }
 
 function stringValue(value: unknown) {

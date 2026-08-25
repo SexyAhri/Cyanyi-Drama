@@ -4,6 +4,8 @@ import { prisma } from "@/lib/server/prisma";
 import { createMediaTask } from "./task-contract";
 import { createDatabaseMediaTaskStore } from "./task-store";
 import { enqueuePersistedMediaTask } from "./task-submit";
+import { BillingError } from "@/lib/billing/service";
+import { resolveStoredMediaUrl } from "@/lib/storage";
 
 export type ProjectAssetTarget = "character" | "location";
 
@@ -65,10 +67,7 @@ export async function createProjectImageTask(
     targetType: entity.entityType,
     targetId: entity.id,
     kind: "image",
-    provider:
-      channel.protocol === "volcengine-ark"
-        ? "volcengine-ark"
-        : "openai-compatible",
+    provider: channel.providerKey,
     protocol: channel.protocol as "openai-compatible" | "volcengine-ark",
     model: input.model,
     request: {
@@ -81,7 +80,7 @@ export async function createProjectImageTask(
   });
   const store = createDatabaseMediaTaskStore(input.userId);
   await store.create(task);
-  const queued = await enqueuePersistedMediaTask(input.userId, task);
+  const queued = await enqueueProjectTask(input.userId, task);
   return { task: queued, entity };
 }
 
@@ -99,7 +98,7 @@ export async function createStoryboardPanelImageTask(input: {
 }) {
   const channel = await prisma.channel.findFirst({
     where: { id: input.channelId, userId: input.userId },
-    select: { id: true, protocol: true },
+    select: { id: true, protocol: true, providerKey: true },
   });
   if (
     !channel ||
@@ -162,8 +161,7 @@ export async function createStoryboardPanelImageTask(input: {
     targetType: "storyboard_panel",
     targetId: panel.id,
     kind: "image",
-    provider:
-      channel.protocol === "volcengine-ark" ? "volcengine-ark" : "openai-compatible",
+    provider: channel.providerKey,
     protocol: channel.protocol as "openai-compatible" | "volcengine-ark",
     model: input.model,
     request: {
@@ -176,7 +174,7 @@ export async function createStoryboardPanelImageTask(input: {
   });
   const store = createDatabaseMediaTaskStore(input.userId);
   await store.create(task);
-  const queued = await enqueuePersistedMediaTask(input.userId, task);
+  const queued = await enqueueProjectTask(input.userId, task);
   return {
     task: queued,
     panel: { id: panel.id, referenceCount: referenceImages.length },
@@ -195,10 +193,12 @@ export async function createStoryboardPanelVideoTask(input: {
   ratio?: string;
   resolution?: string;
   duration?: string;
+  mode?: "reference" | "first-last";
+  lastFramePanelId?: string;
 }) {
   const channel = await prisma.channel.findFirst({
     where: { id: input.channelId, userId: input.userId },
-    select: { id: true, protocol: true },
+    select: { id: true, protocol: true, providerKey: true },
   });
   if (
     !channel ||
@@ -236,29 +236,79 @@ export async function createStoryboardPanelVideoTask(input: {
     },
     select: {
       id: true,
+      storyboardId: true,
+      panelIndex: true,
+      linkedToNextPanel: true,
       description: true,
       videoPrompt: true,
-      imageAsset: { select: { url: true, mimeType: true } },
+      firstLastFramePrompt: true,
+      imageAsset: {
+        select: { url: true, storageKey: true, mimeType: true },
+      },
       charactersJson: true,
       locationName: true,
     },
   });
   if (!panel) throw new ProjectAssetTaskError("分镜格不存在", 404);
   const prompt =
-    input.prompt?.trim() || panel.videoPrompt?.trim() || panel.description?.trim();
+    input.prompt?.trim() ||
+    (input.mode === "first-last"
+      ? panel.firstLastFramePrompt?.trim()
+      : panel.videoPrompt?.trim()) ||
+    panel.description?.trim();
   if (!prompt) throw new ProjectAssetTaskError("分镜格缺少视频提示词", 400);
 
-  const referenceImages = await findStoryboardReferenceImages({
+  const supportingReferences = await findStoryboardReferenceImages({
     projectId: input.projectId,
     characters: parseStringArray(panel.charactersJson),
     locationName: panel.locationName,
   });
-  if (panel.imageAsset?.url) {
-    referenceImages.unshift({
-      url: panel.imageAsset.url,
-      mimeType: panel.imageAsset.mimeType ?? undefined,
+  const referenceImages: Array<{
+    url: string;
+    mimeType?: string;
+    role?: "reference_image" | "first_frame" | "last_frame";
+  }> = [];
+  if (input.mode === "first-last") {
+    const firstFrameUrl = await mediaAssetUrl(panel.imageAsset);
+    const lastFrame = await findLastFramePanel({
+      userId: input.userId,
+      projectId: input.projectId,
+      episodeId: input.episodeId,
+      storyboardId: panel.storyboardId,
+      panelIndex: panel.panelIndex,
+      linkedToNextPanel: panel.linkedToNextPanel,
+      lastFramePanelId: input.lastFramePanelId,
     });
+    const lastFrameUrl = await mediaAssetUrl(lastFrame?.imageAsset);
+    if (!firstFrameUrl || !lastFrameUrl)
+      throw new ProjectAssetTaskError("首尾帧模式需要首帧和尾帧图片", 400);
+    referenceImages.push(
+      {
+        url: firstFrameUrl,
+        mimeType: panel.imageAsset?.mimeType ?? undefined,
+        role: "first_frame",
+      },
+      {
+        url: lastFrameUrl,
+        mimeType: lastFrame?.imageAsset?.mimeType ?? undefined,
+        role: "last_frame",
+      },
+    );
+  } else {
+    const panelImageUrl = await mediaAssetUrl(panel.imageAsset);
+    if (panelImageUrl)
+      referenceImages.push({
+        url: panelImageUrl,
+        mimeType: panel.imageAsset?.mimeType ?? undefined,
+        role: "reference_image",
+      });
   }
+  referenceImages.push(
+    ...supportingReferences.map((reference) => ({
+      ...reference,
+      role: "reference_image" as const,
+    })),
+  );
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
@@ -268,8 +318,7 @@ export async function createStoryboardPanelVideoTask(input: {
     targetType: "storyboard_panel",
     targetId: panel.id,
     kind: "video",
-    provider:
-      channel.protocol === "volcengine-ark" ? "volcengine-ark" : "openai-compatible",
+    provider: channel.providerKey,
     protocol: channel.protocol as "openai-compatible" | "volcengine-ark",
     model: input.model,
     request: {
@@ -278,16 +327,58 @@ export async function createStoryboardPanelVideoTask(input: {
       resolution: input.resolution ?? "720p",
       duration: input.duration ?? "5s",
       format: "mp4",
+      videoMode: input.mode ?? "reference",
       ...(referenceImages.length ? { referenceImages: referenceImages.slice(0, 9) } : {}),
     },
   });
   const store = createDatabaseMediaTaskStore(input.userId);
   await store.create(task);
-  const queued = await enqueuePersistedMediaTask(input.userId, task);
+  const queued = await enqueueProjectTask(input.userId, task);
   return {
     task: queued,
     panel: { id: panel.id, referenceCount: referenceImages.length },
   };
+}
+
+async function findLastFramePanel(input: {
+  userId: string;
+  projectId: string;
+  episodeId: string;
+  storyboardId: string;
+  panelIndex: number;
+  linkedToNextPanel: boolean;
+  lastFramePanelId?: string;
+}) {
+  if (!input.lastFramePanelId && !input.linkedToNextPanel) return null;
+  return prisma.storyboardPanel.findFirst({
+    where: {
+      storyboardId: input.storyboardId,
+      ...(input.lastFramePanelId
+        ? { id: input.lastFramePanelId }
+        : { panelIndex: { gt: input.panelIndex } }),
+      storyboard: {
+        projectId: input.projectId,
+        episodeId: input.episodeId,
+        project: { userId: input.userId },
+      },
+    },
+    orderBy: { panelIndex: "asc" },
+    select: {
+      imageAsset: {
+        select: { url: true, storageKey: true, mimeType: true },
+      },
+    },
+  });
+}
+
+async function mediaAssetUrl(
+  asset:
+    | { url: string | null; storageKey: string | null }
+    | null
+    | undefined,
+) {
+  if (asset?.storageKey) return resolveStoredMediaUrl(asset.storageKey);
+  return asset?.url ?? null;
 }
 
 async function createTargetEntity(input: CreateProjectImageTaskInput) {
@@ -451,5 +542,18 @@ export class ProjectAssetTaskError extends Error {
     readonly status: number,
   ) {
     super(message);
+  }
+}
+
+async function enqueueProjectTask(
+  userId: string,
+  task: Parameters<typeof enqueuePersistedMediaTask>[1],
+) {
+  try {
+    return await enqueuePersistedMediaTask(userId, task);
+  } catch (error) {
+    if (error instanceof BillingError)
+      throw new ProjectAssetTaskError(error.message, error.status);
+    throw error;
   }
 }

@@ -1,4 +1,9 @@
 import { enqueueMediaJob } from "@/lib/queue/media-queue";
+import {
+  BillingError,
+  reserveMediaTaskCharge,
+  settleMediaTaskCharge,
+} from "@/lib/billing/service";
 import { createDatabaseMediaTaskStore } from "./task-store";
 import type { MediaTask } from "./task-contract";
 
@@ -8,7 +13,9 @@ export async function enqueuePersistedMediaTask(
   task: MediaTask,
 ) {
   const store = createDatabaseMediaTaskStore(userId);
+  let chargeReserved = false;
   try {
+    chargeReserved = !!(await reserveMediaTaskCharge(userId, task));
     const job = await enqueueMediaJob({
       taskId: task.id,
       userId,
@@ -22,14 +29,19 @@ export async function enqueuePersistedMediaTask(
     await store.update(queued);
     return queued;
   } catch (error) {
+    if (chargeReserved)
+      await settleMediaTaskCharge(userId, task.id, false).catch(() => null);
     const now = new Date().toISOString();
+    const billingError = error instanceof BillingError;
     const failed: MediaTask = {
       ...task,
       status: "failed",
       error: {
-        code: "QUEUE_ENQUEUE_FAILED",
+        code: billingError
+          ? error.message
+          : "QUEUE_ENQUEUE_FAILED",
         message: error instanceof Error ? error.message : "Queue unavailable.",
-        retryable: true,
+        retryable: !billingError,
       },
       completedAt: now,
       updatedAt: now,

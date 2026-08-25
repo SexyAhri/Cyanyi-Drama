@@ -14,6 +14,7 @@ import {
 type ChannelInput = {
   id?: string;
   name?: string;
+  providerKey?: string;
   protocol?: string;
   baseUrl?: string;
   apiKeys?: string[];
@@ -39,6 +40,7 @@ export async function GET() {
       channels: channels.map((channel) => ({
         id: channel.id,
         name: channel.name,
+        providerKey: channel.providerKey,
         protocol: channel.protocol,
         baseUrl: channel.baseUrl,
         apiKeys: JSON.parse(
@@ -63,6 +65,7 @@ export async function PUT(request: Request) {
   const name = body.name?.trim();
   const baseUrl = body.baseUrl?.trim();
   const protocol = body.protocol?.trim();
+  const providerKey = body.providerKey?.trim() || providerKeyForProtocol(protocol);
   const apiKeys = [
     ...new Set((body.apiKeys ?? []).map((key) => key.trim()).filter(Boolean)),
   ];
@@ -84,6 +87,7 @@ export async function PUT(request: Request) {
           where: { id },
           data: {
             name,
+            providerKey,
             protocol,
             baseUrl,
             encryptedApiKeys: encryptSecret(JSON.stringify(apiKeys)),
@@ -94,6 +98,7 @@ export async function PUT(request: Request) {
             id,
             userId: user.id,
             name,
+            providerKey,
             protocol,
             baseUrl,
             encryptedApiKeys: encryptSecret(JSON.stringify(apiKeys)),
@@ -140,7 +145,15 @@ export async function PUT(request: Request) {
   });
   return attachSessionCookie(
     Response.json({
-      channel: { id: channel.id, name, protocol, baseUrl, apiKeys, models },
+      channel: {
+        id: channel.id,
+        name,
+        providerKey,
+        protocol,
+        baseUrl,
+        apiKeys,
+        models,
+      },
     }),
     sessionId,
   );
@@ -260,6 +273,10 @@ function normalizeProtocol(value: string): ChannelProtocol {
     return value;
   }
   return "openai-compatible";
+}
+
+function providerKeyForProtocol(protocol?: string) {
+  return protocol === "volcengine-ark" ? "volcengine-ark" : "custom";
 }
 
 export async function DELETE(request: Request) {

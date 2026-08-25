@@ -32,6 +32,8 @@ export async function POST(request: Request, context: Context) {
       ratio: stringValue(body.ratio) || undefined,
       resolution: stringValue(body.resolution) || undefined,
       duration: stringValue(body.duration) || undefined,
+      mode: body.mode === "first-last" ? "first-last" : "reference",
+      lastFramePanelId: stringValue(body.lastFramePanelId) || undefined,
     });
     return attachSessionCookie(Response.json(result, { status: 202 }), sessionId);
   } catch (error) {

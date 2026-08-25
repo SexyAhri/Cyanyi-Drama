@@ -4,6 +4,7 @@ import { prisma } from "@/lib/server/prisma";
 import { createMediaTask } from "./task-contract";
 import { createDatabaseMediaTaskStore } from "./task-store";
 import { enqueuePersistedMediaTask } from "./task-submit";
+import { BillingError } from "@/lib/billing/service";
 
 export class ProductionTaskError extends Error {
   constructor(
@@ -27,7 +28,7 @@ export async function createProductionTask(input: {
 }) {
   const channel = await prisma.channel.findFirst({
     where: { id: input.channelId, userId: input.userId },
-    select: { id: true, protocol: true },
+    select: { id: true, protocol: true, providerKey: true },
   });
   if (
     !channel ||
@@ -38,11 +39,12 @@ export async function createProductionTask(input: {
       400,
     );
   }
-  const capability = input.targetType === "lip_sync"
-    ? '"lipsync"'
-    : input.kind === "video"
-      ? '"video"'
-      : '"audio"';
+  const capability =
+    input.targetType === "lip_sync"
+      ? '"lipsync"'
+      : input.kind === "video"
+        ? '"video"'
+        : '"audio"';
   const selectedModel = await prisma.providerModel.count({
     where: {
       channelId: input.channelId,
@@ -73,15 +75,18 @@ export async function createProductionTask(input: {
     targetType: input.targetType,
     targetId: input.targetId,
     kind: input.kind,
-    provider:
-      channel.protocol === "volcengine-ark"
-        ? "volcengine-ark"
-        : "openai-compatible",
+    provider: channel.providerKey,
     protocol: channel.protocol as "openai-compatible" | "volcengine-ark",
     model: input.model,
     request: input.request,
   });
   const store = createDatabaseMediaTaskStore(input.userId);
   await store.create(task);
-  return enqueuePersistedMediaTask(input.userId, task);
+  try {
+    return await enqueuePersistedMediaTask(input.userId, task);
+  } catch (error) {
+    if (error instanceof BillingError)
+      throw new ProductionTaskError(error.message, error.status);
+    throw error;
+  }
 }

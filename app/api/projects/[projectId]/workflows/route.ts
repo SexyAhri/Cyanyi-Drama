@@ -1,6 +1,7 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import { createWorkflowRun, listWorkflowRuns } from "@/lib/workflow/store";
+import { getWorkflowTemplate } from "@/lib/workflow/registry";
 
 type Context = { params: Promise<{ projectId: string }> };
 
@@ -19,12 +20,14 @@ export async function POST(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { projectId } = await context.params;
   const body = await readObject(request);
-  const steps = Array.isArray(body.steps) ? body.steps.filter(isStep) : [];
-  if (
-    typeof body.workflowType !== "string" ||
-    !body.workflowType.trim() ||
-    !steps.length
-  )
+  const workflowType =
+    typeof body.workflowType === "string" ? body.workflowType.trim() : "";
+  const explicitSteps = Array.isArray(body.steps)
+    ? body.steps.filter(isStep)
+    : [];
+  const template = workflowType ? getWorkflowTemplate(workflowType) : null;
+  const steps = explicitSteps.length ? explicitSteps : (template?.steps ?? []);
+  if (!workflowType || !steps.length)
     return attachSessionCookie(
       Response.json(
         { message: "workflowType 和 steps 是必填项" },
@@ -40,7 +43,7 @@ export async function POST(request: Request, context: Context) {
       projectId,
       episodeId:
         typeof body.episodeId === "string" ? body.episodeId : undefined,
-      workflowType: body.workflowType.trim(),
+      workflowType,
       input: isRecord(body.input) ? body.input : undefined,
       steps,
     });
@@ -89,7 +92,9 @@ function isStep(value: unknown): value is {
         value.dependsOn.every((item: unknown) => typeof item === "string"))) &&
     (value.artifactTypes === undefined ||
       (Array.isArray(value.artifactTypes) &&
-        value.artifactTypes.every((item: unknown) => typeof item === "string"))) &&
+        value.artifactTypes.every(
+          (item: unknown) => typeof item === "string",
+        ))) &&
     (value.retryable === undefined || typeof value.retryable === "boolean") &&
     (value.failureMode === undefined || value.failureMode === "fail_run") &&
     (value.input === undefined || isRecord(value.input))

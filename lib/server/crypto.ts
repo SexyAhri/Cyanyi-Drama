@@ -5,14 +5,12 @@ import {
   scryptSync,
 } from "node:crypto";
 
+import { getAppSecret } from "./app-secret";
+
 const PASSWORD_SALT = "cyanyi-password-v1";
 
 function getEncryptionKey() {
-  return scryptSync(
-    process.env.APP_SECRET || "cyanyi-development-secret",
-    "cyanyi-db",
-    32,
-  );
+  return scryptSync(getAppSecret(), "cyanyi-db", 32);
 }
 
 export function hashPassword(password: string) {

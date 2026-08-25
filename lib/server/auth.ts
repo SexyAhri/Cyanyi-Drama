@@ -105,6 +105,46 @@ export async function registerUser(
         where: { userId: previousUser.id },
         data: { userId: user.id },
       }),
+      prisma.workflowRun.updateMany({
+        where: { userId: previousUser.id },
+        data: { userId: user.id },
+      }),
+      prisma.voicePreset.updateMany({
+        where: { userId: previousUser.id },
+        data: { userId: user.id },
+      }),
+      prisma.globalAssetFolder.updateMany({
+        where: { userId: previousUser.id },
+        data: { userId: user.id },
+      }),
+      prisma.globalCharacter.updateMany({
+        where: { userId: previousUser.id },
+        data: { userId: user.id },
+      }),
+      prisma.globalLocation.updateMany({
+        where: { userId: previousUser.id },
+        data: { userId: user.id },
+      }),
+      prisma.globalVoice.updateMany({
+        where: { userId: previousUser.id },
+        data: { userId: user.id },
+      }),
+      prisma.userBalance.updateMany({
+        where: { userId: previousUser.id },
+        data: { userId: user.id },
+      }),
+      prisma.balanceFreeze.updateMany({
+        where: { userId: previousUser.id },
+        data: { userId: user.id },
+      }),
+      prisma.balanceTransaction.updateMany({
+        where: { userId: previousUser.id },
+        data: { userId: user.id },
+      }),
+      prisma.usageCost.updateMany({
+        where: { userId: previousUser.id },
+        data: { userId: user.id },
+      }),
       prisma.session.deleteMany({ where: { userId: previousUser.id } }),
       prisma.user.delete({ where: { id: previousUser.id } }),
     ]);

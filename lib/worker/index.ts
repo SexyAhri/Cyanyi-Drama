@@ -14,6 +14,7 @@ import { prisma } from "@/lib/server/prisma";
 import { processQueuedMediaTask } from "@/lib/queue/media-runtime";
 import { processWorkflowJob } from "@/lib/workflow/runtime";
 import { startWorkWatchdog } from "@/lib/queue/reconcile";
+import { settleMediaTaskCharge } from "@/lib/billing/service";
 
 const stopWatchdog = startWorkWatchdog();
 
@@ -42,6 +43,7 @@ const worker = new Worker<MediaJob>(
           progress: task.progress,
         },
       });
+      await settleChargeSafely(task.userId, task.id, false);
       return;
     }
 
@@ -65,7 +67,11 @@ const worker = new Worker<MediaJob>(
       },
     });
 
-    await processQueuedMediaTask(job.data.taskId, job.data.userId);
+    const succeeded = await processQueuedMediaTask(
+      job.data.taskId,
+      job.data.userId,
+    );
+    await settleChargeSafely(job.data.userId, job.data.taskId, succeeded);
   },
   {
     connection: getRedisConnection(),
@@ -140,7 +146,27 @@ worker.on("failed", async (job, error) => {
       payload: { retryable, attemptsMade: job.attemptsMade },
     },
   });
+  if (!retryable)
+    await settleChargeSafely(job.data.userId, job.data.taskId, false);
 });
+
+async function settleChargeSafely(
+  userId: string,
+  taskId: string,
+  succeeded: boolean,
+) {
+  try {
+    await settleMediaTaskCharge(userId, taskId, succeeded);
+  } catch (error) {
+    await prisma.mediaTaskEvent.create({
+      data: {
+        taskId,
+        type: "billing_settlement_failed",
+        message: error instanceof Error ? error.message : String(error),
+      },
+    });
+  }
+}
 
 process.once("SIGTERM", async () => {
   stopWatchdog();

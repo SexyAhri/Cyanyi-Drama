@@ -1,21 +1,15 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { createDatabaseMediaTaskStore } from "@/lib/media/task-store";
 import { createMediaTask, type MediaTaskKind } from "@/lib/media/task-contract";
-import { enqueueMediaJob } from "@/lib/queue/media-queue";
-import type { ChannelProtocol } from "@/lib/agent/provider-types";
+import { enqueuePersistedMediaTask } from "@/lib/media/task-submit";
+import { BillingError } from "@/lib/billing/service";
+import { prisma } from "@/lib/server/prisma";
 
 const taskKinds = new Set<MediaTaskKind>([
   "image",
   "video",
   "audio",
   "lipsync",
-  "voicedesign",
-]);
-const protocols = new Set<ChannelProtocol>([
-  "openai-compatible",
-  "anthropic",
-  "google-gemini",
-  "volcengine-ark",
 ]);
 
 export async function POST(request: Request) {
@@ -25,25 +19,52 @@ export async function POST(request: Request) {
     typeof body.kind === "string" && taskKinds.has(body.kind as MediaTaskKind)
       ? (body.kind as MediaTaskKind)
       : null;
-  const protocol =
-    typeof body.protocol === "string" &&
-    protocols.has(body.protocol as ChannelProtocol)
-      ? (body.protocol as ChannelProtocol)
-      : null;
+  const channelId =
+    typeof body.channelId === "string" ? body.channelId.trim() : "";
   if (
     !kind ||
-    !protocol ||
+    !channelId ||
     typeof body.model !== "string" ||
-    typeof body.provider !== "string"
+    !body.model.trim()
   ) {
     return attachSessionCookie(
       Response.json(
-        { message: "kind, provider, protocol and model are required." },
+        { message: "kind、channelId 和 model 是必填项" },
         { status: 400 },
       ),
       sessionId,
     );
   }
+
+  const channel = await prisma.channel.findFirst({
+    where: { id: channelId, userId: user.id },
+    select: { protocol: true, providerKey: true },
+  });
+  if (
+    !channel ||
+    !["openai-compatible", "volcengine-ark"].includes(channel.protocol)
+  )
+    return attachSessionCookie(
+      Response.json({ message: "媒体渠道不存在或协议不受支持" }, { status: 400 }),
+      sessionId,
+    );
+  const model = body.model.trim();
+  const configuredModel = await prisma.providerModel.count({
+    where: {
+      channelId,
+      modelId: model,
+      selected: true,
+      OR: [
+        { modelType: kind },
+        { capabilitiesJson: { contains: `"${kind}"` } },
+      ],
+    },
+  });
+  if (!configuredModel)
+    return attachSessionCookie(
+      Response.json({ message: "模型未在该渠道中配置或未选中" }, { status: 400 }),
+      sessionId,
+    );
 
   const idempotencyKey =
     typeof body.idempotencyKey === "string"
@@ -59,69 +80,70 @@ export async function POST(request: Request) {
       );
   }
 
+  const requestPayload =
+    body.request && typeof body.request === "object"
+      ? (body.request as Record<string, unknown>)
+      : {};
+  if (kind === "lipsync" && requestPayload.operation !== "lip_sync")
+    return attachSessionCookie(
+      Response.json({ message: "lipsync 任务必须使用 lip_sync operation" }, { status: 400 }),
+      sessionId,
+    );
+  const projectId = typeof body.projectId === "string" ? body.projectId : undefined;
+  const episodeId = typeof body.episodeId === "string" ? body.episodeId : undefined;
+  if (
+    projectId &&
+    !(await prisma.project.count({ where: { id: projectId, userId: user.id } }))
+  )
+    return attachSessionCookie(
+      Response.json({ message: "项目不存在" }, { status: 404 }),
+      sessionId,
+    );
+  if (
+    episodeId &&
+    !(await prisma.episode.count({
+      where: { id: episodeId, ...(projectId ? { projectId } : {}), project: { userId: user.id } },
+    }))
+  )
+    return attachSessionCookie(
+      Response.json({ message: "剧集不存在" }, { status: 404 }),
+      sessionId,
+    );
+
   const task = createMediaTask({
     id: `media_task_${crypto.randomUUID()}`,
     idempotencyKey,
     kind,
-    provider: body.provider,
-    protocol,
-    model: body.model,
-    projectId: typeof body.projectId === "string" ? body.projectId : undefined,
-    episodeId: typeof body.episodeId === "string" ? body.episodeId : undefined,
+    provider: channel.providerKey,
+    protocol: channel.protocol as "openai-compatible" | "volcengine-ark",
+    model,
+    projectId,
+    episodeId,
     batchId: typeof body.batchId === "string" ? body.batchId : undefined,
-    channelId: typeof body.channelId === "string" ? body.channelId : undefined,
+    channelId,
     targetType:
       typeof body.targetType === "string" ? body.targetType : undefined,
     targetId: typeof body.targetId === "string" ? body.targetId : undefined,
-    request:
-      body.request && typeof body.request === "object"
-        ? (body.request as Record<string, unknown>)
-        : {},
+    request: requestPayload,
     maxRetries: typeof body.maxRetries === "number" ? body.maxRetries : 2,
   });
   await store.create(task);
   try {
-    const job = await enqueueMediaJob({
-      taskId: task.id,
-      userId: user.id,
-      projectId: task.projectId,
-      episodeId: task.episodeId,
-      channelId: task.channelId,
-      kind,
-      maxAttempts: task.maxRetries + 1,
-    });
-    task.queueJobId = job.id;
-    await store.update(task);
+    const queued = await enqueuePersistedMediaTask(user.id, task);
+    return attachSessionCookie(
+      Response.json({ task: queued }, { status: 202 }),
+      sessionId,
+    );
   } catch (error) {
-    await store.update({
-      ...task,
-      status: "failed",
-      error: {
-        code: "QUEUE_ENQUEUE_FAILED",
-        message: error instanceof Error ? error.message : "Queue unavailable.",
-        retryable: true,
-      },
-      completedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-    await store.appendEvent({
-      taskId: task.id,
-      type: "failed",
-      status: "failed",
-      message: error instanceof Error ? error.message : "Queue unavailable.",
-    });
+    const billingError = error instanceof BillingError;
     return attachSessionCookie(
       Response.json(
-        { message: "Unable to enqueue media task." },
-        { status: 503 },
+        { message: error instanceof Error ? error.message : "任务入队失败" },
+        { status: billingError ? error.status : 503 },
       ),
       sessionId,
     );
   }
-  return attachSessionCookie(
-    Response.json({ task }, { status: 202 }),
-    sessionId,
-  );
 }
 
 export async function GET(request: Request) {

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/server/prisma";
 import { createMediaTask } from "./task-contract";
 import { createDatabaseMediaTaskStore } from "./task-store";
 import { enqueuePersistedMediaTask } from "./task-submit";
+import { BillingError } from "@/lib/billing/service";
 
 export class VoiceTaskError extends Error {
   constructor(
@@ -25,7 +26,7 @@ export async function createVoiceLineAudioTask(input: {
 }) {
   const channel = await prisma.channel.findFirst({
     where: { id: input.channelId, userId: input.userId },
-    select: { id: true, protocol: true },
+    select: { id: true, protocol: true, providerKey: true },
   });
   if (
     !channel ||
@@ -70,10 +71,7 @@ export async function createVoiceLineAudioTask(input: {
     targetType: "voice_line",
     targetId: line.id,
     kind: "audio",
-    provider:
-      channel.protocol === "volcengine-ark"
-        ? "volcengine-ark"
-        : "openai-compatible",
+    provider: channel.providerKey,
     protocol: channel.protocol as "openai-compatible" | "volcengine-ark",
     model: input.model,
     request: {
@@ -85,6 +83,13 @@ export async function createVoiceLineAudioTask(input: {
   });
   const store = createDatabaseMediaTaskStore(input.userId);
   await store.create(task);
-  const queued = await enqueuePersistedMediaTask(input.userId, task);
+  let queued;
+  try {
+    queued = await enqueuePersistedMediaTask(input.userId, task);
+  } catch (error) {
+    if (error instanceof BillingError)
+      throw new VoiceTaskError(error.message, error.status);
+    throw error;
+  }
   return { task: queued, line: { id: line.id } };
 }

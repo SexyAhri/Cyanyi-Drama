@@ -1,6 +1,6 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { prisma } from "@/lib/server/prisma";
-import { resolveStoredMediaUrl } from "@/lib/storage/s3";
+import { resolveStoredMediaUrl } from "@/lib/storage";
 
 type Context = { params: Promise<{ assetId: string }> };
 

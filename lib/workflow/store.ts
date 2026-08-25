@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/server/prisma";
 import {
   assertWorkflowAction,
-  assertUniqueStepKeys,
+  assertWorkflowDefinition,
   type WorkflowRunDefinition,
   type WorkflowRunStatus,
 } from "./contract";
@@ -12,10 +12,12 @@ import {
 const include = {
   steps: { orderBy: { stepIndex: "asc" as const } },
   events: { orderBy: { createdAt: "asc" as const }, take: 200 },
+  checkpoints: { orderBy: { createdAt: "asc" as const }, take: 200 },
+  stepAttempts: { orderBy: { createdAt: "asc" as const }, take: 200 },
 } as const;
 
 export async function createWorkflowRun(definition: WorkflowRunDefinition) {
-  assertUniqueStepKeys(definition.steps);
+  assertWorkflowDefinition(definition.steps);
   const ownsProject = await prisma.project.count({
     where: { id: definition.projectId, userId: definition.userId },
   });
@@ -159,7 +161,11 @@ export async function retryWorkflowRun(userId: string, runId: string) {
     include: { steps: true },
   });
   if (!current || !["failed", "blocked"].includes(current.status)) return null;
-  const exhausted = current.steps.some((step) => ["failed", "blocked"].includes(step.status) && step.attempt >= step.maxAttempts);
+  const exhausted = current.steps.some(
+    (step) =>
+      ["failed", "blocked"].includes(step.status) &&
+      step.attempt >= step.maxAttempts,
+  );
   if (exhausted) return null;
   const resetKeys = resolveRetryStepKeys(current.steps);
   const resetStepIds = current.steps
@@ -188,12 +194,72 @@ export async function retryWorkflowRun(userId: string, runId: string) {
     prisma.workflowArtifact.deleteMany({
       where: { runId, stepId: { in: resetStepIds } },
     }),
+    prisma.workflowCheckpoint.deleteMany({
+      where: { runId, stepKey: { in: resetKeys } },
+    }),
     prisma.workflowEvent.create({
       data: {
         runId,
         type: "retry_requested",
         status: "queued",
         payload: toJson({ resetKeys }),
+      },
+    }),
+  ]);
+  return getWorkflowRun(userId, runId);
+}
+
+export async function retryWorkflowStep(
+  userId: string,
+  runId: string,
+  stepKey: string,
+) {
+  const current = await prisma.workflowRun.findFirst({
+    where: { id: runId, userId },
+    include: { steps: true },
+  });
+  if (!current || ["running", "canceled"].includes(current.status)) return null;
+  const target = current.steps.find((step) => step.stepKey === stepKey);
+  if (!target || !target.retryable || target.attempt >= target.maxAttempts)
+    return null;
+  const resetKeys = resolveDownstreamStepKeys(current.steps, stepKey);
+  const resetStepIds = current.steps
+    .filter((step) => resetKeys.includes(step.stepKey))
+    .map((step) => step.id);
+  await prisma.$transaction([
+    prisma.workflowRun.update({
+      where: { id: runId },
+      data: {
+        status: "queued",
+        error: Prisma.DbNull,
+        completedAt: null,
+        cancelRequestedAt: null,
+        updatedAt: new Date(),
+      },
+    }),
+    prisma.workflowStep.updateMany({
+      where: { runId, stepKey: { in: resetKeys } },
+      data: {
+        status: "pending",
+        output: Prisma.DbNull,
+        error: Prisma.DbNull,
+        completedAt: null,
+        updatedAt: new Date(),
+      },
+    }),
+    prisma.workflowArtifact.deleteMany({
+      where: { runId, stepId: { in: resetStepIds } },
+    }),
+    prisma.workflowCheckpoint.deleteMany({
+      where: { runId, stepKey: { in: resetKeys } },
+    }),
+    prisma.workflowEvent.create({
+      data: {
+        runId,
+        stepId: target.id,
+        type: "step_retry_requested",
+        status: "queued",
+        payload: toJson({ stepKey, resetKeys }),
       },
     }),
   ]);
@@ -217,9 +283,39 @@ function resolveRetryStepKeys(
     changed = false;
     for (const step of steps) {
       const dependencies = Array.isArray(step.dependsOn)
-        ? step.dependsOn.filter((item): item is string => typeof item === "string")
+        ? step.dependsOn.filter(
+            (item): item is string => typeof item === "string",
+          )
         : [];
-      if (!reset.has(step.stepKey) && dependencies.some((key) => reset.has(key))) {
+      if (
+        !reset.has(step.stepKey) &&
+        dependencies.some((key) => reset.has(key))
+      ) {
+        reset.add(step.stepKey);
+        changed = true;
+      }
+    }
+  }
+  return Array.from(reset);
+}
+
+function resolveDownstreamStepKeys(
+  steps: Array<{
+    stepKey: string;
+    dependsOn: Prisma.JsonValue | null;
+  }>,
+  stepKey: string,
+) {
+  const reset = new Set([stepKey]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const step of steps) {
+      const dependencies = parseStringArray(step.dependsOn);
+      if (
+        !reset.has(step.stepKey) &&
+        dependencies.some((key) => reset.has(key))
+      ) {
         reset.add(step.stepKey);
         changed = true;
       }
@@ -273,6 +369,30 @@ function toRun(row: Row) {
       message: event.message ?? undefined,
       payload: event.payload as Record<string, unknown> | undefined,
       createdAt: event.createdAt.toISOString(),
+    })),
+    checkpoints: row.checkpoints.map((checkpoint) => ({
+      id: checkpoint.id,
+      stepKey: checkpoint.stepKey,
+      version: checkpoint.version,
+      state: checkpoint.stateJson as Record<string, unknown>,
+      stateBytes: checkpoint.stateBytes,
+      createdAt: checkpoint.createdAt.toISOString(),
+    })),
+    stepAttempts: row.stepAttempts.map((attempt) => ({
+      id: attempt.id,
+      stepId: attempt.stepId,
+      attempt: attempt.attempt,
+      status: attempt.status,
+      provider: attempt.provider ?? undefined,
+      modelKey: attempt.modelKey ?? undefined,
+      inputHash: attempt.inputHash ?? undefined,
+      input: attempt.input as Record<string, unknown> | undefined,
+      outputText: attempt.outputText ?? undefined,
+      usage: attempt.usageJson as Record<string, unknown> | undefined,
+      errorCode: attempt.errorCode ?? undefined,
+      errorMessage: attempt.errorMessage ?? undefined,
+      startedAt: attempt.startedAt?.toISOString(),
+      finishedAt: attempt.finishedAt?.toISOString(),
     })),
   };
 }

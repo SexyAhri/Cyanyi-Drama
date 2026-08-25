@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertUniqueStepKeys,
+  assertWorkflowDefinition,
   assertWorkflowAction,
   nextRunnableStep,
 } from "./contract";
@@ -17,6 +18,20 @@ describe("workflow contract", () => {
   it("only allows resume from paused or blocked states", () => {
     expect(() => assertWorkflowAction("resume", "running")).toThrow("WORKFLOW_RESUME_INVALID_STATUS:running");
     expect(() => assertWorkflowAction("resume", "blocked")).not.toThrow();
+  });
+
+  it("rejects missing and cyclic dependencies", () => {
+    expect(() =>
+      assertWorkflowDefinition([
+        { key: "render", type: "render", dependsOn: ["missing"] },
+      ]),
+    ).toThrow("WORKFLOW_DEPENDENCY_NOT_FOUND:render:missing");
+    expect(() =>
+      assertWorkflowDefinition([
+        { key: "a", type: "a", dependsOn: ["b"] },
+        { key: "b", type: "b", dependsOn: ["a"] },
+      ]),
+    ).toThrow("WORKFLOW_DEPENDENCY_CYCLE");
   });
 
   it("does not skip an earlier unfinished step", () => {

@@ -52,6 +52,33 @@ export function assertUniqueStepKeys(steps: WorkflowStepInput[]) {
   }
 }
 
+export function assertWorkflowDefinition(steps: WorkflowStepInput[]) {
+  assertUniqueStepKeys(steps);
+  const keys = new Set(steps.map((step) => step.key.trim()));
+  for (const step of steps) {
+    for (const dependency of step.dependsOn ?? []) {
+      if (!keys.has(dependency))
+        throw new Error(
+          `WORKFLOW_DEPENDENCY_NOT_FOUND:${step.key}:${dependency}`,
+        );
+      if (dependency === step.key)
+        throw new Error(`WORKFLOW_DEPENDENCY_SELF:${step.key}`);
+    }
+  }
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const byKey = new Map(steps.map((step) => [step.key, step]));
+  const visit = (key: string) => {
+    if (visiting.has(key)) throw new Error(`WORKFLOW_DEPENDENCY_CYCLE:${key}`);
+    if (visited.has(key)) return;
+    visiting.add(key);
+    for (const dependency of byKey.get(key)?.dependsOn ?? []) visit(dependency);
+    visiting.delete(key);
+    visited.add(key);
+  };
+  for (const key of keys) visit(key);
+}
+
 export function canPause(status: WorkflowRunStatus) {
   return status === "queued" || status === "running";
 }
