@@ -20,6 +20,10 @@ describe("workflow contract", () => {
     expect(() => assertWorkflowAction("resume", "blocked")).not.toThrow();
   });
 
+  it("keeps cancellation idempotent while worker acknowledgement is pending", () => {
+    expect(() => assertWorkflowAction("cancel", "canceling")).not.toThrow();
+  });
+
   it("rejects missing and cyclic dependencies", () => {
     expect(() =>
       assertWorkflowDefinition([

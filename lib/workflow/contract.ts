@@ -1,6 +1,7 @@
 export const WORKFLOW_RUN_STATUSES = [
   "queued",
   "running",
+  "canceling",
   "paused",
   "failed",
   "blocked",
@@ -37,6 +38,8 @@ export type WorkflowRunDefinition = {
   projectId: string;
   episodeId?: string;
   workflowType: string;
+  targetType?: string;
+  targetId?: string;
   input?: Record<string, unknown>;
   steps: WorkflowStepInput[];
   maxAttempts?: number;
@@ -92,7 +95,12 @@ export function canRetry(status: WorkflowRunStatus) {
 }
 
 export function canCancel(status: WorkflowRunStatus) {
-  return status === "queued" || status === "running" || status === "paused";
+  return (
+    status === "queued" ||
+    status === "running" ||
+    status === "canceling" ||
+    status === "paused"
+  );
 }
 
 export function assertWorkflowAction(

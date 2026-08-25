@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { Queue } from "bullmq";
 import { getRedisConnection } from "./connection";
 import { prisma } from "@/lib/server/prisma";
@@ -18,13 +20,19 @@ export function getWorkflowQueue() {
 }
 export async function enqueueWorkflowJob(job: WorkflowJob) {
   try {
-    return await getWorkflowQueue().add("workflow", job, {
-      jobId: job.runId,
+    const queued = await getWorkflowQueue().add("workflow", job, {
+      jobId: `${job.runId}_${randomUUID()}`,
       attempts: Math.max(1, job.maxAttempts ?? 1),
       backoff: { type: "exponential", delay: 1000 },
       removeOnComplete: 1000,
       removeOnFail: 1000,
     });
+    const now = new Date();
+    await prisma.workflowRun.updateMany({
+      where: { id: job.runId, userId: job.userId, status: "queued" },
+      data: { heartbeatAt: now, updatedAt: now },
+    });
+    return queued;
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Queue unavailable.";
@@ -39,6 +47,9 @@ export async function enqueueWorkflowJob(job: WorkflowJob) {
         status: "failed",
         error: { code: "QUEUE_ENQUEUE_FAILED", message },
         completedAt: now,
+        activeDedupeKey: null,
+        leaseOwner: null,
+        leaseExpiresAt: null,
         updatedAt: now,
       },
     });

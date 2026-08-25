@@ -566,11 +566,16 @@ model WorkflowRun {
   projectId         String                @map("project_id")
   episodeId         String?               @map("episode_id")
   workflowType      String                @map("workflow_type")
+  targetType        String?               @map("target_type")
+  targetId          String?               @map("target_id")
+  activeDedupeKey   String?               @unique @map("active_dedupe_key")
   status            String                @default("queued")
   input             Json?
   output            Json?
   error             Json?
   cancelRequestedAt DateTime?             @map("cancel_requested_at")
+  leaseOwner        String?               @map("lease_owner")
+  leaseExpiresAt    DateTime?             @map("lease_expires_at")
   workflowVersion   Int                   @default(1) @map("workflow_version")
   queuedAt          DateTime              @default(now()) @map("queued_at")
   startedAt         DateTime?             @map("started_at")
@@ -590,6 +595,8 @@ model WorkflowRun {
   @@index([userId, createdAt])
   @@index([projectId, status])
   @@index([episodeId, createdAt])
+  @@index([workflowType, targetType, targetId, status])
+  @@index([leaseExpiresAt])
   @@map("workflow_runs")
 }
 

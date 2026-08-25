@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { Prisma } from "@prisma/client";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
@@ -9,17 +9,58 @@ import {
 import { prisma } from "@/lib/server/prisma";
 import { saveProductionClips } from "@/lib/production/domain-store";
 import { analyzeEpisodeVoices } from "@/lib/voice/analyze";
+import {
+  assertWorkflowRunActive,
+  WorkflowControlError,
+  withWorkflowRunLease,
+} from "./lease";
 
-export async function processWorkflowJob(runId: string, userId: string) {
+export async function processWorkflowJob(
+  runId: string,
+  userId: string,
+  workerId = `workflow_${process.pid}_${randomUUID()}`,
+) {
+  const leased = await withWorkflowRunLease({
+    runId,
+    userId,
+    workerId,
+    run: () => processClaimedWorkflowJob(runId, userId, workerId),
+  });
+  if (!leased.claimed) return false;
+  if (leased.result === "requeue") {
+    const run = await prisma.workflowRun.findFirst({
+      where: { id: runId, userId, status: "queued" },
+      select: { projectId: true },
+    });
+    if (run)
+      await enqueueWorkflowJob({
+        runId,
+        userId,
+        projectId: run.projectId,
+        maxAttempts: 1,
+      });
+  }
+  return true;
+}
+
+async function processClaimedWorkflowJob(
+  runId: string,
+  userId: string,
+  workerId: string,
+): Promise<"done" | "requeue"> {
   const run = await prisma.workflowRun.findFirst({
     where: { id: runId, userId },
     include: { steps: { orderBy: { stepIndex: "asc" } } },
   });
   if (!run) throw new Error("WORKFLOW_RUN_NOT_FOUND");
-  if (["canceled", "paused", "succeeded"].includes(run.status)) return;
+  if (run.status === "canceling") {
+    await acknowledgeWorkflowCancel(runId, workerId);
+    return "done";
+  }
+  if (["canceled", "paused", "succeeded"].includes(run.status)) return "done";
   const now = new Date();
-  await prisma.workflowRun.update({
-    where: { id: runId },
+  const started = await prisma.workflowRun.updateMany({
+    where: { id: runId, leaseOwner: workerId },
     data: {
       status: "running",
       startedAt: run.startedAt ?? now,
@@ -27,13 +68,14 @@ export async function processWorkflowJob(runId: string, userId: string) {
       updatedAt: now,
     },
   });
+  if (!started.count) throw new WorkflowControlError("lease_lost", runId);
   await prisma.workflowEvent.create({
     data: { runId, type: "running", status: "running" },
   });
   const step = findRunnableStep(run.steps);
   if (!step && run.steps.every((item) => item.status === "succeeded")) {
-    await finishRun(runId, {});
-    return;
+    await finishRun(runId, workerId, {});
+    return "done";
   }
   if (!step) {
     await prisma.workflowRun.update({
@@ -46,6 +88,9 @@ export async function processWorkflowJob(runId: string, userId: string) {
         },
         completedAt: new Date(),
         heartbeatAt: new Date(),
+        activeDedupeKey: null,
+        leaseOwner: null,
+        leaseExpiresAt: null,
         updatedAt: new Date(),
       },
     });
@@ -57,11 +102,11 @@ export async function processWorkflowJob(runId: string, userId: string) {
         message: "没有可执行的工作流步骤，请检查前置步骤状态。",
       },
     });
-    return;
+    return "done";
   }
   if (step.stepType === "manual_gate") {
-    await prisma.workflowRun.update({
-      where: { id: runId },
+    await prisma.workflowRun.updateMany({
+      where: { id: runId, leaseOwner: workerId },
       data: {
         status: "paused",
         heartbeatAt: new Date(),
@@ -77,7 +122,7 @@ export async function processWorkflowJob(runId: string, userId: string) {
         message: "Workflow is waiting for an explicit resume.",
       },
     });
-    return;
+    return "done";
   }
   const attemptNumber = step.attempt + 1;
   const attemptInput = {
@@ -112,11 +157,23 @@ export async function processWorkflowJob(runId: string, userId: string) {
     data: { runId, stepId: step.id, type: "step_running", status: "running" },
   });
   try {
+    await assertWorkflowRunActive({ runId, workerId });
     const output = await runStep(userId, run, step);
+    await assertWorkflowRunActive({ runId, workerId });
     const outputJson = toInputJson(output);
     const outputText = JSON.stringify(output);
     const completedAt = new Date();
     await prisma.$transaction(async (tx) => {
+      const owned = await tx.workflowRun.updateMany({
+        where: {
+          id: runId,
+          leaseOwner: workerId,
+          status: "running",
+          leaseExpiresAt: { gt: completedAt },
+        },
+        data: { heartbeatAt: completedAt, updatedAt: completedAt },
+      });
+      if (!owned.count) throw new WorkflowControlError("lease_lost", runId);
       await tx.workflowStep.update({
         where: { id: step.id },
         data: {
@@ -169,35 +226,71 @@ export async function processWorkflowJob(runId: string, userId: string) {
         payload: outputJson,
       },
     });
+    await assertWorkflowRunActive({ runId, workerId });
     const remaining = run.steps.some(
       (item) => item.id !== step.id && item.status !== "succeeded",
     );
     if (remaining) {
-      await prisma.workflowRun.update({
-        where: { id: runId },
+      await prisma.workflowRun.updateMany({
+        where: { id: runId, leaseOwner: workerId, status: "running" },
         data: {
           status: "queued",
           heartbeatAt: new Date(),
           updatedAt: new Date(),
         },
       });
-      await enqueueWorkflowJob({
-        runId,
-        userId,
-        projectId: run.projectId,
-        maxAttempts: 1,
-      });
+      return "requeue";
     } else {
-      await finishRun(runId, output);
+      await finishRun(runId, workerId, output);
+      return "done";
     }
   } catch (error) {
+    if (error instanceof WorkflowControlError) {
+      await settleWorkflowControl(
+        runId,
+        workerId,
+        step.id,
+        attemptNumber,
+        error,
+      );
+      return "done";
+    }
+    try {
+      await assertWorkflowRunActive({ runId, workerId });
+    } catch (control) {
+      if (control instanceof WorkflowControlError) {
+        await settleWorkflowControl(
+          runId,
+          workerId,
+          step.id,
+          attemptNumber,
+          control,
+        );
+        return "done";
+      }
+      throw control;
+    }
     const failure = {
       code: "WORKFLOW_STEP_FAILED",
       message: error instanceof Error ? error.message : String(error),
     };
     const failedAt = new Date();
-    await prisma.$transaction([
-      prisma.workflowStep.update({
+    const failed = await prisma.$transaction(async (tx) => {
+      const owned = await tx.workflowRun.updateMany({
+        where: { id: runId, leaseOwner: workerId, status: "running" },
+        data: {
+          status: "failed",
+          error: failure,
+          heartbeatAt: failedAt,
+          completedAt: failedAt,
+          activeDedupeKey: null,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          updatedAt: failedAt,
+        },
+      });
+      if (!owned.count) return false;
+      await tx.workflowStep.update({
         where: { id: step.id },
         data: {
           status: "failed",
@@ -205,8 +298,8 @@ export async function processWorkflowJob(runId: string, userId: string) {
           completedAt: failedAt,
           updatedAt: failedAt,
         },
-      }),
-      prisma.workflowStepAttempt.updateMany({
+      });
+      await tx.workflowStepAttempt.updateMany({
         where: { stepId: step.id, attempt: attemptNumber },
         data: {
           status: "failed",
@@ -215,18 +308,10 @@ export async function processWorkflowJob(runId: string, userId: string) {
           finishedAt: failedAt,
           updatedAt: failedAt,
         },
-      }),
-      prisma.workflowRun.update({
-        where: { id: runId },
-        data: {
-          status: "failed",
-          error: failure,
-          heartbeatAt: failedAt,
-          completedAt: failedAt,
-          updatedAt: failedAt,
-        },
-      }),
-    ]);
+      });
+      return true;
+    });
+    if (!failed) return "done";
     await prisma.workflowEvent.create({
       data: {
         runId,
@@ -237,6 +322,7 @@ export async function processWorkflowJob(runId: string, userId: string) {
         payload: failure,
       },
     });
+    return "done";
   }
 }
 
@@ -464,18 +550,103 @@ function hashJson(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-async function finishRun(runId: string, output: unknown) {
-  await prisma.workflowRun.update({
-    where: { id: runId },
+async function finishRun(runId: string, workerId: string, output: unknown) {
+  const completedAt = new Date();
+  const updated = await prisma.workflowRun.updateMany({
+    where: { id: runId, leaseOwner: workerId, status: "running" },
     data: {
       status: "succeeded",
       output: output as Prisma.InputJsonValue,
-      completedAt: new Date(),
-      heartbeatAt: new Date(),
-      updatedAt: new Date(),
+      completedAt,
+      heartbeatAt: completedAt,
+      activeDedupeKey: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      updatedAt: completedAt,
     },
   });
+  if (!updated.count) throw new WorkflowControlError("lease_lost", runId);
   await prisma.workflowEvent.create({
     data: { runId, type: "succeeded", status: "succeeded" },
+  });
+}
+
+async function acknowledgeWorkflowCancel(runId: string, workerId: string) {
+  const completedAt = new Date();
+  const updated = await prisma.workflowRun.updateMany({
+    where: { id: runId, leaseOwner: workerId, status: "canceling" },
+    data: {
+      status: "canceled",
+      completedAt,
+      heartbeatAt: completedAt,
+      activeDedupeKey: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      updatedAt: completedAt,
+    },
+  });
+  if (updated.count)
+    await prisma.workflowEvent.create({
+      data: { runId, type: "canceled", status: "canceled" },
+    });
+}
+
+async function settleWorkflowControl(
+  runId: string,
+  workerId: string,
+  stepId: string,
+  attempt: number,
+  control: WorkflowControlError,
+) {
+  if (control.reason === "lease_lost" || control.reason === "terminal") return;
+  const now = new Date();
+  if (control.reason === "canceled") {
+    await prisma.$transaction(async (tx) => {
+      const owned = await tx.workflowRun.updateMany({
+        where: { id: runId, leaseOwner: workerId, status: "canceling" },
+        data: {
+          status: "canceled",
+          completedAt: now,
+          heartbeatAt: now,
+          activeDedupeKey: null,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          updatedAt: now,
+        },
+      });
+      if (!owned.count) return;
+      await tx.workflowStep.updateMany({
+        where: { id: stepId, status: "running" },
+        data: { status: "paused", completedAt: now, updatedAt: now },
+      });
+      await tx.workflowStepAttempt.updateMany({
+        where: { stepId, attempt, status: "running" },
+        data: {
+          status: "canceled",
+          errorCode: "WORKFLOW_CANCELED",
+          errorMessage: "工作流已取消。",
+          finishedAt: now,
+          updatedAt: now,
+        },
+      });
+    });
+    await prisma.workflowEvent.create({
+      data: { runId, stepId, type: "canceled", status: "canceled" },
+    });
+    return;
+  }
+  await prisma.workflowStep.updateMany({
+    where: { id: stepId, runId, status: "running" },
+    data: { status: "pending", completedAt: null, updatedAt: now },
+  });
+  await prisma.workflowStepAttempt.updateMany({
+    where: { stepId, attempt, status: "running" },
+    data: {
+      status: "paused",
+      errorCode: "WORKFLOW_PAUSED",
+      errorMessage: "工作流已暂停。",
+      finishedAt: now,
+      updatedAt: now,
+    },
   });
 }

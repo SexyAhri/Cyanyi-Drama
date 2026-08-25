@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/server/prisma";
@@ -16,7 +16,21 @@ const include = {
   stepAttempts: { orderBy: { createdAt: "asc" as const }, take: 200 },
 } as const;
 
+const ACTIVE_WORKFLOW_STATUSES: WorkflowRunStatus[] = [
+  "queued",
+  "running",
+  "canceling",
+  "paused",
+];
+
 export async function createWorkflowRun(definition: WorkflowRunDefinition) {
+  const result = await createOrReuseWorkflowRun(definition);
+  return result?.workflow ?? null;
+}
+
+export async function createOrReuseWorkflowRun(
+  definition: WorkflowRunDefinition,
+) {
   assertWorkflowDefinition(definition.steps);
   const ownsProject = await prisma.project.count({
     where: { id: definition.projectId, userId: definition.userId },
@@ -33,42 +47,105 @@ export async function createWorkflowRun(definition: WorkflowRunDefinition) {
     }))
   )
     return null;
-  const row = await prisma.workflowRun.create({
-    data: {
-      id: definition.id,
-      userId: definition.userId,
-      projectId: definition.projectId,
-      episodeId: definition.episodeId ?? null,
-      workflowType: definition.workflowType,
-      input: toJson(definition.input),
-      steps: {
-        create: definition.steps.map((step, index) => ({
-          id: randomUUID(),
-          stepKey: step.key.trim(),
-          stepType: step.type.trim(),
-          stepIndex: index,
-          dependsOn: toJson(step.dependsOn ?? []),
-          artifactTypes: toJson(step.artifactTypes ?? []),
-          retryable: step.retryable ?? true,
-          failureMode: step.failureMode ?? "fail_run",
-          maxAttempts: Math.max(
-            1,
-            step.maxAttempts ?? definition.maxAttempts ?? 3,
-          ),
-          input: toJson(step.input),
-        })),
-      },
-      events: {
-        create: {
-          type: "created",
-          status: "queued",
-          payload: toJson({ stepCount: definition.steps.length }),
+  const targetType =
+    definition.targetType?.trim() ||
+    (definition.episodeId ? "episode" : "project");
+  const targetId =
+    definition.targetId?.trim() || definition.episodeId || definition.projectId;
+  const activeDedupeKey = buildActiveWorkflowDedupeKey({
+    userId: definition.userId,
+    projectId: definition.projectId,
+    workflowType: definition.workflowType,
+    targetType,
+    targetId,
+  });
+  const existing = await findReusableWorkflowRun(activeDedupeKey);
+  if (existing) return { workflow: toRun(existing), reused: true };
+
+  try {
+    const row = await prisma.workflowRun.create({
+      data: {
+        id: definition.id,
+        userId: definition.userId,
+        projectId: definition.projectId,
+        episodeId: definition.episodeId ?? null,
+        workflowType: definition.workflowType.trim(),
+        targetType,
+        targetId,
+        activeDedupeKey,
+        input: toJson(definition.input),
+        steps: {
+          create: definition.steps.map((step, index) => ({
+            id: randomUUID(),
+            stepKey: step.key.trim(),
+            stepType: step.type.trim(),
+            stepIndex: index,
+            dependsOn: toJson(step.dependsOn ?? []),
+            artifactTypes: toJson(step.artifactTypes ?? []),
+            retryable: step.retryable ?? true,
+            failureMode: step.failureMode ?? "fail_run",
+            maxAttempts: Math.max(
+              1,
+              step.maxAttempts ?? definition.maxAttempts ?? 3,
+            ),
+            input: toJson(step.input),
+          })),
+        },
+        events: {
+          create: {
+            type: "created",
+            status: "queued",
+            payload: toJson({
+              stepCount: definition.steps.length,
+              targetType,
+              targetId,
+            }),
+          },
         },
       },
+      include,
+    });
+    return { workflow: toRun(row), reused: false };
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      const raced = await findReusableWorkflowRun(activeDedupeKey);
+      if (raced) return { workflow: toRun(raced), reused: true };
+    }
+    throw error;
+  }
+}
+
+async function findReusableWorkflowRun(activeDedupeKey: string) {
+  return prisma.workflowRun.findFirst({
+    where: {
+      activeDedupeKey,
+      status: { in: ACTIVE_WORKFLOW_STATUSES },
     },
+    orderBy: { updatedAt: "desc" },
     include,
   });
-  return toRun(row);
+}
+
+export function buildActiveWorkflowDedupeKey(input: {
+  userId: string;
+  projectId: string;
+  workflowType: string;
+  targetType: string;
+  targetId: string;
+}) {
+  const canonical = [
+    input.userId,
+    input.projectId,
+    input.workflowType,
+    input.targetType,
+    input.targetId,
+  ]
+    .map((value) => value.trim().toLowerCase())
+    .join("\u0000");
+  return createHash("sha256").update(canonical).digest("hex");
 }
 
 export async function getWorkflowRun(userId: string, runId: string) {
@@ -108,6 +185,13 @@ export async function updateWorkflowRunStatus(
   if (status === "queued" && message === "resume_requested") {
     assertWorkflowAction("resume", currentStatus);
   }
+  const activeDedupeKey =
+    status === "queued" ? buildRunDedupeKey(current) : null;
+  if (
+    activeDedupeKey &&
+    (await hasConflictingActiveRun(runId, activeDedupeKey))
+  )
+    return null;
   const now = new Date();
   const row = await prisma.workflowRun.update({
     where: { id: runId },
@@ -116,8 +200,16 @@ export async function updateWorkflowRunStatus(
       heartbeatAt: now,
       updatedAt: now,
       ...(status === "running" ? { startedAt: current.startedAt ?? now } : {}),
+      ...(status === "queued"
+        ? { activeDedupeKey }
+        : {}),
       ...(status === "succeeded" || status === "failed" || status === "canceled"
-        ? { completedAt: now }
+        ? {
+            completedAt: now,
+            activeDedupeKey: null,
+            leaseOwner: null,
+            leaseExpiresAt: null,
+          }
         : {}),
       ...(status === "paused" || status === "queued"
         ? { cancelRequestedAt: null, completedAt: null }
@@ -136,21 +228,37 @@ export async function requestWorkflowCancel(userId: string, runId: string) {
     where: { id: runId, userId },
     select: { status: true },
   });
-  if (!current || !["queued", "running", "paused"].includes(current.status))
+  if (
+    !current ||
+    !["queued", "running", "canceling", "paused"].includes(current.status)
+  )
     return null;
+  if (current.status === "canceling") return getWorkflowRun(userId, runId);
   const now = new Date();
+  const requiresWorkerAck = current.status === "running";
   const row = await prisma.workflowRun.update({
     where: { id: runId },
     data: {
-      status: "canceled",
+      status: requiresWorkerAck ? "canceling" : "canceled",
       cancelRequestedAt: now,
-      completedAt: now,
+      completedAt: requiresWorkerAck ? null : now,
+      ...(requiresWorkerAck
+        ? {}
+        : {
+            activeDedupeKey: null,
+            leaseOwner: null,
+            leaseExpiresAt: null,
+          }),
       updatedAt: now,
     },
     include,
   });
   await prisma.workflowEvent.create({
-    data: { runId, type: "cancel_requested", status: "canceled" },
+    data: {
+      runId,
+      type: "cancel_requested",
+      status: requiresWorkerAck ? "canceling" : "canceled",
+    },
   });
   return toRun(row);
 }
@@ -168,6 +276,8 @@ export async function retryWorkflowRun(userId: string, runId: string) {
   );
   if (exhausted) return null;
   const resetKeys = resolveRetryStepKeys(current.steps);
+  const activeDedupeKey = buildRunDedupeKey(current);
+  if (await hasConflictingActiveRun(runId, activeDedupeKey)) return null;
   const resetStepIds = current.steps
     .filter((step) => resetKeys.includes(step.stepKey))
     .map((step) => step.id);
@@ -176,6 +286,7 @@ export async function retryWorkflowRun(userId: string, runId: string) {
       where: { id: runId },
       data: {
         status: "queued",
+        activeDedupeKey,
         error: Prisma.DbNull,
         completedAt: null,
         cancelRequestedAt: null,
@@ -223,6 +334,8 @@ export async function retryWorkflowStep(
   if (!target || !target.retryable || target.attempt >= target.maxAttempts)
     return null;
   const resetKeys = resolveDownstreamStepKeys(current.steps, stepKey);
+  const activeDedupeKey = buildRunDedupeKey(current);
+  if (await hasConflictingActiveRun(runId, activeDedupeKey)) return null;
   const resetStepIds = current.steps
     .filter((step) => resetKeys.includes(step.stepKey))
     .map((step) => step.id);
@@ -231,6 +344,7 @@ export async function retryWorkflowStep(
       where: { id: runId },
       data: {
         status: "queued",
+        activeDedupeKey,
         error: Prisma.DbNull,
         completedAt: null,
         cancelRequestedAt: null,
@@ -332,6 +446,8 @@ function toRun(row: Row) {
     projectId: row.projectId,
     episodeId: row.episodeId ?? undefined,
     workflowType: row.workflowType,
+    targetType: row.targetType ?? undefined,
+    targetId: row.targetId ?? undefined,
     status: row.status as WorkflowRunStatus,
     input: row.input as Record<string, unknown> | undefined,
     output: row.output as Record<string, unknown> | undefined,
@@ -340,6 +456,8 @@ function toRun(row: Row) {
     queuedAt: row.queuedAt.toISOString(),
     startedAt: row.startedAt?.toISOString(),
     heartbeatAt: row.heartbeatAt?.toISOString(),
+    leaseExpiresAt: row.leaseExpiresAt?.toISOString(),
+    cancelRequestedAt: row.cancelRequestedAt?.toISOString(),
     completedAt: row.completedAt?.toISOString(),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -406,4 +524,32 @@ function parseStringArray(value: Prisma.JsonValue | null) {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : [];
+}
+
+function buildRunDedupeKey(run: {
+  userId: string;
+  projectId: string;
+  workflowType: string;
+  episodeId: string | null;
+  targetType: string | null;
+  targetId: string | null;
+}) {
+  return buildActiveWorkflowDedupeKey({
+    userId: run.userId,
+    projectId: run.projectId,
+    workflowType: run.workflowType,
+    targetType: run.targetType || (run.episodeId ? "episode" : "project"),
+    targetId: run.targetId || run.episodeId || run.projectId,
+  });
+}
+
+async function hasConflictingActiveRun(
+  runId: string,
+  activeDedupeKey: string,
+) {
+  return Boolean(
+    await prisma.workflowRun.count({
+      where: { id: { not: runId }, activeDedupeKey },
+    }),
+  );
 }

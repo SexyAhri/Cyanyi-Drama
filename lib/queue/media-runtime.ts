@@ -1,5 +1,6 @@
 import { decryptSecret } from "@/lib/server/crypto";
 import { Prisma } from "@prisma/client";
+import { fetchWithProviderRetry } from "@/lib/providers/http";
 import { prisma } from "@/lib/server/prisma";
 import type { MediaAsset } from "@/lib/media/task-contract";
 import { downloadAndStoreMedia, resolveStoredMediaUrl } from "@/lib/storage";
@@ -333,7 +334,7 @@ async function performLipSync(
       }
     : { model, video_url: videoUrl, audio_url: audioUrl };
 
-  const response = await fetch(`${baseUrl}/${submitPath}`, {
+  const response = await fetchWithProviderRetry(`${baseUrl}/${submitPath}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -361,7 +362,7 @@ async function performLipSync(
 
   for (let attempt = 0; attempt < 60; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 3000));
-    const statusResponse = await fetch(
+    const statusResponse = await fetchWithProviderRetry(
       `${baseUrl}/${statusPath(initial.taskId)}`,
       {
         headers: { Authorization: `Bearer ${apiKey}` },
@@ -643,7 +644,7 @@ async function generateImage(
     protocol === "volcengine-ark",
   );
   const size = resolveImageSize(request.ratio, request.resolution);
-  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/${endpoint}`, {
+  const response = await fetchWithProviderRetry(`${baseUrl.replace(/\/+$/, "")}/${endpoint}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -702,7 +703,7 @@ async function generateVideo(
         ? process.env.OPENAI_COMPATIBLE_VIDEO_STATUS_PATH
         : undefined,
   });
-  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/${createPath}`, {
+  const response = await fetchWithProviderRetry(`${baseUrl.replace(/\/+$/, "")}/${createPath}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -726,7 +727,7 @@ async function generateVideo(
   if (!initial.taskId) throw new Error("VIDEO_TASK_ID_MISSING");
   for (let attempt = 0; attempt < 60; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 3000));
-    const statusResponse = await fetch(
+    const statusResponse = await fetchWithProviderRetry(
       `${baseUrl.replace(/\/+$/, "")}/${statusPath(initial.taskId)}`,
       {
         method:
@@ -767,7 +768,7 @@ async function generateAudio(
   if (protocol !== "openai-compatible" && protocol !== "volcengine-ark") {
     throw new Error(`AUDIO_PROTOCOL_NOT_SUPPORTED:${protocol}`);
   }
-  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/audio/speech`, {
+  const response = await fetchWithProviderRetry(`${baseUrl.replace(/\/+$/, "")}/audio/speech`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,

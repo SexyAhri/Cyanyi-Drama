@@ -1,5 +1,6 @@
 import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
+import { fetchWithProviderRetry } from "@/lib/providers/http";
 import {
   saveStoryboard,
   upsertNovelCharacters,
@@ -122,7 +123,7 @@ async function requestNovelParse(
   let lastError: unknown;
   for (const apiKey of apiKeys) {
     try {
-      const response = await fetch(
+      const response = await fetchWithProviderRetry(
         `${channel.baseUrl.replace(/\/+$/, "")}/chat/completions`,
         {
           method: "POST",

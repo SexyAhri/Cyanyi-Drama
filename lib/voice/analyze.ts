@@ -1,5 +1,6 @@
 import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
+import { fetchWithProviderRetry } from "@/lib/providers/http";
 
 export type VoiceAnalyzeInput = {
   userId: string;
@@ -85,7 +86,7 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
   let lastError: unknown;
   for (const apiKey of keys) {
     try {
-      const response = await fetch(
+      const response = await fetchWithProviderRetry(
         `${channel.baseUrl.replace(/\/+$/, "")}/chat/completions`,
         {
           method: "POST",

@@ -93,29 +93,38 @@ const workflowWorker = new Worker<WorkflowJob>(
 workflowWorker.on("failed", async (job, error) => {
   if (!job) return;
   const now = new Date();
-  await prisma.workflowRun.updateMany({
+  const updated = await prisma.workflowRun.updateMany({
     where: {
       id: job.data.runId,
       userId: job.data.userId,
-      status: { notIn: ["canceled", "succeeded"] },
+      status: { in: ["queued", "running"] },
+      OR: [
+        { leaseOwner: null },
+        { leaseExpiresAt: null },
+        { leaseExpiresAt: { lt: now } },
+      ],
     },
     data: {
       status: "failed",
       error: { code: "WORKFLOW_WORKER_FAILED", message: error.message },
       completedAt: now,
       heartbeatAt: now,
+      activeDedupeKey: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
       updatedAt: now,
     },
   });
-  await prisma.workflowEvent.create({
-    data: {
-      runId: job.data.runId,
-      type: "failed",
-      status: "failed",
-      message: error.message,
-      payload: { attemptsMade: job.attemptsMade },
-    },
-  });
+  if (updated.count)
+    await prisma.workflowEvent.create({
+      data: {
+        runId: job.data.runId,
+        type: "failed",
+        status: "failed",
+        message: error.message,
+        payload: { attemptsMade: job.attemptsMade },
+      },
+    });
 });
 
 worker.on("failed", async (job, error) => {

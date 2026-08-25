@@ -1,3 +1,5 @@
+import { fetchWithProviderRetry } from "./http";
+
 export type LipSyncProviderResult = {
   url: string;
   providerTaskId: string;
@@ -34,7 +36,7 @@ async function generateFalLipSync(input: {
     toDataUrl(input.videoUrl),
     toDataUrl(input.audioUrl),
   ]);
-  const response = await fetch(`${baseUrl}/${trimPath(input.model)}`, {
+  const response = await fetchWithProviderRetry(`${baseUrl}/${trimPath(input.model)}`, {
     method: "POST",
     headers: {
       Authorization: `Key ${input.apiKey}`,
@@ -54,7 +56,7 @@ async function generateFalLipSync(input: {
 
   for (let attempt = 0; attempt < 60; attempt += 1) {
     await waitForPoll();
-    const statusResponse = await fetch(
+    const statusResponse = await fetchWithProviderRetry(
       `${baseUrl}/${owner}/${alias}/requests/${encodeURIComponent(requestId)}/status?logs=0`,
       { headers: { Authorization: `Key ${input.apiKey}` } },
     );
@@ -65,7 +67,7 @@ async function generateFalLipSync(input: {
       throw new Error(`FAL_LIPSYNC_FAILED:${message(statusPayload)}`);
     if (status !== "COMPLETED") continue;
     const responseUrl = stringAt(statusPayload, "response_url");
-    const resultResponse = await fetch(
+    const resultResponse = await fetchWithProviderRetry(
       responseUrl ||
         `${baseUrl}/${trimPath(input.model)}/requests/${encodeURIComponent(requestId)}`,
       {
@@ -96,7 +98,7 @@ async function generateViduLipSync(input: {
   const videoUrl = publicPullUrl(input.videoUrl, "video_url");
   const audioUrl = publicPullUrl(input.audioUrl, "audio_url");
   const apiBase = viduApiBase(input.baseUrl);
-  const response = await fetch(`${apiBase}/lip-sync`, {
+  const response = await fetchWithProviderRetry(`${apiBase}/lip-sync`, {
     method: "POST",
     headers: {
       Authorization: `Token ${input.apiKey}`,
@@ -114,7 +116,7 @@ async function generateViduLipSync(input: {
 
   for (let attempt = 0; attempt < 60; attempt += 1) {
     await waitForPoll();
-    const statusResponse = await fetch(
+    const statusResponse = await fetchWithProviderRetry(
       `${apiBase}/tasks/${encodeURIComponent(taskId)}/creations`,
       { headers: { Authorization: `Token ${input.apiKey}` } },
     );
@@ -148,7 +150,7 @@ async function generateBailianLipSync(input: {
   audioUrl: string;
 }) {
   const apiBase = dashscopeApiBase(input.baseUrl);
-  const response = await fetch(
+  const response = await fetchWithProviderRetry(
     `${apiBase}/services/aigc/image2video/video-synthesis`,
     {
       method: "POST",
@@ -177,7 +179,7 @@ async function generateBailianLipSync(input: {
 
   for (let attempt = 0; attempt < 60; attempt += 1) {
     await waitForPoll();
-    const statusResponse = await fetch(
+    const statusResponse = await fetchWithProviderRetry(
       `${apiBase}/tasks/${encodeURIComponent(taskId)}`,
       { headers: { Authorization: `Bearer ${input.apiKey}` } },
     );
@@ -202,7 +204,7 @@ async function generateBailianLipSync(input: {
 
 async function toDataUrl(url: string) {
   if (url.startsWith("data:")) return url;
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await fetchWithProviderRetry(url, { cache: "no-store" });
   if (!response.ok)
     throw new Error(`LIPSYNC_INPUT_DOWNLOAD_FAILED:${response.status}`);
   const mimeType =

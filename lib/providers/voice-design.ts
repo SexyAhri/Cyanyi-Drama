@@ -1,3 +1,5 @@
+import { fetchWithProviderRetry } from "./http";
+
 export type VoiceDesignInput = {
   voicePrompt: string;
   previewText: string;
@@ -25,7 +27,9 @@ export async function createBailianVoiceDesign(
   const apiBase = baseUrl.replace(/\/+$/, "").endsWith("/api/v1")
     ? baseUrl.replace(/\/+$/, "")
     : `${baseUrl.replace(/\/+$/, "")}/api/v1`;
-  const response = await fetch(`${apiBase}/services/audio/tts/customization`, {
+  const response = await fetchWithProviderRetry(
+    `${apiBase}/services/audio/tts/customization`,
+    {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -43,7 +47,8 @@ export async function createBailianVoiceDesign(
       },
       parameters: { sample_rate: 24000, response_format: "wav" },
     }),
-  });
+    },
+  );
   const payload = (await response.json().catch(() => ({}))) as {
     output?: {
       voice?: string;

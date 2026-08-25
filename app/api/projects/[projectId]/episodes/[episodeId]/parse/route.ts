@@ -1,6 +1,6 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
-import { createWorkflowRun } from "@/lib/workflow/store";
+import { createOrReuseWorkflowRun } from "@/lib/workflow/store";
 
 type Context = { params: Promise<{ projectId: string; episodeId: string }> };
 
@@ -19,12 +19,14 @@ export async function POST(request: Request, context: Context) {
       ),
       sessionId,
     );
-  const workflow = await createWorkflowRun({
+  const result = await createOrReuseWorkflowRun({
     id: `workflow_${crypto.randomUUID()}`,
     userId: user.id,
     projectId,
     episodeId,
     workflowType: "novel-production",
+    targetType: "episode",
+    targetId: episodeId,
     input: { channelId, model },
     steps: [
       {
@@ -69,19 +71,23 @@ export async function POST(request: Request, context: Context) {
     ],
     maxAttempts: 1,
   });
-  if (!workflow)
+  if (!result)
     return attachSessionCookie(
       Response.json({ message: "项目或剧集不存在" }, { status: 404 }),
       sessionId,
     );
-  await enqueueWorkflowJob({
-    runId: workflow.id,
-    userId: user.id,
-    projectId,
-    maxAttempts: 1,
-  });
+  if (!result.reused)
+    await enqueueWorkflowJob({
+      runId: result.workflow.id,
+      userId: user.id,
+      projectId,
+      maxAttempts: 1,
+    });
   return attachSessionCookie(
-    Response.json({ workflow }, { status: 202 }),
+    Response.json(
+      { workflow: result.workflow, reused: result.reused },
+      { status: result.reused ? 200 : 202 },
+    ),
     sessionId,
   );
 }
