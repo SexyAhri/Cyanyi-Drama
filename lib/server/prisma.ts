@@ -1,5 +1,16 @@
 import { PrismaClient } from "@prisma/client";
 
+const DEFAULT_DEVELOPMENT_DATABASE_URL =
+  "mysql://cyanyi:cyanyi@localhost:3306/cyanyi";
+
+// Local Docker Compose provides these credentials. Production deployments must
+// provide their own DATABASE_URL explicitly.
+export function getDatabaseUrl() {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  if (process.env.NODE_ENV !== "production") return DEFAULT_DEVELOPMENT_DATABASE_URL;
+  return undefined;
+}
+
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
 };
@@ -7,6 +18,7 @@ const globalForPrisma = globalThis as unknown as {
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
+    datasourceUrl: getDatabaseUrl(),
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
 

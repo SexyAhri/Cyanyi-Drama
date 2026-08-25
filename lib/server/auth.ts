@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { randomUUID } from "node:crypto";
 
-import { prisma } from "./prisma";
+import { getDatabaseUrl, prisma } from "./prisma";
 import { hashPassword, verifyPassword } from "./crypto";
 
 export const SESSION_COOKIE = "cyanyi_session";
@@ -34,26 +34,52 @@ export async function ensureAnonymousUser() {
   const userId = randomUUID();
   const sessionId = randomUUID();
   await prisma.$transaction([
-    prisma.user.create({ data: { id: userId, displayName: "本地用户", anonymous: true } }),
-    prisma.session.create({ data: { id: sessionId, userId, expiresAt: new Date(now.getTime() + SESSION_DAYS * 86_400_000) } }),
+    prisma.user.create({
+      data: { id: userId, displayName: "本地用户", anonymous: true },
+    }),
+    prisma.session.create({
+      data: {
+        id: sessionId,
+        userId,
+        expiresAt: new Date(now.getTime() + SESSION_DAYS * 86_400_000),
+      },
+    }),
   ]);
-  return { user: { id: userId, email: null, displayName: "本地用户", anonymous: true }, sessionId };
+  return {
+    user: { id: userId, email: null, displayName: "本地用户", anonymous: true },
+    sessionId,
+  };
 }
 
 async function ensureDatabaseConfigured() {
-  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL must be configured with a MySQL connection string.");
+  if (!getDatabaseUrl())
+    throw new Error(
+      "DATABASE_URL must be configured with a MySQL connection string.",
+    );
 }
 
-export function attachSessionCookie(response: Response, sessionId: string | null) {
-  if (sessionId) response.headers.append("Set-Cookie", `${SESSION_COOKIE}=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`);
+export function attachSessionCookie(
+  response: Response,
+  sessionId: string | null,
+) {
+  if (sessionId)
+    response.headers.append(
+      "Set-Cookie",
+      `${SESSION_COOKIE}=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`,
+    );
   return response;
 }
 
-export async function registerUser(email: string, password: string, displayName?: string) {
+export async function registerUser(
+  email: string,
+  password: string,
+  displayName?: string,
+) {
   const normalizedEmail = email.trim().toLowerCase();
   if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) throw new Error("INVALID_EMAIL");
   if (password.length < 8) throw new Error("PASSWORD_TOO_SHORT");
-  if (await prisma.user.findUnique({ where: { email: normalizedEmail } })) throw new Error("EMAIL_ALREADY_REGISTERED");
+  if (await prisma.user.findUnique({ where: { email: normalizedEmail } }))
+    throw new Error("EMAIL_ALREADY_REGISTERED");
 
   const previousUser = await getCurrentUser();
   const user = await prisma.user.create({
@@ -67,9 +93,18 @@ export async function registerUser(email: string, password: string, displayName?
   });
   if (previousUser?.anonymous) {
     await prisma.$transaction([
-      prisma.channel.updateMany({ where: { userId: previousUser.id }, data: { userId: user.id } }),
-      prisma.project.updateMany({ where: { userId: previousUser.id }, data: { userId: user.id } }),
-      prisma.mediaTask.updateMany({ where: { userId: previousUser.id }, data: { userId: user.id } }),
+      prisma.channel.updateMany({
+        where: { userId: previousUser.id },
+        data: { userId: user.id },
+      }),
+      prisma.project.updateMany({
+        where: { userId: previousUser.id },
+        data: { userId: user.id },
+      }),
+      prisma.mediaTask.updateMany({
+        where: { userId: previousUser.id },
+        data: { userId: user.id },
+      }),
       prisma.session.deleteMany({ where: { userId: previousUser.id } }),
       prisma.user.delete({ where: { id: previousUser.id } }),
     ]);
@@ -78,8 +113,11 @@ export async function registerUser(email: string, password: string, displayName?
 }
 
 export async function loginUser(email: string, password: string) {
-  const user = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() } });
-  if (!user?.passwordHash || !verifyPassword(password, user.passwordHash)) throw new Error("INVALID_CREDENTIALS");
+  const user = await prisma.user.findUnique({
+    where: { email: email.trim().toLowerCase() },
+  });
+  if (!user?.passwordHash || !verifyPassword(password, user.passwordHash))
+    throw new Error("INVALID_CREDENTIALS");
   return { user: toAuthUser(user), sessionId: await createSession(user.id) };
 }
 
@@ -91,10 +129,26 @@ export async function destroyCurrentSession() {
 
 async function createSession(userId: string) {
   const id = randomUUID();
-  await prisma.session.create({ data: { id, userId, expiresAt: new Date(Date.now() + SESSION_DAYS * 86_400_000) } });
+  await prisma.session.create({
+    data: {
+      id,
+      userId,
+      expiresAt: new Date(Date.now() + SESSION_DAYS * 86_400_000),
+    },
+  });
   return id;
 }
 
-function toAuthUser(user: { id: string; email: string | null; displayName: string; anonymous: boolean }): AuthUser {
-  return { id: user.id, email: user.email, displayName: user.displayName, anonymous: user.anonymous };
+function toAuthUser(user: {
+  id: string;
+  email: string | null;
+  displayName: string;
+  anonymous: boolean;
+}): AuthUser {
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    anonymous: user.anonymous,
+  };
 }
