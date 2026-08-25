@@ -162,6 +162,9 @@ export async function retryWorkflowRun(userId: string, runId: string) {
   const exhausted = current.steps.some((step) => ["failed", "blocked"].includes(step.status) && step.attempt >= step.maxAttempts);
   if (exhausted) return null;
   const resetKeys = resolveRetryStepKeys(current.steps);
+  const resetStepIds = current.steps
+    .filter((step) => resetKeys.includes(step.stepKey))
+    .map((step) => step.id);
   await prisma.$transaction([
     prisma.workflowRun.update({
       where: { id: runId },
@@ -181,6 +184,9 @@ export async function retryWorkflowRun(userId: string, runId: string) {
         completedAt: null,
         updatedAt: new Date(),
       },
+    }),
+    prisma.workflowArtifact.deleteMany({
+      where: { runId, stepId: { in: resetStepIds } },
     }),
     prisma.workflowEvent.create({
       data: {

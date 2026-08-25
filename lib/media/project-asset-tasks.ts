@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/server/prisma";
 import { createMediaTask } from "./task-contract";
 import { createDatabaseMediaTaskStore } from "./task-store";
-import { enqueueMediaJob } from "@/lib/queue/media-queue";
+import { enqueuePersistedMediaTask } from "./task-submit";
 
 export type ProjectAssetTarget = "character" | "location";
 
@@ -81,17 +81,8 @@ export async function createProjectImageTask(
   });
   const store = createDatabaseMediaTaskStore(input.userId);
   await store.create(task);
-  const job = await enqueueMediaJob({
-    taskId: task.id,
-    userId: input.userId,
-    projectId: input.projectId,
-    channelId: input.channelId,
-    kind: "image",
-    maxAttempts: task.maxRetries + 1,
-  });
-  task.queueJobId = job.id;
-  await store.update(task);
-  return { task, entity };
+  const queued = await enqueuePersistedMediaTask(input.userId, task);
+  return { task: queued, entity };
 }
 
 export async function createStoryboardPanelImageTask(input: {
@@ -185,19 +176,9 @@ export async function createStoryboardPanelImageTask(input: {
   });
   const store = createDatabaseMediaTaskStore(input.userId);
   await store.create(task);
-  const job = await enqueueMediaJob({
-    taskId: task.id,
-    userId: input.userId,
-    projectId: input.projectId,
-    episodeId: input.episodeId,
-    channelId: input.channelId,
-    kind: "image",
-    maxAttempts: task.maxRetries + 1,
-  });
-  task.queueJobId = job.id;
-  await store.update(task);
+  const queued = await enqueuePersistedMediaTask(input.userId, task);
   return {
-    task,
+    task: queued,
     panel: { id: panel.id, referenceCount: referenceImages.length },
   };
 }
@@ -302,19 +283,9 @@ export async function createStoryboardPanelVideoTask(input: {
   });
   const store = createDatabaseMediaTaskStore(input.userId);
   await store.create(task);
-  const job = await enqueueMediaJob({
-    taskId: task.id,
-    userId: input.userId,
-    projectId: input.projectId,
-    episodeId: input.episodeId,
-    channelId: input.channelId,
-    kind: "video",
-    maxAttempts: task.maxRetries + 1,
-  });
-  task.queueJobId = job.id;
-  await store.update(task);
+  const queued = await enqueuePersistedMediaTask(input.userId, task);
   return {
-    task,
+    task: queued,
     panel: { id: panel.id, referenceCount: referenceImages.length },
   };
 }

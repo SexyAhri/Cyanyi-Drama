@@ -3,6 +3,7 @@ import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import { parseNovelAndPersist, type NovelParseInput } from "@/lib/novel/parser-runtime";
 import { prisma } from "@/lib/server/prisma";
 import { saveProductionClips } from "@/lib/production/domain-store";
+import { analyzeEpisodeVoices } from "@/lib/voice/analyze";
 
 export async function processWorkflowJob(runId: string, userId: string) {
   const run = await prisma.workflowRun.findFirst({
@@ -74,7 +75,22 @@ export async function processWorkflowJob(runId: string, userId: string) {
   await prisma.workflowEvent.create({ data: { runId, stepId: step.id, type: "step_running", status: "running" } });
   try {
     const output = await runStep(userId, run, step);
-    await prisma.workflowStep.update({ where: { id: step.id }, data: { status: "succeeded", output: output as Prisma.InputJsonValue, completedAt: new Date(), updatedAt: new Date() } });
+    await prisma.$transaction(async (tx) => {
+      await tx.workflowStep.update({ where: { id: step.id }, data: { status: "succeeded", output: output as Prisma.InputJsonValue, completedAt: new Date(), updatedAt: new Date() } });
+      const artifactTypes = parseStringArray(step.artifactTypes);
+      if (artifactTypes.length) {
+        await tx.workflowArtifact.createMany({
+          data: artifactTypes.map((artifactType) => ({
+            id: `${run.id}_${step.id}_${artifactType}`.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 190),
+            runId,
+            stepId: step.id,
+            artifactType,
+            payload: output as Prisma.InputJsonValue,
+          })),
+          skipDuplicates: true,
+        });
+      }
+    });
     await prisma.workflowEvent.create({ data: { runId, stepId: step.id, type: "step_succeeded", status: "succeeded", payload: output as Prisma.InputJsonValue } });
     const remaining = run.steps.some((item) => item.id !== step.id && item.status !== "succeeded");
     if (remaining) {
@@ -177,6 +193,16 @@ async function runStep(userId: string, run: { projectId: string; episodeId: stri
     await prisma.storyboard.update({ where: { id: storyboard.id }, data: { status: "ready" } });
     return { panelCount: storyboard.panels.length };
   }
+  if (step.stepType === "voice_analyze") {
+    if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
+    const runInput = isRecord(run.input) ? run.input : {};
+    const stepInput = isRecord(step.input) ? step.input : {};
+    const channelId = getString(stepInput.channelId ?? runInput.channelId);
+    const model = getString(stepInput.model ?? runInput.model);
+    if (!channelId || !model) throw new Error("WORKFLOW_VOICE_ANALYZE_INPUT_REQUIRED");
+    const lines = await analyzeEpisodeVoices({ userId, projectId: run.projectId, episodeId: run.episodeId, channelId, model });
+    return { lineCount: lines.length };
+  }
   throw new Error(`WORKFLOW_STEP_HANDLER_NOT_IMPLEMENTED:${step.stepType}`);
 }
 
@@ -218,6 +244,9 @@ function findRunnableStep<T extends {
 
 function isRecord(value: unknown): value is Record<string, Prisma.JsonValue> { return !!value && typeof value === "object" && !Array.isArray(value); }
 function getString(value: Prisma.JsonValue | undefined) { return typeof value === "string" ? value : undefined; }
+function parseStringArray(value: Prisma.JsonValue | null) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
 
 async function finishRun(runId: string, output: unknown) {
   await prisma.workflowRun.update({

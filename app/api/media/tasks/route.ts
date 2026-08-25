@@ -93,10 +93,21 @@ export async function POST(request: Request) {
     task.queueJobId = job.id;
     await store.update(task);
   } catch (error) {
+    await store.update({
+      ...task,
+      status: "failed",
+      error: {
+        code: "QUEUE_ENQUEUE_FAILED",
+        message: error instanceof Error ? error.message : "Queue unavailable.",
+        retryable: true,
+      },
+      completedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
     await store.appendEvent({
       taskId: task.id,
       type: "failed",
-      status: "queued",
+      status: "failed",
       message: error instanceof Error ? error.message : "Queue unavailable.",
     });
     return attachSessionCookie(

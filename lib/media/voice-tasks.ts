@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/server/prisma";
 import { createMediaTask } from "./task-contract";
 import { createDatabaseMediaTaskStore } from "./task-store";
-import { enqueueMediaJob } from "@/lib/queue/media-queue";
+import { enqueuePersistedMediaTask } from "./task-submit";
 
 export class VoiceTaskError extends Error {
   constructor(
@@ -85,16 +85,6 @@ export async function createVoiceLineAudioTask(input: {
   });
   const store = createDatabaseMediaTaskStore(input.userId);
   await store.create(task);
-  const job = await enqueueMediaJob({
-    taskId: task.id,
-    userId: input.userId,
-    projectId: input.projectId,
-    episodeId: input.episodeId,
-    channelId: input.channelId,
-    kind: "audio",
-    maxAttempts: task.maxRetries + 1,
-  });
-  task.queueJobId = job.id;
-  await store.update(task);
-  return { task, line: { id: line.id } };
+  const queued = await enqueuePersistedMediaTask(input.userId, task);
+  return { task: queued, line: { id: line.id } };
 }

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/server/prisma";
 import { createMediaTask } from "./task-contract";
 import { createDatabaseMediaTaskStore } from "./task-store";
-import { enqueueMediaJob } from "@/lib/queue/media-queue";
+import { enqueuePersistedMediaTask } from "./task-submit";
 
 export class ProductionTaskError extends Error {
   constructor(
@@ -83,16 +83,5 @@ export async function createProductionTask(input: {
   });
   const store = createDatabaseMediaTaskStore(input.userId);
   await store.create(task);
-  const job = await enqueueMediaJob({
-    taskId: task.id,
-    userId: input.userId,
-    projectId: input.projectId,
-    episodeId: input.episodeId,
-    channelId: input.channelId,
-    kind: input.kind,
-    maxAttempts: task.maxRetries + 1,
-  });
-  task.queueJobId = job.id;
-  await store.update(task);
-  return task;
+  return enqueuePersistedMediaTask(input.userId, task);
 }

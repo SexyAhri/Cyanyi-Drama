@@ -13,6 +13,9 @@ import {
 import { prisma } from "@/lib/server/prisma";
 import { processQueuedMediaTask } from "@/lib/queue/media-runtime";
 import { processWorkflowJob } from "@/lib/workflow/runtime";
+import { startWorkWatchdog } from "@/lib/queue/reconcile";
+
+const stopWatchdog = startWorkWatchdog();
 
 const worker = new Worker<MediaJob>(
   MEDIA_QUEUE_NAME,
@@ -140,11 +143,13 @@ worker.on("failed", async (job, error) => {
 });
 
 process.once("SIGTERM", async () => {
+  stopWatchdog();
   await worker.close();
   await workflowWorker.close();
   process.exit(0);
 });
 process.once("SIGINT", async () => {
+  stopWatchdog();
   await worker.close();
   await workflowWorker.close();
   process.exit(0);

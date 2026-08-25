@@ -570,6 +570,7 @@ model WorkflowRun {
   episode           Episode?        @relation(fields: [episodeId], references: [id], onDelete: Cascade)
   steps             WorkflowStep[]
   events            WorkflowEvent[]
+  artifacts         WorkflowArtifact[]
 
   @@index([userId, createdAt])
   @@index([projectId, status])
@@ -598,11 +599,29 @@ model WorkflowStep {
   createdAt   DateTime    @default(now()) @map("created_at")
   updatedAt   DateTime    @updatedAt @map("updated_at")
   run         WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  artifacts   WorkflowArtifact[]
 
   @@unique([runId, stepKey])
   @@index([runId, status])
   @@index([runId, stepIndex])
   @@map("workflow_steps")
+}
+
+model WorkflowArtifact {
+  id           String       @id @default(uuid())
+  runId        String       @map("run_id")
+  stepId       String       @map("step_id")
+  artifactType String       @map("artifact_type")
+  refId        String?      @map("ref_id")
+  payload      Json?
+  createdAt    DateTime     @default(now()) @map("created_at")
+  run          WorkflowRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  step         WorkflowStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, stepId, artifactType, refId])
+  @@index([runId, artifactType])
+  @@index([refId])
+  @@map("workflow_artifacts")
 }
 
 model WorkflowEvent {

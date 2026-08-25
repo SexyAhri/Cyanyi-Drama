@@ -59,6 +59,13 @@ export async function POST(request: Request, context: Context) {
         artifactTypes: ["storyboard.panels"],
         input: {},
       },
+      {
+        key: "voice_analyze",
+        type: "voice_analyze",
+        dependsOn: ["build_storyboard"],
+        artifactTypes: ["voice.lines"],
+        input: { channelId, model },
+      },
     ],
     maxAttempts: 1,
   });
