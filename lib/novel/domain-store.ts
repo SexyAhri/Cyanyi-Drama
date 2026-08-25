@@ -135,6 +135,16 @@ export async function saveStoryboard(
       props?: string[];
       imagePrompt?: string | null;
       videoPrompt?: string | null;
+      phase?: string;
+      status?: string;
+      srtStart?: number | null;
+      srtEnd?: number | null;
+      durationSeconds?: number | null;
+      subtitleText?: string | null;
+      actingNotes?: Record<string, unknown>;
+      photographyRules?: string | null;
+      firstLastFramePrompt?: string | null;
+      linkedToNextPanel?: boolean;
     }>;
   },
 ) {
@@ -177,6 +187,16 @@ export async function saveStoryboard(
           propsJson: stringifyArray(panel.props),
           imagePrompt: panel.imagePrompt?.trim() || null,
           videoPrompt: panel.videoPrompt?.trim() || null,
+          phase: panel.phase?.trim() || "phase1",
+          status: panel.status?.trim() || "draft",
+          srtStart: finiteNumber(panel.srtStart),
+          srtEnd: finiteNumber(panel.srtEnd),
+          durationSeconds: finiteNumber(panel.durationSeconds),
+          subtitleText: panel.subtitleText?.trim() || null,
+          actingNotesJson: stringifyObject(panel.actingNotes),
+          photographyRules: panel.photographyRules?.trim() || null,
+          firstLastFramePrompt: panel.firstLastFramePrompt?.trim() || null,
+          linkedToNextPanel: panel.linkedToNextPanel ?? false,
         })),
       });
     }
@@ -197,6 +217,9 @@ function stringifyArray(value?: string[]) {
 }
 function stringifyObject(value?: Record<string, unknown>) {
   return value && Object.keys(value).length ? JSON.stringify(value) : null;
+}
+function finiteNumber(value?: number | null) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 function parseArray(value: string | null) {
   try {
@@ -309,6 +332,16 @@ function toPanel(
     props: parseArray(row.propsJson),
     imagePrompt: row.imagePrompt,
     videoPrompt: row.videoPrompt,
+    phase: row.phase,
+    status: row.status,
+    srtStart: row.srtStart,
+    srtEnd: row.srtEnd,
+    durationSeconds: row.durationSeconds,
+    subtitleText: row.subtitleText,
+    actingNotes: parseObject(row.actingNotesJson),
+    photographyRules: row.photographyRules,
+    firstLastFramePrompt: row.firstLastFramePrompt,
+    linkedToNextPanel: row.linkedToNextPanel,
     imageAssetId: row.imageAssetId,
     videoAssetId: row.videoAssetId,
     createdAt: row.createdAt.toISOString(),

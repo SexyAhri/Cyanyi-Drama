@@ -1,0 +1,98 @@
+import { randomUUID } from "node:crypto";
+
+import { prisma } from "@/lib/server/prisma";
+import { createMediaTask } from "./task-contract";
+import { createDatabaseMediaTaskStore } from "./task-store";
+import { enqueueMediaJob } from "@/lib/queue/media-queue";
+
+export class ProductionTaskError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+export async function createProductionTask(input: {
+  userId: string;
+  projectId: string;
+  episodeId: string;
+  kind: "audio" | "lipsync" | "video";
+  targetType: "episode_audio" | "lip_sync" | "editor_render";
+  targetId: string;
+  channelId: string;
+  model: string;
+  request: Record<string, unknown>;
+}) {
+  const channel = await prisma.channel.findFirst({
+    where: { id: input.channelId, userId: input.userId },
+    select: { id: true, protocol: true },
+  });
+  if (
+    !channel ||
+    !["openai-compatible", "volcengine-ark"].includes(channel.protocol)
+  ) {
+    throw new ProductionTaskError(
+      "媒体任务需要有效的 OpenAI 兼容或火山方舟渠道",
+      400,
+    );
+  }
+  const capability = input.targetType === "lip_sync"
+    ? '"lipsync"'
+    : input.kind === "video"
+      ? '"video"'
+      : '"audio"';
+  const selectedModel = await prisma.providerModel.count({
+    where: {
+      channelId: input.channelId,
+      modelId: input.model,
+      selected: true,
+      OR: [
+        { modelType: input.kind },
+        ...(input.targetType === "lip_sync" ? [{ modelType: "lipsync" }] : []),
+        { capabilitiesJson: { contains: capability } },
+      ],
+    },
+  });
+  if (!selectedModel)
+    throw new ProductionTaskError("模型未在该渠道中配置或未选中", 400);
+  const ownsEpisode = await prisma.episode.count({
+    where: {
+      id: input.episodeId,
+      projectId: input.projectId,
+      project: { userId: input.userId },
+    },
+  });
+  if (!ownsEpisode) throw new ProductionTaskError("项目或剧集不存在", 404);
+  const task = createMediaTask({
+    id: `media_task_${randomUUID()}`,
+    projectId: input.projectId,
+    episodeId: input.episodeId,
+    channelId: input.channelId,
+    targetType: input.targetType,
+    targetId: input.targetId,
+    kind: input.kind,
+    provider:
+      channel.protocol === "volcengine-ark"
+        ? "volcengine-ark"
+        : "openai-compatible",
+    protocol: channel.protocol as "openai-compatible" | "volcengine-ark",
+    model: input.model,
+    request: input.request,
+  });
+  const store = createDatabaseMediaTaskStore(input.userId);
+  await store.create(task);
+  const job = await enqueueMediaJob({
+    taskId: task.id,
+    userId: input.userId,
+    projectId: input.projectId,
+    episodeId: input.episodeId,
+    channelId: input.channelId,
+    kind: input.kind,
+    maxAttempts: task.maxRetries + 1,
+  });
+  task.queueJobId = job.id;
+  await store.update(task);
+  return task;
+}

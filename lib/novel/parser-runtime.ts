@@ -5,6 +5,7 @@ import {
   upsertNovelCharacters,
   upsertNovelLocations,
 } from "./domain-store";
+import { upsertProductionProps } from "@/lib/production/domain-store";
 
 export type NovelParseInput = {
   projectId: string;
@@ -22,6 +23,7 @@ export type NovelParseOutput = {
     introduction?: string | null;
   }>;
   locations: Array<{ name: string; summary?: string | null }>;
+  props: Array<{ name: string; summary?: string | null }>;
   panels: Array<{
     panelIndex: number;
     shotType?: string | null;
@@ -62,6 +64,7 @@ export async function parseNovelAndPersist(
     input.projectId,
     parsed.locations,
   );
+  const props = await upsertProductionProps(userId, input.projectId, parsed.props);
   const storyboard = await saveStoryboard(
     userId,
     input.projectId,
@@ -72,9 +75,9 @@ export async function parseNovelAndPersist(
       panels: parsed.panels,
     },
   );
-  if (!characters || !locations || !storyboard)
+  if (!characters || !locations || !props || !storyboard)
     throw new Error("NOVEL_PARSE_PERSIST_FAILED");
-  return { characters, locations, storyboard, sourceLength: sourceText.length };
+  return { characters, locations, props, storyboard, sourceLength: sourceText.length };
 }
 
 async function requestNovelParse(
@@ -108,9 +111,10 @@ async function requestNovelParse(
   if (!apiKeys.length) throw new Error("NOVEL_CHANNEL_API_KEY_MISSING");
   const system = [
     "你是 AI 漫剧前期制片分析器。只返回严格 JSON，不要 Markdown，不要解释。",
-    "输出字段必须是 characters、locations、panels。",
+    "输出字段必须是 characters、locations、props、panels。",
     "characters: [{name, aliases: string[], profile: object, introduction: string}]。",
     "locations: [{name, summary: string}]。",
+    "props: [{name, summary: string}]。",
     "panels: [{panelIndex: number, shotType, cameraMove, description, locationName, characters: string[], props: string[], imagePrompt, videoPrompt}]。",
     "角色名和场景名必须稳定、简短且可复用；panels 从 0 开始按叙事顺序排列。",
   ].join("\n");
@@ -187,6 +191,9 @@ function normalizeParseOutput(text: string): NovelParseOutput {
   const locations = Array.isArray(value.locations)
     ? value.locations.filter(isLocation)
     : [];
+  const props = Array.isArray(value.props)
+    ? value.props.filter(isLocation)
+    : [];
   const panels = Array.isArray(value.panels)
     ? value.panels.filter(isPanel).map((panel, index) => ({
         ...panel,
@@ -195,9 +202,9 @@ function normalizeParseOutput(text: string): NovelParseOutput {
           : index,
       }))
     : [];
-  if (!characters.length && !locations.length && !panels.length)
+  if (!characters.length && !locations.length && !props.length && !panels.length)
     throw new Error("NOVEL_PARSE_EMPTY_OUTPUT");
-  return { characters, locations, panels };
+  return { characters, locations, props, panels };
 }
 
 function isCharacter(

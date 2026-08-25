@@ -20,6 +20,7 @@ model User {
   projects     Project[]
   mediaTasks   MediaTask[]
   workflowRuns WorkflowRun[]
+  voicePresets VoicePreset[]
 
   @@map("users")
 }
@@ -82,7 +83,11 @@ model Project {
   mediaTasks      MediaTask[]
   characters      NovelCharacter[]
   locations       NovelLocation[]
+  props           NovelProp[]
+  voicePresets    VoicePreset[]
   storyboards     Storyboard[]
+  clips           StoryClip[]
+  shots           StoryShot[]
   assetReferences AssetReference[]
   workflowRuns    WorkflowRun[]
 
@@ -126,6 +131,11 @@ model Episode {
   project         Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   mediaTasks      MediaTask[]
   storyboard      Storyboard?
+  clips           StoryClip[]
+  shots           StoryShot[]
+  voiceLines      VoiceLine[]
+  audioTracks     EpisodeAudioTrack[]
+  editorProject   EditorProject?
   assetReferences AssetReference[]
   workflowRuns    WorkflowRun[]
 
@@ -208,6 +218,13 @@ model MediaAsset {
   locationImages            LocationImage[]       @relation("LocationImageAsset")
   storyboardPanelImages     StoryboardPanel[]     @relation("StoryboardPanelImage")
   storyboardPanelVideos     StoryboardPanel[]     @relation("StoryboardPanelVideo")
+  storyboardPanelLipSync    StoryboardPanel[]     @relation("StoryboardPanelLipSync")
+  storyShotImages           StoryShot[]            @relation("StoryShotImage")
+  storyShotVideos           StoryShot[]            @relation("StoryShotVideo")
+  voicePresetSamples        VoicePreset[]          @relation("VoicePresetSample")
+  voiceLineAudio            VoiceLine[]            @relation("VoiceLineAudio")
+  episodeAudioTracks        EpisodeAudioTrack[]    @relation("EpisodeAudioTrackAsset")
+  editorOutputs             EditorProject[]        @relation("EditorOutputAsset")
 
   @@index([taskId])
   @@map("media_assets")
@@ -268,6 +285,21 @@ model NovelLocation {
   @@map("novel_locations")
 }
 
+model NovelProp {
+  id           String   @id
+  projectId    String   @map("project_id")
+  name         String
+  summary      String?  @db.Text
+  metadataJson String?  @map("metadata_json") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, name])
+  @@index([projectId, updatedAt])
+  @@map("novel_props")
+}
+
 model LocationImage {
   id             String          @id
   locationId     String          @map("location_id")
@@ -317,19 +349,182 @@ model StoryboardPanel {
   propsJson      String?     @map("props_json") @db.Text
   imagePrompt    String?     @map("image_prompt") @db.Text
   videoPrompt    String?     @map("video_prompt") @db.Text
+  phase          String      @default("phase1")
+  status         String      @default("draft")
+  srtStart       Float?      @map("srt_start")
+  srtEnd         Float?      @map("srt_end")
+  durationSeconds Float?     @map("duration_seconds")
+  subtitleText   String?     @map("subtitle_text") @db.Text
+  actingNotesJson String?    @map("acting_notes_json") @db.Text
+  photographyRules String?   @map("photography_rules") @db.Text
+  firstLastFramePrompt String? @map("first_last_frame_prompt") @db.Text
+  linkedToNextPanel Boolean  @default(false) @map("linked_to_next_panel")
   imageAssetId   String?     @map("image_asset_id")
   videoAssetId   String?     @map("video_asset_id")
+  lipSyncAssetId String?     @map("lip_sync_asset_id")
   createdAt      DateTime    @default(now()) @map("created_at")
   updatedAt      DateTime    @updatedAt @map("updated_at")
   storyboard     Storyboard  @relation(fields: [storyboardId], references: [id], onDelete: Cascade)
   imageAsset     MediaAsset? @relation("StoryboardPanelImage", fields: [imageAssetId], references: [id], onDelete: SetNull)
   videoAsset     MediaAsset? @relation("StoryboardPanelVideo", fields: [videoAssetId], references: [id], onDelete: SetNull)
+  lipSyncAsset   MediaAsset? @relation("StoryboardPanelLipSync", fields: [lipSyncAssetId], references: [id], onDelete: SetNull)
+  voiceLines     VoiceLine[]
 
   @@unique([storyboardId, panelIndex])
   @@index([storyboardId, updatedAt])
   @@index([imageAssetId])
   @@index([videoAssetId])
+  @@index([lipSyncAssetId])
   @@map("storyboard_panels")
+}
+
+model StoryClip {
+  id             String       @id
+  episodeId      String       @map("episode_id")
+  clipIndex      Int          @map("clip_index")
+  summary        String       @db.Text
+  content        String       @db.Text
+  startText      String?      @map("start_text") @db.Text
+  endText        String?      @map("end_text") @db.Text
+  screenplay     String?      @db.Text
+  charactersJson String?      @map("characters_json") @db.Text
+  locationsJson  String?      @map("locations_json") @db.Text
+  propsJson      String?      @map("props_json") @db.Text
+  shotCount      Int?         @map("shot_count")
+  status         String       @default("draft")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  episode        Episode      @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId      String       @map("project_id")
+  shots          StoryShot[]
+
+  @@unique([episodeId, clipIndex])
+  @@index([projectId, updatedAt])
+  @@index([episodeId, updatedAt])
+  @@map("story_clips")
+}
+
+model StoryShot {
+  id              String      @id
+  projectId       String      @map("project_id")
+  episodeId       String      @map("episode_id")
+  clipId          String?     @map("clip_id")
+  shotIndex       Int         @map("shot_index")
+  sequence        String?     @db.Text
+  description     String?     @db.Text
+  locationName    String?     @map("location_name")
+  charactersJson  String?     @map("characters_json") @db.Text
+  propsJson       String?     @map("props_json") @db.Text
+  cameraMove      String?     @map("camera_move") @db.Text
+  imagePrompt     String?     @map("image_prompt") @db.Text
+  videoPrompt     String?     @map("video_prompt") @db.Text
+  imageAssetId    String?     @map("image_asset_id")
+  videoAssetId    String?     @map("video_asset_id")
+  srtStart        Float?      @map("srt_start")
+  srtEnd          Float?      @map("srt_end")
+  durationSeconds Float?      @map("duration_seconds")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+  project         Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  episode         Episode     @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  clip            StoryClip?  @relation(fields: [clipId], references: [id], onDelete: SetNull)
+  imageAsset      MediaAsset? @relation("StoryShotImage", fields: [imageAssetId], references: [id], onDelete: SetNull)
+  videoAsset      MediaAsset? @relation("StoryShotVideo", fields: [videoAssetId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, updatedAt])
+  @@index([episodeId, shotIndex])
+  @@index([clipId, shotIndex])
+  @@index([imageAssetId])
+  @@index([videoAssetId])
+  @@map("story_shots")
+}
+
+model VoicePreset {
+  id             String      @id
+  userId         String      @map("user_id")
+  projectId      String?     @map("project_id")
+  name           String
+  providerVoiceId String?    @map("provider_voice_id")
+  language       String?
+  gender         String?
+  description    String?     @db.Text
+  sampleAssetId  String?     @map("sample_asset_id")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project        Project?    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sampleAsset    MediaAsset? @relation("VoicePresetSample", fields: [sampleAssetId], references: [id], onDelete: SetNull)
+  voiceLines     VoiceLine[]
+
+  @@index([userId, updatedAt])
+  @@index([projectId, updatedAt])
+  @@index([sampleAssetId])
+  @@map("voice_presets")
+}
+
+model VoiceLine {
+  id                String         @id
+  episodeId         String         @map("episode_id")
+  lineIndex         Int            @map("line_index")
+  speaker           String
+  content           String         @db.Text
+  voicePresetId     String?        @map("voice_preset_id")
+  audioAssetId      String?        @map("audio_asset_id")
+  emotionPrompt     String?        @map("emotion_prompt") @db.Text
+  emotionStrength   Float?         @map("emotion_strength")
+  matchedPanelId    String?        @map("matched_panel_id")
+  durationSeconds   Float?         @map("duration_seconds")
+  status            String         @default("draft")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+  episode           Episode        @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  voicePreset       VoicePreset?   @relation(fields: [voicePresetId], references: [id], onDelete: SetNull)
+  audioAsset        MediaAsset?    @relation("VoiceLineAudio", fields: [audioAssetId], references: [id], onDelete: SetNull)
+  matchedPanel      StoryboardPanel? @relation(fields: [matchedPanelId], references: [id], onDelete: SetNull)
+
+  @@unique([episodeId, lineIndex])
+  @@index([episodeId, updatedAt])
+  @@index([voicePresetId])
+  @@index([audioAssetId])
+  @@index([matchedPanelId])
+  @@map("voice_lines")
+}
+
+model EpisodeAudioTrack {
+  id             String      @id
+  episodeId      String      @map("episode_id")
+  trackType      String      @map("track_type")
+  assetId        String?     @map("asset_id")
+  startSeconds   Float?      @map("start_seconds")
+  endSeconds     Float?      @map("end_seconds")
+  volume         Float?      @default(1)
+  metadataJson   String?     @map("metadata_json") @db.Text
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+  episode        Episode     @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  asset          MediaAsset? @relation("EpisodeAudioTrackAsset", fields: [assetId], references: [id], onDelete: SetNull)
+
+  @@index([episodeId, trackType])
+  @@index([assetId])
+  @@map("episode_audio_tracks")
+}
+
+model EditorProject {
+  id             String      @id
+  episodeId      String      @unique @map("episode_id")
+  timelineJson   String      @map("timeline_json") @db.LongText
+  subtitleJson   String?     @map("subtitle_json") @db.LongText
+  renderStatus   String      @default("draft") @map("render_status")
+  renderTaskId   String?     @map("render_task_id")
+  outputAssetId  String?     @map("output_asset_id")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+  episode        Episode     @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  outputAsset   MediaAsset? @relation("EditorOutputAsset", fields: [outputAssetId], references: [id], onDelete: SetNull)
+
+  @@index([outputAssetId])
+  @@map("editor_projects")
 }
 
 model AssetReference {
@@ -389,6 +584,10 @@ model WorkflowStep {
   stepType    String      @map("step_type")
   stepIndex   Int         @map("step_index")
   status      String      @default("pending")
+  dependsOn   Json?
+  artifactTypes Json?
+  retryable   Boolean     @default(true)
+  failureMode String      @default("fail_run") @map("failure_mode")
   attempt     Int         @default(0)
   maxAttempts Int         @default(3) @map("max_attempts")
   input       Json?

@@ -2,6 +2,7 @@ import { decryptSecret } from "@/lib/server/crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/server/prisma";
 import type { MediaAsset } from "@/lib/media/task-contract";
+import { downloadAndStoreMedia, resolveStoredMediaUrl } from "@/lib/storage/s3";
 
 type TaskRequest = {
   prompt?: string;
@@ -11,6 +12,9 @@ type TaskRequest = {
   style?: string;
   duration?: string;
   referenceImages?: Array<{ url: string; mimeType?: string }>;
+  voice?: string;
+  input?: string;
+  responseFormat?: string;
 };
 
 type ProviderState = { status?: string; url?: string; thumbnailUrl?: string };
@@ -32,6 +36,18 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
   if (!apiKeys.length) throw new Error("MEDIA_TASK_API_KEY_MISSING");
   const payload = task.payload as { request?: TaskRequest };
   const request = payload.request ?? {};
+  const operation = typeof (request as Record<string, unknown>).operation === "string"
+    ? (request as Record<string, unknown>).operation
+    : undefined;
+  if (operation === "merge_episode_audio") {
+    throw new Error("AUDIO_MERGE_PROVIDER_NOT_IMPLEMENTED");
+  }
+  if (operation === "lip_sync") {
+    throw new Error("LIP_SYNC_PROVIDER_NOT_IMPLEMENTED");
+  }
+  if (operation === "render_timeline") {
+    throw new Error("TIMELINE_RENDER_PROVIDER_NOT_IMPLEMENTED");
+  }
   let output: MediaAsset[] | undefined;
   let lastError: unknown;
   for (const apiKey of apiKeys) {
@@ -53,7 +69,15 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
                 task.model,
                 request,
               )
-            : (() => {
+            : task.kind === "audio"
+              ? await generateAudio(
+                  channel.baseUrl,
+                  channel.protocol,
+                  apiKey,
+                  task.model,
+                  request,
+                )
+              : (() => {
                 throw new Error(
                   `MEDIA_WORKER_HANDLER_NOT_IMPLEMENTED:${task.kind}`,
                 );
@@ -86,14 +110,22 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
       updatedAt: new Date(),
       assets: {
         createMany: {
-          data: output.map((asset) => ({
-            id: asset.id,
-            kind: asset.kind,
-            url: asset.url,
-            mimeType: asset.mimeType,
-            metadataJson: asset.metadata
-              ? JSON.stringify(asset.metadata)
-              : null,
+          data: await Promise.all(output.map(async (asset) => {
+            const storageKey = `projects/${task.projectId ?? "global"}/media/${asset.kind}/${asset.id}.${asset.kind === "video" ? "mp4" : asset.kind === "audio" ? "mp3" : "png"}`;
+            let storedKey: string | null = null;
+            try {
+              storedKey = await downloadAndStoreMedia(asset.url, storageKey, asset.mimeType);
+            } catch {
+              storedKey = null;
+            }
+            return {
+              id: asset.id,
+              kind: asset.kind,
+              storageKey: storedKey,
+              url: storedKey ? await resolveStoredMediaUrl(storedKey) : asset.url,
+              mimeType: asset.mimeType,
+              metadataJson: JSON.stringify({ ...(asset.metadata ?? {}), originalUrl: asset.url }),
+            };
           })),
         },
       },
@@ -165,10 +197,40 @@ async function linkGeneratedAsset(task: { id: string; projectId: string | null; 
           ? { videoAssetId: asset.id, updatedAt: new Date() }
           : { imageAssetId: asset.id, updatedAt: new Date() },
     });
+  } else if (task.targetType === "voice_line" && task.kind === "audio") {
+    await prisma.voiceLine.updateMany({
+      where: {
+        id: task.targetId,
+        episode: { projectId: task.projectId, project: { userId } },
+      },
+      data: { audioAssetId: asset.id, status: "generated", updatedAt: new Date() },
+    });
+  } else if (task.targetType === "lip_sync" && task.kind === "video") {
+    await prisma.storyboardPanel.updateMany({
+      where: {
+        id: task.targetId,
+        storyboard: { projectId: task.projectId, episodeId: task.episodeId ?? undefined, project: { userId } },
+      },
+      data: { lipSyncAssetId: asset.id, updatedAt: new Date() },
+    });
+  } else if (task.targetType === "editor_render" && task.kind === "video") {
+    await prisma.editorProject.updateMany({
+      where: { episodeId: task.episodeId ?? "", episode: { projectId: task.projectId, project: { userId } } },
+      data: { outputAssetId: asset.id, renderStatus: "succeeded", updatedAt: new Date() },
+    });
+  } else if (task.targetType === "episode_audio" && task.kind === "audio") {
+    await prisma.episodeAudioTrack.create({
+      data: {
+        id: `${task.id}_track`,
+        episodeId: task.episodeId ?? task.targetId,
+        trackType: "merged",
+        assetId: asset.id,
+      },
+    }).catch(() => undefined);
   } else {
     return;
   }
-  await prisma.assetReference.create({ data: { id: `${task.id}_reference`, projectId: task.projectId, episodeId: task.episodeId, mediaAssetId: asset.id, entityType: task.targetType, entityId: task.targetId, role: task.kind === "video" ? "generated_video" : "generated" } }).catch(() => undefined);
+  await prisma.assetReference.create({ data: { id: `${task.id}_reference`, projectId: task.projectId, episodeId: task.episodeId, mediaAssetId: asset.id, entityType: task.targetType, entityId: task.targetId, role: task.kind === "video" ? "generated_video" : task.kind === "audio" ? "generated_audio" : "generated" } }).catch(() => undefined);
 }
 
 async function generateImage(
@@ -306,6 +368,45 @@ async function generateVideo(
   throw new Error("VIDEO_POLL_TIMEOUT");
 }
 
+async function generateAudio(
+  baseUrl: string,
+  protocol: string,
+  apiKey: string,
+  model: string,
+  request: TaskRequest,
+): Promise<MediaAsset[]> {
+  if (protocol !== "openai-compatible" && protocol !== "volcengine-ark") {
+    throw new Error(`AUDIO_PROTOCOL_NOT_SUPPORTED:${protocol}`);
+  }
+  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/audio/speech`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      input: request.input ?? request.prompt ?? "",
+      voice: request.voice ?? "alloy",
+      response_format: request.responseFormat ?? "mp3",
+    }),
+  });
+  const contentType = response.headers.get("content-type") ?? "audio/mpeg";
+  if (!response.ok) {
+    const payload = await readJson(response);
+    throw new Error(providerMessage(payload, response.status));
+  }
+  if (contentType.includes("json")) {
+    const payload = await readJson(response);
+    const url = extractAudioUrl(payload);
+    if (!url) throw new Error("AUDIO_RESULT_MISSING");
+    return [{ id: `${model}-${Date.now()}`, kind: "audio", url, mimeType: "audio/mpeg", metadata: { model, protocol } }];
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const dataUrl = `data:${contentType};base64,${bytes.toString("base64")}`;
+  return [{ id: `${model}-${Date.now()}`, kind: "audio", url: dataUrl, mimeType: contentType, metadata: { model, protocol } }];
+}
+
 async function readJson(response: Response) {
   const text = await response.text();
   try {
@@ -386,6 +487,15 @@ function extractVideoState(
           ? content.cover_url
           : undefined,
   };
+}
+
+function extractAudioUrl(payload: unknown) {
+  if (!payload || typeof payload !== "object") return undefined;
+  const value = payload as Record<string, unknown>;
+  for (const key of ["url", "audio_url", "audioUrl"]) {
+    if (typeof value[key] === "string") return value[key];
+  }
+  return undefined;
 }
 
 async function resolveReferenceImages(

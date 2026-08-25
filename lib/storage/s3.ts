@@ -60,3 +60,23 @@ export async function deleteObject(key: string) {
     new DeleteObjectCommand({ Bucket: getBucket(), Key: key }),
   );
 }
+
+export async function downloadAndStoreMedia(
+  sourceUrl: string,
+  key: string,
+  contentType?: string,
+) {
+  const response = await fetch(sourceUrl, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`MEDIA_DOWNLOAD_FAILED:${response.status}`);
+  }
+  const body = new Uint8Array(await response.arrayBuffer());
+  const resolvedType =
+    contentType || response.headers.get("content-type") || undefined;
+  await uploadObject(key, body, resolvedType);
+  return key;
+}
+
+export async function resolveStoredMediaUrl(key: string, expiresIn = 3600) {
+  return getObjectUrl(key, expiresIn);
+}

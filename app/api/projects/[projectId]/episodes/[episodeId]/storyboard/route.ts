@@ -40,6 +40,16 @@ function isPanelInput(value: unknown): value is {
   props?: string[];
   imagePrompt?: string | null;
   videoPrompt?: string | null;
+  phase?: string;
+  status?: string;
+  srtStart?: number | null;
+  srtEnd?: number | null;
+  durationSeconds?: number | null;
+  subtitleText?: string | null;
+  actingNotes?: Record<string, unknown>;
+  photographyRules?: string | null;
+  firstLastFramePrompt?: string | null;
+  linkedToNextPanel?: boolean;
 } {
   if (!value || typeof value !== "object") return false;
   const item = value as Record<string, unknown>;

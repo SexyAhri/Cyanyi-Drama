@@ -24,10 +24,41 @@ export async function POST(request: Request, context: Context) {
     userId: user.id,
     projectId,
     episodeId,
-    workflowType: "novel-parse",
+    workflowType: "novel-production",
     input: { channelId, model },
     steps: [
-      { key: "parse_novel", type: "parse_novel", input: { channelId, model } },
+      {
+        key: "analyze_novel",
+        type: "parse_novel",
+        artifactTypes: [
+          "analysis.characters",
+          "analysis.locations",
+          "analysis.props",
+          "analysis.panels",
+        ],
+        input: { channelId, model },
+      },
+      {
+        key: "split_clips",
+        type: "split_clips",
+        dependsOn: ["analyze_novel"],
+        artifactTypes: ["clips.split"],
+        input: {},
+      },
+      {
+        key: "convert_screenplay",
+        type: "convert_screenplay",
+        dependsOn: ["split_clips"],
+        artifactTypes: ["screenplay.clip"],
+        input: {},
+      },
+      {
+        key: "build_storyboard",
+        type: "build_storyboard",
+        dependsOn: ["convert_screenplay"],
+        artifactTypes: ["storyboard.panels"],
+        input: {},
+      },
     ],
     maxAttempts: 1,
   });

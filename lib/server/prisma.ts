@@ -7,7 +7,8 @@ const DEFAULT_DEVELOPMENT_DATABASE_URL =
 // provide their own DATABASE_URL explicitly.
 export function getDatabaseUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
-  if (process.env.NODE_ENV !== "production") return DEFAULT_DEVELOPMENT_DATABASE_URL;
+  if (process.env.NODE_ENV !== "production")
+    return DEFAULT_DEVELOPMENT_DATABASE_URL;
   return undefined;
 }
 

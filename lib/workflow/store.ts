@@ -45,6 +45,10 @@ export async function createWorkflowRun(definition: WorkflowRunDefinition) {
           stepKey: step.key.trim(),
           stepType: step.type.trim(),
           stepIndex: index,
+          dependsOn: toJson(step.dependsOn ?? []),
+          artifactTypes: toJson(step.artifactTypes ?? []),
+          retryable: step.retryable ?? true,
+          failureMode: step.failureMode ?? "fail_run",
           maxAttempts: Math.max(
             1,
             step.maxAttempts ?? definition.maxAttempts ?? 3,
@@ -157,6 +161,7 @@ export async function retryWorkflowRun(userId: string, runId: string) {
   if (!current || !["failed", "blocked"].includes(current.status)) return null;
   const exhausted = current.steps.some((step) => ["failed", "blocked"].includes(step.status) && step.attempt >= step.maxAttempts);
   if (exhausted) return null;
+  const resetKeys = resolveRetryStepKeys(current.steps);
   await prisma.$transaction([
     prisma.workflowRun.update({
       where: { id: runId },
@@ -169,7 +174,7 @@ export async function retryWorkflowRun(userId: string, runId: string) {
       },
     }),
     prisma.workflowStep.updateMany({
-      where: { runId, status: { in: ["failed", "blocked", "running"] } },
+      where: { runId, stepKey: { in: resetKeys } },
       data: {
         status: "pending",
         error: Prisma.DbNull,
@@ -178,10 +183,43 @@ export async function retryWorkflowRun(userId: string, runId: string) {
       },
     }),
     prisma.workflowEvent.create({
-      data: { runId, type: "retry_requested", status: "queued" },
+      data: {
+        runId,
+        type: "retry_requested",
+        status: "queued",
+        payload: toJson({ resetKeys }),
+      },
     }),
   ]);
   return getWorkflowRun(userId, runId);
+}
+
+function resolveRetryStepKeys(
+  steps: Array<{
+    stepKey: string;
+    status: string;
+    dependsOn: Prisma.JsonValue | null;
+  }>,
+) {
+  const reset = new Set(
+    steps
+      .filter((step) => ["failed", "blocked", "running"].includes(step.status))
+      .map((step) => step.stepKey),
+  );
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const step of steps) {
+      const dependencies = Array.isArray(step.dependsOn)
+        ? step.dependsOn.filter((item): item is string => typeof item === "string")
+        : [];
+      if (!reset.has(step.stepKey) && dependencies.some((key) => reset.has(key))) {
+        reset.add(step.stepKey);
+        changed = true;
+      }
+    }
+  }
+  return Array.from(reset);
 }
 
 type Row = Prisma.WorkflowRunGetPayload<{ include: typeof include }>;
@@ -212,6 +250,10 @@ function toRun(row: Row) {
       attempt: step.attempt,
       maxAttempts: step.maxAttempts,
       input: step.input as Record<string, unknown> | undefined,
+      dependsOn: parseStringArray(step.dependsOn),
+      artifactTypes: parseStringArray(step.artifactTypes),
+      retryable: step.retryable,
+      failureMode: step.failureMode,
       output: step.output as Record<string, unknown> | undefined,
       error: step.error as Record<string, unknown> | undefined,
       startedAt: step.startedAt?.toISOString(),
@@ -232,4 +274,10 @@ function toJson(value: unknown): Prisma.InputJsonValue | undefined {
   return value === undefined
     ? undefined
     : (JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue);
+}
+
+function parseStringArray(value: Prisma.JsonValue | null) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }

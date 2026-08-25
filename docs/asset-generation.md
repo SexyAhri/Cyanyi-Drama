@@ -95,3 +95,11 @@
 ```
 
 视频任务不会使用假模型或假结果。渠道没有视频能力、服务商返回错误或轮询超时时，任务会进入 `failed`，保留原始错误并可通过批次或单任务接口重试。
+
+## 语音与生产任务
+
+语音行通过 `POST /api/projects/:projectId/episodes/:episodeId/voice-lines/:lineId/generate` 创建真实 `audio` 媒体任务，Worker 使用 OpenAI 兼容的 `/audio/speech` 接口并回填 `VoiceLine.audioAssetId`。音色预设通过 `/api/projects/:projectId/voice-presets` 保存。
+
+音频合并、Lip Sync 和时间线渲染已经具备独立任务入口和状态追踪，但没有通用的跨厂商协议。当前 Worker 会在没有对应服务商适配器时明确将任务标记为失败，不会把普通 TTS 或视频任务伪装成合并、口型同步或成片结果。
+
+时间线可通过 `POST /api/projects/:projectId/episodes/:episodeId/production/timeline` 根据已保存的 Shot 和语音行生成，结果写入 `EditorProject`，随后再提交渲染任务。

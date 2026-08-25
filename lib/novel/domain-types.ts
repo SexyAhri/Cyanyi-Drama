@@ -70,6 +70,16 @@ export type StoryboardPanelRecord = {
   props: string[];
   imagePrompt: string | null;
   videoPrompt: string | null;
+  phase?: string;
+  status?: string;
+  srtStart?: number | null;
+  srtEnd?: number | null;
+  durationSeconds?: number | null;
+  subtitleText?: string | null;
+  actingNotes?: Record<string, unknown>;
+  photographyRules?: string | null;
+  firstLastFramePrompt?: string | null;
+  linkedToNextPanel?: boolean;
   imageAssetId: string | null;
   videoAssetId: string | null;
   createdAt: string;

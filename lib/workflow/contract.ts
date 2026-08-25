@@ -23,6 +23,10 @@ export type WorkflowStepStatus = (typeof WORKFLOW_STEP_STATUSES)[number];
 export type WorkflowStepInput = {
   key: string;
   type: string;
+  dependsOn?: string[];
+  artifactTypes?: string[];
+  retryable?: boolean;
+  failureMode?: "fail_run";
   input?: Record<string, unknown>;
   maxAttempts?: number;
 };

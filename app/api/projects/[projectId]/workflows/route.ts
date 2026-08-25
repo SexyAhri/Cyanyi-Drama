@@ -70,11 +70,13 @@ export async function POST(request: Request, context: Context) {
   );
 }
 
-function isStep(
-  value: unknown,
-): value is {
+function isStep(value: unknown): value is {
   key: string;
   type: string;
+  dependsOn?: string[];
+  artifactTypes?: string[];
+  retryable?: boolean;
+  failureMode?: "fail_run";
   input?: Record<string, unknown>;
   maxAttempts?: number;
 } {
@@ -82,6 +84,14 @@ function isStep(
     isRecord(value) &&
     typeof value.key === "string" &&
     typeof value.type === "string" &&
+    (value.dependsOn === undefined ||
+      (Array.isArray(value.dependsOn) &&
+        value.dependsOn.every((item: unknown) => typeof item === "string"))) &&
+    (value.artifactTypes === undefined ||
+      (Array.isArray(value.artifactTypes) &&
+        value.artifactTypes.every((item: unknown) => typeof item === "string"))) &&
+    (value.retryable === undefined || typeof value.retryable === "boolean") &&
+    (value.failureMode === undefined || value.failureMode === "fail_run") &&
     (value.input === undefined || isRecord(value.input))
   );
 }

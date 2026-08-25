@@ -23,6 +23,7 @@ export type MediaAsset = {
   id: string;
   kind: MediaTaskKind;
   url: string;
+  storageKey?: string;
   mimeType?: string;
   width?: number;
   height?: number;

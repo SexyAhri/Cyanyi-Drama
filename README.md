@@ -138,7 +138,7 @@ AI_GATEWAY_API_KEY=
 - `GET /api/media/tasks/:taskId`：读取单个媒体任务
 - `/api/agent`：LangGraph HITL 示例运行时
 
-图片和视频任务会经过统一状态机，记录 queued、running、succeeded 和 failed 等状态，并按用户隔离查询。火山方舟的视频生成支持异步创建、轮询和结果处理。
+图片、视频和语音任务会经过统一状态机，记录 queued、running、succeeded 和 failed 等状态，并按用户隔离查询。火山方舟的视频生成支持异步创建、轮询和结果处理。服务商返回的媒体会优先转存到 S3/MinIO，并通过媒体资产接口返回签名 URL。
 
 媒体任务接口还支持：
 
@@ -159,6 +159,7 @@ Worker 不会在没有实际服务商处理器时伪造成功状态；未接入�
 - `GET/PATCH /api/projects/:projectId/config`：读取和更新项目级模型、画幅、画风等配置
 - `GET/PUT /api/projects/:projectId/characters`：读取和保存角色草稿
 - `GET/PUT /api/projects/:projectId/locations`：读取和保存场景草稿
+- `GET/PUT /api/projects/:projectId/props`：读取和保存道具草稿
 - `GET/PUT /api/projects/:projectId/episodes/:episodeId/storyboard`：读取和保存分镜草稿
 - `POST /api/projects/:projectId/episodes/:episodeId/parse`：创建真实文本解析工作流
 - `POST /api/projects/:projectId/assets/generate`：创建角色或场景图片任务
@@ -168,6 +169,14 @@ Worker 不会在没有实际服务商处理器时伪造成功状态；未接入�
 - `POST /api/projects/:projectId/episodes/:episodeId/storyboard/generate-batch`：批量生成剧集分镜图片
 - `POST /api/projects/:projectId/episodes/:episodeId/storyboard/:panelId/generate-video`：根据分镜格、分镜图片和已确认资产生成视频片段
 - `POST /api/projects/:projectId/episodes/:episodeId/storyboard/generate-video-batch`：批量生成剧集视频片段
+- `GET/PUT /api/projects/:projectId/episodes/:episodeId/production`：读取和保存 Clip、Shot、语音行和编辑时间线
+- `POST /api/projects/:projectId/episodes/:episodeId/production/timeline`：根据 Clip/Shot 和语音行生成时间线、字幕草稿
+- `GET/PUT /api/projects/:projectId/voice-presets`：读取和创建项目音色预设
+- `POST /api/projects/:projectId/episodes/:episodeId/voice-lines/:lineId/generate`：通过真实音频模型生成语音行
+- `POST /api/projects/:projectId/episodes/:episodeId/audio/merge`：创建音频合并任务
+- `POST /api/projects/:projectId/episodes/:episodeId/lip-sync`：创建口型同步任务
+- `POST /api/projects/:projectId/episodes/:episodeId/render`：创建时间线渲染任务
+- `GET /api/media/assets/:assetId`：读取媒体资产并生成对象存储签名 URL
 - `GET/POST /api/media/batches/:batchId`：读取批次汇总，批量取消或重试失败任务
 - `GET /api/projects/:projectId/workflows`：读取项目工作流
 - `GET/POST /api/workflows/:runId`：读取、暂停、恢复、重试或取消工作流
