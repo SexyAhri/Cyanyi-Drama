@@ -16,7 +16,9 @@ Cyanyi Drama 是一个面向 AI 漫剧和短剧创作的智能工作台。
 - 选中模型后自动根据所属渠道路由请求
 - 图片、视频媒体任务状态持久化和查询
 - 匿名用户 Session，以及注册、登录、退出接口
-- API Key 加密保存，SQLite 本地数据库持久化
+- API Key 加密保存，MySQL 数据库持久化
+- 漫剧项目、项目配置和剧集数据持久化
+- 项目/剧集接口按当前用户隔离，媒体任务可关联项目和剧集
 - LangGraph Human-in-the-loop 示例运行时
 
 ## AI 漫剧方向
@@ -39,7 +41,9 @@ Cyanyi Drama 的目标不是单纯提供一个聊天窗口，而是把 AI 能力
 | UI | React 19、shadcn/ui、Base UI、Tailwind CSS 4 |
 | AI Runtime | Vercel AI SDK 7、LangGraph |
 | 模型协议 | OpenAI Compatible、Anthropic、Google Gemini、Volcengine Ark |
-| 数据库 | sql.js / SQLite |
+| 数据库 | Prisma ORM / MySQL 8.4 |
+| 队列与缓存 | Redis、BullMQ |
+| 对象存储 | S3 兼容存储（本地开发使用 MinIO） |
 | 认证 | HttpOnly Session Cookie |
 | 测试 | Vitest、TypeScript、ESLint |
 
@@ -49,6 +53,8 @@ Cyanyi Drama 的目标不是单纯提供一个聊天窗口，而是把 AI 能力
 
 ```bash
 pnpm install
+docker compose up -d
+pnpm db:push
 pnpm dev
 ```
 
@@ -89,7 +95,7 @@ AI_GATEWAY_API_KEY=
 
 ## 用户身份和数据
 
-开发环境默认使用本地 SQLite 保存用户、Session、渠道、模型和媒体任务数据，数据库目录为 `data/`，该目录已被 Git 忽略。
+用户、Session、渠道、模型、项目和媒体任务统一保存到 MySQL，连接地址由 `DATABASE_URL` 配置。Redis 用于 BullMQ 队列、任务事件和分布式锁；媒体文件使用 S3 兼容对象存储，默认连接本地 MinIO。项目不使用本地数据库文件。
 
 系统首次访问时会自动创建匿名用户和 HttpOnly Session。账号接口如下：
 
@@ -128,6 +134,16 @@ AI_GATEWAY_API_KEY=
 
 图片和视频任务会经过统一状态机，记录 queued、running、succeeded 和 failed 等状态，并按用户隔离查询。火山方舟的视频生成支持异步创建、轮询和结果处理。
 
+## 项目接口
+
+- `GET /api/projects`：分页读取当前用户的漫剧项目
+- `POST /api/projects`：创建项目并初始化项目配置
+- `GET/PATCH/DELETE /api/projects/:projectId`：读取、更新和删除项目
+- `GET /api/projects/:projectId/data`：一次读取项目配置和剧集列表
+- `GET/POST /api/projects/:projectId/episodes`：读取和创建剧集
+- `PATCH/DELETE /api/projects/:projectId/episodes/:episodeId`：编辑和删除剧集
+- `GET/PATCH /api/projects/:projectId/config`：读取和更新项目级模型、画幅、画风等配置
+
 ## 目录结构
 
 ```text
@@ -137,7 +153,10 @@ components/ui/             通用 UI 组件
 hooks/                     聊天、模型和运行时状态
 lib/agent/                 Agent 事件、适配器、协议和流处理
 lib/media/                 媒体任务契约和存储
-lib/server/                SQLite、认证和密钥加密
+lib/server/                Prisma、认证和密钥加密
+lib/queue/                 Redis/BullMQ 队列和任务事件
+lib/storage/               S3 兼容对象存储适配器
+lib/worker/                BullMQ Worker 入口
 docs/                      集成、工具扩展和项目说明
 ```
 
@@ -149,7 +168,7 @@ docs/                      集成、工具扩展和项目说明
 - 配音、音频设计、口型同步和字幕
 - 视频片段编排、剪辑和成片导出
 - 更完善的任务队列、重试、配额和审计能力
-- PostgreSQL / LibSQL 等生产级数据库部署方案
+- 生产环境的 MySQL、Redis 和 S3 兼容存储部署方案
 
 ## 开发原则
 

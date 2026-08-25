@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { decryptSecret, encryptSecret } from "@/lib/server/crypto";
-import { getDatabase, persistDatabase, queryRows, runSql } from "@/lib/server/database";
+import { prisma } from "@/lib/server/prisma";
 
 type ChannelInput = {
   id?: string;
@@ -16,45 +16,42 @@ type ChannelInput = {
     modelId?: string;
     type?: string;
     capabilities?: unknown;
-    protocol?: string;
   }>;
   modelIds?: string[];
 };
 
 export async function GET() {
   const { user, sessionId } = await ensureAnonymousUser();
-  const database = await getDatabase();
-  const rows = queryRows<{ id: string; name: string; protocol: string; base_url: string; encrypted_api_keys: string }>(database, "SELECT id, name, protocol, base_url, encrypted_api_keys FROM channels WHERE user_id = ? ORDER BY created_at", [user.id]);
-  return attachSessionCookie(Response.json({
-    channels: rows.map((row) => {
-      const channelModels = queryRows<{
-        id: string;
-        model_id: string;
-        name: string;
-        model_type: string;
-        capabilities_json: string;
-        selected: number;
-      }>(database, "SELECT id, model_id, name, model_type, capabilities_json FROM models WHERE channel_id = ? ORDER BY created_at", [row.id]);
-      return {
-        id: row.id,
-        name: row.name,
-        protocol: row.protocol,
-        baseUrl: row.base_url,
-        apiKeys: JSON.parse(decryptSecret(row.encrypted_api_keys)) as string[],
-        models: channelModels.map((model) => ({
+  const channels = await prisma.channel.findMany({
+    where: { userId: user.id },
+    orderBy: { createdAt: "asc" },
+    include: { models: { orderBy: { createdAt: "asc" } } },
+  });
+  return attachSessionCookie(
+    Response.json({
+      channels: channels.map((channel) => ({
+        id: channel.id,
+        name: channel.name,
+        protocol: channel.protocol,
+        baseUrl: channel.baseUrl,
+        apiKeys: JSON.parse(
+          decryptSecret(channel.encryptedApiKeys),
+        ) as string[],
+        models: channel.models.map((model) => ({
           id: model.id,
-          modelId: model.model_id,
+          modelId: model.modelId,
           name: model.name,
-          type: model.model_type,
-          capabilities: JSON.parse(model.capabilities_json),
-          selected: Boolean(model.selected),
-          channelId: row.id,
-          channelName: row.name,
-          protocol: row.protocol,
+          type: model.modelType,
+          capabilities: JSON.parse(model.capabilitiesJson),
+          selected: model.selected,
+          channelId: channel.id,
+          channelName: channel.name,
+          protocol: channel.protocol,
         })),
-      };
+      })),
     }),
-  }), sessionId);
+    sessionId,
+  );
 }
 
 export async function PUT(request: Request) {
@@ -63,61 +60,91 @@ export async function PUT(request: Request) {
   const name = body.name?.trim();
   const baseUrl = body.baseUrl?.trim();
   const protocol = body.protocol?.trim();
-  const apiKeys = [...new Set((body.apiKeys ?? []).map((key) => key.trim()).filter(Boolean))];
-  if (!name || !baseUrl || !protocol || apiKeys.length === 0) {
-    return Response.json({ message: "渠道名称、协议、Base URL 和 API Key 不能为空" }, { status: 400 });
-  }
+  const apiKeys = [
+    ...new Set((body.apiKeys ?? []).map((key) => key.trim()).filter(Boolean)),
+  ];
+  if (!name || !baseUrl || !protocol || apiKeys.length === 0)
+    return Response.json(
+      { message: "渠道名称、协议、Base URL 和 API Key 不能为空" },
+      { status: 400 },
+    );
 
-  const database = await getDatabase();
   const id = body.id?.trim() || randomUUID();
-  const now = new Date().toISOString();
-  const existing = queryRows(database, "SELECT id FROM channels WHERE id = ? AND user_id = ?", [id, user.id]);
-  const encryptedKeys = encryptSecret(JSON.stringify(apiKeys));
-  if (existing.length) {
-    runSql(database, "UPDATE channels SET name = ?, protocol = ?, base_url = ?, encrypted_api_keys = ?, updated_at = ? WHERE id = ? AND user_id = ?", [name, protocol, baseUrl, encryptedKeys, now, id, user.id]);
-  } else {
-    runSql(database, "INSERT INTO channels (id, user_id, name, protocol, base_url, encrypted_api_keys, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [id, user.id, name, protocol, baseUrl, encryptedKeys, now, now]);
-  }
-  const incomingModels = body.models ?? [];
-  const selectedModelIds = new Set(body.modelIds ?? []);
-  const incomingIds = new Set<string>();
-  for (const model of incomingModels) {
-    const modelId = model.modelId?.trim() || model.id.trim();
-    const modelRecordId = model.id.trim() || `${id}::${modelId}`;
-    if (!modelId || !modelRecordId || !model.name.trim()) continue;
-    incomingIds.add(modelRecordId);
-    runSql(database, `INSERT INTO models (id, channel_id, model_id, name, model_type, capabilities_json, selected, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(channel_id, model_id) DO UPDATE SET id = excluded.id, name = excluded.name, model_type = excluded.model_type, capabilities_json = excluded.capabilities_json, selected = excluded.selected, updated_at = excluded.updated_at`, [
-      modelRecordId,
-      id,
-      modelId,
-      model.name.trim(),
-      model.type || "llm",
-      JSON.stringify(model.capabilities ?? {}),
-      selectedModelIds.has(modelRecordId) || selectedModelIds.has(modelId) ? 1 : 0,
-      now,
-      now,
-    ]);
-  }
-  if (body.models) {
-    const existingModels = queryRows<{ id: string }>(database, "SELECT id FROM models WHERE channel_id = ?", [id]);
-    for (const model of existingModels) {
-      if (!incomingIds.has(model.id)) {
-        runSql(database, "DELETE FROM models WHERE id = ? AND channel_id = ?", [model.id, id]);
+  const selectedIds = new Set(body.modelIds ?? []);
+  const models = body.models ?? [];
+  const channel = await prisma.$transaction(async (tx) => {
+    const existing = await tx.channel.findFirst({
+      where: { id, userId: user.id },
+    });
+    const saved = existing
+      ? await tx.channel.update({
+          where: { id },
+          data: {
+            name,
+            protocol,
+            baseUrl,
+            encryptedApiKeys: encryptSecret(JSON.stringify(apiKeys)),
+          },
+        })
+      : await tx.channel.create({
+          data: {
+            id,
+            userId: user.id,
+            name,
+            protocol,
+            baseUrl,
+            encryptedApiKeys: encryptSecret(JSON.stringify(apiKeys)),
+          },
+        });
+    if (body.models) {
+      await tx.providerModel.deleteMany({
+        where: {
+          channelId: id,
+          id: { notIn: models.map((model) => model.id) },
+        },
+      });
+      for (const model of models) {
+        const modelId = model.modelId?.trim() || model.id.trim();
+        if (!modelId || !model.name.trim()) continue;
+        await tx.providerModel.upsert({
+          where: { channelId_modelId: { channelId: id, modelId } },
+          create: {
+            id: model.id || `${id}::${modelId}`,
+            channelId: id,
+            modelId,
+            name: model.name.trim(),
+            modelType: model.type || "llm",
+            capabilitiesJson: JSON.stringify(model.capabilities ?? {}),
+            selected: selectedIds.has(model.id) || selectedIds.has(modelId),
+          },
+          update: {
+            id: model.id || `${id}::${modelId}`,
+            name: model.name.trim(),
+            modelType: model.type || "llm",
+            capabilitiesJson: JSON.stringify(model.capabilities ?? {}),
+            selected: selectedIds.has(model.id) || selectedIds.has(modelId),
+          },
+        });
       }
     }
-  }
-  await persistDatabase();
-  return attachSessionCookie(Response.json({ channel: { id, name, protocol, baseUrl, apiKeys, models: incomingModels } }), sessionId);
+    return saved;
+  });
+  return attachSessionCookie(
+    Response.json({
+      channel: { id: channel.id, name, protocol, baseUrl, apiKeys, models },
+    }),
+    sessionId,
+  );
 }
 
 export async function DELETE(request: Request) {
   const { user, sessionId } = await ensureAnonymousUser();
   const id = new URL(request.url).searchParams.get("id");
-  if (!id) return Response.json({ message: "Channel id is required." }, { status: 400 });
-  const database = await getDatabase();
-  runSql(database, "DELETE FROM channels WHERE id = ? AND user_id = ?", [id, user.id]);
-  await persistDatabase();
+  if (!id)
+    return Response.json(
+      { message: "Channel id is required." },
+      { status: 400 },
+    );
+  await prisma.channel.deleteMany({ where: { id, userId: user.id } });
   return attachSessionCookie(Response.json({ ok: true }), sessionId);
 }

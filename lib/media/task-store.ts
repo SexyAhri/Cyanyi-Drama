@@ -1,10 +1,6 @@
+import { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/server/prisma";
 import type { MediaTask } from "./task-contract";
-import {
-  getDatabase,
-  persistDatabase,
-  queryRows,
-  runSql,
-} from "@/lib/server/database";
 
 export interface MediaTaskStore {
   create(task: MediaTask): Promise<MediaTask>;
@@ -13,158 +9,134 @@ export interface MediaTaskStore {
   list(filter?: {
     status?: MediaTask["status"];
     limit?: number;
+    projectId?: string;
+    episodeId?: string;
   }): Promise<MediaTask[]>;
 }
-
-/**
- * Development-only store. Replace this implementation with a database-backed
- * store before running multiple instances or deploying serverless workers.
- */
-export function createMemoryMediaTaskStore(): MediaTaskStore {
-  const tasks = new Map<string, MediaTask>();
-
-  return {
-    async create(task) {
-      if (tasks.has(task.id)) {
-        throw new Error("MEDIA_TASK_ALREADY_EXISTS");
-      }
-      tasks.set(task.id, task);
-      return task;
-    },
-    async get(id) {
-      return tasks.get(id) ?? null;
-    },
-    async update(task) {
-      if (!tasks.has(task.id)) {
-        throw new Error("MEDIA_TASK_NOT_FOUND");
-      }
-      tasks.set(task.id, task);
-      return task;
-    },
-    async list(filter) {
-      const values = [...tasks.values()]
-        .filter((task) => !filter?.status || task.status === filter.status)
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-      return filter?.limit ? values.slice(0, filter.limit) : values;
-    },
-  };
-}
-
-export const mediaTaskStore = createMemoryMediaTaskStore();
 
 export function createDatabaseMediaTaskStore(userId: string): MediaTaskStore {
   return {
     async create(task) {
-      const database = await getDatabase();
-      runSql(
-        database,
-        `INSERT INTO media_tasks (id, user_id, status, kind, provider, protocol, model, provider_task_id, payload_json, error_json, retry_count, max_retries, created_at, updated_at, started_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          task.id,
-          userId,
-          task.status,
-          task.kind,
-          task.provider,
-          task.protocol,
-          task.model,
-          task.providerTaskId ?? null,
-          JSON.stringify({ request: task.request, output: task.output }),
-          task.error ? JSON.stringify(task.error) : null,
-          task.retryCount,
-          task.maxRetries,
-          task.createdAt,
-          task.updatedAt,
-          task.startedAt ?? null,
-          task.completedAt ?? null,
-        ],
-      );
-      await persistDatabase();
+      await prisma.mediaTask.create({ data: toCreateData(userId, task) });
       return task;
     },
     async get(id) {
-      const database = await getDatabase();
-      const rows = queryRows<DatabaseTaskRow>(
-        database,
-        "SELECT * FROM media_tasks WHERE id = ? AND user_id = ? LIMIT 1",
-        [id, userId],
-      );
-      return rows[0] ? fromRow(rows[0]) : null;
+      const task = await prisma.mediaTask.findFirst({ where: { id, userId } });
+      return task ? fromRow(task) : null;
     },
     async update(task) {
-      const database = await getDatabase();
-      runSql(
-        database,
-        `UPDATE media_tasks SET status = ?, provider_task_id = ?, payload_json = ?, error_json = ?, retry_count = ?, max_retries = ?, updated_at = ?, started_at = ?, completed_at = ? WHERE id = ? AND user_id = ?`,
-        [
-          task.status,
-          task.providerTaskId ?? null,
-          JSON.stringify({ request: task.request, output: task.output }),
-          task.error ? JSON.stringify(task.error) : null,
-          task.retryCount,
-          task.maxRetries,
-          task.updatedAt,
-          task.startedAt ?? null,
-          task.completedAt ?? null,
-          task.id,
-          userId,
-        ],
-      );
-      await persistDatabase();
+      await prisma.mediaTask.updateMany({
+        where: { id: task.id, userId },
+        data: toUpdateData(task),
+      });
       return task;
     },
     async list(filter) {
-      const database = await getDatabase();
-      const rows = queryRows<DatabaseTaskRow>(
-        database,
-        "SELECT * FROM media_tasks WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
-        [userId, filter?.limit ?? 100],
-      );
-      return rows
-        .map(fromRow)
-        .filter((task) => !filter?.status || task.status === filter.status);
+      const rows = await prisma.mediaTask.findMany({
+        where: {
+          userId,
+          ...(filter?.status ? { status: filter.status } : {}),
+          ...(filter?.projectId ? { projectId: filter.projectId } : {}),
+          ...(filter?.episodeId ? { episodeId: filter.episodeId } : {}),
+        },
+        orderBy: { updatedAt: "desc" },
+        take: filter?.limit ?? 100,
+      });
+      return rows.map(fromRow);
     },
   };
 }
 
-type DatabaseTaskRow = {
-  id: string;
-  status: MediaTask["status"];
-  kind: MediaTask["kind"];
-  provider: string;
-  protocol: MediaTask["protocol"];
-  model: string;
-  provider_task_id: string | null;
-  payload_json: string;
-  error_json: string | null;
-  retry_count: number;
-  max_retries: number;
-  created_at: string;
-  updated_at: string;
-  started_at: string | null;
-  completed_at: string | null;
-};
+function toCreateData(userId: string, task: MediaTask) {
+  return {
+    id: task.id,
+    userId,
+    projectId: task.projectId ?? null,
+    episodeId: task.episodeId ?? null,
+    targetType: task.targetType ?? null,
+    targetId: task.targetId ?? null,
+    status: task.status,
+    kind: task.kind,
+    provider: task.provider,
+    protocol: task.protocol,
+    model: task.model,
+    providerTaskId: task.providerTaskId ?? null,
+    payload: toJsonValue({
+      request: task.request,
+      output: task.output ?? null,
+    }),
+    error: toNullableJson(task.error),
+    retryCount: task.retryCount,
+    maxRetries: task.maxRetries,
+    createdAt: new Date(task.createdAt),
+    updatedAt: new Date(task.updatedAt),
+    startedAt: task.startedAt ? new Date(task.startedAt) : null,
+    completedAt: task.completedAt ? new Date(task.completedAt) : null,
+  };
+}
 
-function fromRow(row: DatabaseTaskRow): MediaTask {
-  const payload = JSON.parse(row.payload_json) as {
+function toUpdateData(task: MediaTask) {
+  return {
+    projectId: task.projectId ?? null,
+    episodeId: task.episodeId ?? null,
+    targetType: task.targetType ?? null,
+    targetId: task.targetId ?? null,
+    status: task.status,
+    providerTaskId: task.providerTaskId ?? null,
+    payload: toJsonValue({
+      request: task.request,
+      output: task.output ?? null,
+    }),
+    error: toNullableJson(task.error),
+    retryCount: task.retryCount,
+    maxRetries: task.maxRetries,
+    updatedAt: new Date(task.updatedAt),
+    startedAt: task.startedAt ? new Date(task.startedAt) : null,
+    completedAt: task.completedAt ? new Date(task.completedAt) : null,
+  };
+}
+
+function toJsonValue(
+  value: unknown,
+): Prisma.InputJsonValue | typeof Prisma.JsonNull {
+  if (value === null || value === undefined) return Prisma.JsonNull;
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function toNullableJson(
+  value: unknown,
+): Prisma.InputJsonValue | typeof Prisma.DbNull {
+  if (value === null || value === undefined) return Prisma.DbNull;
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+type MediaTaskRow = Prisma.MediaTaskGetPayload<Record<string, never>>;
+
+function fromRow(row: MediaTaskRow): MediaTask {
+  const payload = row.payload as {
     request?: Record<string, unknown>;
     output?: MediaTask["output"];
   };
   return {
     id: row.id,
-    status: row.status,
-    kind: row.kind,
+    projectId: row.projectId ?? undefined,
+    episodeId: row.episodeId ?? undefined,
+    targetType: row.targetType ?? undefined,
+    targetId: row.targetId ?? undefined,
+    status: row.status as MediaTask["status"],
+    kind: row.kind as MediaTask["kind"],
     provider: row.provider,
-    protocol: row.protocol,
+    protocol: row.protocol as MediaTask["protocol"],
     model: row.model,
-    providerTaskId: row.provider_task_id ?? undefined,
+    providerTaskId: row.providerTaskId ?? undefined,
     request: payload.request ?? {},
-    output: payload.output,
-    error: row.error_json ? JSON.parse(row.error_json) : undefined,
-    retryCount: row.retry_count,
-    maxRetries: row.max_retries,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    startedAt: row.started_at ?? undefined,
-    completedAt: row.completed_at ?? undefined,
+    output: payload.output ?? undefined,
+    error: row.error as MediaTask["error"] | undefined,
+    retryCount: row.retryCount,
+    maxRetries: row.maxRetries,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    startedAt: row.startedAt?.toISOString(),
+    completedAt: row.completedAt?.toISOString(),
   };
 }

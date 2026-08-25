@@ -33,6 +33,10 @@ export type MediaAsset = {
 
 export type MediaTask = {
   id: string;
+  projectId?: string;
+  episodeId?: string;
+  targetType?: string;
+  targetId?: string;
   kind: MediaTaskKind;
   status: MediaTaskStatus;
   provider: string;
@@ -59,6 +63,10 @@ export type MediaTaskEvent =
 
 export function createMediaTask(input: {
   id: string;
+  projectId?: string;
+  episodeId?: string;
+  targetType?: string;
+  targetId?: string;
   kind: MediaTaskKind;
   provider: string;
   protocol: ChannelProtocol;
@@ -71,6 +79,10 @@ export function createMediaTask(input: {
   const now = input.now ?? new Date().toISOString();
   return {
     id: input.id,
+    projectId: input.projectId,
+    episodeId: input.episodeId,
+    targetType: input.targetType,
+    targetId: input.targetId,
     kind: input.kind,
     status: "queued",
     provider: input.provider,

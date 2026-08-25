@@ -1,0 +1,173 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String          @id @default(uuid())
+  email         String?         @unique
+  passwordHash  String?         @map("password_hash")
+  displayName   String          @map("display_name")
+  anonymous     Boolean         @default(false)
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+  sessions      Session[]
+  channels      Channel[]
+  projects      Project[]
+  mediaTasks    MediaTask[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Channel {
+  id               String          @id
+  userId           String          @map("user_id")
+  name             String
+  protocol         String
+  baseUrl          String          @map("base_url")
+  encryptedApiKeys String          @map("encrypted_api_keys") @db.Text
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  models           ProviderModel[]
+
+  @@index([userId, createdAt])
+  @@map("channels")
+}
+
+model ProviderModel {
+  id                String   @id
+  channelId         String   @map("channel_id")
+  modelId           String   @map("model_id")
+  name              String
+  modelType         String   @map("model_type")
+  capabilitiesJson  String   @map("capabilities_json") @db.Text
+  selected          Boolean  @default(true)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  channel           Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, modelId])
+  @@index([channelId])
+  @@map("models")
+}
+
+model Project {
+  id             String        @id
+  userId         String        @map("user_id")
+  name           String
+  description    String?       @db.Text
+  lastAccessedAt DateTime?     @map("last_accessed_at")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  config         ProjectConfig?
+  episodes       Episode[]
+  mediaTasks     MediaTask[]
+
+  @@index([userId, updatedAt])
+  @@map("projects")
+}
+
+model ProjectConfig {
+  id                    String   @id
+  projectId             String   @unique @map("project_id")
+  analysisModel         String?  @map("analysis_model")
+  characterModel        String?  @map("character_model")
+  locationModel         String?  @map("location_model")
+  storyboardModel       String?  @map("storyboard_model")
+  editModel             String?  @map("edit_model")
+  videoModel            String?  @map("video_model")
+  audioModel            String?  @map("audio_model")
+  videoRatio            String   @default("9:16") @map("video_ratio")
+  videoResolution       String   @default("720p") @map("video_resolution")
+  artStyle              String   @default("american-comic") @map("art_style")
+  ttsRate               String   @default("+50%") @map("tts_rate")
+  workflowMode          String   @default("novel-promotion") @map("workflow_mode")
+  globalAssetText       String?  @map("global_asset_text") @db.Text
+  capabilityOverridesJson String? @map("capability_overrides_json") @db.Text
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  project               Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_configs")
+}
+
+model Episode {
+  id            String      @id
+  projectId     String      @map("project_id")
+  episodeNumber Int         @map("episode_number")
+  name          String
+  description   String?     @db.Text
+  novelText     String?     @map("novel_text") @db.LongText
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  project       Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  mediaTasks    MediaTask[]
+
+  @@unique([projectId, episodeNumber])
+  @@index([projectId, episodeNumber])
+  @@map("episodes")
+}
+
+model MediaTask {
+  id             String        @id
+  userId         String        @map("user_id")
+  projectId      String?       @map("project_id")
+  episodeId      String?       @map("episode_id")
+  targetType     String?       @map("target_type")
+  targetId       String?       @map("target_id")
+  status         String
+  kind           String
+  provider       String
+  protocol       String
+  model          String
+  providerTaskId String?       @map("provider_task_id")
+  payload        Json
+  error          Json?
+  retryCount     Int           @default(0) @map("retry_count")
+  maxRetries     Int           @default(2) @map("max_retries")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+  startedAt      DateTime?     @map("started_at")
+  completedAt    DateTime?     @map("completed_at")
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project        Project?      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  episode        Episode?      @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  assets         MediaAsset[]
+
+  @@index([userId, updatedAt])
+  @@index([projectId, updatedAt])
+  @@index([episodeId, updatedAt])
+  @@map("media_tasks")
+}
+
+model MediaAsset {
+  id           String    @id
+  taskId       String    @map("task_id")
+  kind         String
+  storageKey   String?   @map("storage_key")
+  url          String?   @db.Text
+  mimeType     String?   @map("mime_type")
+  metadataJson String?   @map("metadata_json") @db.Text
+  createdAt    DateTime  @default(now()) @map("created_at")
+  task         MediaTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@map("media_assets")
+}

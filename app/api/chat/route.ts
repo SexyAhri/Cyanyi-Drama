@@ -44,15 +44,17 @@ import {
 } from "@/lib/media/task-contract";
 import {
   createDatabaseMediaTaskStore,
-  mediaTaskStore,
   type MediaTaskStore,
 } from "@/lib/media/task-store";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
+import { getProject } from "@/lib/projects/queries";
 
 type ChatRequestBody = {
   messages?: AgentMessage[];
   content?: string;
   model?: string;
+  projectId?: string;
+  episodeId?: string;
   metadata?: {
     apiKey?: string;
     baseUrl?: string;
@@ -69,6 +71,8 @@ type ProviderRuntime = {
   baseUrl?: string;
   protocol?: ChannelProtocol;
   userId?: string;
+  projectId?: string;
+  episodeId?: string;
 };
 
 type ChannelProtocol =
@@ -382,6 +386,8 @@ function resolveModelRoute(
       baseUrl: route?.baseUrl || fallback.baseUrl,
       protocol: route?.protocol || fallback.protocol || "openai-compatible",
       userId: fallback.userId,
+      projectId: fallback.projectId,
+      episodeId: fallback.episodeId,
     },
   };
 }
@@ -918,13 +924,16 @@ async function* createMediaGenerationEvents({
   runtime: ProviderRuntime;
 }): AsyncIterable<AgentEvent> {
   const isVideo = composer.mode === "video";
-  const taskStore = runtime.userId
-    ? createDatabaseMediaTaskStore(runtime.userId)
-    : mediaTaskStore;
+  if (!runtime.userId) throw new Error("MEDIA_TASK_USER_REQUIRED");
+  const taskStore = createDatabaseMediaTaskStore(runtime.userId);
   const mediaTaskId = createId("media_task");
   const mediaTaskKind = isVideo ? "video" : "image";
   let mediaTask = createMediaTask({
     id: mediaTaskId,
+    projectId: runtime.projectId,
+    episodeId: runtime.episodeId,
+    targetType: mediaTaskKind,
+    targetId: mediaTaskId,
     kind: mediaTaskKind,
     provider: runtime.protocol === "volcengine-ark" ? "volcengine-ark" : "openai-compatible",
     protocol: runtime.protocol ?? "openai-compatible",
@@ -3728,6 +3737,15 @@ async function* createAiSdkEvents({
 export async function POST(request: Request) {
   const body = (await request.json()) as ChatRequestBody;
   const { user, sessionId } = await ensureAnonymousUser();
+  if (body.projectId?.trim()) {
+    const project = await getProject(user.id, body.projectId.trim());
+    if (!project) {
+      return attachSessionCookie(
+        createAgentEventStreamResponse(createRuntimeErrorEvents("项目不存在或无权访问。")),
+        sessionId,
+      );
+    }
+  }
   const content = body.content?.trim() ?? "";
   const composer = body.metadata?.composer;
   const modelRoutes = body.metadata?.modelRoutes;
@@ -3747,6 +3765,8 @@ export async function POST(request: Request) {
   const providerRuntime = {
     ...resolved.providerRuntime,
     userId: user.id,
+    projectId: body.projectId?.trim() || undefined,
+    episodeId: body.episodeId?.trim() || undefined,
   };
   const requestedAvailableMediaToolIntent = resolveAvailableMediaToolIntent({
     composer,
@@ -3788,6 +3808,8 @@ export async function POST(request: Request) {
             baseUrl: mediaRoute.runtime.baseUrl,
             protocol: mediaRoute.runtime.protocol,
             userId: user.id,
+            projectId: body.projectId?.trim() || undefined,
+            episodeId: body.episodeId?.trim() || undefined,
           },
         }),
       ), sessionId);

@@ -17,10 +17,19 @@ export async function GET(request: Request) {
     ? Math.min(Math.max(Math.floor(limitValue), 1), 100)
     : 50;
 
-  return attachSessionCookie(Response.json({
-    tasks: await mediaTaskStore.list({
-      limit,
-      ...(status ? { status } : {}),
+  return attachSessionCookie(
+    Response.json({
+      tasks: await mediaTaskStore.list({
+        limit,
+        ...(status ? { status } : {}),
+        ...(url.searchParams.get("projectId")
+          ? { projectId: url.searchParams.get("projectId")! }
+          : {}),
+        ...(url.searchParams.get("episodeId")
+          ? { episodeId: url.searchParams.get("episodeId")! }
+          : {}),
+      }),
     }),
-  }), sessionId);
+    sessionId,
+  );
 }
