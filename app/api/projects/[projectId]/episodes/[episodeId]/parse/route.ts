@@ -11,6 +11,7 @@ export async function POST(request: Request, context: Context) {
   const channelId =
     typeof body.channelId === "string" ? body.channelId.trim() : "";
   const model = typeof body.model === "string" ? body.model.trim() : "";
+  const locale = body.locale === "en" ? "en" : "zh";
   if (!channelId || !model)
     return attachSessionCookie(
       Response.json(
@@ -27,7 +28,7 @@ export async function POST(request: Request, context: Context) {
     workflowType: "novel-production",
     targetType: "episode",
     targetId: episodeId,
-    input: { channelId, model },
+    input: { channelId, model, locale },
     steps: [
       {
         key: "analyze_novel",
@@ -38,7 +39,7 @@ export async function POST(request: Request, context: Context) {
           "analysis.props",
           "analysis.panels",
         ],
-        input: { channelId, model },
+        input: { channelId, model, locale },
       },
       {
         key: "split_clips",
@@ -66,7 +67,7 @@ export async function POST(request: Request, context: Context) {
         type: "voice_analyze",
         dependsOn: ["build_storyboard"],
         artifactTypes: ["voice.lines"],
-        input: { channelId, model },
+        input: { channelId, model, locale },
       },
     ],
     maxAttempts: 1,

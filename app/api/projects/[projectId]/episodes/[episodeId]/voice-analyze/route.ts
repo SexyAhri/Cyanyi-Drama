@@ -13,6 +13,7 @@ export async function POST(request: Request, context: Context) {
   const channelId =
     typeof body.channelId === "string" ? body.channelId.trim() : "";
   const model = typeof body.model === "string" ? body.model.trim() : "";
+  const locale = body.locale === "en" ? "en" : "zh";
   if (!channelId || !model)
     return attachSessionCookie(
       Response.json(
@@ -28,6 +29,7 @@ export async function POST(request: Request, context: Context) {
       episodeId,
       channelId,
       model,
+      locale,
     });
     return attachSessionCookie(Response.json({ voiceLines }), sessionId);
   } catch (error) {

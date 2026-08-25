@@ -344,13 +344,19 @@ async function runStep(
       projectId: run.projectId,
       ...(run.episodeId ? { episodeId: run.episodeId } : {}),
     } as Record<string, Prisma.JsonValue>;
-    if (
-      !getString(input.episodeId) ||
-      !getString(input.channelId) ||
-      !getString(input.model)
-    )
+    const episodeId = getString(input.episodeId);
+    const channelId = getString(input.channelId);
+    const model = getString(input.model);
+    if (!episodeId || !channelId || !model)
       throw new Error("WORKFLOW_PARSE_INPUT_REQUIRED");
-    return parseNovelAndPersist(userId, input as unknown as NovelParseInput);
+    return parseNovelAndPersist(userId, {
+      projectId: run.projectId,
+      episodeId,
+      channelId,
+      model,
+      sourceText: getString(input.sourceText) || undefined,
+      locale: getString(input.locale) === "en" ? "en" : "zh",
+    } satisfies NovelParseInput);
   }
   if (step.stepType === "split_clips") {
     if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
@@ -478,6 +484,8 @@ async function runStep(
       episodeId: run.episodeId,
       channelId,
       model,
+      locale:
+        getString(stepInput.locale ?? runInput.locale) === "en" ? "en" : "zh",
     });
     return { lineCount: lines.length };
   }

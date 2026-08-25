@@ -21,8 +21,8 @@
 | --- | --- | ---: | --- | --- |
 | M0 | 已完成 | 1-2 天 | 分类当前工作树、删除空迁移和生成物、强制生产 `APP_SECRET`、验证 Prisma Schema 和迁移、通过类型与测试、提交现有基线 | 跟踪文件干净；没有密钥和空迁移；全新数据库迁移成功；类型检查和测试通过 |
 | M1 | 已完成 | 3-5 天 | 活动 Run 复用、目标级去重、Run 租约抢占和续租、孤儿任务补偿、取消超时、`Retry-After` | 重复请求只返回一个活动 Run；第二个 Worker 无法执行已租用 Run；过期任务可恢复且不重复计费 |
-| M2 | 下一步 | 3-4 天 | Prompt 目录、Prompt ID、中英模板、变量契约、版本 Hash、`jsonrepair + Zod`、纠错重试 | 缺失或多余变量稳定失败；畸形 JSON 可修复或重试；Prompt 契约测试通过 |
-| M3 | 待开始 | 4-6 天 | Story-to-Script：并行角色/场景/道具分析、边界校验切片、逐 clip 剧本转换、增量 Artifact | 单个 clip 可独立重试；Worker 中断后成功 clip 不丢失；原文无重叠和缺口 |
+| M2 | 已完成 | 3-4 天 | Prompt 目录、Prompt ID、中英模板、变量契约、版本 Hash、`jsonrepair + Zod`、纠错重试 | 缺失或多余变量稳定失败；畸形 JSON 可修复或重试；Prompt 契约测试通过 |
+| M3 | 下一步 | 4-6 天 | Story-to-Script：并行角色/场景/道具分析、边界校验切片、逐 clip 剧本转换、增量 Artifact | 单个 clip 可独立重试；Worker 中断后成功 clip 不丢失；原文无重叠和缺口 |
 | M4 | 待开始 | 5-7 天 | Script-to-Storyboard：规划、摄影、表演、细化、台词分析、clip/phase 级失效重试 | 重试一个 phase 只失效其下游；其他 clip 不变化；分镜和台词输出通过 Schema 校验 |
 | M5 | 待开始 | 4-6 天 | 资产上传、参考图转角色、资产提取、标记/AI 分集、OpenAI Compatible 媒体模板、空字段显式省略 | 新 Provider 无需修改 Worker 核心代码；上传和提取资产保留所有权与来源 |
 | M6 | 待开始 | 3-5 天 | 计费对账、结构化 Trace、Prompt Canary、行为 Guard、渲染规格归一化、系统回归测试 | 对账幂等；Run/Task/Step 可串联追踪；混合媒体输入能生成规格统一的成片 |
@@ -53,12 +53,15 @@ M1 实库并发验收使用 8 个同目标并发创建请求，只持久化 1 �
 
 ## 6. M2 Prompt 与领域 Agent 任务表
 
-| 任务 | 目标模块 | 验收测试 |
-| --- | --- | --- |
-| Prompt Registry | `lib/prompts`、`lib/prompt-i18n` | 每个 Prompt ID 都有中英模板和变量声明 |
-| 领域身份 | 选角、场景/道具、切片、编剧、分镜规划、摄影、表演、细化、台词 | 每个角色职责单一且有输出 Schema |
-| 结构化解析 | 共享 LLM JSON Parser | 可修复输出成功；语义错误触发纠错重试 |
-| 回归 Guard | Scripts 和 Tests | 占位符、必要字段、JSON Canary 和固定样本测试通过 |
+| 任务 | 目标模块 | 验收测试 | 状态 |
+| --- | --- | --- | --- |
+| Prompt Registry | `lib/prompts` | 每个 Prompt ID 都有中英模板和变量声明 | 已完成 |
+| 领域身份 | 选角、场景/道具、切片、编剧、分镜规划、摄影、表演、细化、台词 | 每个角色职责单一且有输出 Schema | 已完成 |
+| 结构化解析 | 共享 LLM JSON Parser | 可修复输出成功；语义错误触发纠错重试 | 已完成 |
+| 现有调用链迁移 | 小说解析、台词分析、Workflow/API Locale | 删除硬编码 Prompt 和手写 JSON 解析 | 已完成 |
+| 回归 Guard | Prompt 与结构化输出 Tests | 占位符、必要字段、JSON Canary 和固定样本测试通过 | 已完成 |
+
+M2 共注册 9 个领域 Prompt ID 和 18 份中英模板。小说解析已按角色分析与场景/道具分析并行、分镜规划串行的依赖顺序执行；台词分析复用同一结构化请求层，并保留 `panelIndex` 到持久化 `panelId` 的映射。10 项 M2 定向测试覆盖变量契约、双语 Hash、Markdown Fence、混合文本、`jsonrepair` 和单次语义纠错；全量 86 项测试、TypeScript、ESLint、生产构建、Prisma 校验及 13 组迁移状态均通过。
 
 ## 7. M3-M4 Artifact 与重试粒度
 
@@ -79,8 +82,8 @@ M1 实库并发验收使用 8 个同目标并发创建请求，只持久化 1 �
 | `docs: add backend parity roadmap` | 本计划表和验收门禁 | 是 |
 | `feat: establish production pipeline baseline` | 当前 Prisma Schema、非空迁移、Storage、Provider、媒体 Runtime、资产库、Billing、Workflow Checkpoint、API 和测试 | 已提交 |
 | `fix: harden production app secret` | 共享 `APP_SECRET` 策略和测试 | 已随 M0 基线提交 |
-| `feat: add workflow run leases and dedupe` | M1 Schema、Runtime、API 和测试 | 当前提交 |
-| `feat: add domain prompt contracts` | M2 Prompt、Parser 和 Guard | M1 之后 |
+| `feat: add workflow run leases and dedupe` | M1 Schema、Runtime、API 和测试 | 已提交 |
+| `feat: add domain prompt contracts` | M2 Prompt、Parser 和 Guard | 本次提交 |
 | `feat: implement story-to-script workflow` | M3 编排、Artifact 和落库 | M2 之后 |
 | `feat: implement script-to-storyboard workflow` | M4 编排、Artifact 和落库 | M3 之后 |
 

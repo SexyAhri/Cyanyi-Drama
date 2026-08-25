@@ -1,6 +1,12 @@
 import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
-import { fetchWithProviderRetry } from "@/lib/providers/http";
+import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
+import {
+  PROMPT_IDS,
+  renderPrompt,
+  type PromptLocale,
+} from "@/lib/prompts";
+import { voiceAnalysisSchema } from "@/lib/prompts/schemas";
 
 export type VoiceAnalyzeInput = {
   userId: string;
@@ -8,6 +14,7 @@ export type VoiceAnalyzeInput = {
   episodeId: string;
   channelId: string;
   model: string;
+  locale?: PromptLocale;
 };
 
 export class VoiceAnalyzeError extends Error {
@@ -68,81 +75,109 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
   const keys = parseKeys(channel.encryptedApiKeys);
   if (!keys.length) throw new VoiceAnalyzeError("渠道没有可用 API Key");
 
+  const characters = await prisma.novelCharacter.findMany({
+    where: { projectId: input.projectId },
+    orderBy: { name: "asc" },
+    select: {
+      name: true,
+      aliases: true,
+      profileJson: true,
+      introduction: true,
+    },
+  });
   const panelContext = episode.storyboard.panels.map((panel) => ({
     panelIndex: panel.panelIndex,
     description: panel.description ?? "",
     subtitleText: panel.subtitleText ?? "",
   }));
-  const prompt = [
-    "你是 AI 漫剧台词分析器。只返回严格 JSON，不要 Markdown，不要解释。",
-    '返回格式：{"lines":[{"speaker":"角色名","content":"台词","emotionPrompt":"情绪","emotionStrength":0.5,"matchedPanelIndex":0}]}。',
-    "只提取角色实际说出的对白，不要把旁白、动作描述写进 content。",
-    "speaker 必须是角色名；matchedPanelIndex 必须对应提供的面板编号，无法匹配时可省略。",
-    'emotionStrength 必须是 0 到 1 的数字；没有对白时返回 {"lines":[]}。',
-    `剧集文本：\n${episode.novelText}`,
-    `分镜面板：\n${JSON.stringify(panelContext)}`,
-  ].join("\n\n");
-
-  let lastError: unknown;
-  for (const apiKey of keys) {
-    try {
-      const response = await fetchWithProviderRetry(
-        `${channel.baseUrl.replace(/\/+$/, "")}/chat/completions`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: input.model,
-            temperature: 0.1,
-            response_format: { type: "json_object" },
-            messages: [{ role: "user", content: prompt }],
-          }),
-          signal: AbortSignal.timeout(120_000),
-          cache: "no-store",
-        },
-      );
-      const payload = await readJson(response);
-      if (!response.ok)
-        throw new Error(providerMessage(payload, response.status));
-      const lines = normalizeLines(
-        extractText(payload),
-        episode.storyboard.panels,
-      );
-      await prisma.$transaction(async (tx) => {
-        await tx.voiceLine.deleteMany({
-          where: { episodeId: input.episodeId },
-        });
-        if (lines.length) {
-          await tx.voiceLine.createMany({
-            data: lines.map((line, index) => ({
-              id: crypto.randomUUID(),
-              episodeId: input.episodeId,
-              lineIndex: index,
-              speaker: line.speaker,
-              content: line.content,
-              emotionPrompt: line.emotionPrompt,
-              emotionStrength: line.emotionStrength,
-              matchedPanelId: line.matchedPanelId,
-              status: "draft",
-            })),
-          });
-        }
-      });
-      return prisma.voiceLine.findMany({
-        where: { episodeId: input.episodeId },
-        orderBy: { lineIndex: "asc" },
-      });
-    } catch (error) {
-      lastError = error;
-    }
+  let analyzed: Awaited<ReturnType<typeof requestVoiceAnalysis>>;
+  try {
+    analyzed = await requestVoiceAnalysis({
+      baseUrl: channel.baseUrl,
+      apiKeys: keys,
+      model: input.model,
+      locale: input.locale ?? "zh",
+      sourceText: episode.novelText,
+      characters: characters.map((character) => ({
+        name: character.name,
+        aliases: parseStoredJson(character.aliases, []),
+        profile: parseStoredJson(character.profileJson, {}),
+        introduction: character.introduction,
+      })),
+      panels: panelContext,
+    });
+  } catch (error) {
+    throw new VoiceAnalyzeError(
+      error instanceof Error ? error.message : "台词分析失败",
+      502,
+    );
   }
-  throw new VoiceAnalyzeError(
-    lastError instanceof Error ? lastError.message : "台词分析失败",
-    502,
+  const panelIds = new Map(
+    episode.storyboard.panels.map((panel) => [panel.panelIndex, panel.id]),
   );
+  const lines = analyzed.data.lines.map((line) => ({
+    speaker: line.speaker,
+    content: line.content,
+    emotionPrompt: line.emotionPrompt ?? null,
+    emotionStrength: line.emotionStrength,
+    matchedPanelId:
+      line.matchedPanelIndex === null
+        ? null
+        : (panelIds.get(line.matchedPanelIndex) ?? null),
+  }));
+
+  await prisma.$transaction(async (tx) => {
+    await tx.voiceLine.deleteMany({
+      where: { episodeId: input.episodeId },
+    });
+    if (lines.length) {
+      await tx.voiceLine.createMany({
+        data: lines.map((line, index) => ({
+          id: crypto.randomUUID(),
+          episodeId: input.episodeId,
+          lineIndex: index,
+          speaker: line.speaker,
+          content: line.content,
+          emotionPrompt: line.emotionPrompt,
+          emotionStrength: line.emotionStrength,
+          matchedPanelId: line.matchedPanelId,
+          status: "draft",
+        })),
+      });
+    }
+  });
+  return prisma.voiceLine.findMany({
+    where: { episodeId: input.episodeId },
+    orderBy: { lineIndex: "asc" },
+  });
+}
+
+function requestVoiceAnalysis(input: {
+  baseUrl: string;
+  apiKeys: string[];
+  model: string;
+  locale: PromptLocale;
+  sourceText: string;
+  characters: unknown[];
+  panels: unknown[];
+}) {
+  return requestOpenAiStructured({
+    baseUrl: input.baseUrl,
+    apiKeys: input.apiKeys,
+    model: input.model,
+    temperature: 0.1,
+    maxCorrectionAttempts: 1,
+    prompt: renderPrompt({
+      id: PROMPT_IDS.STORY_VOICE_ANALYSIS,
+      locale: input.locale,
+      variables: {
+        source_text: input.sourceText,
+        characters_json: JSON.stringify(input.characters),
+        panels_json: JSON.stringify(input.panels),
+      },
+    }),
+    schema: voiceAnalysisSchema,
+  });
 }
 
 function parseKeys(value: string) {
@@ -160,111 +195,11 @@ function parseKeys(value: string) {
   }
 }
 
-function normalizeLines(
-  text: string,
-  panels: Array<{ id: string; panelIndex: number }>,
-) {
-  const cleaned = text
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "");
-  let parsed: unknown;
+function parseStoredJson(value: string | null, fallback: unknown) {
+  if (!value) return fallback;
   try {
-    parsed = JSON.parse(cleaned);
+    return JSON.parse(value) as unknown;
   } catch {
-    throw new Error("台词分析返回的 JSON 无效");
+    return fallback;
   }
-  if (
-    !parsed ||
-    typeof parsed !== "object" ||
-    !Array.isArray((parsed as { lines?: unknown }).lines)
-  ) {
-    throw new Error("台词分析返回缺少 lines 数组");
-  }
-  const panelIds = new Map(panels.map((panel) => [panel.panelIndex, panel.id]));
-  return (parsed as { lines: unknown[] }).lines
-    .flatMap((value) => {
-      if (!value || typeof value !== "object") return [];
-      const item = value as Record<string, unknown>;
-      const speaker =
-        typeof item.speaker === "string" ? item.speaker.trim() : "";
-      const content =
-        typeof item.content === "string" ? item.content.trim() : "";
-      if (!speaker || !content) return [];
-      const rawStrength =
-        typeof item.emotionStrength === "number" ? item.emotionStrength : 0.5;
-      const panelIndex =
-        typeof item.matchedPanelIndex === "number" &&
-        Number.isInteger(item.matchedPanelIndex)
-          ? item.matchedPanelIndex
-          : undefined;
-      return [
-        {
-          speaker,
-          content,
-          emotionPrompt:
-            typeof item.emotionPrompt === "string"
-              ? item.emotionPrompt.trim() || null
-              : null,
-          emotionStrength: Math.min(1, Math.max(0, rawStrength)),
-          matchedPanelId:
-            panelIndex === undefined
-              ? null
-              : (panelIds.get(panelIndex) ?? null),
-        },
-      ];
-    })
-    .slice(0, 500);
-}
-
-function extractText(payload: unknown) {
-  const choice =
-    payload &&
-    typeof payload === "object" &&
-    Array.isArray((payload as { choices?: unknown }).choices)
-      ? (payload as { choices: unknown[] }).choices[0]
-      : undefined;
-  const message =
-    choice && typeof choice === "object"
-      ? (choice as { message?: unknown }).message
-      : undefined;
-  const content =
-    message && typeof message === "object"
-      ? (message as { content?: unknown }).content
-      : undefined;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content))
-    return content
-      .map((part) =>
-        part &&
-        typeof part === "object" &&
-        typeof (part as { text?: unknown }).text === "string"
-          ? (part as { text: string }).text
-          : "",
-      )
-      .join("");
-  throw new Error("台词分析响应为空");
-}
-
-async function readJson(response: Response) {
-  const text = await response.text();
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return { message: text };
-  }
-}
-
-function providerMessage(payload: unknown, status: number) {
-  if (payload && typeof payload === "object") {
-    const value = payload as Record<string, unknown>;
-    if (typeof value.message === "string") return value.message;
-    if (
-      value.error &&
-      typeof value.error === "object" &&
-      typeof (value.error as { message?: unknown }).message === "string"
-    )
-      return (value.error as { message: string }).message;
-  }
-  return `台词分析服务请求失败 (${status})`;
 }
