@@ -65,3 +65,33 @@
 剧集也支持批量生成：`POST /api/projects/:projectId/episodes/:episodeId/storyboard/generate-batch`。请求的 `items` 使用 `{ "panelId": "...", "prompt": "..." }`，返回的 `batchId` 可以交给批次接口统一查询、取消和重试。
 
 分镜图可以通过资产确认接口使用 `targetType: "storyboard_panel"` 写入 `selected` 资产引用。
+
+## 分镜视频
+
+`POST /api/projects/:projectId/episodes/:episodeId/storyboard/:panelId/generate-video`
+
+```json
+{
+  "channelId": "video-channel-id",
+  "model": "seedance-1-0-pro",
+  "ratio": "16:9",
+  "resolution": "720p",
+  "duration": "5s"
+}
+```
+
+视频提示词优先使用分镜格的 `videoPrompt`，没有时回退到 `description`。任务会自动携带当前分镜图片、已确认角色图片和已确认场景图片作为参考图。接口只创建异步媒体任务，返回的 `task` 可以通过媒体任务接口读取状态。
+
+剧集视频也支持批量生成：`POST /api/projects/:projectId/episodes/:episodeId/storyboard/generate-video-batch`。请求的 `items` 使用 `{ "panelId": "...", "prompt": "..." }`，返回的 `batchId` 与图片批次共用查询、取消和重试接口。
+
+视频任务成功后，Worker 会把结果写入 `StoryboardPanel.videoAssetId`，并创建 `generated_video` 资产引用。确认视频时调用资产确认接口：
+
+```json
+{
+  "targetType": "storyboard_panel",
+  "targetId": "panel-id",
+  "assetKind": "video"
+}
+```
+
+视频任务不会使用假模型或假结果。渠道没有视频能力、服务商返回错误或轮询超时时，任务会进入 `failed`，保留原始错误并可通过批次或单任务接口重试。

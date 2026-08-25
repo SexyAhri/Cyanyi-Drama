@@ -163,9 +163,11 @@ Worker 不会在没有实际服务商处理器时伪造成功状态；未接入�
 - `POST /api/projects/:projectId/episodes/:episodeId/parse`：创建真实文本解析工作流
 - `POST /api/projects/:projectId/assets/generate`：创建角色或场景图片任务
 - `POST /api/projects/:projectId/assets/generate-batch`：批量创建角色或场景图片任务，默认复用已选参考图
-- `POST /api/projects/:projectId/assets/select`：确认角色形象或场景图为当前基准资产
+- `POST /api/projects/:projectId/assets/select`：确认角色、场景或分镜图片/视频资产为当前基准资产（分镜通过 `assetKind: "image" | "video"` 区分）
 - `POST /api/projects/:projectId/episodes/:episodeId/storyboard/:panelId/generate`：根据分镜格和已确认资产生成分镜图片
 - `POST /api/projects/:projectId/episodes/:episodeId/storyboard/generate-batch`：批量生成剧集分镜图片
+- `POST /api/projects/:projectId/episodes/:episodeId/storyboard/:panelId/generate-video`：根据分镜格、分镜图片和已确认资产生成视频片段
+- `POST /api/projects/:projectId/episodes/:episodeId/storyboard/generate-video-batch`：批量生成剧集视频片段
 - `GET/POST /api/media/batches/:batchId`：读取批次汇总，批量取消或重试失败任务
 - `GET /api/projects/:projectId/workflows`：读取项目工作流
 - `GET/POST /api/workflows/:runId`：读取、暂停、恢复、重试或取消工作流

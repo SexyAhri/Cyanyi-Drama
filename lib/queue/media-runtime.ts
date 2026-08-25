@@ -110,7 +110,7 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
   });
 }
 
-async function linkGeneratedAsset(task: { id: string; projectId: string | null; episodeId: string | null; targetType: string | null; targetId: string | null }, userId: string, asset: MediaAsset | undefined) {
+async function linkGeneratedAsset(task: { id: string; projectId: string | null; episodeId: string | null; targetType: string | null; targetId: string | null; kind: string }, userId: string, asset: MediaAsset | undefined) {
   if (!asset || !task.projectId || !task.targetId || !task.targetType) return;
   if (task.targetType === "character_appearance") {
     const appearance = await prisma.characterAppearance.findFirst({
@@ -160,12 +160,15 @@ async function linkGeneratedAsset(task: { id: string; projectId: string | null; 
         id: task.targetId,
         storyboard: { projectId: task.projectId, episodeId: task.episodeId ?? undefined, project: { userId } },
       },
-      data: { imageAssetId: asset.id, updatedAt: new Date() },
+      data:
+        task.kind === "video"
+          ? { videoAssetId: asset.id, updatedAt: new Date() }
+          : { imageAssetId: asset.id, updatedAt: new Date() },
     });
   } else {
     return;
   }
-  await prisma.assetReference.create({ data: { id: `${task.id}_reference`, projectId: task.projectId, episodeId: task.episodeId, mediaAssetId: asset.id, entityType: task.targetType, entityId: task.targetId, role: "generated" } }).catch(() => undefined);
+  await prisma.assetReference.create({ data: { id: `${task.id}_reference`, projectId: task.projectId, episodeId: task.episodeId, mediaAssetId: asset.id, entityType: task.targetType, entityId: task.targetId, role: task.kind === "video" ? "generated_video" : "generated" } }).catch(() => undefined);
 }
 
 async function generateImage(

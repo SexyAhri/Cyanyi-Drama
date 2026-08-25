@@ -202,6 +202,123 @@ export async function createStoryboardPanelImageTask(input: {
   };
 }
 
+export async function createStoryboardPanelVideoTask(input: {
+  userId: string;
+  projectId: string;
+  episodeId: string;
+  panelId: string;
+  batchId?: string;
+  channelId: string;
+  model: string;
+  prompt?: string;
+  ratio?: string;
+  resolution?: string;
+  duration?: string;
+}) {
+  const channel = await prisma.channel.findFirst({
+    where: { id: input.channelId, userId: input.userId },
+    select: { id: true, protocol: true },
+  });
+  if (
+    !channel ||
+    (channel.protocol !== "openai-compatible" &&
+      channel.protocol !== "volcengine-ark")
+  ) {
+    throw new ProjectAssetTaskError(
+      "视频生成需要有效的 OpenAI 兼容或火山方舟渠道",
+      400,
+    );
+  }
+  const selectedModel = await prisma.providerModel.count({
+    where: {
+      channelId: input.channelId,
+      modelId: input.model,
+      selected: true,
+      OR: [
+        { modelType: "video" },
+        { capabilitiesJson: { contains: '"video"' } },
+      ],
+    },
+  });
+  if (!selectedModel) {
+    throw new ProjectAssetTaskError("视频模型未在该渠道中配置或未选中", 400);
+  }
+
+  const panel = await prisma.storyboardPanel.findFirst({
+    where: {
+      id: input.panelId,
+      storyboard: {
+        projectId: input.projectId,
+        episodeId: input.episodeId,
+        project: { userId: input.userId },
+      },
+    },
+    select: {
+      id: true,
+      description: true,
+      videoPrompt: true,
+      imageAsset: { select: { url: true, mimeType: true } },
+      charactersJson: true,
+      locationName: true,
+    },
+  });
+  if (!panel) throw new ProjectAssetTaskError("分镜格不存在", 404);
+  const prompt =
+    input.prompt?.trim() || panel.videoPrompt?.trim() || panel.description?.trim();
+  if (!prompt) throw new ProjectAssetTaskError("分镜格缺少视频提示词", 400);
+
+  const referenceImages = await findStoryboardReferenceImages({
+    projectId: input.projectId,
+    characters: parseStringArray(panel.charactersJson),
+    locationName: panel.locationName,
+  });
+  if (panel.imageAsset?.url) {
+    referenceImages.unshift({
+      url: panel.imageAsset.url,
+      mimeType: panel.imageAsset.mimeType ?? undefined,
+    });
+  }
+  const task = createMediaTask({
+    id: `media_task_${randomUUID()}`,
+    projectId: input.projectId,
+    episodeId: input.episodeId,
+    batchId: input.batchId,
+    channelId: input.channelId,
+    targetType: "storyboard_panel",
+    targetId: panel.id,
+    kind: "video",
+    provider:
+      channel.protocol === "volcengine-ark" ? "volcengine-ark" : "openai-compatible",
+    protocol: channel.protocol as "openai-compatible" | "volcengine-ark",
+    model: input.model,
+    request: {
+      prompt,
+      ratio: input.ratio ?? "16:9",
+      resolution: input.resolution ?? "720p",
+      duration: input.duration ?? "5s",
+      format: "mp4",
+      ...(referenceImages.length ? { referenceImages: referenceImages.slice(0, 9) } : {}),
+    },
+  });
+  const store = createDatabaseMediaTaskStore(input.userId);
+  await store.create(task);
+  const job = await enqueueMediaJob({
+    taskId: task.id,
+    userId: input.userId,
+    projectId: input.projectId,
+    episodeId: input.episodeId,
+    channelId: input.channelId,
+    kind: "video",
+    maxAttempts: task.maxRetries + 1,
+  });
+  task.queueJobId = job.id;
+  await store.update(task);
+  return {
+    task,
+    panel: { id: panel.id, referenceCount: referenceImages.length },
+  };
+}
+
 async function createTargetEntity(input: CreateProjectImageTaskInput) {
   if (input.targetType === "character") {
     const target = await prisma.novelCharacter.findFirst({

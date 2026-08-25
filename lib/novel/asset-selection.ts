@@ -1,12 +1,14 @@
 import { prisma } from "@/lib/server/prisma";
 
 export type SelectableAssetType = "character" | "location" | "storyboard_panel";
+export type StoryboardAssetKind = "image" | "video";
 
 export async function selectProjectAsset(input: {
   userId: string;
   projectId: string;
   targetType: SelectableAssetType;
   targetId: string;
+  assetKind?: StoryboardAssetKind;
 }) {
   if (input.targetType === "character") {
     const appearance = await prisma.characterAppearance.findFirst({
@@ -53,26 +55,30 @@ export async function selectProjectAsset(input: {
   }
 
   if (input.targetType === "storyboard_panel") {
+    const assetKind = input.assetKind ?? "image";
     const panel = await prisma.storyboardPanel.findFirst({
       where: {
         id: input.targetId,
-        imageAssetId: { not: null },
+        ...(assetKind === "video"
+          ? { videoAssetId: { not: null } }
+          : { imageAssetId: { not: null } }),
         storyboard: {
           projectId: input.projectId,
           project: { userId: input.userId },
         },
       },
-      select: { id: true, imageAssetId: true },
+      select: { id: true, imageAssetId: true, videoAssetId: true },
     });
-    if (!panel || !panel.imageAssetId) return null;
-    const assetId = panel.imageAssetId;
+    const assetId = assetKind === "video" ? panel?.videoAssetId : panel?.imageAssetId;
+    if (!panel || !assetId) return null;
+    const role = assetKind === "video" ? "selected_video" : "selected";
     await prisma.assetReference.upsert({
       where: {
         mediaAssetId_entityType_entityId_role: {
           mediaAssetId: assetId,
           entityType: "storyboard_panel",
           entityId: panel.id,
-          role: "selected",
+          role,
         },
       },
       create: {
@@ -81,11 +87,16 @@ export async function selectProjectAsset(input: {
         mediaAssetId: assetId,
         entityType: "storyboard_panel",
         entityId: panel.id,
-        role: "selected",
+        role,
       },
       update: {},
     });
-    return { entityType: "storyboard_panel", entityId: panel.id };
+    return {
+      entityType: "storyboard_panel",
+      entityId: panel.id,
+      assetId,
+      assetKind,
+    };
   }
 
   const image = await prisma.locationImage.findFirst({

@@ -2,6 +2,7 @@ import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import {
   selectProjectAsset,
   type SelectableAssetType,
+  type StoryboardAssetKind,
 } from "@/lib/novel/asset-selection";
 
 type Context = { params: Promise<{ projectId: string }> };
@@ -17,6 +18,10 @@ export async function POST(request: Request, context: Context) {
       ? (body.targetType as SelectableAssetType)
       : null;
   const targetId = typeof body.targetId === "string" ? body.targetId.trim() : "";
+  const assetKind =
+    body.assetKind === "video" || body.assetKind === "image"
+      ? (body.assetKind as StoryboardAssetKind)
+      : undefined;
 
   if (!targetType || !targetId) {
     return attachSessionCookie(
@@ -33,11 +38,12 @@ export async function POST(request: Request, context: Context) {
     projectId,
     targetType,
     targetId,
+    assetKind,
   });
   if (!selected) {
     return attachSessionCookie(
       Response.json(
-        { message: "资产不存在或尚未生成图片" },
+        { message: assetKind === "video" ? "资产不存在或尚未生成视频" : "资产不存在或尚未生成图片" },
         { status: 404 },
       ),
       sessionId,
