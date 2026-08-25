@@ -99,6 +99,7 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
       },
     },
   });
+  await linkGeneratedAsset(task, userId, output[0]);
   await prisma.mediaTaskEvent.create({
     data: {
       taskId: task.id,
@@ -107,6 +108,64 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
       progress: 100,
     },
   });
+}
+
+async function linkGeneratedAsset(task: { id: string; projectId: string | null; episodeId: string | null; targetType: string | null; targetId: string | null }, userId: string, asset: MediaAsset | undefined) {
+  if (!asset || !task.projectId || !task.targetId || !task.targetType) return;
+  if (task.targetType === "character_appearance") {
+    const appearance = await prisma.characterAppearance.findFirst({
+      where: {
+        id: task.targetId,
+        character: { projectId: task.projectId, project: { userId } },
+      },
+      select: { id: true, characterId: true },
+    });
+    if (!appearance) return;
+    await prisma.$transaction(async (tx) => {
+      await tx.characterAppearance.updateMany({
+        where: { characterId: appearance.characterId },
+        data: { selected: false },
+      });
+      await tx.characterAppearance.update({
+        where: { id: appearance.id },
+        data: { imageAssetId: asset.id, selected: true, updatedAt: new Date() },
+      });
+    });
+  } else if (task.targetType === "location_image") {
+    const image = await prisma.locationImage.findFirst({
+      where: {
+        id: task.targetId,
+        location: { projectId: task.projectId, project: { userId } },
+      },
+      select: { id: true, locationId: true },
+    });
+    if (!image) return;
+    await prisma.$transaction(async (tx) => {
+      await tx.locationImage.updateMany({
+        where: { locationId: image.locationId },
+        data: { selected: false },
+      });
+      await tx.locationImage.update({
+        where: { id: image.id },
+        data: { imageAssetId: asset.id, selected: true, updatedAt: new Date() },
+      });
+      await tx.novelLocation.update({
+        where: { id: image.locationId },
+        data: { selectedImageId: image.id },
+      });
+    });
+  } else if (task.targetType === "storyboard_panel") {
+    await prisma.storyboardPanel.updateMany({
+      where: {
+        id: task.targetId,
+        storyboard: { projectId: task.projectId, episodeId: task.episodeId ?? undefined, project: { userId } },
+      },
+      data: { imageAssetId: asset.id, updatedAt: new Date() },
+    });
+  } else {
+    return;
+  }
+  await prisma.assetReference.create({ data: { id: `${task.id}_reference`, projectId: task.projectId, episodeId: task.episodeId, mediaAssetId: asset.id, entityType: task.targetType, entityId: task.targetId, role: "generated" } }).catch(() => undefined);
 }
 
 async function generateImage(

@@ -35,6 +35,7 @@ export type MediaTask = {
   id: string;
   projectId?: string;
   episodeId?: string;
+  batchId?: string;
   channelId?: string;
   targetType?: string;
   targetId?: string;
@@ -93,6 +94,7 @@ export function createMediaTask(input: {
   id: string;
   projectId?: string;
   episodeId?: string;
+  batchId?: string;
   channelId?: string;
   targetType?: string;
   targetId?: string;
@@ -111,6 +113,7 @@ export function createMediaTask(input: {
     id: input.id,
     projectId: input.projectId,
     episodeId: input.episodeId,
+    batchId: input.batchId,
     channelId: input.channelId,
     targetType: input.targetType,
     targetId: input.targetId,

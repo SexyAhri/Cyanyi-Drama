@@ -18,6 +18,7 @@ export interface MediaTaskStore {
     limit?: number;
     projectId?: string;
     episodeId?: string;
+    batchId?: string;
   }): Promise<MediaTask[]>;
 }
 
@@ -135,6 +136,7 @@ export function createDatabaseMediaTaskStore(userId: string): MediaTaskStore {
           ...(filter?.status ? { status: filter.status } : {}),
           ...(filter?.projectId ? { projectId: filter.projectId } : {}),
           ...(filter?.episodeId ? { episodeId: filter.episodeId } : {}),
+          ...(filter?.batchId ? { batchId: filter.batchId } : {}),
         },
         orderBy: { updatedAt: "desc" },
         take: filter?.limit ?? 100,
@@ -160,6 +162,7 @@ function toCreateData(userId: string, task: MediaTask) {
     idempotencyKey: task.idempotencyKey ?? null,
     projectId: task.projectId ?? null,
     episodeId: task.episodeId ?? null,
+    batchId: task.batchId ?? null,
     channelId: task.channelId ?? null,
     targetType: task.targetType ?? null,
     targetId: task.targetId ?? null,
@@ -195,6 +198,7 @@ function toUpdateData(task: MediaTask) {
     idempotencyKey: task.idempotencyKey ?? null,
     projectId: task.projectId ?? null,
     episodeId: task.episodeId ?? null,
+    batchId: task.batchId ?? null,
     channelId: task.channelId ?? null,
     targetType: task.targetType ?? null,
     targetId: task.targetId ?? null,
@@ -246,6 +250,7 @@ function fromRow(row: MediaTaskRow): MediaTask {
     idempotencyKey: row.idempotencyKey ?? undefined,
     projectId: row.projectId ?? undefined,
     episodeId: row.episodeId ?? undefined,
+    batchId: row.batchId ?? undefined,
     channelId: row.channelId ?? undefined,
     targetType: row.targetType ?? undefined,
     targetId: row.targetId ?? undefined,

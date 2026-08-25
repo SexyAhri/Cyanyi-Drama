@@ -69,8 +69,13 @@ export function inferModelCapabilities(
     }
   }
 
+  // Provider ids such as `gpt-image-2` or `seedream-*` can match a
+  // generic text keyword (for example `gpt` or `seed`) as well as a media
+  // keyword. Media models must remain in the media selector and must not be
+  // routed through the normal conversation model list.
+  const mediaModalities = modalities.filter((item) => item !== "text");
   const resolvedModalities: ModelCapability[] =
-    modalities.length > 0 ? modalities : ["text"];
+    mediaModalities.length > 0 ? mediaModalities : ["text"];
   const isMediaOnly = resolvedModalities.some((item) => item !== "text");
 
   return {
@@ -94,5 +99,8 @@ export function inferModelCapabilities(
 export function getPrimaryModelCapability(
   capabilities: ModelCapabilities,
 ): ModelCapability {
-  return capabilities.modalities[0] ?? "text";
+  const mediaCapability = capabilities.modalities.find(
+    (capability) => capability !== "text",
+  );
+  return mediaCapability ?? capabilities.modalities[0] ?? "text";
 }

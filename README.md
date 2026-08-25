@@ -19,6 +19,11 @@ Cyanyi Drama 是一个面向 AI 漫剧和短剧创作的智能工作台。
 - 匿名用户 Session，以及注册、登录、退出接口
 - API Key 加密保存，MySQL 数据库持久化
 - 漫剧项目、项目配置和剧集数据持久化
+- 结构化角色、角色形象、场景、场景图和分镜草稿持久化
+- 工作流运行、步骤门禁、暂停、恢复、重试、取消和事件流水
+- 真实文本模型驱动的剧集解析，可产出角色、场景和分镜草稿
+- 角色/场景图片生成任务可回填业务资产引用
+- 角色/场景图片批量生成，并自动携带已选资产作为一致性参考
 - 项目/剧集接口按当前用户隔离，媒体任务可关联项目和剧集
 - LangGraph Human-in-the-loop 示例运行时
 
@@ -152,6 +157,18 @@ Worker 不会在没有实际服务商处理器时伪造成功状态；未接入�
 - `GET/POST /api/projects/:projectId/episodes`：读取和创建剧集
 - `PATCH/DELETE /api/projects/:projectId/episodes/:episodeId`：编辑和删除剧集
 - `GET/PATCH /api/projects/:projectId/config`：读取和更新项目级模型、画幅、画风等配置
+- `GET/PUT /api/projects/:projectId/characters`：读取和保存角色草稿
+- `GET/PUT /api/projects/:projectId/locations`：读取和保存场景草稿
+- `GET/PUT /api/projects/:projectId/episodes/:episodeId/storyboard`：读取和保存分镜草稿
+- `POST /api/projects/:projectId/episodes/:episodeId/parse`：创建真实文本解析工作流
+- `POST /api/projects/:projectId/assets/generate`：创建角色或场景图片任务
+- `POST /api/projects/:projectId/assets/generate-batch`：批量创建角色或场景图片任务，默认复用已选参考图
+- `POST /api/projects/:projectId/assets/select`：确认角色形象或场景图为当前基准资产
+- `POST /api/projects/:projectId/episodes/:episodeId/storyboard/:panelId/generate`：根据分镜格和已确认资产生成分镜图片
+- `POST /api/projects/:projectId/episodes/:episodeId/storyboard/generate-batch`：批量生成剧集分镜图片
+- `GET/POST /api/media/batches/:batchId`：读取批次汇总，批量取消或重试失败任务
+- `GET /api/projects/:projectId/workflows`：读取项目工作流
+- `GET/POST /api/workflows/:runId`：读取、暂停、恢复、重试或取消工作流
 
 ## 目录结构
 
@@ -171,8 +188,8 @@ docs/                      集成、工具扩展和项目说明
 
 ## 后续规划
 
-- 漫剧项目、章节和资产管理
-- 小说到剧本、角色、场景和分镜的结构化流水线
+- 角色和场景一致性工作流：批量资产生成、失败重试和结果确认
+- 小说到剧本、角色、场景和分镜的多阶段结构化流水线
 - 角色一致性和场景一致性工作流
 - 配音、音频设计、口型同步和字幕
 - 视频片段编排、剪辑和成片导出

@@ -22,7 +22,7 @@ type PreferencesSettingsPanelProps = {
   settings: ShellSettings;
 };
 
-type ModelType = NonNullable<ModelOption["type"]>;
+type ModelType = "llm" | "image" | "video" | "audio" | "lipsync";
 type SelectOption = { label: string; value: string };
 
 const modelFields: Array<{
@@ -254,20 +254,23 @@ function SelectField({
 }
 
 function getModelsForType(models: ModelOption[], type: ModelType) {
-  const typedModels = models.filter((model) => model.type === type);
-  if (typedModels.length > 0) return typedModels;
-
-  const inferredModels = models.filter((model) => inferModelType(model) === type);
-  return inferredModels.length > 0 ? inferredModels : models;
+  return models.filter((model) => inferModelType(model) === type);
 }
 
 function inferModelType(model: ModelOption): ModelType {
-  if (model.type) return model.type;
+  const declaredModalities = model.capabilities?.modalities ?? [];
+  const mediaType = declaredModalities.find((modality) => modality !== "text");
+  if (mediaType === "image" || mediaType === "video" || mediaType === "audio" || mediaType === "lipsync") {
+    return mediaType;
+  }
 
-  const id = `${model.id} ${model.name}`.toLowerCase();
+  const id = `${model.id} ${model.modelId ?? ""} ${model.name}`.toLowerCase();
   if (/(lipsync|lip[-_ ]?sync|retalk)/.test(id)) return "lipsync";
   if (/(tts|text[-_ ]?to[-_ ]?speech|speech|voice|audio|index)/.test(id)) return "audio";
   if (/(video|seedance|veo|kling|runway|luma|hailuo|pixverse|wan|sora)/.test(id)) return "video";
   if (/(image|gpt-image|nano[-_ ]?banana|seedream|flux|imagen|banana|dall[-_ ]?e|stable[-_ ]?diffusion|recraft|ideogram)/.test(id)) return "image";
+  if (model.type === "image" || model.type === "video" || model.type === "audio" || model.type === "lipsync") {
+    return model.type;
+  }
   return "llm";
 }

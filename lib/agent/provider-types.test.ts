@@ -30,4 +30,12 @@ describe("model capability inference", () => {
     expect(capabilities.supportsToolCalling).toBe(true);
     expect(capabilities.supportsReferenceImages).toBe(false);
   });
+
+  it("prioritizes media capabilities over generic text keywords", () => {
+    const capabilities = inferModelCapabilities("gpt-image-2");
+
+    expect(capabilities.modalities).toEqual(["image"]);
+    expect(getPrimaryModelCapability(capabilities)).toBe("image");
+    expect(capabilities.supportsToolCalling).toBe(false);
+  });
 });

@@ -18,10 +18,17 @@ import type {
   AgentComposerSettings,
   AgentComposerTemplate,
 } from "./types";
+import {
+  inferModelCapabilities,
+  type ModelCapabilities,
+} from "@/lib/agent/provider-types";
 
 type RuntimeModelOption = {
   id: string;
   name: string;
+  modelId?: string;
+  type?: string;
+  capabilities?: ModelCapabilities;
 };
 
 export type ComposerModelOptions = {
@@ -272,28 +279,12 @@ export function resolveComposerModelOptions(
     VIDEO_MODEL_KEYWORDS,
   );
 
-  // Some OpenAI-compatible providers expose video-capable models with
-  // provider-specific IDs that do not contain a recognizable video keyword.
-  // Keep the selector available using the models actually returned by the API.
-  const resolvedVideoModelOptions =
-    videoModelOptions.length > 0
-      ? videoModelOptions
-      : getComposerModelOptions(models);
-
+  // A missing media capability should result in an empty selector. The
+  // conversation model must never be silently reused for media generation.
   return {
     imageModelOptions,
-    videoModelOptions: resolvedVideoModelOptions,
+    videoModelOptions,
   };
-}
-
-function getComposerModelOptions(models: RuntimeModelOption[]) {
-  return dedupeComposerOptions(
-    models.map((model) => ({
-      id: model.id,
-      label: model.name,
-      icon: Sparkles,
-    })),
-  );
 }
 
 export function normalizeComposerSettings(
@@ -380,7 +371,32 @@ function getComposerModelOptionsByKeywords(
 }
 
 function matchesModelKeywords(model: RuntimeModelOption, keywords: string[]) {
-  const searchableText = `${model.id} ${model.name}`.trim().toLowerCase();
+  const searchableText = `${model.id} ${model.modelId ?? ""} ${model.name}`
+    .trim()
+    .toLowerCase();
+  const inferredCapabilities = inferModelCapabilities(
+    model.modelId || model.id,
+  ).modalities;
+  const declaredCapabilities = model.capabilities?.modalities ?? [];
+  const capabilities = new Set([
+    ...inferredCapabilities,
+    ...declaredCapabilities,
+  ]);
+  if (model.type === "image" || model.type === "video") {
+    capabilities.add(model.type);
+  }
+
+  const targetCapability =
+    keywords === IMAGE_MODEL_KEYWORDS ? "image" : "video";
+  if (declaredCapabilities.length > 0) {
+    return capabilities.has(targetCapability);
+  }
+  if (keywords === IMAGE_MODEL_KEYWORDS && capabilities.has("image")) {
+    return true;
+  }
+  if (keywords === VIDEO_MODEL_KEYWORDS && capabilities.has("video")) {
+    return true;
+  }
 
   return keywords.some((keyword) => searchableText.includes(keyword));
 }

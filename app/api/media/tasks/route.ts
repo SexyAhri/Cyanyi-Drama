@@ -68,6 +68,7 @@ export async function POST(request: Request) {
     model: body.model,
     projectId: typeof body.projectId === "string" ? body.projectId : undefined,
     episodeId: typeof body.episodeId === "string" ? body.episodeId : undefined,
+    batchId: typeof body.batchId === "string" ? body.batchId : undefined,
     channelId: typeof body.channelId === "string" ? body.channelId : undefined,
     targetType:
       typeof body.targetType === "string" ? body.targetType : undefined,
@@ -138,6 +139,9 @@ export async function GET(request: Request) {
           : {}),
         ...(url.searchParams.get("episodeId")
           ? { episodeId: url.searchParams.get("episodeId")! }
+          : {}),
+        ...(url.searchParams.get("batchId")
+          ? { batchId: url.searchParams.get("batchId")! }
           : {}),
       }),
     }),

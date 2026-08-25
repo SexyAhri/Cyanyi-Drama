@@ -9,17 +9,14 @@ import {
 } from "./composer-data";
 
 describe("composer model resolution", () => {
-  it("keeps video model selection available for provider-specific model ids", () => {
+  it("does not expose text models as video models", () => {
     const options = resolveComposerModelOptions([
       { id: "gpt-5-mini", name: "gpt-5-mini" },
       { id: "deepseek-chat", name: "deepseek-chat" },
     ]);
 
     expect(options.imageModelOptions).toEqual(defaultImageModelOptions);
-    expect(options.videoModelOptions.map((option) => option.id)).toEqual([
-      "gpt-5-mini",
-      "deepseek-chat",
-    ]);
+    expect(options.videoModelOptions).toEqual([]);
   });
 
   it("detects image and video models from runtime models", () => {
@@ -42,6 +39,7 @@ describe("composer model resolution", () => {
     expect(options.imageModelOptions.map((option) => option.id)).toEqual([
       "gpt-image-2-4k",
       "grok-image",
+      "grok-imagine-image",
       "nano-banana-2-4k",
       "seedream-4.0",
     ]);

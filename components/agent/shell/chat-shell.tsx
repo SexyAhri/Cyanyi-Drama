@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { inferModelCapabilities } from "@/lib/agent/provider-types";
 
 import { ChatSidebar } from "./chat-sidebar";
 import {
@@ -128,6 +129,10 @@ export function ChatShell({
 
   const activeThreadId = currentThreadId ?? internalActiveThreadId;
   const shellModels = useMemo(() => models, [models]);
+  const chatModels = useMemo(
+    () => models.filter(isConversationModel),
+    [models],
+  );
 
   const currentThreadTitle = getShellThreadTitle({
     activeThreadId,
@@ -162,7 +167,7 @@ export function ChatShell({
         compact={settings.compactSidebar}
         copy={copy}
         locale={locale}
-        models={shellModels}
+        models={chatModels}
         onLocaleChange={onLocaleChange}
         onModelChange={handleModelChange}
         onNewChat={handleNewChat}
@@ -214,5 +219,15 @@ export function ChatShell({
         settings={settings}
       />
     </SidebarProvider>
+  );
+}
+
+function isConversationModel(model: ModelOption) {
+  const modalities = new Set([
+    ...(model.capabilities?.modalities ?? []),
+    ...inferModelCapabilities(model.modelId || model.id).modalities,
+  ]);
+  return !(["image", "video", "audio", "lipsync", "voicedesign"] as const).some(
+    (modality) => modalities.has(modality),
   );
 }

@@ -3,6 +3,13 @@ import { randomUUID } from "node:crypto";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { decryptSecret, encryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
+import {
+  getPrimaryModelCapability,
+  inferModelCapabilities,
+  type ChannelProtocol,
+  type ModelCapabilities,
+  type ModelCapability,
+} from "@/lib/agent/provider-types";
 
 type ChannelInput = {
   id?: string;
@@ -38,11 +45,7 @@ export async function GET() {
           decryptSecret(channel.encryptedApiKeys),
         ) as string[],
         models: channel.models.map((model) => ({
-          id: model.id,
-          modelId: model.modelId,
-          name: model.name,
-          type: model.modelType,
-          capabilities: JSON.parse(model.capabilitiesJson),
+          ...normalizeStoredModel(model, channel.protocol),
           selected: model.selected,
           channelId: channel.id,
           channelName: channel.name,
@@ -106,6 +109,12 @@ export async function PUT(request: Request) {
       for (const model of models) {
         const modelId = model.modelId?.trim() || model.id.trim();
         if (!modelId || !model.name.trim()) continue;
+        const metadata = normalizeModelMetadata(
+          modelId,
+          protocol,
+          model.type,
+          model.capabilities,
+        );
         await tx.providerModel.upsert({
           where: { channelId_modelId: { channelId: id, modelId } },
           create: {
@@ -113,15 +122,15 @@ export async function PUT(request: Request) {
             channelId: id,
             modelId,
             name: model.name.trim(),
-            modelType: model.type || "llm",
-            capabilitiesJson: JSON.stringify(model.capabilities ?? {}),
+            modelType: metadata.type,
+            capabilitiesJson: JSON.stringify(metadata.capabilities),
             selected: selectedIds.has(model.id) || selectedIds.has(modelId),
           },
           update: {
             id: model.id || `${id}::${modelId}`,
             name: model.name.trim(),
-            modelType: model.type || "llm",
-            capabilitiesJson: JSON.stringify(model.capabilities ?? {}),
+            modelType: metadata.type,
+            capabilitiesJson: JSON.stringify(metadata.capabilities),
             selected: selectedIds.has(model.id) || selectedIds.has(modelId),
           },
         });
@@ -135,6 +144,122 @@ export async function PUT(request: Request) {
     }),
     sessionId,
   );
+}
+
+function normalizeStoredModel(
+  model: {
+    id: string;
+    modelId: string;
+    name: string;
+    modelType: string;
+    capabilitiesJson: string;
+  },
+  protocol: string,
+) {
+  const metadata = normalizeModelMetadata(
+    model.modelId || model.id,
+    protocol,
+    model.modelType,
+    parseCapabilities(model.capabilitiesJson),
+  );
+
+  return {
+    id: model.id,
+    modelId: model.modelId,
+    name: model.name,
+    type: metadata.type,
+    capabilities: metadata.capabilities,
+  };
+}
+
+function normalizeModelMetadata(
+  modelId: string,
+  protocolValue: string,
+  declaredType: string | undefined,
+  declaredCapabilities: unknown,
+) {
+  const protocol = normalizeProtocol(protocolValue);
+  const inferred = inferModelCapabilities(modelId, protocol);
+  const declared = isModelCapabilities(declaredCapabilities)
+    ? declaredCapabilities
+    : undefined;
+  const declaredTypeCapability = toModelCapability(declaredType);
+  const declaredModalities = declared?.modalities ?? [];
+  const modalities = [
+    ...new Set<ModelCapability>([
+      ...inferred.modalities,
+      ...declaredModalities,
+      ...(declaredTypeCapability ? [declaredTypeCapability] : []),
+    ]),
+  ];
+  const mediaModalities = modalities.filter((item) => item !== "text");
+  const normalizedModalities: ModelCapability[] = mediaModalities.length
+    ? [
+        ...mediaModalities,
+        ...(modalities.includes("text") ? (["text"] as const) : []),
+      ]
+    : ["text"];
+  const capabilities: ModelCapabilities = {
+    ...inferred,
+    ...(declared ?? {}),
+    modalities: normalizedModalities,
+    supportsToolCalling: mediaModalities.length
+      ? false
+      : (declared?.supportsToolCalling ?? inferred.supportsToolCalling),
+  };
+  const primary = getPrimaryModelCapability(capabilities);
+
+  return {
+    type: primary === "text" ? "llm" : primary,
+    capabilities,
+  };
+}
+
+function toModelCapability(value: string | undefined): ModelCapability | undefined {
+  if (
+    value === "text" ||
+    value === "llm" ||
+    value === "image" ||
+    value === "video" ||
+    value === "audio" ||
+    value === "lipsync" ||
+    value === "voicedesign"
+  ) {
+    return value === "llm" ? "text" : value;
+  }
+  return undefined;
+}
+
+function parseCapabilities(value: string) {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+function isModelCapabilities(value: unknown): value is ModelCapabilities {
+  if (!value || typeof value !== "object") return false;
+  const modalities = (value as { modalities?: unknown }).modalities;
+  return (
+    Array.isArray(modalities) &&
+    modalities.every((item) =>
+      ["text", "image", "video", "audio", "lipsync", "voicedesign"].includes(
+        item,
+      ),
+    )
+  );
+}
+
+function normalizeProtocol(value: string): ChannelProtocol {
+  if (
+    value === "anthropic" ||
+    value === "google-gemini" ||
+    value === "volcengine-ark"
+  ) {
+    return value;
+  }
+  return "openai-compatible";
 }
 
 export async function DELETE(request: Request) {

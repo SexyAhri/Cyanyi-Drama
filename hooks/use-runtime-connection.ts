@@ -8,6 +8,7 @@ import type {
   RuntimeChannel,
   RuntimeConnectionSettings,
 } from "@/components/agent/shell";
+import { inferModelCapabilities } from "@/lib/agent/provider-types";
 
 const STORAGE_KEY = "agent-ui-runtime-connection";
 const LEGACY_DEMO_MODEL_IDS = new Set([
@@ -29,6 +30,15 @@ type ModelsResponse = {
   models?: ModelOption[];
 };
 
+type RuntimeApiChannel = {
+  id: string;
+  name: string;
+  protocol: RuntimeChannel["protocol"];
+  baseUrl: string;
+  apiKeys: string[];
+  models?: Array<ModelOption & { selected?: boolean }>;
+};
+
 export function useRuntimeConnection(initialModels: ModelOption[]) {
   const [connection, setConnection] = useState<RuntimeConnectionSettings>({
     apiKey: "",
@@ -40,7 +50,7 @@ export function useRuntimeConnection(initialModels: ModelOption[]) {
     normalizeRuntimeModels(initialModels),
   );
   const [selectedModel, setSelectedModel] = useState(
-    normalizeRuntimeModels(initialModels)[0]?.id ?? "",
+    getConversationModels(normalizeRuntimeModels(initialModels))[0]?.id ?? "",
   );
   const [channelRoutes, setChannelRoutes] = useState<
     Record<string, RuntimeChannel>
@@ -77,6 +87,7 @@ export function useRuntimeConnection(initialModels: ModelOption[]) {
           (model) =>
             model.id === stored.modelId &&
             Boolean(model.channelId) &&
+            isConversationModel(model) &&
             !LEGACY_DEMO_MODEL_IDS.has(model.id),
         )
       ) {
@@ -87,6 +98,65 @@ export function useRuntimeConnection(initialModels: ModelOption[]) {
     } finally {
       setHasHydrated(true);
     }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void fetch("/api/channels", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Failed to load channels.");
+        }
+        return (await response.json()) as { channels?: RuntimeApiChannel[] };
+      })
+      .then((payload) => {
+        if (cancelled || !Array.isArray(payload.channels)) {
+          return;
+        }
+
+        const activeModels = payload.channels.flatMap((channel) =>
+          (channel.models ?? [])
+            .filter((model) => model.selected)
+            .map((model) => ({
+              ...model,
+              channelId: channel.id,
+              channelName: channel.name,
+              protocol: channel.protocol,
+            })),
+        );
+        const activeRoutes = Object.fromEntries(
+          payload.channels.map((channel) => [
+            channel.id,
+            {
+              channelId: channel.id,
+              channelName: channel.name,
+              protocol: channel.protocol,
+              baseUrl: channel.baseUrl,
+              apiKey: channel.apiKeys[0] ?? "",
+              apiKeys: channel.apiKeys,
+            },
+          ]),
+        );
+
+        setModels(normalizeRuntimeModels(activeModels));
+        setChannelRoutes(activeRoutes);
+        setSelectedModel((current) => {
+          const nextModels = normalizeRuntimeModels(activeModels);
+          return current && nextModels.some(
+            (model) => model.id === current && isConversationModel(model),
+          )
+            ? current
+            : (getConversationModels(nextModels)[0]?.id ?? "");
+        });
+      })
+      .catch(() => {
+        // Keep the local cache when the channel API is temporarily unavailable.
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -127,9 +197,12 @@ export function useRuntimeConnection(initialModels: ModelOption[]) {
 
   useEffect(() => {
     setSelectedModel((current) =>
-      current && models.some((model) => model.id === current)
+      current &&
+      models.some(
+        (model) => model.id === current && isConversationModel(model),
+      )
         ? current
-        : (models[0]?.id ?? ""),
+        : (getConversationModels(models)[0]?.id ?? ""),
     );
   }, [models]);
 
@@ -186,9 +259,11 @@ export function useRuntimeConnection(initialModels: ModelOption[]) {
         ...normalizeRuntimeModels(channelModels),
       ]);
       setSelectedModel((current) =>
-        channelModels.some((model) => model.id === current)
+        channelModels.some(
+          (model) => model.id === current && isConversationModel(model),
+        )
           ? current
-          : (channelModels[0]?.id ?? current),
+          : (getConversationModels(channelModels)[0]?.id ?? current),
       );
       setConnection((current) => ({
         ...current,
@@ -321,6 +396,22 @@ function normalizeRuntimeModels(models: ModelOption[]) {
         .map((model) => [model.id, model]),
     ).values(),
   ];
+}
+
+function getConversationModels(models: ModelOption[]) {
+  return models.filter(isConversationModel);
+}
+
+function isConversationModel(model: ModelOption) {
+  const declaredModalities = model.capabilities?.modalities ?? [];
+  const inferredModalities = inferModelCapabilities(
+    model.modelId || model.id,
+  ).modalities;
+  const modalities = new Set([...declaredModalities, ...inferredModalities]);
+
+  return !(["image", "video", "audio", "lipsync", "voicedesign"] as const).some(
+    (modality) => modalities.has(modality),
+  );
 }
 
 function getReadableErrorMessage(error: unknown) {
