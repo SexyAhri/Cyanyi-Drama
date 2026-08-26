@@ -1,10 +1,10 @@
-# Cyanyi-Drama 后端功能对齐开发计划
+# Cyanyi-Drama 全链路开发计划
 
 ## 1. 开发目标
 
-在不照搬 UI 的前提下，使 Cyanyi-Drama 的影视生产工作流逐步达到与 `waoowaoo` 接近的行为能力，同时保留现有媒体任务 SSE、Fal/Vidu/百炼口型同步、音频合并和 Timeline Render。
+在不照搬第三方 UI 或受限源码的前提下，使 Cyanyi-Drama 的影视生产工作流逐步达到与 `waoowaoo` 接近的行为能力，同时保留现有媒体任务 SSE、Fal/Vidu/百炼口型同步、音频合并和 Timeline Render，并为这些能力建设统一的生产工作台。
 
-开发顺序固定为：稳定基线、工作流可靠性、Prompt 与领域 Agent、两条生产工作流、外部能力、质量体系。功能只有通过对应恢复测试和验收门禁后才算完成。
+开发顺序固定为：稳定基线、工作流可靠性、Prompt 与领域 Agent、两条生产工作流、外部能力、质量体系、生产工作台。功能只有通过对应恢复测试和验收门禁后才算完成。
 
 ## 2. 交付原则
 
@@ -14,6 +14,8 @@
 - 生产环境必须拒绝缺失或公开默认的密钥，媒体访问必须校验用户或项目所有权。
 - 每个里程碑同步增加测试，不把回归测试推迟到最后补。
 - 保留现有 FFmpeg Render、音频合并、媒体 SSE 和三家 Lip Sync Provider。
+- M7 前端只消费真实 API、Workflow、Media Task、Worker、Trace 和领域数据；禁止用定时器或本地假数据伪造执行进度与成功结果。
+- UI 维持 `shadcn/ui + Base UI + Tailwind semantic tokens + lucide-react` 技术边界，不为模仿参考项目引入另一套组件系统。
 
 ## 3. 里程碑总表
 
@@ -27,6 +29,7 @@
 | M4 | 已完成 | 5-7 天 | Script-to-Storyboard：规划、摄影、表演、细化、台词分析、clip/phase 级失效重试 | 重试一个 phase 只失效其下游；其他 clip 不变化；分镜和台词输出通过 Schema 校验 |
 | M5 | 已完成 | 4-6 天 | 资产上传、参考图转角色、资产提取、标记/AI 分集、OpenAI Compatible 媒体模板、空字段显式省略 | 新 Provider 无需修改 Worker 核心代码；上传和提取资产保留所有权与来源 |
 | M6 | 已完成 | 3-5 天 | 计费对账、结构化 Trace、Prompt Canary、行为 Guard、渲染规格归一化、系统回归测试 | 对账幂等；Run/Task/Step 可串联追踪；混合媒体输入能生成规格统一的成片 |
+| M7 | 待开发 | 12-18 天 | 项目首页、全屏生产工作台、六阶段创作导航、上下文 Agent、任务与 Trace 可观测、响应式与无障碍 | 现有生产 API 均有可操作入口；刷新可恢复真实状态；失败可定位、取消或重试；桌面与移动端关键流程可用 |
 
 ## 4. M0 当前基线任务表
 
@@ -145,7 +148,113 @@ M5 复用了既有媒体任务、资产引用和模型能力数据结构，因�
 
 M6 新增第 15 组非空迁移，为既有 Run、Step 和 Task 回填稳定 Trace/Span Hash，并为后续任务保留显式 Workflow 关联。用量记录增加唯一来源键，重复 Worker 回调和 Watchdog 对账不会重复扣费。渲染输出固定为 H.264、`yuv420p`、确定尺寸和帧率；当分镜没有视频时可使用选中图片按镜头时长补帧。完整接口和运维说明见 `docs/m6-quality-system.md`。
 
-## 8. 提交计划
+## 8. M7 生产工作台与统一编排
+
+M7 的目标不是再做一层聊天壳，而是把 M0-M6 已完成的领域能力组织成可连续操作、可恢复、可追踪的漫剧生产工作台。用户从项目进入后，应能沿同一条生产链完成内容导入、资产确认、分镜与媒体生产、声音制作、时间线渲染和交付。
+
+### 8.1 产品信息架构
+
+| 层级 | 页面或区域 | 核心职责 | 数据来源 |
+| --- | --- | --- | --- |
+| 全局层 | 项目首页 | 新建、搜索、排序、最近打开、归档项目；显示真实制作阶段和异常摘要 | Project、Episode、Workflow Run、Media Task |
+| 项目层 | 全屏生产工作台 | 承载项目配置、剧集切换、阶段切换和全局任务反馈 | Project Config、Episodes、Workflow Runs |
+| 导航层 | 左侧剧集导航 | 剧集状态、未完成项、失败提示、快速切换和新增剧集 | Episode、Storyboard、Production |
+| 阶段层 | 顶部阶段导航 | 显示当前阶段、完成度、阻塞关系和可执行的下一步 | Workflow Step、Artifact、领域有效性 |
+| 内容层 | 中央工作区 | 针对当前阶段提供密集、可扫描、可编辑的专业工具 | 对应领域 API |
+| 协作层 | 右侧上下文 Agent | 读取当前项目、剧集、阶段和选中实体上下文，展示建议、工具调用与审批 | AgentEvent、Trace、当前 UI Context |
+| 反馈层 | 任务与运行面板 | 查看批次、队列、进度、错误、费用、Trace，并执行取消、重试 | Media Batch、Media Task、Workflow、Billing、Trace |
+
+生产阶段固定为六组，避免把后端接口直接平铺成菜单：
+
+1. **小说与剧本**：导入或编辑原文、标记/AI 分集、运行 `story-to-script`、查看 Clip 与结构化剧本。
+2. **角色、场景与道具**：确认分析结果，上传或提取参考素材，生成候选图并选择基准资产。
+3. **分镜设计**：运行 `script-to-storyboard`，按 Clip/Panel 检查构图、表演、连续性和台词。
+4. **镜头生产**：批量或单格生成分镜图与视频，比较候选结果，重试失败任务并确认镜头资产。
+5. **声音制作**：管理音色、台词与语音，执行音频合并和口型同步，处理失败与替换结果。
+6. **时间线与交付**：生成和调整 Timeline、预览字幕与音轨、提交渲染、查看成片并导出。
+
+### 8.2 页面骨架与交互原则
+
+- 项目首页使用克制的列表或网格切换，不制作营销式 Hero；项目名称、阶段、更新时间和阻塞状态应在首屏可扫描。
+- 项目工作台采用全屏应用布局，不把主编辑器包在装饰性卡片中，也不使用卡片嵌套卡片。
+- 桌面端保持“左侧剧集导航 + 中央工作区 + 可收起右侧 Agent”的稳定结构；窄屏将两侧区域收为 Sheet，主任务保持单列。
+- 顶部阶段导航使用图标、短标签和明确状态，不用仅靠颜色表达完成、运行、失败或阻塞。
+- 中央工作区优先使用表格、列表、画布、时间线和分栏检查器；卡片只用于候选资产、重复媒体项、任务和确认对话框。
+- 生成、重试、取消、确认和发布必须提供明确的 pending、success、error、disabled 与 destructive 状态；高风险批量操作需要二次确认。
+- 用户选择角色、场景、道具、Panel 或时间线片段时，右侧 Agent 同步接收结构化上下文，不从 DOM 文本反推上下文。
+- 每个阶段保留稳定 URL 与选择状态，刷新、前进后退和深链访问不会丢失当前项目、剧集、阶段或选中实体。
+
+### 8.3 OpenAI 风格的原创设计约束
+
+M7 借鉴 [OpenAI Docs 的 UI guidelines](https://developers.openai.com/plugins/concepts/ui-guidelines) 所体现的设计原则，不复制 OpenAI 产品页面或品牌资产：
+
+- 使用系统字体栈、有限的正文与小字号层级、稳定的行高和一致的 4/8px 间距节奏，保证信息优先和长时间工作可读性。
+- 使用中性的语义色处理背景、文字、边框和状态，仅把项目品牌色用于少量主操作、选中态与状态强调；不使用装饰性渐变、纹理或大面积品牌色背景。
+- 延续项目现有 Tailwind semantic tokens，同时支持明暗主题；禁止在业务组件中散落无法审计的硬编码颜色。
+- 使用 `lucide-react` 的单色线性图标和熟悉控件；图标按钮提供 Tooltip 和可访问名称，不绘制仿 OpenAI 图标。
+- 通过标题、辅助信息、主操作的固定顺序建立视觉层级，减少无关控件；次要设置采用渐进披露。
+- 文本与背景至少满足 WCAG AA；支持键盘导航、清晰焦点、图片替代文本和浏览器文本缩放，状态变化通过可感知文本或实时区域反馈。
+- 不使用 OpenAI Logo、ChatGPT 名称、商标、专有插图、截图、文案或像素级布局，也不暗示产品由 OpenAI 提供或背书。
+
+### 8.4 状态与数据编排
+
+```txt
+Project / Episode / Stage URL
+  -> typed feature client
+  -> server API and persisted domain state
+  -> Workflow Run / Media Batch / Task events
+  -> normalized workspace view model
+  -> stage UI + contextual Agent + task panel
+```
+
+- 在 `features/studio` 内按 `projects`、`episodes`、`assets`、`storyboard`、`shots`、`audio`、`timeline`、`runs` 拆分类型、请求、状态组合和视图组件，避免新增单个超大工作台组件。
+- 现有 `components/agent` 继续作为通用 Agent shell 和消息/工具协议层；生产领域状态不得写回通用聊天组件。
+- Workflow Run 是长流程阶段状态的权威来源，Media Batch/Task 是媒体任务状态的权威来源，领域表和 Artifact 决定产物是否真实存在且有效。
+- 统一映射 `queued`、`running`、`paused`、`succeeded`、`failed`、`cancelled` 和阻塞状态；页面刷新后从服务端重建，不从本地倒计时推算。
+- 优先复用现有 SSE 事件；断线后使用带退避的查询补偿，并在终态停止订阅或轮询。失败信息必须保留稳定错误码、可操作建议和 Trace 入口。
+- 乐观更新只用于可安全回滚的轻量编辑；启动生成、资产确认、批量重试和渲染均以服务端响应为准。
+- 前端不得绕过现有所有权、阶段门禁、幂等键、Billing 冻结和质量 Guard。
+
+### 8.5 分批交付
+
+| 批次 | 交付内容 | 验收门禁 | 状态 |
+| --- | --- | --- | --- |
+| M7.1 工作台基础 | 路由、项目首页、项目工作台骨架、剧集与阶段导航、语义 Token、明暗主题、响应式 Shell | 可创建并打开项目；深链和刷新可恢复；桌面/移动端无重叠或横向溢出 | 待开发 |
+| M7.2 小说与资产 | 原文/分集/剧本界面，角色/场景/道具资产库，上传、提取、生成、选择与批次反馈 | `story-to-script` 可完整操作；资产来源和当前基准可追踪；跨项目资产不可见 | 待开发 |
+| M7.3 分镜与镜头 | Clip/Panel 分镜编辑、连续性问题、图片/视频候选、单项与批量任务控制 | `script-to-storyboard` 可完整操作；失败只重试目标范围；任务结果不伪造 | 待开发 |
+| M7.4 声音与交付 | 音色与台词、语音、合并、口型、Timeline、渲染、预览与下载 | 真实任务可取消/重试；混合素材成片可渲染；失败有 Trace 和恢复入口 | 待开发 |
+| M7.5 Agent 与可观测 | 上下文 Agent、审批、任务中心、费用摘要、Run/Step/Task Trace 检查器 | Agent 工具调用携带当前结构化上下文；状态、费用和 Trace 可串联核对 | 待开发 |
+| M7.6 质量收口 | i18n、键盘与焦点、WCAG AA、空/载入/错误/部分成功状态、性能和端到端回归 | 中英文无溢出；关键路径端到端通过；生产构建、类型、Lint 和测试通过 | 待开发 |
+
+每个批次使用独立双语提交并保持可运行。只有当前批次通过验收门禁后，才进入下一批次；不得用静态展示页代替对应业务闭环。
+
+### 8.6 M7 总体验收
+
+- 新用户可以从项目首页进入任意项目，在同一工作台内完成至少一集从原文到渲染成片的完整流程。
+- 六个阶段都能区分未开始、进行中、已完成、失败、已取消和被上游阻塞，且状态与数据库、Workflow、Worker 和 Task 一致。
+- 刷新页面、Worker 重启或 SSE 短暂断开后，已完成产物不丢失，运行状态能够恢复，不重复创建 Run、Task 或计费记录。
+- 角色、场景、道具和镜头的当前基准资产可追溯到来源，替换后下游影响明确，不静默使用失效素材。
+- 单项和批量任务均可查看进度、失败原因、费用、Trace，并按后端能力执行取消或精确重试。
+- 右侧 Agent 的建议和工具调用基于当前结构化上下文；审批、错误和工具结果继续遵循 `AgentEvent` 协议。
+- 关键桌面和移动视口无文本截断、控件重叠、不可达操作或布局跳动；键盘和屏幕阅读器可完成主要操作。
+- 现有 API 所有权、幂等、质量 Guard、Prompt Canary、计费与 Trace 回归测试持续通过。
+
+### 8.7 参考项目与许可边界
+
+- 外部 UI 参考项目仅用于研究生产流程的信息分组、阶段可见性和任务反馈；其源码采用限制性 source-available 许可，本项目不复制其源码、样式、文案、品牌、颜色、素材、组件实现或文件组织方式。
+- M7 使用 Cyanyi-Drama 自有领域模型、现有技术栈和六阶段信息架构独立实现，不引入参考项目的具体组件或编辑器方案，也不复刻其页面结构。
+- OpenAI 官方指南只作为通用视觉与交互原则来源；本项目保留独立品牌，不复用 OpenAI 商标与专有资产。
+- 新增第三方依赖前必须核对许可证和用途兼容性；需要保留的版权或 NOTICE 随依赖一并提交。
+
+## 9. 提交计划与双语规范
+
+从 M7 计划提交开始，Git 标题统一为：
+
+```txt
+<type>(<scope>): <English summary> / <中文摘要>
+```
+
+`scope` 可在不影响清晰度时省略。标题保持单行、同义和同一行为范围；必要的提交正文也应先英文后中文说明动机、风险或迁移步骤。历史提交不重写。
 
 | 提交信息 | 范围 | 当前是否提交 |
 | --- | --- | --- |
@@ -158,11 +267,18 @@ M6 新增第 15 组非空迁移，为既有 Run、Step 和 Task 回填稳定 Tra
 | `feat: implement story-to-script workflow` | M3 编排、Artifact 和落库 | 已提交 |
 | `feat: implement script-to-storyboard workflow` | M4 编排、Artifact 和落库 | 已提交 |
 | `feat: add external assets and media templates` | M5 上传、视觉提取、整本分集、Provider 模板和测试 | 已提交 |
-| `feat: add production quality safeguards` | M6 计费对账、Trace、Canary、行为门禁、渲染归一化和系统回归 | 本次提交 |
+| `feat: add production quality safeguards` | M6 计费对账、Trace、Canary、行为门禁、渲染归一化和系统回归 | 已提交 |
+| `docs(roadmap): plan M7 production workspace / 规划 M7 生产工作台` | M7 信息架构、设计与许可边界、交付批次、验收门禁和双语提交规范 | 本次提交 |
+| `feat(studio): build project workspace foundation / 构建项目工作台基础` | M7.1 路由、项目首页、工作台 Shell、导航和响应式基础 | 待提交 |
+| `feat(studio): connect writing and asset workflows / 接入编剧与资产工作流` | M7.2 小说、剧本和资产闭环 | 待提交 |
+| `feat(studio): connect storyboard and shot production / 接入分镜与镜头生产` | M7.3 分镜、图片和视频闭环 | 待提交 |
+| `feat(studio): connect audio timeline and delivery / 接入声音时间线与交付` | M7.4 声音、口型、时间线和渲染闭环 | 待提交 |
+| `feat(studio): add contextual agent and observability / 增加上下文智能体与可观测性` | M7.5 Agent、审批、任务、费用和 Trace | 待提交 |
+| `test(studio): complete M7 quality gates / 完成 M7 质量门禁` | M7.6 i18n、无障碍、响应式、端到端和回归测试 | 待提交 |
 
 当前 Prisma Schema、迁移、资产、计费、媒体和 Workflow 改动相互依赖，因此现有功能使用一个可编译、可迁移的基线提交，不拆成无法独立运行的中间提交。后续每个里程碑按功能和测试独立提交。
 
-## 9. 明确不提交的内容
+## 10. 明确不提交的内容
 
 - `.env.local` 以及任何真实 API Key、密码、Token、存储凭据。
 - `.next`、`node_modules`、Coverage、`*.tsbuildinfo`、日志、本地数据库卷、`.media` 和渲染媒体。
@@ -170,7 +286,7 @@ M6 新增第 15 组非空迁移，为既有 Run、Step 和 Task 回填稳定 Tra
 - 临时截图、剪贴板文件、调试 Payload、一次性 Provider Response。
 - 生成的 Prisma Client。
 
-## 10. 每次提交前检查
+## 11. 每次提交前检查
 
 1. `pnpm exec prisma validate`
 2. 在一次性 MySQL 数据库执行全部 Migration，并检查 Schema Drift。

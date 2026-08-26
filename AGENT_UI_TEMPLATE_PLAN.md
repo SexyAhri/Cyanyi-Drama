@@ -1,6 +1,8 @@
 # Agent UI Template 开发计划与约束
 
-这份文档是当前项目的主线说明。项目定位已经收口为通用 Agent UI 模板，不再内置登录、注册、后台模型管理、充值或业务产品逻辑。
+> 文档状态：本文件保留为通用 Agent UI 基座的历史设计与迁移约束。Cyanyi-Drama 当前 M0-M7 产品主线以 [`docs/backend-parity-roadmap.md`](docs/backend-parity-roadmap.md) 为准；本文件中的通用组件边界仍适用于 `components/agent`，但不再代表整个平台的功能范围。
+
+这份文档记录项目早期通用 Agent UI 模板的定位。模板本身不内置登录、注册、后台模型管理、充值或业务产品逻辑，Cyanyi-Drama 的产品功能在模板边界之外独立演进。
 
 ## 1. 项目定位
 
