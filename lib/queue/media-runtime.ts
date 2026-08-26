@@ -11,6 +11,11 @@ import {
   generateSpecializedLipSync,
   supportsSpecializedLipSync,
 } from "@/lib/providers/lipsync";
+import {
+  executeOpenAiCompatibleMediaTemplate,
+  parseOpenAiCompatibleMediaTemplate,
+  type OpenAiCompatibleMediaTemplate,
+} from "@/lib/providers/openai-compatible-media-template";
 
 type TaskRequest = {
   prompt?: string;
@@ -72,6 +77,12 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
       userId,
     );
   }
+  const mediaTemplate =
+    !output &&
+    channel.protocol === "openai-compatible" &&
+    (task.kind === "image" || task.kind === "video")
+      ? await findMediaTemplate(task.channelId, task.model, task.kind)
+      : undefined;
   const keys = output
     ? []
     : (JSON.parse(decryptSecret(channel.encryptedApiKeys)) as string[]);
@@ -83,21 +94,39 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
       output =
         output ??
         (task.kind === "image"
-          ? await generateImage(
-              channel.baseUrl,
-              channel.protocol,
-              apiKey,
-              task.model,
-              request,
-            )
-          : task.kind === "video"
-            ? await generateVideo(
+          ? mediaTemplate
+            ? await executeOpenAiCompatibleMediaTemplate({
+                baseUrl: channel.baseUrl,
+                apiKey,
+                model: task.model,
+                kind: "image",
+                request: request as Record<string, unknown>,
+                template: mediaTemplate,
+              })
+            : await generateImage(
                 channel.baseUrl,
                 channel.protocol,
                 apiKey,
                 task.model,
                 request,
               )
+          : task.kind === "video"
+            ? mediaTemplate
+              ? await executeOpenAiCompatibleMediaTemplate({
+                  baseUrl: channel.baseUrl,
+                  apiKey,
+                  model: task.model,
+                  kind: "video",
+                  request: request as Record<string, unknown>,
+                  template: mediaTemplate,
+                })
+              : await generateVideo(
+                  channel.baseUrl,
+                  channel.protocol,
+                  apiKey,
+                  task.model,
+                  request,
+                )
             : task.kind === "audio"
               ? await generateAudio(
                   channel.baseUrl,
@@ -181,6 +210,31 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
     },
   });
   return true;
+}
+
+async function findMediaTemplate(
+  channelId: string,
+  model: string,
+  kind: "image" | "video",
+): Promise<OpenAiCompatibleMediaTemplate | undefined> {
+  const configured = await prisma.providerModel.findFirst({
+    where: { channelId, modelId: model, selected: true },
+    select: { capabilitiesJson: true },
+  });
+  if (!configured) return undefined;
+  try {
+    const capabilities: unknown = JSON.parse(configured.capabilitiesJson);
+    if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities))
+      return undefined;
+    const template = (capabilities as Record<string, unknown>).mediaTemplate;
+    return template === undefined
+      ? undefined
+      : parseOpenAiCompatibleMediaTemplate(template, kind);
+  } catch (error) {
+    throw new Error(
+      `OPENAI_COMPAT_MEDIA_TEMPLATE_INVALID:${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 async function mergeEpisodeAudio(

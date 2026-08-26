@@ -24,6 +24,9 @@ Cyanyi Drama 是一个面向 AI 漫剧和短剧创作的智能工作台。
 - 真实文本模型驱动的剧集解析，可产出角色、场景和分镜草稿
 - 角色/场景图片生成任务可回填业务资产引用
 - 角色/场景图片批量生成，并自动携带已选资产作为一致性参考
+- 项目图片/视频上传、来源追踪、参考图转角色和视觉资产提取
+- 整本小说标记分集与 AI 边界分集，支持安全批量落库
+- 模型级 OpenAI Compatible 媒体模板，支持同步、异步和显式空字段省略
 - 项目/剧集接口按当前用户隔离，媒体任务可关联项目和剧集
 - LangGraph Human-in-the-loop 示例运行时
 
@@ -131,6 +134,8 @@ AI_GATEWAY_API_KEY=
 
 模型列表必须由实际渠道接口返回。调用文本、图片或视频模型时，系统会依据选中的模型自动选择对应渠道和 API Key。
 
+OpenAI Compatible 图片/视频模型可在 `models[].capabilities.mediaTemplate` 中保存模型级媒体模板。模板支持自定义创建、状态、内容端点和 JSONPath 响应映射；只允许访问渠道 Base URL 的同源端点。配置细节见 [M5 外部资产与媒体模板](docs/m5-external-capabilities.md)。
+
 ## 聊天和媒体任务
 
 - `/api/chat`：文本聊天、工具调用、图片生成和视频生成事件流
@@ -164,7 +169,11 @@ Worker 不会在没有实际服务商处理器时伪造成功状态；未接入�
 - `POST /api/projects/:projectId/episodes/:episodeId/parse`：创建真实文本解析工作流
 - `POST /api/projects/:projectId/assets/generate`：创建角色或场景图片任务
 - `POST /api/projects/:projectId/assets/generate-batch`：批量创建角色或场景图片任务，默认复用已选参考图
+- `POST /api/projects/:projectId/assets/upload`：上传项目图片或视频，并记录所有权、来源和目标实体引用
+- `POST /api/projects/:projectId/assets/reference-to-character`：使用已归属项目的参考图生成角色外观，或只提取角色描述
+- `POST /api/projects/:projectId/assets/extract`：从项目图片或视频抽帧中提取角色、场景和道具，可选择落库
 - `POST /api/projects/:projectId/assets/select`：确认角色、场景或分镜图片/视频资产为当前基准资产（分镜通过 `assetKind: "image" | "video"` 区分）
+- `POST /api/projects/:projectId/episodes/split`：整本小说自动选择标记分集或 AI 分集，可选择事务化创建剧集
 - `POST /api/projects/:projectId/episodes/:episodeId/storyboard/:panelId/generate`：根据分镜格和已确认资产生成分镜图片
 - `POST /api/projects/:projectId/episodes/:episodeId/storyboard/generate-batch`：批量生成剧集分镜图片
 - `POST /api/projects/:projectId/episodes/:episodeId/storyboard/:panelId/generate-video`：根据分镜格、分镜图片和已确认资产生成视频片段
@@ -225,6 +234,7 @@ docs/                      集成、工具扩展和项目说明
 - [示例页面](docs/examples.md)
 - [模板迁移说明](docs/template-migration.md)
 - [开发计划](AGENT_UI_TEMPLATE_PLAN.md)
+- [M5 外部资产与媒体模板](docs/m5-external-capabilities.md)
 
 ## 项目状态
 

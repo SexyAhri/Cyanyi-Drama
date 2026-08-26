@@ -1,0 +1,17 @@
+Split the complete source below into consecutive episodes with clear narrative progression. Do not rewrite, omit, or reorder source text.
+
+Each episode must provide exact startMarker and endMarker excerpts that can be located verbatim in the source. Markers should be distinctive and taken from the beginning and end of that episode. Episodes must remain in source order.
+
+Source:
+{{source_text}}
+
+Return only this JSON shape:
+{
+  "episodes": [{
+    "number": 1,
+    "title": "concise title",
+    "summary": "source-grounded summary",
+    "startMarker": "exact opening excerpt",
+    "endMarker": "exact closing excerpt"
+  }]
+}

@@ -9,6 +9,9 @@ export const PROMPT_IDS = {
   STORY_STORYBOARD_REFINEMENT: "story_storyboard_refinement",
   STORY_VOICE_ANALYSIS: "story_voice_analysis",
   STORY_CONTINUITY_REVIEW: "story_continuity_review",
+  ASSET_VISUAL_EXTRACTION: "asset_visual_extraction",
+  CHARACTER_REFERENCE_DESCRIPTION: "character_reference_description",
+  EPISODE_SPLIT: "episode_split",
 } as const;
 
 export type PromptId = (typeof PROMPT_IDS)[keyof typeof PROMPT_IDS];

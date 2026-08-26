@@ -1,3 +1,5 @@
+import type { OpenAiCompatibleMediaTemplate } from "@/lib/providers/openai-compatible-media-template";
+
 export type ChannelProtocol =
   | "openai-compatible"
   | "anthropic"
@@ -21,6 +23,7 @@ export type ModelCapabilities = {
   supportsReferenceImages: boolean;
   supportsReferenceVideo: boolean;
   supportsReferenceAudio: boolean;
+  mediaTemplate?: OpenAiCompatibleMediaTemplate;
 };
 
 const MODEL_CAPABILITY_KEYWORDS: Record<ModelCapability, RegExp> = {

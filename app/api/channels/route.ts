@@ -10,6 +10,7 @@ import {
   type ModelCapabilities,
   type ModelCapability,
 } from "@/lib/agent/provider-types";
+import { parseOpenAiCompatibleMediaTemplate } from "@/lib/providers/openai-compatible-media-template";
 
 type ChannelInput = {
   id?: string;
@@ -78,6 +79,28 @@ export async function PUT(request: Request) {
   const id = body.id?.trim() || randomUUID();
   const selectedIds = new Set(body.modelIds ?? []);
   const models = body.models ?? [];
+  try {
+    for (const model of models)
+      normalizeModelMetadata(
+        model.modelId?.trim() || model.id.trim(),
+        protocol,
+        model.type,
+        model.capabilities,
+      );
+  } catch (error) {
+    return attachSessionCookie(
+      Response.json(
+        {
+          message:
+            error instanceof Error
+              ? `模型能力或媒体模板无效：${error.message}`
+              : "模型能力或媒体模板无效",
+        },
+        { status: 400 },
+      ),
+      sessionId,
+    );
+  }
   const channel = await prisma.$transaction(async (tx) => {
     const existing = await tx.channel.findFirst({
       where: { id, userId: user.id },
@@ -196,6 +219,12 @@ function normalizeModelMetadata(
   const declared = isModelCapabilities(declaredCapabilities)
     ? declaredCapabilities
     : undefined;
+  const declaredRecord = isRecord(declaredCapabilities)
+    ? declaredCapabilities
+    : undefined;
+  const mediaTemplate = declaredRecord?.mediaTemplate === undefined
+    ? undefined
+    : parseOpenAiCompatibleMediaTemplate(declaredRecord.mediaTemplate);
   const declaredTypeCapability = toModelCapability(declaredType);
   const declaredModalities = declared?.modalities ?? [];
   const modalities = [
@@ -221,6 +250,7 @@ function normalizeModelMetadata(
       : (declared?.supportsToolCalling ?? inferred.supportsToolCalling),
     supportsStructuredOutputs:
       declared?.supportsStructuredOutputs ?? inferred.supportsStructuredOutputs,
+    ...(mediaTemplate ? { mediaTemplate } : {}),
   };
   const primary = getPrimaryModelCapability(capabilities);
 
@@ -228,6 +258,10 @@ function normalizeModelMetadata(
     type: primary === "text" ? "llm" : primary,
     capabilities,
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function toModelCapability(value: string | undefined): ModelCapability | undefined {

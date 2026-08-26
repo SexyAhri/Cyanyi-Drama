@@ -25,8 +25,8 @@
 | M2.5 | 已完成 | 2-3 天 | Agent Contract V2、System/User 分层、领域语义 Validator、证据链、连续性监督、结构化 Trace | 语义失败只做定向修复且不跨 Key 重复；Trace 可追踪 Prompt、模型、纠错和 Token 用量 |
 | M3 | 已完成 | 4-6 天 | Story-to-Script：并行角色/场景/道具分析、边界校验切片、逐 clip 剧本转换、增量 Artifact | 单个 clip 可独立重试；Worker 中断后成功 clip 不丢失；原文无重叠和缺口 |
 | M4 | 已完成 | 5-7 天 | Script-to-Storyboard：规划、摄影、表演、细化、台词分析、clip/phase 级失效重试 | 重试一个 phase 只失效其下游；其他 clip 不变化；分镜和台词输出通过 Schema 校验 |
-| M5 | 下一步 | 4-6 天 | 资产上传、参考图转角色、资产提取、标记/AI 分集、OpenAI Compatible 媒体模板、空字段显式省略 | 新 Provider 无需修改 Worker 核心代码；上传和提取资产保留所有权与来源 |
-| M6 | 待开始 | 3-5 天 | 计费对账、结构化 Trace、Prompt Canary、行为 Guard、渲染规格归一化、系统回归测试 | 对账幂等；Run/Task/Step 可串联追踪；混合媒体输入能生成规格统一的成片 |
+| M5 | 已完成 | 4-6 天 | 资产上传、参考图转角色、资产提取、标记/AI 分集、OpenAI Compatible 媒体模板、空字段显式省略 | 新 Provider 无需修改 Worker 核心代码；上传和提取资产保留所有权与来源 |
+| M6 | 下一步 | 3-5 天 | 计费对账、结构化 Trace、Prompt Canary、行为 Guard、渲染规格归一化、系统回归测试 | 对账幂等；Run/Task/Step 可串联追踪；混合媒体输入能生成规格统一的成片 |
 
 ## 4. M0 当前基线任务表
 
@@ -117,6 +117,20 @@ M3 与 `waoowaoo` 保持相同的分析、切片、逐 Clip 剧本顺序，但�
 
 M4 保留 `waoowaoo` 的规划、摄影/表演并行、细化和台词分析顺序，并增加连续性监督、Prompt 版本化恢复和严格的 Clip 所有权校验。分镜只在全部 Clip 成功后统一落库；中途失败时，已完成 Phase 仍以 Artifact 保存。7 项新增测试覆盖部分失败恢复、分支失效范围、连续性隔离、稳定 Panel ID、跨剧集 Clip 拒绝和工作流依赖；全量 121 项测试、TypeScript、ESLint、生产构建、Prisma 校验和 14 组本地迁移状态均通过。
 
+### 7.3 M5 外部能力完成记录
+
+| 任务 | 目标模块 | 验收结果 | 状态 |
+| --- | --- | --- | --- |
+| 资产上传与来源 | Project Asset Store、Storage 与 Upload API | 图片/视频统一写入媒体账本；项目、剧集和目标实体均校验所有权；来源进入 `AssetReference` | 已完成 |
+| 参考图转角色 | Project Asset Task 与 Reference API | 只接受项目拥有的图片资产；生成和描述提取均记录来源；重复请求使用稳定幂等键 | 已完成 |
+| 图片/视频提取 | Visual Asset Agent 与 FFmpeg 抽帧 | 图片与视频帧进入同一结构化 Agent；角色、场景、道具落库后保留源资产引用 | 已完成 |
+| 标记/AI 分集 | Episode Split Runtime 与 API | 标记模式不调用模型；AI 边界逐字定位；所有分集重建后与原文完全一致 | 已完成 |
+| 安全分集落库 | Episode Store | 有下游制作数据的剧集正文不会被覆盖；批量创建和更新在同一事务完成 | 已完成 |
+| 媒体模板 | OpenAI Compatible Template Adapter | 模型级 sync/async、自定义端点、JSONPath 映射、同源约束和显式空字段省略 | 已完成 |
+| Worker 分派 | Media Runtime | Worker 从模型能力读取模板；后续同协议 Provider 只需配置模板，不再增加核心分支 | 已完成 |
+
+M5 复用了既有媒体任务、资产引用和模型能力数据结构，因此不需要新增 Prisma 表或迁移。模板不会保存 API Key，绝对 URL 只能与渠道 Base URL 同源；视觉提取只读取通过项目所有权校验的媒体资产。13 项新增回归测试覆盖上传来源、跨项目资产拒绝、视频抽帧、分集完整覆盖、异步状态与空字段语义；全量 134 项测试、TypeScript、ESLint、生产构建、Prisma 校验和 14 组本地迁移状态均通过。
+
 ## 8. 提交计划
 
 | 提交信息 | 范围 | 当前是否提交 |
@@ -128,7 +142,8 @@ M4 保留 `waoowaoo` 的规划、摄影/表演并行、细化和台词分析顺�
 | `feat: add domain prompt contracts` | M2 Prompt、Parser 和 Guard | 已提交 |
 | `feat: harden domain agent contracts` | M2.5 Agent Contract、Validator、连续性监督、Provider 能力和 Trace | 已提交 |
 | `feat: implement story-to-script workflow` | M3 编排、Artifact 和落库 | 已提交 |
-| `feat: implement script-to-storyboard workflow` | M4 编排、Artifact 和落库 | 本次提交 |
+| `feat: implement script-to-storyboard workflow` | M4 编排、Artifact 和落库 | 已提交 |
+| `feat: add external assets and media templates` | M5 上传、视觉提取、整本分集、Provider 模板和测试 | 本次提交 |
 
 当前 Prisma Schema、迁移、资产、计费、媒体和 Workflow 改动相互依赖，因此现有功能使用一个可编译、可迁移的基线提交，不拆成无法独立运行的中间提交。后续每个里程碑按功能和测试独立提交。
 

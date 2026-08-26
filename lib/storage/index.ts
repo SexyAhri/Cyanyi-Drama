@@ -54,19 +54,29 @@ export async function downloadAndStoreMedia(
   const response = await fetch(sourceUrl, { cache: "no-store" });
   if (!response.ok) throw new Error(`MEDIA_DOWNLOAD_FAILED:${response.status}`);
   const body = new Uint8Array(await response.arrayBuffer());
+  return storeMediaBytes(
+    body,
+    key,
+    contentType || response.headers.get("content-type") || undefined,
+  );
+}
+
+export async function storeMediaBytes(
+  body: Uint8Array,
+  key: string,
+  contentType?: string,
+) {
   const sha256 = sha256Hex(body);
   const existing = await prisma.mediaHash.findUnique({ where: { sha256 } });
   if (existing) return existing.storageKey;
 
-  const resolvedType =
-    contentType || response.headers.get("content-type") || undefined;
-  await uploadObject(key, body, resolvedType);
+  await uploadObject(key, body, contentType);
   const record = await prisma.mediaHash.upsert({
     where: { sha256 },
     create: {
       sha256,
       storageKey: key,
-      mimeType: resolvedType,
+      mimeType: contentType,
       sizeBytes: BigInt(body.byteLength),
     },
     update: {},

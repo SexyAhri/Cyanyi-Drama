@@ -120,6 +120,38 @@ describe("OpenAI structured requests", () => {
     expect(result.trace.outputHash).toHaveLength(64);
   });
 
+  it("attaches owned visual references to the first user message", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse('{"value":7}'),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const prompt = renderPrompt({
+      id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+      variables: { source_text: "source", character_library: "[]" },
+    });
+
+    await requestOpenAiStructured({
+      baseUrl: "https://provider.test/v1",
+      apiKeys: ["test-key"],
+      model: "vision-model",
+      prompt,
+      schema,
+      imageUrls: ["https://media.test/reference.png"],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    expect(body.messages[0].content).toEqual(expect.any(String));
+    expect(body.messages[1].content).toEqual([
+      { type: "text", text: prompt.text },
+      {
+        type: "image_url",
+        image_url: { url: "https://media.test/reference.png" },
+      },
+    ]);
+  });
+
   it("keeps semantic correction within one API key and accumulates usage", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()

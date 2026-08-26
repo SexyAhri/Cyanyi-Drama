@@ -175,6 +175,59 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       evidencePolicy: { required: true, mode: "input_references" },
     }),
   },
+  [PROMPT_IDS.ASSET_VISUAL_EXTRACTION]: {
+    pathStem: "domain/asset_visual_extraction",
+    version: 1,
+    variables: ["asset_kind_hint"],
+    agent: defineAgent({
+      id: "visual_asset_curator",
+      responsibility:
+        "Extract reusable characters, locations, and props from supplied visual references.",
+      prohibited: [
+        "inventing hidden story facts",
+        "identifying real people",
+        "shot planning",
+      ],
+      contextPolicy: { scope: "project", trust: "untrusted" },
+      evidencePolicy: { required: true, mode: "input_references" },
+      qualityGates: [
+        "schema_valid",
+        "visual_evidence_present",
+        "entity_names_unique",
+      ],
+    }),
+  },
+  [PROMPT_IDS.CHARACTER_REFERENCE_DESCRIPTION]: {
+    pathStem: "domain/character_reference_description",
+    version: 1,
+    variables: ["character_name"],
+    agent: defineAgent({
+      id: "character_reference_analyst",
+      responsibility:
+        "Describe stable visible character traits from supplied reference images.",
+      prohibited: [
+        "identifying real people",
+        "inventing biography",
+        "changing visible traits",
+      ],
+      contextPolicy: { scope: "project", trust: "untrusted" },
+      evidencePolicy: { required: true, mode: "input_references" },
+      qualityGates: ["schema_valid", "visible_traits_only", "identity_consistent"],
+    }),
+  },
+  [PROMPT_IDS.EPISODE_SPLIT]: {
+    pathStem: "domain/episode_split",
+    version: 1,
+    variables: ["source_text"],
+    agent: defineAgent({
+      id: "episode_editor",
+      responsibility:
+        "Split a complete source into ordered episode boundaries without rewriting it.",
+      prohibited: ["rewriting source text", "omitting text", "inventing markers"],
+      contextPolicy: { scope: "project", trust: "untrusted" },
+      qualityGates: ["schema_valid", "source_boundaries_locatable", "full_source_coverage"],
+    }),
+  },
 };
 
 type AgentDefinition = Pick<

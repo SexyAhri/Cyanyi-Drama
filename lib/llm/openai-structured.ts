@@ -40,6 +40,7 @@ export async function requestOpenAiStructured<T>(input: {
   schema: z.ZodType<T>;
   validate?: (data: T) => StructuredValidationIssue[];
   structuredOutputMode?: StructuredOutputMode;
+  imageUrls?: string[];
   temperature?: number;
   timeoutMs?: number;
 }) {
@@ -68,6 +69,7 @@ export async function requestOpenAiStructured<T>(input: {
             model: input.model,
             messages,
             responseFormat,
+            imageUrls: input.imageUrls,
             temperature: input.temperature,
             timeoutMs: input.timeoutMs,
           });
@@ -111,6 +113,7 @@ async function requestText(input: {
   model: string;
   messages: StructuredMessage[];
   responseFormat: ReturnType<typeof buildStructuredResponseFormat>;
+  imageUrls?: string[];
   temperature?: number;
   timeoutMs?: number;
 }) {
@@ -126,7 +129,7 @@ async function requestText(input: {
         model: input.model,
         temperature: input.temperature ?? 0.2,
         response_format: input.responseFormat,
-        messages: input.messages,
+        messages: buildOpenAiMessages(input.messages, input.imageUrls),
       }),
       signal: AbortSignal.timeout(input.timeoutMs ?? 120_000),
       cache: "no-store",
@@ -141,6 +144,29 @@ async function requestText(input: {
     text: extractText(payload),
     tokenUsage: normalizeTokenUsage(payload),
   };
+}
+
+function buildOpenAiMessages(
+  messages: StructuredMessage[],
+  imageUrls: string[] | undefined,
+) {
+  const images = (imageUrls ?? []).map((url) => url.trim()).filter(Boolean);
+  if (!images.length) return messages;
+  const firstUserIndex = messages.findIndex((message) => message.role === "user");
+  return messages.map((message, index) =>
+    index === firstUserIndex
+      ? {
+          ...message,
+          content: [
+            { type: "text", text: message.content },
+            ...images.map((url) => ({
+              type: "image_url",
+              image_url: { url },
+            })),
+          ],
+        }
+      : message,
+  );
 }
 
 export function buildStructuredResponseFormat(input: {

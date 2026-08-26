@@ -6,6 +6,10 @@ import { createDatabaseMediaTaskStore } from "./task-store";
 import { enqueuePersistedMediaTask } from "./task-submit";
 import { BillingError } from "@/lib/billing/service";
 import { resolveStoredMediaUrl } from "@/lib/storage";
+import {
+  linkSourceAssets,
+  listOwnedProjectMediaAssets,
+} from "@/lib/assets/project-store";
 
 export type ProjectAssetTarget = "character" | "location";
 
@@ -21,6 +25,9 @@ type CreateProjectImageTaskInput = {
   ratio?: string;
   resolution?: string;
   useSelectedReference?: boolean;
+  referenceAssetIds?: string[];
+  targetAppearanceId?: string;
+  idempotencyKey?: string;
 };
 
 export async function createProjectImageTask(
@@ -55,15 +62,34 @@ export async function createProjectImageTask(
     throw new ProjectAssetTaskError("模型未在该渠道中配置或未选中", 400);
   }
 
-  const entity = await createTargetEntity(input);
-  const referenceImages = input.useSelectedReference
+  const store = createDatabaseMediaTaskStore(input.userId);
+  if (input.idempotencyKey) {
+    const existing = await store.findByIdempotencyKey(input.idempotencyKey);
+    if (existing?.targetId && existing.targetType)
+      return {
+        task: existing,
+        entity: { id: existing.targetId, entityType: existing.targetType },
+      };
+  }
+  const explicitReferenceImages = input.referenceAssetIds?.length
+    ? await findExplicitReferenceImages(input)
+    : [];
+  const selectedReferenceImages = input.useSelectedReference
     ? await findSelectedReferenceImages(input)
     : [];
+  const entity = await createTargetEntity(input);
+  const referenceImages = [
+    ...explicitReferenceImages,
+    ...(input.useSelectedReference
+      ? selectedReferenceImages
+      : []),
+  ].slice(0, 9);
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
     batchId: input.batchId,
     channelId: input.channelId,
+    idempotencyKey: input.idempotencyKey,
     targetType: entity.entityType,
     targetId: entity.id,
     kind: "image",
@@ -78,8 +104,17 @@ export async function createProjectImageTask(
       ...(referenceImages.length ? { referenceImages } : {}),
     },
   });
-  const store = createDatabaseMediaTaskStore(input.userId);
   await store.create(task);
+  if (input.referenceAssetIds?.length)
+    await linkSourceAssets({
+      userId: input.userId,
+      projectId: input.projectId,
+      assetIds: input.referenceAssetIds,
+      entityType: entity.entityType,
+      entityId: entity.id,
+      role: "reference_source",
+      metadata: { taskId: task.id, model: input.model },
+    });
   const queued = await enqueueProjectTask(input.userId, task);
   return { task: queued, entity };
 }
@@ -392,6 +427,19 @@ async function createTargetEntity(input: CreateProjectImageTaskInput) {
       select: { id: true },
     });
     if (!target) throw new ProjectAssetTaskError("目标资产不存在", 404);
+    if (input.targetAppearanceId) {
+      const appearance = await prisma.characterAppearance.findFirst({
+        where: {
+          id: input.targetAppearanceId,
+          characterId: input.targetId,
+          character: { projectId: input.projectId },
+        },
+        select: { id: true },
+      });
+      if (!appearance)
+        throw new ProjectAssetTaskError("角色外观不存在", 404);
+      return { id: appearance.id, entityType: "character_appearance" as const };
+    }
     const row = await prisma.characterAppearance.create({
       data: {
         id: randomUUID(),
@@ -421,6 +469,19 @@ async function createTargetEntity(input: CreateProjectImageTaskInput) {
     },
   });
   return { id: row.id, entityType: "location_image" as const };
+}
+
+async function findExplicitReferenceImages(input: CreateProjectImageTaskInput) {
+  const assets = await listOwnedProjectMediaAssets(
+    input.userId,
+    input.projectId,
+    input.referenceAssetIds ?? [],
+    ["image"],
+  );
+  return assets.map((asset) => ({
+    url: asset.url,
+    mimeType: asset.mimeType ?? undefined,
+  }));
 }
 
 async function findSelectedReferenceImages(input: CreateProjectImageTaskInput) {

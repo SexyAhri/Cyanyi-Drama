@@ -14,7 +14,7 @@ const LOCALES: PromptLocale[] = ["zh", "en"];
 
 describe("prompt registry", () => {
   it("provides catalog-aligned Chinese and English templates", () => {
-    expect(PROMPT_ID_LIST).toHaveLength(10);
+    expect(PROMPT_ID_LIST).toHaveLength(13);
 
     for (const id of PROMPT_ID_LIST) {
       for (const locale of LOCALES) {
@@ -135,7 +135,13 @@ function contractError(code: string, id: PromptId, detail: string) {
 }
 
 function expectedVersion(id: PromptId) {
-  if (id === PROMPT_IDS.STORY_CONTINUITY_REVIEW) return 1;
+  if (
+    id === PROMPT_IDS.STORY_CONTINUITY_REVIEW ||
+    id === PROMPT_IDS.ASSET_VISUAL_EXTRACTION ||
+    id === PROMPT_IDS.CHARACTER_REFERENCE_DESCRIPTION ||
+    id === PROMPT_IDS.EPISODE_SPLIT
+  )
+    return 1;
   if (
     id === PROMPT_IDS.STORY_CLIP_SEGMENTATION ||
     id === PROMPT_IDS.STORY_SCREENPLAY_CONVERSION ||

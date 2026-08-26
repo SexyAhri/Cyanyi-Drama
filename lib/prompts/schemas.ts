@@ -217,6 +217,48 @@ export const continuityReviewSchema = z
       });
   });
 
+const visualEntitySchema = z
+  .object({
+    name: z.string().trim().min(1).max(160),
+    description: z.string().trim().min(1).max(4_000),
+    evidence: z.array(z.string().trim().min(1)).min(1).max(12),
+  })
+  .strict();
+
+export const visualAssetExtractionSchema = z
+  .object({
+    characters: z.array(visualEntitySchema).max(30),
+    locations: z.array(visualEntitySchema).max(30),
+    props: z.array(visualEntitySchema).max(50),
+  })
+  .strict();
+
+export const characterReferenceDescriptionSchema = z
+  .object({
+    description: z.string().trim().min(1).max(8_000),
+    uncertainties: z.array(z.string().trim().min(1)).max(20),
+  })
+  .strict();
+
+export const episodeSplitSchema = z
+  .object({
+    episodes: z
+      .array(
+        z
+          .object({
+            number: z.number().int().positive(),
+            title: z.string().trim().min(1).max(160),
+            summary: z.string().trim().max(4_000),
+            startMarker: exactText,
+            endMarker: exactText,
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(500),
+  })
+  .strict();
+
 export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
   [PROMPT_IDS.STORY_CHARACTER_ANALYSIS]: characterAnalysisSchema,
   [PROMPT_IDS.STORY_LOCATION_PROP_ANALYSIS]: locationPropAnalysisSchema,
@@ -228,4 +270,7 @@ export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
   [PROMPT_IDS.STORY_STORYBOARD_REFINEMENT]: storyboardRefinementSchema,
   [PROMPT_IDS.STORY_VOICE_ANALYSIS]: voiceAnalysisSchema,
   [PROMPT_IDS.STORY_CONTINUITY_REVIEW]: continuityReviewSchema,
+  [PROMPT_IDS.ASSET_VISUAL_EXTRACTION]: visualAssetExtractionSchema,
+  [PROMPT_IDS.CHARACTER_REFERENCE_DESCRIPTION]: characterReferenceDescriptionSchema,
+  [PROMPT_IDS.EPISODE_SPLIT]: episodeSplitSchema,
 };

@@ -1,0 +1,9 @@
+Use the supplied character references to extract a reusable visual description for "{{character_name}}".
+
+Describe only visible and consistent facial traits, hair, build, wardrobe, palette, and distinctive accessories. Record conflicts in uncertainties. Never infer real identity or biography.
+
+Return only this JSON shape:
+{
+  "description": "objective description reusable for a character sheet and later prompts",
+  "uncertainties": ["difference that cannot be resolved across references"]
+}

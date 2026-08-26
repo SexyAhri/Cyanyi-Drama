@@ -1,0 +1,12 @@
+Analyze the supplied images or sampled video frames and extract reusable visual assets for the current production project.
+
+Asset type hint: {{asset_kind_hint}}
+
+Describe only directly visible information. Do not infer real identities, biography, personality, or off-screen facts. Merge the same entity across references and cite visible evidence with the reference number.
+
+Return only this JSON shape:
+{
+  "characters": [{ "name": "project-safe name", "description": "stable appearance, wardrobe, and build", "evidence": ["reference 1: visible evidence"] }],
+  "locations": [{ "name": "location name", "description": "space, lighting, and key layout", "evidence": ["reference 2: visible evidence"] }],
+  "props": [{ "name": "prop name", "description": "material, shape, and distinguishing detail", "evidence": ["reference 1: visible evidence"] }]
+}
