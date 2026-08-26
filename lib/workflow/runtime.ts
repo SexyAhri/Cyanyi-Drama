@@ -6,8 +6,11 @@ import {
   parseNovelAndPersist,
   type NovelParseInput,
 } from "@/lib/novel/parser-runtime";
+import {
+  convertEpisodeClipsToScreenplays,
+  splitEpisodeIntoClips,
+} from "@/lib/novel/story-to-script-runtime";
 import { prisma } from "@/lib/server/prisma";
-import { saveProductionClips } from "@/lib/production/domain-store";
 import { analyzeEpisodeVoices } from "@/lib/voice/analyze";
 import {
   assertWorkflowRunActive,
@@ -158,7 +161,19 @@ async function processClaimedWorkflowJob(
   });
   try {
     await assertWorkflowRunActive({ runId, workerId });
-    const output = await runStep(userId, run, step);
+    const output = await runStep(userId, run, step, {
+      attempt: attemptNumber,
+      assertActive: () => assertWorkflowRunActive({ runId, workerId }),
+      persistArtifact: (artifactType, refId, payload) =>
+        persistIncrementalArtifact({
+          runId,
+          stepId: step.id,
+          workerId,
+          artifactType,
+          refId,
+          payload,
+        }),
+    });
     await assertWorkflowRunActive({ runId, workerId });
     const outputJson = toInputJson(output);
     const outputText = JSON.stringify(output);
@@ -213,10 +228,12 @@ async function processClaimedWorkflowJob(
             runId,
             stepId: step.id,
             artifactType,
-            payload:
-              artifactType === "prompt.trace" && promptTracePayload
-                ? promptTracePayload
-                : outputJson,
+            payload: getStepArtifactPayload({
+              output,
+              outputJson,
+              artifactType,
+              promptTracePayload,
+            }),
           })),
           skipDuplicates: true,
         });
@@ -339,6 +356,15 @@ async function runStep(
     input: Prisma.JsonValue | null;
   },
   step: { stepType: string; input: Prisma.JsonValue | null },
+  runtime: {
+    attempt: number;
+    assertActive: () => Promise<void>;
+    persistArtifact: (
+      artifactType: string,
+      refId: string,
+      payload: unknown,
+    ) => Promise<void>;
+  },
 ) {
   if (step.stepType === "parse_novel") {
     const runInput = isRecord(run.input) ? run.input : {};
@@ -354,109 +380,59 @@ async function runStep(
     const model = getString(input.model);
     if (!episodeId || !channelId || !model)
       throw new Error("WORKFLOW_PARSE_INPUT_REQUIRED");
-    return parseNovelAndPersist(userId, {
-      projectId: run.projectId,
-      episodeId,
-      channelId,
-      model,
-      sourceText: getString(input.sourceText) || undefined,
-      locale: getString(input.locale) === "en" ? "en" : "zh",
-    } satisfies NovelParseInput);
+    return parseNovelAndPersist(
+      userId,
+      {
+        projectId: run.projectId,
+        episodeId,
+        channelId,
+        model,
+        sourceText: getString(input.sourceText) || undefined,
+        locale: getString(input.locale) === "en" ? "en" : "zh",
+      } satisfies NovelParseInput,
+      runtime,
+    );
   }
   if (step.stepType === "split_clips") {
     if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
-    const storyboard = await prisma.storyboard.findFirst({
-      where: {
+    const input = mergedStepInput(run.input, step.input);
+    const channelId = getString(input.channelId);
+    const model = getString(input.model);
+    if (!channelId || !model)
+      throw new Error("WORKFLOW_SPLIT_CLIPS_INPUT_REQUIRED");
+    return splitEpisodeIntoClips(
+      userId,
+      {
         projectId: run.projectId,
         episodeId: run.episodeId,
-        project: { userId },
+        channelId,
+        model,
+        locale: getString(input.locale) === "en" ? "en" : "zh",
+        sourceText: getString(input.sourceText),
+        resumeExisting: runtime.attempt > 1,
       },
-      include: { panels: { orderBy: { panelIndex: "asc" } } },
-    });
-    if (!storyboard) throw new Error("WORKFLOW_STORYBOARD_REQUIRED");
-    const clipSize = 9;
-    const clips = [];
-    for (
-      let offset = 0;
-      offset < storyboard.panels.length;
-      offset += clipSize
-    ) {
-      const panels = storyboard.panels.slice(offset, offset + clipSize);
-      const first = panels[0];
-      const last = panels[panels.length - 1];
-      clips.push({
-        clipIndex: clips.length,
-        summary:
-          panels
-            .map((panel) => panel.description || "")
-            .filter(Boolean)
-            .join(" ")
-            .slice(0, 300) || `片段 ${clips.length + 1}`,
-        content: panels
-          .map((panel) => panel.description || "")
-          .filter(Boolean)
-          .join("\n"),
-        startText: first?.description,
-        endText: last?.description,
-        characters: uniqueStrings(
-          panels.flatMap((panel) => parseArray(panel.charactersJson)),
-        ),
-        locations: uniqueStrings(
-          panels.map((panel) => panel.locationName || ""),
-        ),
-        props: uniqueStrings(
-          panels.flatMap((panel) => parseArray(panel.propsJson)),
-        ),
-        shotCount: panels.length,
-        shots: panels.map((panel, index) => ({
-          shotIndex: index,
-          description: panel.description,
-          locationName: panel.locationName,
-          characters: parseArray(panel.charactersJson),
-          props: parseArray(panel.propsJson),
-          cameraMove: panel.cameraMove,
-          imagePrompt: panel.imagePrompt,
-          videoPrompt: panel.videoPrompt,
-          srtStart: panel.srtStart,
-          srtEnd: panel.srtEnd,
-          durationSeconds: panel.durationSeconds,
-        })),
-      });
-    }
-    const result = await saveProductionClips(
-      userId,
-      run.projectId,
-      run.episodeId,
-      clips,
+      runtime,
     );
-    if (!result) throw new Error("WORKFLOW_CLIPS_PERSIST_FAILED");
-    return { clipCount: result.length };
   }
   if (step.stepType === "convert_screenplay") {
     if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
-    const clips = await prisma.storyClip.findMany({
-      where: { projectId: run.projectId, episodeId: run.episodeId },
-      orderBy: { clipIndex: "asc" },
-    });
-    await prisma.$transaction(
-      clips.map((clip) =>
-        prisma.storyClip.update({
-          where: { id: clip.id },
-          data: {
-            screenplay:
-              clip.screenplay ||
-              clip.content
-                .split(/\n+/)
-                .map((line) => line.trim())
-                .filter(Boolean)
-                .map((line) => `场景：${line}`)
-                .join("\n"),
-            status: "screenplay_ready",
-          },
-        }),
-      ),
+    const input = mergedStepInput(run.input, step.input);
+    const channelId = getString(input.channelId);
+    const model = getString(input.model);
+    if (!channelId || !model)
+      throw new Error("WORKFLOW_SCREENPLAY_INPUT_REQUIRED");
+    return convertEpisodeClipsToScreenplays(
+      userId,
+      {
+        projectId: run.projectId,
+        episodeId: run.episodeId,
+        channelId,
+        model,
+        locale: getString(input.locale) === "en" ? "en" : "zh",
+        concurrency: getNumber(input.concurrency),
+      },
+      runtime,
     );
-    return { clipCount: clips.length };
   }
   if (step.stepType === "build_storyboard") {
     if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
@@ -500,23 +476,6 @@ async function runStep(
   throw new Error(`WORKFLOW_STEP_HANDLER_NOT_IMPLEMENTED:${step.stepType}`);
 }
 
-function parseArray(value: string | null) {
-  try {
-    const parsed = value ? JSON.parse(value) : [];
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === "string")
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function uniqueStrings(values: string[]) {
-  return Array.from(
-    new Set(values.map((value) => value.trim()).filter(Boolean)),
-  );
-}
-
 function findRunnableStep<
   T extends {
     stepKey: string;
@@ -552,6 +511,11 @@ function isRecord(value: unknown): value is Record<string, Prisma.JsonValue> {
 function getString(value: Prisma.JsonValue | undefined) {
   return typeof value === "string" ? value : undefined;
 }
+function getNumber(value: Prisma.JsonValue | undefined) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
 function parseStringArray(value: Prisma.JsonValue | null) {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
@@ -572,6 +536,97 @@ function getPromptTracePayload(value: unknown) {
   const promptTraces = (value as { promptTraces?: unknown }).promptTraces;
   if (!Array.isArray(promptTraces)) return undefined;
   return toInputJson({ promptTraces });
+}
+
+function getStepArtifactPayload(input: {
+  output: unknown;
+  outputJson: Prisma.InputJsonValue;
+  artifactType: string;
+  promptTracePayload: Prisma.InputJsonValue | undefined;
+}) {
+  if (input.artifactType === "prompt.trace" && input.promptTracePayload)
+    return input.promptTracePayload;
+  if (!input.output || typeof input.output !== "object")
+    return input.outputJson;
+  const output = input.output as {
+    analysis?: Record<string, unknown>;
+    clips?: unknown;
+    results?: unknown;
+  };
+  if (input.artifactType.startsWith("analysis.")) {
+    const key = input.artifactType.slice("analysis.".length);
+    const value = output.analysis?.[key];
+    if (value !== undefined) return toInputJson({ [key]: value });
+  }
+  if (input.artifactType === "clips.split" && output.clips !== undefined)
+    return toInputJson({ clips: output.clips });
+  if (input.artifactType === "screenplay.clip" && output.results !== undefined)
+    return toInputJson({ results: output.results });
+  return input.outputJson;
+}
+
+function mergedStepInput(
+  runInput: Prisma.JsonValue | null,
+  stepInput: Prisma.JsonValue | null,
+) {
+  return {
+    ...(isRecord(runInput) ? runInput : {}),
+    ...(isRecord(stepInput) ? stepInput : {}),
+  };
+}
+
+async function persistIncrementalArtifact(input: {
+  runId: string;
+  stepId: string;
+  workerId: string;
+  artifactType: string;
+  refId: string;
+  payload: unknown;
+}) {
+  const now = new Date();
+  const payload = toInputJson(input.payload);
+  const id = `workflow_artifact_${createHash("sha256")
+    .update(
+      `${input.runId}\u0000${input.stepId}\u0000${input.artifactType}\u0000${input.refId}`,
+    )
+    .digest("hex")}`;
+  await prisma.$transaction(async (tx) => {
+    const owned = await tx.workflowRun.updateMany({
+      where: {
+        id: input.runId,
+        leaseOwner: input.workerId,
+        status: "running",
+        leaseExpiresAt: { gt: now },
+      },
+      data: { heartbeatAt: now, updatedAt: now },
+    });
+    if (!owned.count)
+      throw new WorkflowControlError("lease_lost", input.runId);
+    await tx.workflowArtifact.upsert({
+      where: { id },
+      create: {
+        id,
+        runId: input.runId,
+        stepId: input.stepId,
+        artifactType: input.artifactType,
+        refId: input.refId,
+        payload,
+      },
+      update: { payload },
+    });
+    await tx.workflowEvent.create({
+      data: {
+        runId: input.runId,
+        stepId: input.stepId,
+        type: "artifact_committed",
+        status: "running",
+        payload: toInputJson({
+          artifactType: input.artifactType,
+          refId: input.refId,
+        }),
+      },
+    });
+  });
 }
 
 async function finishRun(runId: string, workerId: string, output: unknown) {

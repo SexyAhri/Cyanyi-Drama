@@ -8,43 +8,38 @@ export type WorkflowTemplate = {
 
 const templates = new Map<string, WorkflowTemplate>([
   [
-    "novel_production",
+    "story-to-script",
     {
-      type: "novel_production",
+      type: "story-to-script",
       version: 1,
       steps: [
         {
           key: "parse",
           type: "parse_novel",
           artifactTypes: [
-            "novel.analysis",
-            "storyboard.draft",
+            "analysis.characters",
+            "analysis.locations",
+            "analysis.props",
             "prompt.trace",
           ],
+          retryable: true,
+          maxAttempts: 3,
         },
         {
           key: "split",
           type: "split_clips",
           dependsOn: ["parse"],
-          artifactTypes: ["clips"],
+          artifactTypes: ["clips.split", "prompt.trace"],
+          retryable: true,
+          maxAttempts: 3,
         },
         {
           key: "screenplay",
           type: "convert_screenplay",
           dependsOn: ["split"],
-          artifactTypes: ["screenplay"],
-        },
-        {
-          key: "storyboard",
-          type: "build_storyboard",
-          dependsOn: ["screenplay"],
-          artifactTypes: ["storyboard.ready"],
-        },
-        {
-          key: "voice",
-          type: "voice_analyze",
-          dependsOn: ["storyboard"],
-          artifactTypes: ["voice.lines", "prompt.trace"],
+          artifactTypes: ["screenplay.clip", "prompt.trace"],
+          retryable: true,
+          maxAttempts: 3,
         },
       ],
     },

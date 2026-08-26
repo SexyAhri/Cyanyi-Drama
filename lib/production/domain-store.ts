@@ -34,6 +34,7 @@ export type ProductionClipInput = {
   locations?: string[];
   props?: string[];
   shotCount?: number | null;
+  status?: string;
   shots?: ProductionShotInput[];
 };
 
@@ -101,47 +102,85 @@ export async function saveProductionClips(
     where: { id: episodeId, projectId, project: { userId } },
   });
   if (!ownsEpisode) return null;
+  const ordered = [...input].sort((a, b) => a.clipIndex - b.clipIndex);
   await prisma.$transaction(async (tx) => {
+    const existing = await tx.storyClip.findMany({
+      where: { episodeId },
+      select: {
+        id: true,
+        clipIndex: true,
+        content: true,
+        screenplay: true,
+      },
+    });
+    const existingByIndex = new Map(
+      existing.map((clip) => [clip.clipIndex, clip]),
+    );
     await tx.storyShot.deleteMany({ where: { episodeId } });
-    await tx.storyClip.deleteMany({ where: { episodeId } });
-    for (const clip of input.sort((a, b) => a.clipIndex - b.clipIndex)) {
-      const clipId = randomUUID();
-      await tx.storyClip.create({
-        data: {
-          id: clipId,
-          projectId,
-          episodeId,
-          clipIndex: clip.clipIndex,
-          summary: clip.summary.trim(),
-          content: clip.content.trim(),
-          startText: clip.startText?.trim() || null,
-          endText: clip.endText?.trim() || null,
-          screenplay: clip.screenplay?.trim() || null,
-          charactersJson: stringifyArray(clip.characters),
-          locationsJson: stringifyArray(clip.locations),
-          propsJson: stringifyArray(clip.props),
-          shotCount: clip.shotCount ?? clip.shots?.length ?? null,
-          shots: clip.shots?.length
-            ? {
-                create: clip.shots.map((shot) => ({
-                  id: randomUUID(),
-                  projectId,
-                  episodeId,
-                  shotIndex: shot.shotIndex,
-                  sequence: shot.sequence?.trim() || null,
-                  description: shot.description?.trim() || null,
-                  locationName: shot.locationName?.trim() || null,
-                  charactersJson: stringifyArray(shot.characters),
-                  propsJson: stringifyArray(shot.props),
-                  cameraMove: shot.cameraMove?.trim() || null,
-                  imagePrompt: shot.imagePrompt?.trim() || null,
-                  videoPrompt: shot.videoPrompt?.trim() || null,
-                  srtStart: finiteNumber(shot.srtStart),
-                  srtEnd: finiteNumber(shot.srtEnd),
-                  durationSeconds: finiteNumber(shot.durationSeconds),
-                })),
-              }
-            : undefined,
+    if (!ordered.length) {
+      await tx.storyClip.deleteMany({ where: { episodeId } });
+      return;
+    }
+    await tx.storyClip.deleteMany({
+      where: {
+        episodeId,
+        clipIndex: { notIn: ordered.map((clip) => clip.clipIndex) },
+      },
+    });
+    for (const clip of ordered) {
+      if (!clip.content.trim())
+        throw new Error(`PRODUCTION_CLIP_CONTENT_REQUIRED:${clip.clipIndex}`);
+      const previous = existingByIndex.get(clip.clipIndex);
+      const explicitScreenplay = clip.screenplay !== undefined;
+      const screenplay = explicitScreenplay
+        ? clip.screenplay?.trim() || null
+        : previous?.content === clip.content
+          ? previous.screenplay
+          : null;
+      const shots = (clip.shots ?? []).map((shot) => ({
+        id: randomUUID(),
+        projectId,
+        episodeId,
+        shotIndex: shot.shotIndex,
+        sequence: shot.sequence?.trim() || null,
+        description: shot.description?.trim() || null,
+        locationName: shot.locationName?.trim() || null,
+        charactersJson: stringifyArray(shot.characters),
+        propsJson: stringifyArray(shot.props),
+        cameraMove: shot.cameraMove?.trim() || null,
+        imagePrompt: shot.imagePrompt?.trim() || null,
+        videoPrompt: shot.videoPrompt?.trim() || null,
+        srtStart: finiteNumber(shot.srtStart),
+        srtEnd: finiteNumber(shot.srtEnd),
+        durationSeconds: finiteNumber(shot.durationSeconds),
+      }));
+      const values = {
+        projectId,
+        episodeId,
+        clipIndex: clip.clipIndex,
+        summary: clip.summary.trim(),
+        content: clip.content,
+        startText: clip.startText?.length ? clip.startText : null,
+        endText: clip.endText?.length ? clip.endText : null,
+        screenplay,
+        charactersJson: stringifyArray(clip.characters),
+        locationsJson: stringifyArray(clip.locations),
+        propsJson: stringifyArray(clip.props),
+        shotCount: clip.shotCount ?? clip.shots?.length ?? null,
+        status:
+          clip.status?.trim() ||
+          (screenplay ? "screenplay_ready" : "split_ready"),
+      };
+      await tx.storyClip.upsert({
+        where: { episodeId_clipIndex: { episodeId, clipIndex: clip.clipIndex } },
+        create: {
+          id: previous?.id ?? randomUUID(),
+          ...values,
+          shots: shots.length ? { create: shots } : undefined,
+        },
+        update: {
+          ...values,
+          shots: shots.length ? { create: shots } : undefined,
         },
       });
     }

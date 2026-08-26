@@ -89,7 +89,7 @@ describe("prompt registry", () => {
 
       expect(entry.agent.successCriteria.length).toBeGreaterThan(0);
       expect(entry.agent.qualityGates.length).toBeGreaterThan(0);
-      expect(entry.version).toBe(id === PROMPT_IDS.STORY_CONTINUITY_REVIEW ? 1 : 2);
+      expect(entry.version).toBe(expectedVersion(id));
       expect(entry.agent.contextPolicy.trust).toBe("untrusted");
       expect(entry.agent.retryPolicy).toEqual({
         maxSemanticCorrections: 1,
@@ -132,4 +132,15 @@ function variablesFor(id: PromptId) {
 
 function contractError(code: string, id: PromptId, detail: string) {
   return new PromptContractError(code, id, detail);
+}
+
+function expectedVersion(id: PromptId) {
+  if (id === PROMPT_IDS.STORY_CONTINUITY_REVIEW) return 1;
+  if (
+    id === PROMPT_IDS.STORY_CLIP_SEGMENTATION ||
+    id === PROMPT_IDS.STORY_SCREENPLAY_CONVERSION ||
+    id === PROMPT_IDS.STORY_VOICE_ANALYSIS
+  )
+    return 3;
+  return 2;
 }

@@ -12,6 +12,7 @@ import {
   validateStoryboardRefinement,
   validateVoiceAnalysis,
 } from "./validators";
+import { clipSegmentationSchema } from "./schemas";
 
 const canonical = {
   characters: ["林澈"],
@@ -84,6 +85,24 @@ describe("domain semantic validators", () => {
     );
   });
 
+  it("does not trim exact source segments during schema parsing", () => {
+    const parsed = clipSegmentationSchema.parse({
+      clips: [
+        {
+          start: " 甲",
+          end: "甲\n",
+          text: " 甲\n",
+          summary: "片段",
+          location: null,
+          characters: [],
+          props: [],
+        },
+      ],
+    });
+
+    expect(parsed.clips[0].text).toBe(" 甲\n");
+  });
+
   it("rejects nonsequential panels and unknown canonical entities", () => {
     const issues = validateStoryboardPlanning(
       {
@@ -121,17 +140,18 @@ describe("domain semantic validators", () => {
         originalText: "changed text",
         scenes: [
           {
-            sceneNumber: 0,
+            sceneNumber: 2,
             heading: { intExt: "INT", location: "书房", time: "夜" },
             description: "",
             characters: ["林澈"],
             content: [
               {
                 type: "dialogue",
-                character: "林澈",
+                character: "陌生人",
                 parenthetical: null,
                 lines: "补写台词",
               },
+              { type: "action", text: "补写动作" },
             ],
           },
         ],
@@ -144,6 +164,9 @@ describe("domain semantic validators", () => {
         "CLIP_ID_CHANGED",
         "ORIGINAL_TEXT_CHANGED",
         "SPOKEN_TEXT_NOT_IN_SOURCE",
+        "ACTION_NOT_IN_SOURCE",
+        "UNKNOWN_SPEAKER",
+        "SCENE_NUMBER_NOT_SEQUENTIAL",
       ]),
     );
   });

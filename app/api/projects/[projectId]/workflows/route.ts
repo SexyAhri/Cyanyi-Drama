@@ -107,6 +107,11 @@ function isStep(value: unknown): value is {
         ))) &&
     (value.retryable === undefined || typeof value.retryable === "boolean") &&
     (value.failureMode === undefined || value.failureMode === "fail_run") &&
+    (value.maxAttempts === undefined ||
+      (typeof value.maxAttempts === "number" &&
+        Number.isInteger(value.maxAttempts) &&
+        value.maxAttempts >= 1 &&
+        value.maxAttempts <= 10)) &&
     (value.input === undefined || isRecord(value.input))
   );
 }

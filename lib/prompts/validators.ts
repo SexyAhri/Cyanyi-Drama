@@ -163,6 +163,14 @@ export function validateScreenplayConversion(
       ),
     );
   data.scenes.forEach((scene, sceneIndex) => {
+    if (scene.sceneNumber !== sceneIndex)
+      issues.push(
+        issue(
+          `scenes.${sceneIndex}.sceneNumber`,
+          "SCENE_NUMBER_NOT_SEQUENTIAL",
+          `Expected sceneNumber ${sceneIndex}, received ${scene.sceneNumber}`,
+        ),
+      );
     validateCanonicalNames(
       scene.characters,
       input.canonical.characters,
@@ -182,13 +190,29 @@ export function validateScreenplayConversion(
       );
     scene.content.forEach((content, contentIndex) => {
       const value =
-        content.type === "dialogue" ? content.lines : content.type === "voiceover" ? content.text : null;
+        content.type === "dialogue" ? content.lines : content.text;
       if (value && !input.clipText.includes(value))
         issues.push(
           issue(
             `scenes.${sceneIndex}.content.${contentIndex}`,
-            "SPOKEN_TEXT_NOT_IN_SOURCE",
-            "Dialogue and voiceover must be exact source excerpts",
+            content.type === "action"
+              ? "ACTION_NOT_IN_SOURCE"
+              : "SPOKEN_TEXT_NOT_IN_SOURCE",
+            "Screenplay content must be an exact source excerpt",
+          ),
+        );
+      if (
+        content.type !== "action" &&
+        content.character &&
+        !nameSet(input.canonical.characters).has(
+          normalizeName(content.character),
+        )
+      )
+        issues.push(
+          issue(
+            `scenes.${sceneIndex}.content.${contentIndex}.character`,
+            "UNKNOWN_SPEAKER",
+            `Unknown canonical speaker: ${content.character}`,
           ),
         );
     });

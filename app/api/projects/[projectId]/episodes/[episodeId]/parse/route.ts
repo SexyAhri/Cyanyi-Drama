@@ -12,6 +12,10 @@ export async function POST(request: Request, context: Context) {
     typeof body.channelId === "string" ? body.channelId.trim() : "";
   const model = typeof body.model === "string" ? body.model.trim() : "";
   const locale = body.locale === "en" ? "en" : "zh";
+  const concurrency =
+    typeof body.concurrency === "number" && Number.isFinite(body.concurrency)
+      ? Math.max(1, Math.min(8, Math.floor(body.concurrency)))
+      : 3;
   if (!channelId || !model)
     return attachSessionCookie(
       Response.json(
@@ -25,10 +29,10 @@ export async function POST(request: Request, context: Context) {
     userId: user.id,
     projectId,
     episodeId,
-    workflowType: "novel-production",
+    workflowType: "story-to-script",
     targetType: "episode",
     targetId: episodeId,
-    input: { channelId, model, locale },
+    input: { channelId, model, locale, concurrency },
     steps: [
       {
         key: "analyze_novel",
@@ -37,41 +41,32 @@ export async function POST(request: Request, context: Context) {
           "analysis.characters",
           "analysis.locations",
           "analysis.props",
-          "analysis.panels",
           "prompt.trace",
         ],
         input: { channelId, model, locale },
+        retryable: true,
+        maxAttempts: 3,
       },
       {
         key: "split_clips",
         type: "split_clips",
         dependsOn: ["analyze_novel"],
-        artifactTypes: ["clips.split"],
-        input: {},
+        artifactTypes: ["clips.split", "prompt.trace"],
+        input: { channelId, model, locale },
+        retryable: true,
+        maxAttempts: 3,
       },
       {
         key: "convert_screenplay",
         type: "convert_screenplay",
         dependsOn: ["split_clips"],
-        artifactTypes: ["screenplay.clip"],
-        input: {},
-      },
-      {
-        key: "build_storyboard",
-        type: "build_storyboard",
-        dependsOn: ["convert_screenplay"],
-        artifactTypes: ["storyboard.panels"],
-        input: {},
-      },
-      {
-        key: "voice_analyze",
-        type: "voice_analyze",
-        dependsOn: ["build_storyboard"],
-        artifactTypes: ["voice.lines", "prompt.trace"],
-        input: { channelId, model, locale },
+        artifactTypes: ["screenplay.clip", "prompt.trace"],
+        input: { channelId, model, locale, concurrency },
+        retryable: true,
+        maxAttempts: 3,
       },
     ],
-    maxAttempts: 1,
+    maxAttempts: 3,
   });
   if (!result)
     return attachSessionCookie(

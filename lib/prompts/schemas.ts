@@ -3,9 +3,13 @@ import { z } from "zod";
 import { PROMPT_IDS, type PromptId } from "./ids";
 
 const text = z.string().trim().min(1);
+const exactText = z
+  .string()
+  .min(1)
+  .refine((value) => value.trim().length > 0, "Text cannot be whitespace only");
 const optionalText = z.string().trim().min(1).nullish();
 const stringList = z.array(text).max(100).default([]);
-const evidenceQuotes = z.array(text).min(1).max(12);
+const evidenceQuotes = z.array(exactText).min(1).max(12);
 
 const characterSchema = z
   .object({
@@ -49,34 +53,34 @@ export const clipSegmentationSchema = z
     clips: z.array(
       z
         .object({
-          start: text,
-          end: text,
-          text,
+          start: exactText,
+          end: exactText,
+          text: exactText,
           summary: text,
           location: z.string().trim().nullable(),
           characters: stringList,
           props: stringList,
         })
         .strict(),
-    ),
+    ).min(1),
   })
   .strict();
 
 const screenplayContentSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("action"), text }).strict(),
+  z.object({ type: z.literal("action"), text: exactText }).strict(),
   z
     .object({
       type: z.literal("dialogue"),
       character: text,
       parenthetical: optionalText,
-      lines: text,
+      lines: exactText,
     })
     .strict(),
   z
     .object({
       type: z.literal("voiceover"),
       character: optionalText,
-      text,
+      text: exactText,
     })
     .strict(),
 ]);
@@ -84,7 +88,7 @@ const screenplayContentSchema = z.discriminatedUnion("type", [
 export const screenplayConversionSchema = z
   .object({
     clipId: text,
-    originalText: text,
+    originalText: exactText,
     scenes: z.array(
       z
         .object({
@@ -98,10 +102,10 @@ export const screenplayConversionSchema = z
             .strict(),
           description: z.string(),
           characters: stringList,
-          content: z.array(screenplayContentSchema),
+          content: z.array(screenplayContentSchema).min(1),
         })
         .strict(),
-    ),
+    ).min(1).max(200),
   })
   .strict();
 
@@ -173,7 +177,7 @@ export const voiceAnalysisSchema = z
       z
         .object({
           speaker: text,
-          content: text,
+          content: exactText,
           emotionPrompt: optionalText,
           emotionStrength: z.number().min(0).max(1),
           matchedPanelIndex: z.number().int().nonnegative().nullable(),

@@ -11,17 +11,14 @@ import {
 import {
   characterAnalysisSchema,
   locationPropAnalysisSchema,
-  storyboardPlanningSchema,
 } from "@/lib/prompts/schemas";
 import {
   validateCharacterAnalysis,
   validateLocationPropAnalysis,
-  validateStoryboardPlanning,
 } from "@/lib/prompts/validators";
 import {
   listNovelCharacters,
   listNovelLocations,
-  saveStoryboard,
   upsertNovelCharacters,
   upsertNovelLocations,
 } from "./domain-store";
@@ -57,24 +54,22 @@ export type NovelParseOutput = {
     summary?: string | null;
     evidence: string[];
   }>;
-  panels: Array<{
-    panelIndex: number;
-    shotType?: string | null;
-    cameraMove?: string | null;
-    description?: string | null;
-    locationName?: string | null;
-    characters?: string[];
-    props?: string[];
-    imagePrompt?: string | null;
-    videoPrompt?: string | null;
-    sourceEvidence: string[];
-  }>;
   promptTraces: PromptExecutionTrace[];
+};
+
+export type NovelParseRuntimeHooks = {
+  assertActive: () => Promise<void>;
+  persistArtifact: (
+    artifactType: string,
+    refId: string,
+    payload: unknown,
+  ) => Promise<void>;
 };
 
 export async function parseNovelAndPersist(
   userId: string,
   input: NovelParseInput,
+  hooks?: NovelParseRuntimeHooks,
 ) {
   const episode = await prisma.episode.findFirst({
     where: {
@@ -85,53 +80,110 @@ export async function parseNovelAndPersist(
     select: { novelText: true },
   });
   if (!episode) throw new Error("NOVEL_EPISODE_NOT_FOUND");
-  const sourceText = input.sourceText?.trim() || episode.novelText?.trim();
-  if (!sourceText) throw new Error("NOVEL_SOURCE_TEXT_REQUIRED");
+  const sourceText = input.sourceText ?? episode.novelText;
+  if (!sourceText?.trim()) throw new Error("NOVEL_SOURCE_TEXT_REQUIRED");
 
-  const parsed = await requestNovelParse(userId, input, sourceText);
-  const characters = await upsertNovelCharacters(
-    userId,
-    input.projectId,
-    parsed.characters,
-  );
-  const locations = await upsertNovelLocations(
-    userId,
-    input.projectId,
-    parsed.locations,
-  );
-  const props = await upsertProductionProps(userId, input.projectId, parsed.props);
-  const storyboard = await saveStoryboard(
-    userId,
-    input.projectId,
-    input.episodeId,
-    {
-      status: "draft",
-      sourceHash: createSourceHash(sourceText),
-      panels: parsed.panels,
+  let characters: Awaited<ReturnType<typeof upsertNovelCharacters>> = null;
+  let locations: Awaited<ReturnType<typeof upsertNovelLocations>> = null;
+  let props: Awaited<ReturnType<typeof upsertProductionProps>> = null;
+  const parsed = await requestNovelParse(userId, input, sourceText, {
+    onCharacters: async (data, trace) => {
+      characters = await persistAnalysisPart({
+        hooks,
+        artifactType: "analysis.characters",
+        refId: "characters",
+        data,
+        trace,
+        persist: () => upsertNovelCharacters(userId, input.projectId, data),
+      });
     },
-  );
-  if (!characters || !locations || !props || !storyboard)
+    onAssets: async (data, trace) => {
+      const persisted = await Promise.allSettled([
+        persistAnalysisPart({
+          hooks,
+          artifactType: "analysis.locations",
+          refId: "locations",
+          data: data.locations,
+          trace,
+          persist: () =>
+            upsertNovelLocations(userId, input.projectId, data.locations),
+        }),
+        persistAnalysisPart({
+          hooks,
+          artifactType: "analysis.props",
+          refId: "props",
+          data: data.props,
+          trace,
+          persistTrace: false,
+          persist: () =>
+            upsertProductionProps(userId, input.projectId, data.props),
+        }),
+      ]);
+      if (persisted[0].status === "fulfilled") locations = persisted[0].value;
+      if (persisted[1].status === "fulfilled") props = persisted[1].value;
+      const failed = persisted.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (failed) throw failed.reason;
+    },
+  });
+  if (!characters || !locations || !props)
     throw new Error("NOVEL_PARSE_PERSIST_FAILED");
   return {
     characters,
     locations,
     props,
-    storyboard,
     analysis: {
       characters: parsed.characters,
       locations: parsed.locations,
       props: parsed.props,
-      panels: parsed.panels,
     },
     promptTraces: parsed.promptTraces,
     sourceLength: sourceText.length,
   };
 }
 
+async function persistAnalysisPart<T>(input: {
+  hooks?: NovelParseRuntimeHooks;
+  artifactType: string;
+  refId: string;
+  data: unknown;
+  trace: PromptExecutionTrace;
+  persistTrace?: boolean;
+  persist: () => Promise<T>;
+}) {
+  await input.hooks?.assertActive();
+  const persisted = await input.persist();
+  await input.hooks?.persistArtifact(input.artifactType, input.refId, {
+    data: input.data,
+    trace: input.trace,
+  });
+  if (input.persistTrace !== false)
+    await input.hooks?.persistArtifact(
+      "prompt.trace",
+      input.trace.promptId,
+      input.trace,
+    );
+  return persisted;
+}
+
 async function requestNovelParse(
   userId: string,
   input: NovelParseInput,
   sourceText: string,
+  callbacks?: {
+    onCharacters: (
+      data: NovelParseOutput["characters"],
+      trace: PromptExecutionTrace,
+    ) => Promise<void>;
+    onAssets: (
+      data: {
+        locations: NovelParseOutput["locations"];
+        props: NovelParseOutput["props"];
+      },
+      trace: PromptExecutionTrace,
+    ) => Promise<void>;
+  },
 ) {
   const channel = await prisma.channel.findFirst({
     where: { id: input.channelId, userId },
@@ -169,7 +221,7 @@ async function requestNovelParse(
       ? ("json_schema" as const)
       : ("json_object" as const),
   };
-  const [characterResult, assetResult] = await Promise.all([
+  const analysis = await Promise.allSettled([
     requestOpenAiStructured({
       ...provider,
       prompt: renderPrompt({
@@ -182,6 +234,9 @@ async function requestNovelParse(
       }),
       schema: characterAnalysisSchema,
       validate: (data) => validateCharacterAnalysis(data, sourceText),
+    }).then(async (result) => {
+      await callbacks?.onCharacters(result.data.characters, result.trace);
+      return result;
     }),
     requestOpenAiStructured({
       ...provider,
@@ -196,42 +251,27 @@ async function requestNovelParse(
       }),
       schema: locationPropAnalysisSchema,
       validate: (data) => validateLocationPropAnalysis(data, sourceText),
+    }).then(async (result) => {
+      await callbacks?.onAssets(result.data, result.trace);
+      return result;
     }),
   ]);
-  const storyboardResult = await requestOpenAiStructured({
-    ...provider,
-    prompt: renderPrompt({
-      id: PROMPT_IDS.STORY_STORYBOARD_PLANNING,
-      locale,
-      variables: {
-        source_text: sourceText,
-        characters_json: JSON.stringify(characterResult.data.characters),
-        locations_json: JSON.stringify(assetResult.data.locations),
-        props_json: JSON.stringify(assetResult.data.props),
-      },
-    }),
-    schema: storyboardPlanningSchema,
-    validate: (data) =>
-      validateStoryboardPlanning(data, {
-        sourceText,
-        canonical: {
-          characters: characterResult.data.characters.map((item) => item.name),
-          locations: assetResult.data.locations.map((item) => item.name),
-          props: assetResult.data.props.map((item) => item.name),
-        },
-      }),
-  });
-
+  const failed = analysis.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (failed) throw failed.reason;
+  if (
+    analysis[0].status !== "fulfilled" ||
+    analysis[1].status !== "fulfilled"
+  )
+    throw new Error("NOVEL_ANALYSIS_INCOMPLETE");
+  const characterResult = analysis[0].value;
+  const assetResult = analysis[1].value;
   return {
     characters: characterResult.data.characters,
     locations: assetResult.data.locations,
     props: assetResult.data.props,
-    panels: storyboardResult.data.panels,
-    promptTraces: [
-      characterResult.trace,
-      assetResult.trace,
-      storyboardResult.trace,
-    ],
+    promptTraces: [characterResult.trace, assetResult.trace],
   } satisfies NovelParseOutput;
 }
 
@@ -249,12 +289,4 @@ function parseApiKeys(value: string) {
   } catch {
     return [];
   }
-}
-function createSourceHash(value: string) {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16);
 }
