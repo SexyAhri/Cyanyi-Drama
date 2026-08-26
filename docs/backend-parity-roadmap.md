@@ -26,7 +26,7 @@
 | M3 | 已完成 | 4-6 天 | Story-to-Script：并行角色/场景/道具分析、边界校验切片、逐 clip 剧本转换、增量 Artifact | 单个 clip 可独立重试；Worker 中断后成功 clip 不丢失；原文无重叠和缺口 |
 | M4 | 已完成 | 5-7 天 | Script-to-Storyboard：规划、摄影、表演、细化、台词分析、clip/phase 级失效重试 | 重试一个 phase 只失效其下游；其他 clip 不变化；分镜和台词输出通过 Schema 校验 |
 | M5 | 已完成 | 4-6 天 | 资产上传、参考图转角色、资产提取、标记/AI 分集、OpenAI Compatible 媒体模板、空字段显式省略 | 新 Provider 无需修改 Worker 核心代码；上传和提取资产保留所有权与来源 |
-| M6 | 下一步 | 3-5 天 | 计费对账、结构化 Trace、Prompt Canary、行为 Guard、渲染规格归一化、系统回归测试 | 对账幂等；Run/Task/Step 可串联追踪；混合媒体输入能生成规格统一的成片 |
+| M6 | 已完成 | 3-5 天 | 计费对账、结构化 Trace、Prompt Canary、行为 Guard、渲染规格归一化、系统回归测试 | 对账幂等；Run/Task/Step 可串联追踪；混合媒体输入能生成规格统一的成片 |
 
 ## 4. M0 当前基线任务表
 
@@ -131,6 +131,20 @@ M4 保留 `waoowaoo` 的规划、摄影/表演并行、细化和台词分析顺�
 
 M5 复用了既有媒体任务、资产引用和模型能力数据结构，因此不需要新增 Prisma 表或迁移。模板不会保存 API Key，绝对 URL 只能与渠道 Base URL 同源；视觉提取只读取通过项目所有权校验的媒体资产。13 项新增回归测试覆盖上传来源、跨项目资产拒绝、视频抽帧、分集完整覆盖、异步状态与空字段语义；全量 134 项测试、TypeScript、ESLint、生产构建、Prisma 校验和 14 组本地迁移状态均通过。
 
+### 7.4 M6 质量体系完成记录
+
+| 任务 | 目标模块 | 验收结果 | 状态 |
+| --- | --- | --- | --- |
+| 计费对账 | Billing Service 与 Queue Watchdog | 冻结只允许一个结算方抢占；交易和用量使用稳定幂等键；终态任务和过期孤儿冻结自动补偿 | 已完成 |
+| 余额修复 | Billing Reconciler | 串行锁定用户余额后，以待处理冻结总和校正 `frozenAmount`，不会与并发预扣互相覆盖 | 已完成 |
+| 结构化 Trace | Workflow、Media Task 与 Trace API | Run、Step、Attempt、Prompt、Task 使用统一 Trace ID 和父子 Span；查询按当前用户隔离 | 已完成 |
+| Prompt Canary | Prompt Registry 与 Worker Bootstrap | 13 个 Prompt 的 26 个双语版本 Hash 固化；模板或 Agent Contract 漂移会阻止 Worker 启动 | 已完成 |
+| 行为 Guard | Quality Guards 与 Media Runtime | 拒绝重复资产、错误媒体类型、非法 URL、重复 Panel、危险尺寸和不一致输出规格 | 已完成 |
+| 渲染归一化 | FFmpeg Render 与 Render API | 图片和不同编码、宽高比、帧率的视频先统一转码，再与 48kHz 双声道音轨合成 MP4 | 已完成 |
+| 系统回归 | M6 Tests | 覆盖计费重复结算、Trace 父子链、Canary 漂移、渲染参数和跨模块行为门禁 | 已完成 |
+
+M6 新增第 15 组非空迁移，为既有 Run、Step 和 Task 回填稳定 Trace/Span Hash，并为后续任务保留显式 Workflow 关联。用量记录增加唯一来源键，重复 Worker 回调和 Watchdog 对账不会重复扣费。渲染输出固定为 H.264、`yuv420p`、确定尺寸和帧率；当分镜没有视频时可使用选中图片按镜头时长补帧。完整接口和运维说明见 `docs/m6-quality-system.md`。
+
 ## 8. 提交计划
 
 | 提交信息 | 范围 | 当前是否提交 |
@@ -143,7 +157,8 @@ M5 复用了既有媒体任务、资产引用和模型能力数据结构，因�
 | `feat: harden domain agent contracts` | M2.5 Agent Contract、Validator、连续性监督、Provider 能力和 Trace | 已提交 |
 | `feat: implement story-to-script workflow` | M3 编排、Artifact 和落库 | 已提交 |
 | `feat: implement script-to-storyboard workflow` | M4 编排、Artifact 和落库 | 已提交 |
-| `feat: add external assets and media templates` | M5 上传、视觉提取、整本分集、Provider 模板和测试 | 本次提交 |
+| `feat: add external assets and media templates` | M5 上传、视觉提取、整本分集、Provider 模板和测试 | 已提交 |
+| `feat: add production quality safeguards` | M6 计费对账、Trace、Canary、行为门禁、渲染归一化和系统回归 | 本次提交 |
 
 当前 Prisma Schema、迁移、资产、计费、媒体和 Workflow 改动相互依赖，因此现有功能使用一个可编译、可迁移的基线提交，不拆成无法独立运行的中间提交。后续每个里程碑按功能和测试独立提交。
 

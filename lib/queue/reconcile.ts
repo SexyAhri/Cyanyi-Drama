@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/server/prisma";
+import { reconcilePendingMediaCharges } from "@/lib/billing/service";
 import { enqueueWorkflowJob } from "./workflow-queue";
 
 const DEFAULT_INTERVAL_MS = 60_000;
@@ -147,12 +148,14 @@ export async function reconcileStaleWork() {
     }
   }
 
+  const billing = await reconcilePendingMediaCharges();
   return {
     mediaTasks: staleTasks.length,
     workflowRuns: recoveredRuns + failedRuns,
     recoveredRuns,
     failedRuns,
     requeuedRuns,
+    billing,
   };
 }
 

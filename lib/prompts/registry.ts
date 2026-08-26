@@ -79,7 +79,7 @@ export function getPromptTemplate(id: PromptId, locale: PromptLocale) {
     `${entry.pathStem}.${locale}.txt`,
   );
   try {
-    const template = readFileSync(filePath, "utf8").trim();
+    const template = readFileSync(filePath, "utf8").replace(/\r\n/g, "\n").trim();
     templateCache.set(cacheKey, template);
     return template;
   } catch {

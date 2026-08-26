@@ -157,6 +157,11 @@ model Episode {
 model MediaTask {
   id                String           @id
   userId            String           @map("user_id")
+  traceId           String           @map("trace_id") @db.VarChar(64)
+  spanId            String           @unique @map("span_id") @db.VarChar(64)
+  parentSpanId      String?          @map("parent_span_id") @db.VarChar(64)
+  workflowRunId     String?          @map("workflow_run_id")
+  workflowStepId    String?          @map("workflow_step_id")
   channelId         String?          @map("channel_id")
   idempotencyKey    String?          @map("idempotency_key")
   projectId         String?          @map("project_id")
@@ -186,6 +191,8 @@ model MediaTask {
   user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   project           Project?         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   episode           Episode?         @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  workflowRun       WorkflowRun?     @relation(fields: [workflowRunId], references: [id], onDelete: SetNull)
+  workflowStep      WorkflowStep?    @relation(fields: [workflowStepId], references: [id], onDelete: SetNull)
   assets            MediaAsset[]
   events            MediaTaskEvent[]
 
@@ -195,6 +202,8 @@ model MediaTask {
   @@index([episodeId, updatedAt])
   @@index([batchId, updatedAt])
   @@index([channelId, updatedAt])
+  @@index([traceId, createdAt])
+  @@index([workflowRunId, workflowStepId])
   @@map("media_tasks")
 }
 
@@ -570,6 +579,8 @@ model AssetReference {
 model WorkflowRun {
   id                String                @id
   userId            String                @map("user_id")
+  traceId           String                @unique @map("trace_id") @db.VarChar(64)
+  spanId            String                @unique @map("span_id") @db.VarChar(64)
   projectId         String                @map("project_id")
   episodeId         String?               @map("episode_id")
   workflowType      String                @map("workflow_type")
@@ -598,6 +609,7 @@ model WorkflowRun {
   artifacts         WorkflowArtifact[]
   checkpoints       WorkflowCheckpoint[]
   stepAttempts      WorkflowStepAttempt[]
+  mediaTasks        MediaTask[]
 
   @@index([userId, createdAt])
   @@index([projectId, status])
@@ -610,6 +622,9 @@ model WorkflowRun {
 model WorkflowStep {
   id            String                @id
   runId         String                @map("run_id")
+  traceId       String                @map("trace_id") @db.VarChar(64)
+  spanId        String                @unique @map("span_id") @db.VarChar(64)
+  parentSpanId  String                @map("parent_span_id") @db.VarChar(64)
   stepKey       String                @map("step_key")
   stepType      String                @map("step_type")
   stepIndex     Int                   @map("step_index")
@@ -630,10 +645,12 @@ model WorkflowStep {
   run           WorkflowRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
   artifacts     WorkflowArtifact[]
   attempts      WorkflowStepAttempt[]
+  mediaTasks    MediaTask[]
 
   @@unique([runId, stepKey])
   @@index([runId, status])
   @@index([runId, stepIndex])
+  @@index([traceId, stepIndex])
   @@map("workflow_steps")
 }
 
@@ -863,17 +880,20 @@ model BalanceTransaction {
 }
 
 model UsageCost {
-  id        String   @id @default(uuid())
-  projectId String   @map("project_id")
-  userId    String   @map("user_id")
-  apiType   String   @map("api_type")
-  model     String
-  action    String
-  quantity  Int
-  unit      String
-  cost      Decimal  @db.Decimal(18, 6)
-  metadata  String?  @db.Text
-  createdAt DateTime @default(now()) @map("created_at")
+  id             String   @id @default(uuid())
+  projectId      String   @map("project_id")
+  userId         String   @map("user_id")
+  apiType        String   @map("api_type")
+  model          String
+  action         String
+  quantity       Int
+  unit           String
+  cost           Decimal  @db.Decimal(18, 6)
+  sourceType     String?  @map("source_type") @db.VarChar(64)
+  sourceId       String?  @map("source_id") @db.VarChar(191)
+  idempotencyKey String?  @unique @map("idempotency_key") @db.VarChar(191)
+  metadata       String?  @db.Text
+  createdAt      DateTime @default(now()) @map("created_at")
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -882,6 +902,7 @@ model UsageCost {
   @@index([createdAt])
   @@index([projectId])
   @@index([userId])
+  @@index([sourceType, sourceId])
   @@map("usage_costs")
 }
 

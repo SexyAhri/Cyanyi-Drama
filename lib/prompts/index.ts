@@ -5,6 +5,11 @@ export {
   PromptContractError,
   renderPrompt,
 } from "./registry";
+export {
+  assertPromptCanaries,
+  PROMPT_CANARY_MANIFEST,
+  runPromptCanaries,
+} from "./canary";
 export type {
   AgentContract,
   AgentContextScope,

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { Prisma } from "@prisma/client";
 
+import { createMediaTaskTraceContext } from "@/lib/observability/trace-context";
 import { prisma } from "@/lib/server/prisma";
 import { resolveStoredMediaUrl, storeMediaBytes } from "@/lib/storage";
 
@@ -45,6 +46,7 @@ export async function createUploadedProjectAsset(input: {
   const resolvedTarget = await resolveProjectAssetTarget(input);
   const assetId = `media_asset_${randomUUID()}`;
   const taskId = `media_task_upload_${randomUUID()}`;
+  const trace = createMediaTaskTraceContext(taskId);
   const extension = extensionForMime(input.mimeType, input.kind);
   const storageKey = await storeMediaBytes(
     input.bytes,
@@ -67,6 +69,8 @@ export async function createUploadedProjectAsset(input: {
       data: {
         id: taskId,
         userId: input.userId,
+        traceId: trace.traceId,
+        spanId: trace.spanId,
         projectId: input.projectId,
         episodeId: input.episodeId ?? null,
         targetType: target.entityType,

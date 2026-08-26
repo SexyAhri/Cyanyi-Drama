@@ -2,6 +2,7 @@ import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { createDatabaseMediaTaskStore } from "@/lib/media/task-store";
 import { cancelMediaJob, enqueueMediaJob } from "@/lib/queue/media-queue";
 import { transitionMediaTask, type MediaTask } from "@/lib/media/task-contract";
+import { settleMediaTaskCharge } from "@/lib/billing/service";
 
 export async function GET(
   _request: Request,
@@ -49,6 +50,19 @@ export async function POST(
         sessionId,
       );
     await cancelMediaJob(taskId).catch(() => undefined);
+    if (canceled.status === "canceled") {
+      try {
+        await settleMediaTaskCharge(user.id, taskId, false);
+      } catch (error) {
+        await store.appendEvent({
+          taskId,
+          type: "billing_settlement_failed",
+          status: "canceled",
+          progress: canceled.progress,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     return attachSessionCookie(Response.json({ task: canceled }), sessionId);
   }
 

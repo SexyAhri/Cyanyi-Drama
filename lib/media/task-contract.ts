@@ -2,6 +2,10 @@ import type {
   ChannelProtocol,
   ModelCapability,
 } from "@/lib/agent/provider-types";
+import {
+  createMediaTaskTraceContext,
+  type TraceContext,
+} from "@/lib/observability/trace-context";
 
 export type MediaTaskKind = Exclude<ModelCapability, "text">;
 
@@ -34,6 +38,11 @@ export type MediaAsset = {
 
 export type MediaTask = {
   id: string;
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  workflowRunId?: string;
+  workflowStepId?: string;
   projectId?: string;
   episodeId?: string;
   batchId?: string;
@@ -82,6 +91,7 @@ export type MediaTaskEventRecord = {
     | "retry_scheduled"
     | "succeeded"
     | "failed"
+    | "billing_settlement_failed"
     | "cancel_requested"
     | "canceled";
   status?: MediaTaskStatus;
@@ -107,11 +117,18 @@ export function createMediaTask(input: {
   request: Record<string, unknown>;
   maxRetries?: number;
   providerTaskId?: string;
+  traceParent?: TraceContext;
   now?: string;
 }): MediaTask {
   const now = input.now ?? new Date().toISOString();
+  const trace = createMediaTaskTraceContext(input.id, input.traceParent);
   return {
     id: input.id,
+    traceId: trace.traceId,
+    spanId: trace.spanId,
+    parentSpanId: trace.parentSpanId,
+    workflowRunId: trace.workflowRunId,
+    workflowStepId: trace.workflowStepId,
     projectId: input.projectId,
     episodeId: input.episodeId,
     batchId: input.batchId,

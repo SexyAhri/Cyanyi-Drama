@@ -1,5 +1,6 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { createProductionTask, ProductionTaskError } from "@/lib/media/production-tasks";
+import { normalizeRenderSpecification } from "@/lib/providers/local/render-spec";
 
 type Context = { params: Promise<{ projectId: string; episodeId: string }> };
 
@@ -11,6 +12,18 @@ export async function POST(request: Request, context: Context) {
   const model = stringValue(body.model);
   if (!channelId || !model)
     return attachSessionCookie(Response.json({ message: "channelId 和 model 是必填项" }, { status: 400 }), sessionId);
+  let specification;
+  try {
+    specification = normalizeRenderSpecification(body);
+  } catch (error) {
+    return attachSessionCookie(
+      Response.json(
+        { message: error instanceof Error ? error.message : "渲染规格无效" },
+        { status: 400 },
+      ),
+      sessionId,
+    );
+  }
   try {
     const task = await createProductionTask({
       userId: user.id,
@@ -21,7 +34,10 @@ export async function POST(request: Request, context: Context) {
       targetId: episodeId,
       channelId,
       model,
-      request: { operation: "render_timeline", format: stringValue(body.format) || "mp4" },
+      request: {
+        operation: "render_timeline",
+        ...specification,
+      },
     });
     return attachSessionCookie(Response.json({ task }, { status: 202 }), sessionId);
   } catch (error) {

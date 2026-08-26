@@ -27,6 +27,10 @@ Cyanyi Drama 是一个面向 AI 漫剧和短剧创作的智能工作台。
 - 项目图片/视频上传、来源追踪、参考图转角色和视觉资产提取
 - 整本小说标记分集与 AI 边界分集，支持安全批量落库
 - 模型级 OpenAI Compatible 媒体模板，支持同步、异步和显式空字段省略
+- 媒体冻结、结算、释放与用量的幂等对账，Worker Watchdog 自动补偿
+- Workflow Run、Step、Prompt 与 Media Task 的统一 Trace ID 和父子 Span
+- 13 个领域 Prompt 的双语 Canary Hash 与 Agent 行为门禁
+- 图片、异构视频和音轨统一转码为确定规格的 MP4 成片
 - 项目/剧集接口按当前用户隔离，媒体任务可关联项目和剧集
 - LangGraph Human-in-the-loop 示例运行时
 

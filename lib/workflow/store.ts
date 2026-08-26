@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 
+import {
+  createWorkflowStepTraceContext,
+  createWorkflowTraceContext,
+} from "@/lib/observability/trace-context";
 import { prisma } from "@/lib/server/prisma";
 import {
   assertWorkflowAction,
@@ -61,12 +65,15 @@ export async function createOrReuseWorkflowRun(
   });
   const existing = await findReusableWorkflowRun(activeDedupeKey);
   if (existing) return { workflow: toRun(existing), reused: true };
+  const runTrace = createWorkflowTraceContext(definition.id);
 
   try {
     const row = await prisma.workflowRun.create({
       data: {
         id: definition.id,
         userId: definition.userId,
+        traceId: runTrace.traceId,
+        spanId: runTrace.spanId,
         projectId: definition.projectId,
         episodeId: definition.episodeId ?? null,
         workflowType: definition.workflowType.trim(),
@@ -75,21 +82,32 @@ export async function createOrReuseWorkflowRun(
         activeDedupeKey,
         input: toJson(definition.input),
         steps: {
-          create: definition.steps.map((step, index) => ({
-            id: randomUUID(),
-            stepKey: step.key.trim(),
-            stepType: step.type.trim(),
-            stepIndex: index,
-            dependsOn: toJson(step.dependsOn ?? []),
-            artifactTypes: toJson(step.artifactTypes ?? []),
-            retryable: step.retryable ?? true,
-            failureMode: step.failureMode ?? "fail_run",
-            maxAttempts: Math.max(
-              1,
-              step.maxAttempts ?? definition.maxAttempts ?? 3,
-            ),
-            input: toJson(step.input),
-          })),
+          create: definition.steps.map((step, index) => {
+            const stepId = randomUUID();
+            const trace = createWorkflowStepTraceContext({
+              runId: definition.id,
+              stepId,
+              parent: runTrace,
+            });
+            return {
+              id: stepId,
+              traceId: trace.traceId,
+              spanId: trace.spanId,
+              parentSpanId: trace.parentSpanId!,
+              stepKey: step.key.trim(),
+              stepType: step.type.trim(),
+              stepIndex: index,
+              dependsOn: toJson(step.dependsOn ?? []),
+              artifactTypes: toJson(step.artifactTypes ?? []),
+              retryable: step.retryable ?? true,
+              failureMode: step.failureMode ?? "fail_run",
+              maxAttempts: Math.max(
+                1,
+                step.maxAttempts ?? definition.maxAttempts ?? 3,
+              ),
+              input: toJson(step.input),
+            };
+          }),
         },
         events: {
           create: {
@@ -559,6 +577,8 @@ function toRun(row: Row) {
   return {
     id: row.id,
     userId: row.userId,
+    traceId: row.traceId,
+    spanId: row.spanId,
     projectId: row.projectId,
     episodeId: row.episodeId ?? undefined,
     workflowType: row.workflowType,
@@ -579,6 +599,9 @@ function toRun(row: Row) {
     updatedAt: row.updatedAt.toISOString(),
     steps: row.steps.map((step) => ({
       id: step.id,
+      traceId: step.traceId,
+      spanId: step.spanId,
+      parentSpanId: step.parentSpanId,
       key: step.stepKey,
       type: step.stepType,
       index: step.stepIndex,

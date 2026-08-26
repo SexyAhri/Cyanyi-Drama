@@ -203,9 +203,21 @@ export async function settleMediaTaskCharge(
   return prisma.$transaction(
     async (tx) => {
       const freeze = await tx.balanceFreeze.findFirst({
-        where: { userId, taskId, status: "pending" },
+        where: { userId, taskId },
+        orderBy: { createdAt: "desc" },
       });
       if (!freeze) return null;
+      const transactionType = succeeded ? "charge" : "release";
+      const idempotencyKey = `media:${taskId}:${transactionType}`;
+      const existing = await tx.balanceTransaction.findFirst({
+        where: { userId, type: transactionType, idempotencyKey },
+      });
+      if (freeze.status !== "pending") return existing;
+      const claimed = await tx.balanceFreeze.updateMany({
+        where: { id: freeze.id, status: "pending" },
+        data: { status: succeeded ? "settled" : "released" },
+      });
+      if (!claimed.count) return existing;
       const task = await tx.mediaTask.findFirst({
         where: { id: taskId, userId },
       });
@@ -219,14 +231,10 @@ export async function settleMediaTaskCharge(
             }
           : { frozenAmount: { decrement: freeze.amount } },
       });
-      await tx.balanceFreeze.update({
-        where: { id: freeze.id },
-        data: { status: succeeded ? "settled" : "released" },
-      });
       const transaction = await tx.balanceTransaction.create({
         data: {
           userId,
-          type: succeeded ? "charge" : "release",
+          type: transactionType,
           amount: succeeded ? freeze.amount.negated() : new Prisma.Decimal(0),
           balanceAfter: balance.balance,
           description: succeeded
@@ -234,7 +242,7 @@ export async function settleMediaTaskCharge(
             : "Media task hold released",
           relatedId: taskId,
           freezeId: freeze.id,
-          idempotencyKey: `media:${taskId}:${succeeded ? "charge" : "release"}`,
+          idempotencyKey,
           projectId: task?.projectId,
           episodeId: task?.episodeId,
           taskType: task?.kind,
@@ -242,8 +250,10 @@ export async function settleMediaTaskCharge(
         },
       });
       if (succeeded && task?.projectId) {
-        await tx.usageCost.create({
-          data: {
+        const usageIdempotencyKey = `media:${taskId}:usage`;
+        await tx.usageCost.upsert({
+          where: { idempotencyKey: usageIdempotencyKey },
+          create: {
             projectId: task.projectId,
             userId,
             apiType: task.kind,
@@ -252,11 +262,182 @@ export async function settleMediaTaskCharge(
             quantity: 1,
             unit: "task",
             cost: freeze.amount,
+            sourceType: "media_task",
+            sourceId: taskId,
+            idempotencyKey: usageIdempotencyKey,
             metadata: freeze.metadata,
           },
+          update: {},
         });
       }
       return transaction;
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
+}
+
+export type BillingReconciliationReport = {
+  inspected: number;
+  settled: number;
+  released: number;
+  skippedActive: number;
+  repairedBalances: number;
+  failures: Array<{ taskId: string | null; message: string }>;
+};
+
+export function classifyPendingMediaCharge(input: {
+  taskStatus?: string;
+  expiresAt?: Date | null;
+  now: Date;
+}): "settle" | "release" | "skip" {
+  if (input.taskStatus === "succeeded") return "settle";
+  if (input.taskStatus === "failed" || input.taskStatus === "canceled")
+    return "release";
+  if (!input.taskStatus && input.expiresAt && input.expiresAt <= input.now)
+    return "release";
+  return "skip";
+}
+
+export async function reconcilePendingMediaCharges(input?: {
+  userId?: string;
+  now?: Date;
+  limit?: number;
+}): Promise<BillingReconciliationReport> {
+  const now = input?.now ?? new Date();
+  const freezes = await prisma.balanceFreeze.findMany({
+    where: {
+      status: "pending",
+      source: "media_task",
+      ...(input?.userId ? { userId: input.userId } : {}),
+    },
+    orderBy: [{ expiresAt: "asc" }, { createdAt: "asc" }],
+    take: Math.min(Math.max(input?.limit ?? 200, 1), 500),
+  });
+  const taskIds = freezes
+    .map((freeze) => freeze.taskId)
+    .filter((taskId): taskId is string => !!taskId);
+  const tasks = taskIds.length
+    ? await prisma.mediaTask.findMany({
+        where: { id: { in: taskIds } },
+        select: { id: true, userId: true, status: true },
+      })
+    : [];
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const report: BillingReconciliationReport = {
+    inspected: freezes.length,
+    settled: 0,
+    released: 0,
+    skippedActive: 0,
+    repairedBalances: 0,
+    failures: [],
+  };
+  const touchedUsers = new Set<string>(input?.userId ? [input.userId] : []);
+
+  for (const freeze of freezes) {
+    const task = freeze.taskId ? taskById.get(freeze.taskId) : undefined;
+    const action = classifyPendingMediaCharge({
+      taskStatus: task?.status,
+      expiresAt: freeze.expiresAt,
+      now,
+    });
+    if (action === "skip") {
+      report.skippedActive += 1;
+      continue;
+    }
+    try {
+      if (freeze.taskId)
+        await settleMediaTaskCharge(
+          freeze.userId,
+          freeze.taskId,
+          action === "settle",
+        );
+      else await releaseOrphanMediaFreeze(freeze.userId, freeze.id);
+      touchedUsers.add(freeze.userId);
+      if (action === "settle") report.settled += 1;
+      else report.released += 1;
+    } catch (error) {
+      report.failures.push({
+        taskId: freeze.taskId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  for (const userId of touchedUsers) {
+    try {
+      if (await reconcileUserFrozenAmount(userId)) report.repairedBalances += 1;
+    } catch (error) {
+      report.failures.push({
+        taskId: null,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return report;
+}
+
+async function releaseOrphanMediaFreeze(userId: string, freezeId: string) {
+  return prisma.$transaction(
+    async (tx) => {
+      const freeze = await tx.balanceFreeze.findFirst({
+        where: { id: freezeId, userId },
+      });
+      if (!freeze) return null;
+      const idempotencyKey = `media-freeze:${freeze.id}:release`;
+      const existing = await tx.balanceTransaction.findFirst({
+        where: { userId, type: "release", idempotencyKey },
+      });
+      if (freeze.status !== "pending") return existing;
+      const claimed = await tx.balanceFreeze.updateMany({
+        where: { id: freeze.id, status: "pending" },
+        data: { status: "released" },
+      });
+      if (!claimed.count) return existing;
+      const balance = await tx.userBalance.update({
+        where: { userId },
+        data: { frozenAmount: { decrement: freeze.amount } },
+      });
+      return tx.balanceTransaction.create({
+        data: {
+          userId,
+          type: "release",
+          amount: new Prisma.Decimal(0),
+          balanceAfter: balance.balance,
+          description: "Orphaned media task hold released",
+          relatedId: freeze.taskId ?? freeze.requestId ?? freeze.id,
+          freezeId: freeze.id,
+          idempotencyKey,
+          billingMeta: freeze.metadata,
+        },
+      });
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
+}
+
+export async function reconcileUserFrozenAmount(userId: string) {
+  return prisma.$transaction(
+    async (tx) => {
+      await tx.userBalance.upsert({
+        where: { userId },
+        create: { userId },
+        update: {},
+      });
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM user_balances WHERE user_id = ${userId} FOR UPDATE`,
+      );
+      const balance = await tx.userBalance.findUniqueOrThrow({ where: { userId } });
+      const pending = await tx.balanceFreeze.aggregate({
+        where: { userId, status: "pending" },
+        _sum: { amount: true },
+      });
+      const expected = pending._sum.amount ?? new Prisma.Decimal(0);
+      if (balance.frozenAmount.equals(expected)) return false;
+      await tx.userBalance.update({
+        where: { userId },
+        data: { frozenAmount: expected },
+      });
+      return true;
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
   );

@@ -15,7 +15,9 @@ import { processQueuedMediaTask } from "@/lib/queue/media-runtime";
 import { processWorkflowJob } from "@/lib/workflow/runtime";
 import { startWorkWatchdog } from "@/lib/queue/reconcile";
 import { settleMediaTaskCharge } from "@/lib/billing/service";
+import { assertPromptCanaries } from "@/lib/prompts/canary";
 
+assertPromptCanaries();
 const stopWatchdog = startWorkWatchdog();
 
 const worker = new Worker<MediaJob>(

@@ -2,27 +2,38 @@ import { execFile } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import ffmpegStatic from "ffmpeg-static";
+import { assertTimelineRenderBehavior } from "@/lib/quality/behavior-guards";
+import {
+  normalizeRenderSpecification,
+  type RenderSpecification,
+} from "./render-spec";
 
 const execFileAsync = promisify(execFile);
 
 export interface TimelineSegment {
   url: string;
   panelIndex: number;
+  kind?: "image" | "video";
+  durationSeconds?: number;
 }
 
 export interface RenderTimelineOptions {
   segments: TimelineSegment[];
   audioUrl?: string | null;
   format?: string;
+  specification?: RenderSpecification;
 }
 
 export async function renderTimelineVideo(opts: RenderTimelineOptions) {
-  const segments = opts.segments?.filter((s) => s.url);
-  if (!segments?.length) throw new Error("TIMELINE_RENDER_SEGMENTS_EMPTY");
+  const segments = opts.segments.filter((s) => s.url);
+  const specification =
+    opts.specification ?? normalizeRenderSpecification({ format: opts.format });
+  assertTimelineRenderBehavior({ segments, specification });
   const root = join(tmpdir(), `cyanyi-render-${crypto.randomUUID()}`);
+  assertRenderTempRoot(root);
   await mkdir(root, { recursive: true });
   try {
     const inputPaths: string[] = [];
@@ -33,10 +44,22 @@ export async function renderTimelineVideo(opts: RenderTimelineOptions) {
         throw new Error(
           `TIMELINE_RENDER_DOWNLOAD_FAILED:${seg.panelIndex}:${response.status}`,
         );
-      const ext = guessVideoExt(seg.url);
-      const path = join(root, `${String(index).padStart(4, "0")}.${ext}`);
-      await writeFile(path, Buffer.from(await response.arrayBuffer()));
-      inputPaths.push(path);
+      const ext = guessMediaExt(seg.url, seg.kind);
+      const sourcePath = join(root, `${String(index).padStart(4, "0")}.${ext}`);
+      const normalizedPath = join(
+        root,
+        `${String(index).padStart(4, "0")}.normalized.mp4`,
+      );
+      await writeFile(sourcePath, Buffer.from(await response.arrayBuffer()));
+      await executeFfmpeg(
+        buildNormalizeSegmentArgs(
+          sourcePath,
+          normalizedPath,
+          seg,
+          specification,
+        ),
+      );
+      inputPaths.push(normalizedPath);
     }
 
     const listPath = join(root, "inputs.txt");
@@ -50,41 +73,84 @@ export async function renderTimelineVideo(opts: RenderTimelineOptions) {
     let audioPath: string | null = null;
     if (opts.audioUrl) {
       const response = await fetch(opts.audioUrl, { cache: "no-store" });
-      if (response.ok) {
-        audioPath = join(root, "soundtrack.mp3");
-        await writeFile(audioPath, Buffer.from(await response.arrayBuffer()));
-      }
+      if (!response.ok)
+        throw new Error(`TIMELINE_RENDER_AUDIO_DOWNLOAD_FAILED:${response.status}`);
+      audioPath = join(root, "soundtrack.audio");
+      await writeFile(audioPath, Buffer.from(await response.arrayBuffer()));
     }
 
-    const outputPath = join(root, `rendered.${opts.format || "mp4"}`);
-    try {
-      const executable = resolveFfmpegExecutable();
-      const args = buildFfmpegArgs(listPath, audioPath, outputPath);
-      await execFileAsync(executable, args, {
-        timeout: 30 * 60_000,
-        windowsHide: true,
-        maxBuffer: 50 * 1024 * 1024,
-      });
-    } catch (error) {
-      if (isMissingExecutable(error))
-        throw new Error(
-          "FFMPEG_NOT_FOUND: 项目依赖未提供可用 FFmpeg，请重新安装依赖或配置 FFMPEG_PATH",
-        );
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`TIMELINE_RENDER_FFMPEG_FAILED:${message.slice(0, 500)}`);
-    }
+    const outputPath = join(root, "rendered.mp4");
+    await executeFfmpeg(
+      buildConcatFfmpegArgs(listPath, audioPath, outputPath, specification),
+    );
 
     const bytes = await readFile(outputPath);
-    return `data:video/mp4;base64,${bytes.toString("base64")}`;
+    return {
+      dataUrl: `data:video/mp4;base64,${bytes.toString("base64")}`,
+      specification,
+    };
   } finally {
     await rm(root, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
-function buildFfmpegArgs(
+function assertRenderTempRoot(root: string) {
+  const relativePath = relative(resolve(tmpdir()), resolve(root));
+  if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath))
+    throw new Error("TIMELINE_RENDER_TEMP_ROOT_INVALID");
+}
+
+export function buildNormalizeSegmentArgs(
+  inputPath: string,
+  outputPath: string,
+  segment: TimelineSegment,
+  specification: RenderSpecification,
+) {
+  const duration = segment.durationSeconds ?? specification.imageDurationSeconds;
+  const args = ["-hide_banner", "-loglevel", "error", "-y"];
+  if (segment.kind === "image")
+    args.push("-loop", "1", "-framerate", String(specification.fps));
+  args.push("-i", inputPath);
+  if (segment.kind === "image" || segment.durationSeconds)
+    args.push("-t", String(duration));
+  const filters = [
+    `scale=${specification.width}:${specification.height}:force_original_aspect_ratio=decrease`,
+    `pad=${specification.width}:${specification.height}:(ow-iw)/2:(oh-ih)/2:color=black`,
+    "setsar=1",
+  ];
+  if (segment.kind !== "image" && segment.durationSeconds)
+    filters.push(`tpad=stop_mode=clone:stop_duration=${duration}`);
+  filters.push(`fps=${specification.fps}`, `format=${specification.pixelFormat}`);
+  args.push(
+    "-map",
+    "0:v:0",
+    "-an",
+    "-vf",
+    filters.join(","),
+    "-c:v",
+    specification.videoCodec,
+    "-preset",
+    "fast",
+    "-crf",
+    String(specification.crf),
+    "-r",
+    String(specification.fps),
+    "-g",
+    String(Math.max(1, Math.round(specification.fps * 2))),
+    "-video_track_timescale",
+    "90000",
+    "-movflags",
+    "+faststart",
+    outputPath,
+  );
+  return args;
+}
+
+export function buildConcatFfmpegArgs(
   listPath: string,
   audioPath: string | null,
   outputPath: string,
+  specification: RenderSpecification,
 ) {
   const base = [
     "-hide_banner",
@@ -102,13 +168,17 @@ function buildFfmpegArgs(
     base.push("-i", audioPath);
     base.push(
       "-c:v",
-      "libx264",
-      "-preset",
-      "fast",
+      "copy",
       "-c:a",
-      "aac",
+      specification.audioCodec,
       "-b:a",
       "192k",
+      "-ar",
+      String(specification.audioSampleRate),
+      "-ac",
+      String(specification.audioChannels),
+      "-af",
+      "apad",
       "-map",
       "0:v:0",
       "-map",
@@ -120,13 +190,8 @@ function buildFfmpegArgs(
   } else {
     base.push(
       "-c:v",
-      "libx264",
-      "-preset",
-      "fast",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "192k",
+      "copy",
+      "-an",
       "-movflags",
       "+faststart",
     );
@@ -135,11 +200,36 @@ function buildFfmpegArgs(
   return base;
 }
 
-function guessVideoExt(url: string) {
+function guessMediaExt(url: string, kind?: "image" | "video") {
   const match = url.match(/\.([a-z0-9]+)(?:\?|#|$)/i);
   const ext = match ? match[1].toLowerCase() : "";
-  if (["mp4", "webm", "mov", "avi", "mkv"].includes(ext)) return ext;
-  return "mp4";
+  if (
+    ["mp4", "webm", "mov", "avi", "mkv", "png", "jpg", "jpeg", "webp"].includes(
+      ext,
+    )
+  )
+    return ext;
+  return kind === "image" ? "png" : "mp4";
+}
+
+async function executeFfmpeg(args: string[]) {
+  for (const executable of resolveFfmpegExecutables()) {
+    try {
+      await execFileAsync(executable, args, {
+        timeout: 30 * 60_000,
+        windowsHide: true,
+        maxBuffer: 50 * 1024 * 1024,
+      });
+      return;
+    } catch (error) {
+      if (isMissingExecutable(error)) continue;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`TIMELINE_RENDER_FFMPEG_FAILED:${message.slice(0, 500)}`);
+    }
+  }
+  throw new Error(
+    "FFMPEG_NOT_FOUND: 项目依赖未提供可用 FFmpeg，请重新安装依赖或配置 FFMPEG_PATH",
+  );
 }
 
 function isMissingExecutable(error: unknown) {
@@ -149,14 +239,16 @@ function isMissingExecutable(error: unknown) {
   );
 }
 
-function resolveFfmpegExecutable() {
-  if (process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH;
+function resolveFfmpegExecutables() {
+  const candidates: string[] = [];
+  if (process.env.FFMPEG_PATH) candidates.push(process.env.FFMPEG_PATH);
   if (ffmpegStatic) {
     try {
-      if (statSync(ffmpegStatic).size > 0) return ffmpegStatic;
+      if (statSync(ffmpegStatic).size > 0) candidates.push(ffmpegStatic);
     } catch {
       // Fall back to PATH so a system installation still works.
     }
   }
-  return "ffmpeg";
+  candidates.push("ffmpeg");
+  return [...new Set(candidates)];
 }

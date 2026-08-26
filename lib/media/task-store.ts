@@ -159,6 +159,11 @@ function toCreateData(userId: string, task: MediaTask) {
   return {
     id: task.id,
     userId,
+    traceId: task.traceId,
+    spanId: task.spanId,
+    parentSpanId: task.parentSpanId ?? null,
+    workflowRunId: task.workflowRunId ?? null,
+    workflowStepId: task.workflowStepId ?? null,
     idempotencyKey: task.idempotencyKey ?? null,
     projectId: task.projectId ?? null,
     episodeId: task.episodeId ?? null,
@@ -247,6 +252,11 @@ function fromRow(row: MediaTaskRow): MediaTask {
   };
   return {
     id: row.id,
+    traceId: row.traceId,
+    spanId: row.spanId,
+    parentSpanId: row.parentSpanId ?? undefined,
+    workflowRunId: row.workflowRunId ?? undefined,
+    workflowStepId: row.workflowStepId ?? undefined,
     idempotencyKey: row.idempotencyKey ?? undefined,
     projectId: row.projectId ?? undefined,
     episodeId: row.episodeId ?? undefined,

@@ -2,10 +2,12 @@ import { decryptSecret } from "@/lib/server/crypto";
 import { Prisma } from "@prisma/client";
 import { fetchWithProviderRetry } from "@/lib/providers/http";
 import { prisma } from "@/lib/server/prisma";
-import type { MediaAsset } from "@/lib/media/task-contract";
+import type { MediaAsset, MediaTaskKind } from "@/lib/media/task-contract";
 import { downloadAndStoreMedia, resolveStoredMediaUrl } from "@/lib/storage";
 import { mergeAudioUrls } from "@/lib/providers/local/ffmpeg-audio";
 import { renderTimelineVideo } from "@/lib/providers/local/ffmpeg-render";
+import { normalizeRenderSpecification } from "@/lib/providers/local/render-spec";
+import { assertMediaTaskOutputBehavior } from "@/lib/quality/behavior-guards";
 import { buildVideoProviderContract } from "@/lib/providers/video-contract";
 import {
   generateSpecializedLipSync,
@@ -24,6 +26,11 @@ type TaskRequest = {
   format?: string;
   style?: string;
   duration?: string;
+  fps?: number;
+  width?: number;
+  height?: number;
+  aspectRatio?: string;
+  imageDurationSeconds?: number;
   videoMode?: string;
   referenceImages?: Array<{
     url: string;
@@ -75,6 +82,7 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
       task.episodeId,
       task.projectId,
       userId,
+      request,
     );
   }
   const mediaTemplate =
@@ -150,6 +158,10 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
       ? lastError
       : new Error(String(lastError ?? "MEDIA_PROVIDER_FAILED"));
   }
+  assertMediaTaskOutputBehavior({
+    taskKind: task.kind as MediaTaskKind,
+    output,
+  });
 
   const latestTask = await prisma.mediaTask.findFirst({
     where: { id: task.id, userId, status: "running" },
@@ -452,6 +464,7 @@ async function renderEpisodeTimeline(
   episodeId: string | null,
   projectId: string | null,
   userId: string,
+  request: TaskRequest,
 ): Promise<MediaAsset[]> {
   if (!episodeId || !projectId)
     throw new Error("TIMELINE_RENDER_EPISODE_REQUIRED");
@@ -464,6 +477,8 @@ async function renderEpisodeTimeline(
         select: {
           id: true,
           panelIndex: true,
+          durationSeconds: true,
+          imageAsset: { select: { url: true, storageKey: true } },
           videoAsset: { select: { url: true, storageKey: true } },
           lipSyncAsset: { select: { url: true, storageKey: true } },
         },
@@ -472,14 +487,27 @@ async function renderEpisodeTimeline(
   });
   if (!storyboard) throw new Error("TIMELINE_RENDER_STORYBOARD_NOT_FOUND");
 
-  const segments: { url: string; panelIndex: number }[] = [];
+  const segments: Array<{
+    url: string;
+    panelIndex: number;
+    kind: "image" | "video";
+    durationSeconds?: number;
+  }> = [];
   for (const panel of storyboard.panels) {
-    const url =
-      (await resolveAssetUrl(panel.lipSyncAsset)) ??
-      (await resolveAssetUrl(panel.videoAsset));
-    if (url) segments.push({ url, panelIndex: panel.panelIndex });
+    const lipSyncUrl = await resolveAssetUrl(panel.lipSyncAsset);
+    const videoUrl = lipSyncUrl ? undefined : await resolveAssetUrl(panel.videoAsset);
+    const imageUrl =
+      lipSyncUrl || videoUrl ? undefined : await resolveAssetUrl(panel.imageAsset);
+    const url = lipSyncUrl ?? videoUrl ?? imageUrl;
+    if (url)
+      segments.push({
+        url,
+        panelIndex: panel.panelIndex,
+        kind: imageUrl ? "image" : "video",
+        durationSeconds: panel.durationSeconds ?? undefined,
+      });
   }
-  if (!segments.length) throw new Error("TIMELINE_RENDER_NO_VIDEO_PANELS");
+  if (!segments.length) throw new Error("TIMELINE_RENDER_NO_MEDIA_PANELS");
 
   const audioTrack = await prisma.episodeAudioTrack.findFirst({
     where: { episodeId, trackType: "merged" },
@@ -487,17 +515,26 @@ async function renderEpisodeTimeline(
   });
   const audioUrl = (await resolveAssetUrl(audioTrack?.asset)) ?? undefined;
 
-  const dataUrl = await renderTimelineVideo({ segments, audioUrl });
+  const specification = normalizeRenderSpecification(
+    request as Record<string, unknown>,
+  );
+  const rendered = await renderTimelineVideo({
+    segments,
+    audioUrl,
+    specification,
+  });
   return [
     {
       id: `render-${episodeId}-${Date.now()}`,
       kind: "video" as const,
-      url: dataUrl,
+      url: rendered.dataUrl,
       mimeType: "video/mp4",
       metadata: {
         operation: "render_timeline",
         panelCount: segments.length,
+        imagePanelCount: segments.filter((segment) => segment.kind === "image").length,
         hasAudio: !!audioUrl,
+        specification: rendered.specification,
       },
     },
   ];
