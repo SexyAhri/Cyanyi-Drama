@@ -6,6 +6,7 @@ import {
   parseNovelAndPersist,
   type NovelParseInput,
 } from "@/lib/novel/parser-runtime";
+import { buildEpisodeStoryboard } from "@/lib/novel/script-to-storyboard-runtime";
 import {
   convertEpisodeClipsToScreenplays,
   splitEpisodeIntoClips,
@@ -172,6 +173,13 @@ async function processClaimedWorkflowJob(
           artifactType,
           refId,
           payload,
+        }),
+      loadArtifact: (artifactType, refId) =>
+        loadIncrementalArtifact({
+          runId,
+          stepId: step.id,
+          artifactType,
+          refId,
         }),
     });
     await assertWorkflowRunActive({ runId, workerId });
@@ -364,6 +372,10 @@ async function runStep(
       refId: string,
       payload: unknown,
     ) => Promise<void>;
+    loadArtifact: (
+      artifactType: string,
+      refId: string,
+    ) => Promise<unknown | null>;
   },
 ) {
   if (step.stepType === "parse_novel") {
@@ -436,20 +448,23 @@ async function runStep(
   }
   if (step.stepType === "build_storyboard") {
     if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
-    const storyboard = await prisma.storyboard.findFirst({
-      where: {
+    const input = mergedStepInput(run.input, step.input);
+    const channelId = getString(input.channelId);
+    const model = getString(input.model);
+    if (!channelId || !model)
+      throw new Error("WORKFLOW_STORYBOARD_INPUT_REQUIRED");
+    return buildEpisodeStoryboard(
+      userId,
+      {
         projectId: run.projectId,
         episodeId: run.episodeId,
-        project: { userId },
+        channelId,
+        model,
+        locale: getString(input.locale) === "en" ? "en" : "zh",
+        concurrency: getNumber(input.concurrency),
       },
-      select: { id: true, panels: { select: { id: true } } },
-    });
-    if (!storyboard) throw new Error("WORKFLOW_STORYBOARD_REQUIRED");
-    await prisma.storyboard.update({
-      where: { id: storyboard.id },
-      data: { status: "ready" },
-    });
-    return { panelCount: storyboard.panels.length };
+      runtime,
+    );
   }
   if (step.stepType === "voice_analyze") {
     if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
@@ -468,6 +483,15 @@ async function runStep(
       locale:
         getString(stepInput.locale ?? runInput.locale) === "en" ? "en" : "zh",
     });
+    await runtime.persistArtifact("voice.lines", run.episodeId, {
+      voiceLines: result.voiceLines,
+    });
+    for (const [index, trace] of result.promptTraces.entries())
+      await runtime.persistArtifact(
+        "prompt.trace",
+        `${run.episodeId}:voice:${index}`,
+        trace,
+      );
     return {
       lineCount: result.voiceLines.length,
       promptTraces: result.promptTraces,
@@ -627,6 +651,24 @@ async function persistIncrementalArtifact(input: {
       },
     });
   });
+}
+
+async function loadIncrementalArtifact(input: {
+  runId: string;
+  stepId: string;
+  artifactType: string;
+  refId: string;
+}) {
+  const artifact = await prisma.workflowArtifact.findFirst({
+    where: {
+      runId: input.runId,
+      stepId: input.stepId,
+      artifactType: input.artifactType,
+      refId: input.refId,
+    },
+    select: { payload: true },
+  });
+  return artifact?.payload ?? null;
 }
 
 async function finishRun(runId: string, workerId: string, output: unknown) {

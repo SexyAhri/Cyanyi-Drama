@@ -24,8 +24,8 @@
 | M2 | 已完成 | 3-4 天 | Prompt 目录、Prompt ID、中英模板、变量契约、版本 Hash、`jsonrepair + Zod`、纠错重试 | 缺失或多余变量稳定失败；畸形 JSON 可修复或重试；Prompt 契约测试通过 |
 | M2.5 | 已完成 | 2-3 天 | Agent Contract V2、System/User 分层、领域语义 Validator、证据链、连续性监督、结构化 Trace | 语义失败只做定向修复且不跨 Key 重复；Trace 可追踪 Prompt、模型、纠错和 Token 用量 |
 | M3 | 已完成 | 4-6 天 | Story-to-Script：并行角色/场景/道具分析、边界校验切片、逐 clip 剧本转换、增量 Artifact | 单个 clip 可独立重试；Worker 中断后成功 clip 不丢失；原文无重叠和缺口 |
-| M4 | 下一步 | 5-7 天 | Script-to-Storyboard：规划、摄影、表演、细化、台词分析、clip/phase 级失效重试 | 重试一个 phase 只失效其下游；其他 clip 不变化；分镜和台词输出通过 Schema 校验 |
-| M5 | 待开始 | 4-6 天 | 资产上传、参考图转角色、资产提取、标记/AI 分集、OpenAI Compatible 媒体模板、空字段显式省略 | 新 Provider 无需修改 Worker 核心代码；上传和提取资产保留所有权与来源 |
+| M4 | 已完成 | 5-7 天 | Script-to-Storyboard：规划、摄影、表演、细化、台词分析、clip/phase 级失效重试 | 重试一个 phase 只失效其下游；其他 clip 不变化；分镜和台词输出通过 Schema 校验 |
+| M5 | 下一步 | 4-6 天 | 资产上传、参考图转角色、资产提取、标记/AI 分集、OpenAI Compatible 媒体模板、空字段显式省略 | 新 Provider 无需修改 Worker 核心代码；上传和提取资产保留所有权与来源 |
 | M6 | 待开始 | 3-5 天 | 计费对账、结构化 Trace、Prompt Canary、行为 Guard、渲染规格归一化、系统回归测试 | 对账幂等；Run/Task/Step 可串联追踪；混合媒体输入能生成规格统一的成片 |
 
 ## 4. M0 当前基线任务表
@@ -103,6 +103,20 @@ M2.5 将既有 9 个 Prompt 升级为 V2，并新增连续性监督 Prompt，共
 
 M3 与 `waoowaoo` 保持相同的分析、切片、逐 Clip 剧本顺序，但采用更强的原文完整覆盖约束，不依赖模糊边界猜测。增量 Artifact 写入与 Workflow Run 租约在同一事务校验，取消或租约丢失后不会继续提交 Artifact；领域写入在恢复时会通过有效性校验并补齐 Artifact。36 项 M3 定向测试覆盖原文空白、并发上限、稳定 Clip ID、剧本失效、部分失败恢复和工作流依赖；全量 114 项测试、TypeScript、变更文件 ESLint、生产构建、Prisma 校验和 13 组迁移状态均通过。
 
+### 7.2 M4 Script-to-Storyboard 完成记录
+
+| 任务 | 目标模块 | 验收结果 | 状态 |
+| --- | --- | --- | --- |
+| Clip 分镜规划 | Script-to-Storyboard Runtime | 每个有效剧本 Clip 独立生成 Phase 1，Prompt 版本和输入 Hash 决定 Artifact 是否可复用 | 已完成 |
+| 摄影与表演并行 | Runtime 与领域 Agent | Phase 2 两个分支并行；单分支失败不丢失另一分支的成功 Artifact | 已完成 |
+| 分镜细化与连续性 | Runtime、Schema 与 Validator | Phase 3 保持镜头身份和实体不变；连续性审查只引用有效局部 Panel 和规范实体 | 已完成 |
+| 稳定 Panel 落库 | Prisma 与 Novel Domain Store | `clipId + clipPanelIndex` 保留 Panel ID 和媒体引用，全局 `panelIndex` 继续供 UI、台词与 Timeline 使用 | 已完成 |
+| Phase 级恢复 | Workflow Store 与 Retry API | `refId + phase` 只失效目标 Clip 的对应分支及下游；连续性重试不重跑台词 | 已完成 |
+| 集级台词分析 | Workflow Runtime 与 Voice Analyze | 全部分镜落库后执行，并写 `voice.lines` 与 Prompt Trace 增量 Artifact | 已完成 |
+| 工作流入口 | Storyboard API 与 Workflow Registry | `POST /storyboard` 创建分镜、台词两步工作流，支持去重、租约、取消与独立重试 | 已完成 |
+
+M4 保留 `waoowaoo` 的规划、摄影/表演并行、细化和台词分析顺序，并增加连续性监督、Prompt 版本化恢复和严格的 Clip 所有权校验。分镜只在全部 Clip 成功后统一落库；中途失败时，已完成 Phase 仍以 Artifact 保存。7 项新增测试覆盖部分失败恢复、分支失效范围、连续性隔离、稳定 Panel ID、跨剧集 Clip 拒绝和工作流依赖；全量 121 项测试、TypeScript、ESLint、生产构建、Prisma 校验和 14 组本地迁移状态均通过。
+
 ## 8. 提交计划
 
 | 提交信息 | 范围 | 当前是否提交 |
@@ -112,9 +126,9 @@ M3 与 `waoowaoo` 保持相同的分析、切片、逐 Clip 剧本顺序，但�
 | `fix: harden production app secret` | 共享 `APP_SECRET` 策略和测试 | 已随 M0 基线提交 |
 | `feat: add workflow run leases and dedupe` | M1 Schema、Runtime、API 和测试 | 已提交 |
 | `feat: add domain prompt contracts` | M2 Prompt、Parser 和 Guard | 已提交 |
-| `feat: harden domain agent contracts` | M2.5 Agent Contract、Validator、连续性监督、Provider 能力和 Trace | 本次提交 |
-| `feat: implement story-to-script workflow` | M3 编排、Artifact 和落库 | 本次提交 |
-| `feat: implement script-to-storyboard workflow` | M4 编排、Artifact 和落库 | M3 之后 |
+| `feat: harden domain agent contracts` | M2.5 Agent Contract、Validator、连续性监督、Provider 能力和 Trace | 已提交 |
+| `feat: implement story-to-script workflow` | M3 编排、Artifact 和落库 | 已提交 |
+| `feat: implement script-to-storyboard workflow` | M4 编排、Artifact 和落库 | 本次提交 |
 
 当前 Prisma Schema、迁移、资产、计费、媒体和 Workflow 改动相互依赖，因此现有功能使用一个可编译、可迁移的基线提交，不拆成无法独立运行的中间提交。后续每个里程碑按功能和测试独立提交。
 

@@ -127,6 +127,8 @@ export async function saveStoryboard(
     sourceHash?: string | null;
     panels: Array<{
       panelIndex: number;
+      clipId?: string | null;
+      clipPanelIndex?: number | null;
       shotType?: string | null;
       cameraMove?: string | null;
       description?: string | null;
@@ -145,6 +147,7 @@ export async function saveStoryboard(
       photographyRules?: string | null;
       firstLastFramePrompt?: string | null;
       linkedToNextPanel?: boolean;
+      sourceEvidence?: string[];
     }>;
   },
 ) {
@@ -155,6 +158,28 @@ export async function saveStoryboard(
   )
     return null;
   const row = await prisma.$transaction(async (tx) => {
+    const clipIds = Array.from(
+      new Set(
+        input.panels.flatMap((panel) => panel.clipId ? [panel.clipId] : []),
+      ),
+    );
+    if (
+      input.panels.some(
+        (panel) =>
+          (panel.clipId == null) !== (panel.clipPanelIndex == null) ||
+          (panel.clipPanelIndex !== undefined &&
+            panel.clipPanelIndex !== null &&
+            (!Number.isInteger(panel.clipPanelIndex) || panel.clipPanelIndex < 0)),
+      )
+    )
+      throw new Error("STORYBOARD_PANEL_CLIP_IDENTITY_INVALID");
+    if (
+      clipIds.length &&
+      await tx.storyClip.count({
+        where: { id: { in: clipIds }, episodeId, projectId },
+      }) !== clipIds.length
+    )
+      throw new Error("STORYBOARD_PANEL_CLIP_NOT_FOUND");
     const storyboard = await tx.storyboard.upsert({
       where: { episodeId },
       create: {
@@ -170,36 +195,73 @@ export async function saveStoryboard(
         version: { increment: 1 },
       },
     });
-    await tx.storyboardPanel.deleteMany({
+    const existingPanels = await tx.storyboardPanel.findMany({
       where: { storyboardId: storyboard.id },
+      select: {
+        id: true,
+        clipId: true,
+        clipPanelIndex: true,
+        panelIndex: true,
+      },
     });
-    if (input.panels.length) {
-      await tx.storyboardPanel.createMany({
-        data: input.panels.map((panel, index) => ({
-          id: randomUUID(),
-          storyboardId: storyboard.id,
-          panelIndex: panel.panelIndex ?? index,
-          shotType: panel.shotType?.trim() || null,
-          cameraMove: panel.cameraMove?.trim() || null,
-          description: panel.description?.trim() || null,
-          locationName: panel.locationName?.trim() || null,
-          charactersJson: stringifyArray(panel.characters),
-          propsJson: stringifyArray(panel.props),
-          imagePrompt: panel.imagePrompt?.trim() || null,
-          videoPrompt: panel.videoPrompt?.trim() || null,
-          phase: panel.phase?.trim() || "phase1",
-          status: panel.status?.trim() || "draft",
-          srtStart: finiteNumber(panel.srtStart),
-          srtEnd: finiteNumber(panel.srtEnd),
-          durationSeconds: finiteNumber(panel.durationSeconds),
-          subtitleText: panel.subtitleText?.trim() || null,
-          actingNotesJson: stringifyObject(panel.actingNotes),
-          photographyRules: panel.photographyRules?.trim() || null,
-          firstLastFramePrompt: panel.firstLastFramePrompt?.trim() || null,
-          linkedToNextPanel: panel.linkedToNextPanel ?? false,
-        })),
+    const existingByIdentity = new Map(
+      existingPanels.map((panel) => [panelIdentity(panel), panel]),
+    );
+    if (existingPanels.length) {
+      const largestIndex = existingPanels.reduce(
+        (largest, panel) => Math.max(largest, panel.panelIndex),
+        0,
+      );
+      await tx.storyboardPanel.updateMany({
+        where: { storyboardId: storyboard.id },
+        data: { panelIndex: { increment: largestIndex + input.panels.length + 1 } },
       });
     }
+    const retainedIds: string[] = [];
+    for (const [index, panel] of input.panels.entries()) {
+      const identity = panelIdentity({
+        clipId: panel.clipId ?? null,
+        clipPanelIndex: panel.clipPanelIndex ?? null,
+        panelIndex: panel.panelIndex ?? index,
+      });
+      const id = existingByIdentity.get(identity)?.id ?? randomUUID();
+      retainedIds.push(id);
+      const data = {
+        clipId: panel.clipId ?? null,
+        clipPanelIndex: panel.clipPanelIndex ?? null,
+        panelIndex: panel.panelIndex ?? index,
+        shotType: panel.shotType?.trim() || null,
+        cameraMove: panel.cameraMove?.trim() || null,
+        description: panel.description?.trim() || null,
+        locationName: panel.locationName?.trim() || null,
+        charactersJson: stringifyArray(panel.characters),
+        propsJson: stringifyArray(panel.props),
+        imagePrompt: panel.imagePrompt?.trim() || null,
+        videoPrompt: panel.videoPrompt?.trim() || null,
+        phase: panel.phase?.trim() || "phase1",
+        status: panel.status?.trim() || "draft",
+        srtStart: finiteNumber(panel.srtStart),
+        srtEnd: finiteNumber(panel.srtEnd),
+        durationSeconds: finiteNumber(panel.durationSeconds),
+        subtitleText: panel.subtitleText?.trim() || null,
+        actingNotesJson: stringifyObject(panel.actingNotes),
+        photographyRules: panel.photographyRules?.trim() || null,
+        firstLastFramePrompt: panel.firstLastFramePrompt?.trim() || null,
+        linkedToNextPanel: panel.linkedToNextPanel ?? false,
+        sourceEvidenceJson: stringifyArray(panel.sourceEvidence),
+      };
+      await tx.storyboardPanel.upsert({
+        where: { id },
+        create: { id, storyboardId: storyboard.id, ...data },
+        update: data,
+      });
+    }
+    await tx.storyboardPanel.deleteMany({
+      where: {
+        storyboardId: storyboard.id,
+        ...(retainedIds.length ? { id: { notIn: retainedIds } } : {}),
+      },
+    });
     return tx.storyboard.findUniqueOrThrow({
       where: { id: storyboard.id },
       include: storyboardInclude,
@@ -220,6 +282,15 @@ function stringifyObject(value?: Record<string, unknown>) {
 }
 function finiteNumber(value?: number | null) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+function panelIdentity(panel: {
+  clipId: string | null;
+  clipPanelIndex: number | null;
+  panelIndex: number;
+}) {
+  return panel.clipId !== null && panel.clipPanelIndex !== null
+    ? `clip:${panel.clipId}:${panel.clipPanelIndex}`
+    : `panel:${panel.panelIndex}`;
 }
 function parseArray(value: string | null) {
   try {
@@ -323,6 +394,8 @@ function toPanel(
   return {
     id: row.id,
     storyboardId: row.storyboardId,
+    clipId: row.clipId,
+    clipPanelIndex: row.clipPanelIndex,
     panelIndex: row.panelIndex,
     shotType: row.shotType,
     cameraMove: row.cameraMove,
@@ -342,6 +415,7 @@ function toPanel(
     photographyRules: row.photographyRules,
     firstLastFramePrompt: row.firstLastFramePrompt,
     linkedToNextPanel: row.linkedToNextPanel,
+    sourceEvidence: parseArray(row.sourceEvidenceJson),
     imageAssetId: row.imageAssetId,
     videoAssetId: row.videoAssetId,
     createdAt: row.createdAt.toISOString(),

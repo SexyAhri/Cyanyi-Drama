@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { buildActiveWorkflowDedupeKey } from "./store";
+import {
+  buildActiveWorkflowDedupeKey,
+  getStoryboardPhaseInvalidation,
+} from "./store";
 
 describe("workflow active dedupe key", () => {
   const input = {
@@ -24,5 +27,33 @@ describe("workflow active dedupe key", () => {
     expect(buildActiveWorkflowDedupeKey(input)).not.toBe(
       buildActiveWorkflowDedupeKey({ ...input, targetId: "episode-2" }),
     );
+  });
+});
+
+describe("storyboard phase invalidation", () => {
+  it("invalidates only the selected branch and its downstream phases", () => {
+    expect(getStoryboardPhaseInvalidation("phase2.cine")).toEqual({
+      artifactTypes: [
+        "storyboard.clip.phase2.cine",
+        "storyboard.clip.phase3",
+        "storyboard.clip.continuity",
+      ],
+      tracePhases: ["phase2.cine", "phase3", "continuity"],
+    });
+    expect(getStoryboardPhaseInvalidation("phase2.acting")).toEqual({
+      artifactTypes: [
+        "storyboard.clip.phase2.acting",
+        "storyboard.clip.phase3",
+        "storyboard.clip.continuity",
+      ],
+      tracePhases: ["phase2.acting", "phase3", "continuity"],
+    });
+  });
+
+  it("keeps continuity retries isolated", () => {
+    expect(getStoryboardPhaseInvalidation("continuity")).toEqual({
+      artifactTypes: ["storyboard.clip.continuity"],
+      tracePhases: ["continuity"],
+    });
   });
 });

@@ -61,6 +61,8 @@ export type StoryboardRecord = {
 export type StoryboardPanelRecord = {
   id: string;
   storyboardId: string;
+  clipId: string | null;
+  clipPanelIndex: number | null;
   panelIndex: number;
   shotType: string | null;
   cameraMove: string | null;
@@ -80,6 +82,7 @@ export type StoryboardPanelRecord = {
   photographyRules?: string | null;
   firstLastFramePrompt?: string | null;
   linkedToNextPanel?: boolean;
+  sourceEvidence: string[];
   imageAssetId: string | null;
   videoAssetId: string | null;
   createdAt: string;

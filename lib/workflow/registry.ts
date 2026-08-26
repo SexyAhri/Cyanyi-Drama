@@ -44,6 +44,37 @@ const templates = new Map<string, WorkflowTemplate>([
       ],
     },
   ],
+  [
+    "script-to-storyboard",
+    {
+      type: "script-to-storyboard",
+      version: 1,
+      steps: [
+        {
+          key: "storyboard",
+          type: "build_storyboard",
+          artifactTypes: [
+            "storyboard.clip.phase1",
+            "storyboard.clip.phase2.cine",
+            "storyboard.clip.phase2.acting",
+            "storyboard.clip.phase3",
+            "storyboard.clip.continuity",
+            "prompt.trace",
+          ],
+          retryable: true,
+          maxAttempts: 3,
+        },
+        {
+          key: "voice",
+          type: "voice_analyze",
+          dependsOn: ["storyboard"],
+          artifactTypes: ["voice.lines", "prompt.trace"],
+          retryable: true,
+          maxAttempts: 3,
+        },
+      ],
+    },
+  ],
 ]);
 
 export function getWorkflowTemplate(workflowType: string) {

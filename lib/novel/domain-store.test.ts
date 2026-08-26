@@ -21,6 +21,8 @@ function panel(panelIndex: number): StoryboardPanelRecord {
   return {
     id: `panel-${panelIndex}`,
     storyboardId: "storyboard",
+    clipId: null,
+    clipPanelIndex: null,
     panelIndex,
     shotType: null,
     cameraMove: null,
@@ -30,6 +32,7 @@ function panel(panelIndex: number): StoryboardPanelRecord {
     props: [],
     imagePrompt: null,
     videoPrompt: null,
+    sourceEvidence: [],
     imageAssetId: null,
     videoAssetId: null,
     createdAt: "2026-01-01T00:00:00.000Z",

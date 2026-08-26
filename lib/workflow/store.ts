@@ -278,8 +278,14 @@ export async function retryWorkflowRun(userId: string, runId: string) {
   const resetKeys = resolveRetryStepKeys(current.steps);
   const activeDedupeKey = buildRunDedupeKey(current);
   if (await hasConflictingActiveRun(runId, activeDedupeKey)) return null;
-  const resetStepIds = current.steps
-    .filter((step) => resetKeys.includes(step.stepKey))
+  const retryRootIds = current.steps
+    .filter((step) => ["failed", "blocked", "running"].includes(step.status))
+    .map((step) => step.id);
+  const downstreamStepIds = current.steps
+    .filter(
+      (step) =>
+        resetKeys.includes(step.stepKey) && !retryRootIds.includes(step.id),
+    )
     .map((step) => step.id);
   await prisma.$transaction([
     prisma.workflowRun.update({
@@ -303,7 +309,13 @@ export async function retryWorkflowRun(userId: string, runId: string) {
       },
     }),
     prisma.workflowArtifact.deleteMany({
-      where: { runId, stepId: { in: resetStepIds } },
+      where: {
+        runId,
+        OR: [
+          { stepId: { in: downstreamStepIds } },
+          { stepId: { in: retryRootIds }, refId: null },
+        ],
+      },
     }),
     prisma.workflowCheckpoint.deleteMany({
       where: { runId, stepKey: { in: resetKeys } },
@@ -324,6 +336,7 @@ export async function retryWorkflowStep(
   userId: string,
   runId: string,
   stepKey: string,
+  phaseRetry?: StoryboardPhaseRetry,
 ) {
   const current = await prisma.workflowRun.findFirst({
     where: { id: runId, userId },
@@ -333,12 +346,30 @@ export async function retryWorkflowStep(
   const target = current.steps.find((step) => step.stepKey === stepKey);
   if (!target || !target.retryable || target.attempt >= target.maxAttempts)
     return null;
-  const resetKeys = resolveDownstreamStepKeys(current.steps, stepKey);
+  if (
+    phaseRetry &&
+    (current.workflowType !== "script-to-storyboard" ||
+      target.stepType !== "build_storyboard")
+  )
+    return null;
+  const resetKeys =
+    phaseRetry?.phase === "continuity"
+      ? [stepKey]
+      : resolveDownstreamStepKeys(current.steps, stepKey);
   const activeDedupeKey = buildRunDedupeKey(current);
   if (await hasConflictingActiveRun(runId, activeDedupeKey)) return null;
-  const resetStepIds = current.steps
-    .filter((step) => resetKeys.includes(step.stepKey))
+  const downstreamStepIds = current.steps
+    .filter(
+      (step) => resetKeys.includes(step.stepKey) && step.stepKey !== stepKey,
+    )
     .map((step) => step.id);
+  const artifactWhere = buildRetryArtifactWhere({
+    runId,
+    targetStepId: target.id,
+    downstreamStepIds,
+    phaseRetry,
+    preserveTargetArtifacts: ["failed", "blocked"].includes(target.status),
+  });
   await prisma.$transaction([
     prisma.workflowRun.update({
       where: { id: runId },
@@ -362,7 +393,7 @@ export async function retryWorkflowStep(
       },
     }),
     prisma.workflowArtifact.deleteMany({
-      where: { runId, stepId: { in: resetStepIds } },
+      where: artifactWhere,
     }),
     prisma.workflowCheckpoint.deleteMany({
       where: { runId, stepKey: { in: resetKeys } },
@@ -373,11 +404,96 @@ export async function retryWorkflowStep(
         stepId: target.id,
         type: "step_retry_requested",
         status: "queued",
-        payload: toJson({ stepKey, resetKeys }),
+        payload: toJson({ stepKey, resetKeys, phaseRetry }),
       },
     }),
   ]);
   return getWorkflowRun(userId, runId);
+}
+
+export const STORYBOARD_RETRY_PHASES = [
+  "phase1",
+  "phase2",
+  "phase2.cine",
+  "phase2.acting",
+  "phase3",
+  "continuity",
+] as const;
+
+export type StoryboardRetryPhase = (typeof STORYBOARD_RETRY_PHASES)[number];
+
+export type StoryboardPhaseRetry = {
+  refId: string;
+  phase: StoryboardRetryPhase;
+};
+
+function buildRetryArtifactWhere(input: {
+  runId: string;
+  targetStepId: string;
+  downstreamStepIds: string[];
+  phaseRetry?: StoryboardPhaseRetry;
+  preserveTargetArtifacts: boolean;
+}): Prisma.WorkflowArtifactWhereInput {
+  const targetFilters: Prisma.WorkflowArtifactWhereInput[] =
+    input.phaseRetry || input.preserveTargetArtifacts
+      ? [{ stepId: input.targetStepId, refId: null }]
+      : [{ stepId: input.targetStepId }];
+  if (input.phaseRetry) {
+    const invalidation = getStoryboardPhaseInvalidation(input.phaseRetry.phase);
+    targetFilters.push(
+      {
+        stepId: input.targetStepId,
+        refId: input.phaseRetry.refId,
+        artifactType: { in: invalidation.artifactTypes },
+      },
+      {
+        stepId: input.targetStepId,
+        artifactType: "prompt.trace",
+        refId: {
+          in: invalidation.tracePhases.map(
+            (phase) => `${input.phaseRetry?.refId}:${phase}`,
+          ),
+        },
+      },
+    );
+  }
+  return {
+    runId: input.runId,
+    OR: [
+      { stepId: { in: input.downstreamStepIds } },
+      ...targetFilters,
+    ],
+  };
+}
+
+export function getStoryboardPhaseInvalidation(phase: StoryboardRetryPhase) {
+  const ordered = [
+    { phase: "phase1", artifactType: "storyboard.clip.phase1" },
+    { phase: "phase2.cine", artifactType: "storyboard.clip.phase2.cine" },
+    { phase: "phase2.acting", artifactType: "storyboard.clip.phase2.acting" },
+    { phase: "phase3", artifactType: "storyboard.clip.phase3" },
+    { phase: "continuity", artifactType: "storyboard.clip.continuity" },
+  ] as const;
+  const included =
+    phase === "phase1"
+      ? ordered
+      : phase === "phase2"
+        ? ordered.slice(1)
+        : phase === "phase2.cine"
+          ? ordered.filter((item) =>
+              ["phase2.cine", "phase3", "continuity"].includes(item.phase),
+            )
+          : phase === "phase2.acting"
+            ? ordered.filter((item) =>
+                ["phase2.acting", "phase3", "continuity"].includes(item.phase),
+              )
+            : phase === "phase3"
+              ? ordered.slice(3)
+              : ordered.slice(4);
+  return {
+    artifactTypes: included.map((item) => item.artifactType),
+    tracePhases: included.map((item) => item.phase),
+  };
 }
 
 function resolveRetryStepKeys(
