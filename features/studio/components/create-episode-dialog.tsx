@@ -81,7 +81,7 @@ export function CreateEpisodeDialog({
           <FilePlus2 className="size-4" />
         </DialogTrigger>
       )}
-      <DialogContent className="rounded-lg sm:max-w-lg">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-lg sm:max-h-[min(90dvh,720px)] sm:max-w-lg">
         <form className="contents" onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>{copy.createEpisode}</DialogTitle>
@@ -89,7 +89,7 @@ export function CreateEpisodeDialog({
               {copy.createEpisode}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-1">
+          <div className="grid min-h-0 gap-4 overflow-y-auto py-1 pr-1">
             <label className="grid gap-1.5 text-sm font-medium">
               {copy.episodeName}
               <Input
@@ -103,7 +103,7 @@ export function CreateEpisodeDialog({
             <label className="grid gap-1.5 text-sm font-medium">
               {copy.novelText}
               <Textarea
-                className="min-h-40 resize-y"
+                className="h-48 min-h-32 max-h-[min(42dvh,24rem)] resize-y overflow-y-auto field-sizing-fixed"
                 onChange={(event) => setNovelText(event.target.value)}
                 placeholder={copy.novelTextPlaceholder}
                 value={novelText}
