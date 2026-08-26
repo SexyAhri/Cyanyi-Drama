@@ -32,7 +32,7 @@ import type { AgentToolCall, ToolCallStatus } from "@/lib/agent/types";
 import { cn } from "@/lib/utils";
 
 import { ApprovalButtons } from "./approval-buttons";
-import { MediaGenerationToolCard } from "./tool-renderers";
+import { MediaToolCard } from "./media-tool-card";
 import {
   defaultToolRegistry,
   formatUnknown,
@@ -47,9 +47,7 @@ type ToolCardProps = {
   isApprovalSubmitting?: boolean;
   registry?: ToolRegistry;
   embedded?: boolean;
-  onUseAsReferenceImage?: (
-    referenceImage: AgentComposerReferenceImage,
-  ) => void;
+  onUseAsReferenceImage?: (referenceImage: AgentComposerReferenceImage) => void;
 };
 
 const statusMeta: Record<
@@ -108,11 +106,12 @@ export function ToolCard({
   const meta = statusMeta[toolCall.status];
   const StatusIcon = meta.icon;
   const isMediaTool =
-    toolCall.name === "image_generation" || toolCall.name === "video_generation";
+    toolCall.name === "image_generation" ||
+    toolCall.name === "video_generation";
 
   if (isMediaTool) {
     return (
-      <MediaGenerationToolCard
+      <MediaToolCard
         createdAt={createdAt}
         embedded={embedded}
         onUseAsReferenceImage={onUseAsReferenceImage}
@@ -168,15 +167,17 @@ export function ToolCard({
 
         <Separator />
 
-        <ToolDataSection
-          defaultOpen
-          label="Arguments"
-          value={
-            registryItem?.renderArgs?.(toolCall.args) ?? (
-              <JsonBlock value={toolCall.args} />
-            )
-          }
-        />
+        {registryItem?.showArgs !== false ? (
+          <ToolDataSection
+            defaultOpen
+            label="Arguments"
+            value={
+              registryItem?.renderArgs?.(toolCall.args) ?? (
+                <JsonBlock value={toolCall.args} />
+              )
+            }
+          />
+        ) : null}
 
         {toolCall.result !== undefined ? (
           <ToolDataSection

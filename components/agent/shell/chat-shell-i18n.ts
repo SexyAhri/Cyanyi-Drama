@@ -128,6 +128,7 @@ export type ShellCopy = {
   showModelName: string;
   switchLanguage: string;
   switchModel: string;
+  switchTheme: string;
   testConnection: string;
   workspace: string;
 };
@@ -272,6 +273,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     showModelName: "Show model name",
     switchLanguage: "Switch language",
     switchModel: "Switch model",
+    switchTheme: "Switch theme",
     testConnection: "Test connection",
     workspace: "Workspace",
   },
@@ -409,6 +411,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     showModelName: "显示模型名称",
     switchLanguage: "切换语言",
     switchModel: "切换模型",
+    switchTheme: "切换主题",
     testConnection: "测试连接",
     workspace: "工作区",
   },

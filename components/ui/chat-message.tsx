@@ -245,14 +245,33 @@ function AssistantText({
   supplementalContent?: React.ReactNode;
   emptyState?: React.ReactNode;
 }) {
+  const hasPrimaryContent = Boolean(content.trim() || emptyState);
+
+  if (!hasPrimaryContent && !supplementalContent) {
+    return null;
+  }
+
   return (
-    <div className="group/message-row flex flex-col items-start">
-      <Bubble animation={animation} isUser={false}>
-        {content.trim() ? <MarkdownRenderer>{content}</MarkdownRenderer> : emptyState}
-        {supplementalContent ? (
-          <div className="mt-4 space-y-3">{supplementalContent}</div>
-        ) : null}
-      </Bubble>
+    <div className="group/message-row flex w-full flex-col items-start">
+      {hasPrimaryContent ? (
+        <Bubble animation={animation} isUser={false}>
+          {content.trim() ? (
+            <MarkdownRenderer>{content}</MarkdownRenderer>
+          ) : (
+            emptyState
+          )}
+        </Bubble>
+      ) : null}
+      {supplementalContent ? (
+        <div
+          className={cn(
+            "w-full max-w-[628px] space-y-3",
+            hasPrimaryContent && "mt-3",
+          )}
+        >
+          {supplementalContent}
+        </div>
+      ) : null}
 
       <MessageMeta
         actions={actions}

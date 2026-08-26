@@ -29,7 +29,7 @@
 | M4 | 已完成 | 5-7 天 | Script-to-Storyboard：规划、摄影、表演、细化、台词分析、clip/phase 级失效重试 | 重试一个 phase 只失效其下游；其他 clip 不变化；分镜和台词输出通过 Schema 校验 |
 | M5 | 已完成 | 4-6 天 | 资产上传、参考图转角色、资产提取、标记/AI 分集、OpenAI Compatible 媒体模板、空字段显式省略 | 新 Provider 无需修改 Worker 核心代码；上传和提取资产保留所有权与来源 |
 | M6 | 已完成 | 3-5 天 | 计费对账、结构化 Trace、Prompt Canary、行为 Guard、渲染规格归一化、系统回归测试 | 对账幂等；Run/Task/Step 可串联追踪；混合媒体输入能生成规格统一的成片 |
-| M7 | 待开发 | 12-18 天 | 项目首页、全屏生产工作台、六阶段创作导航、上下文 Agent、任务与 Trace 可观测、响应式与无障碍 | 现有生产 API 均有可操作入口；刷新可恢复真实状态；失败可定位、取消或重试；桌面与移动端关键流程可用 |
+| M7 | 开发中 | 12-18 天 | 项目首页、全屏生产工作台、六阶段创作导航、上下文 Agent、任务与 Trace 可观测、响应式与无障碍 | 现有生产 API 均有可操作入口；刷新可恢复真实状态；失败可定位、取消或重试；桌面与移动端关键流程可用 |
 
 ## 4. M0 当前基线任务表
 
@@ -219,7 +219,7 @@ Project / Episode / Stage URL
 
 | 批次 | 交付内容 | 验收门禁 | 状态 |
 | --- | --- | --- | --- |
-| M7.1 工作台基础 | 路由、项目首页、项目工作台骨架、剧集与阶段导航、语义 Token、明暗主题、响应式 Shell | 可创建并打开项目；深链和刷新可恢复；桌面/移动端无重叠或横向溢出 | 待开发 |
+| M7.1 工作台基础 | 路由、项目首页、项目工作台骨架、剧集与阶段导航、语义 Token、明暗主题、响应式 Shell | 可创建并打开项目；深链和刷新可恢复；桌面/移动端无重叠或横向溢出 | 已完成 |
 | M7.2 小说与资产 | 原文/分集/剧本界面，角色/场景/道具资产库，上传、提取、生成、选择与批次反馈 | `story-to-script` 可完整操作；资产来源和当前基准可追踪；跨项目资产不可见 | 待开发 |
 | M7.3 分镜与镜头 | Clip/Panel 分镜编辑、连续性问题、图片/视频候选、单项与批量任务控制 | `script-to-storyboard` 可完整操作；失败只重试目标范围；任务结果不伪造 | 待开发 |
 | M7.4 声音与交付 | 音色与台词、语音、合并、口型、Timeline、渲染、预览与下载 | 真实任务可取消/重试；混合素材成片可渲染；失败有 Trace 和恢复入口 | 待开发 |
@@ -268,8 +268,8 @@ Project / Episode / Stage URL
 | `feat: implement script-to-storyboard workflow` | M4 编排、Artifact 和落库 | 已提交 |
 | `feat: add external assets and media templates` | M5 上传、视觉提取、整本分集、Provider 模板和测试 | 已提交 |
 | `feat: add production quality safeguards` | M6 计费对账、Trace、Canary、行为门禁、渲染归一化和系统回归 | 已提交 |
-| `docs(roadmap): plan M7 production workspace / 规划 M7 生产工作台` | M7 信息架构、设计与许可边界、交付批次、验收门禁和双语提交规范 | 本次提交 |
-| `feat(studio): build project workspace foundation / 构建项目工作台基础` | M7.1 路由、项目首页、工作台 Shell、导航和响应式基础 | 待提交 |
+| `docs(roadmap): plan M7 production workspace / 规划 M7 生产工作台` | M7 信息架构、设计与许可边界、交付批次、验收门禁和双语提交规范 | 已提交 |
+| `feat(studio): build project workspace foundation / 构建项目工作台基础` | M7.1 路由、项目首页、工作台 Shell、导航和响应式基础 | 已提交 |
 | `feat(studio): connect writing and asset workflows / 接入编剧与资产工作流` | M7.2 小说、剧本和资产闭环 | 待提交 |
 | `feat(studio): connect storyboard and shot production / 接入分镜与镜头生产` | M7.3 分镜、图片和视频闭环 | 待提交 |
 | `feat(studio): connect audio timeline and delivery / 接入声音时间线与交付` | M7.4 声音、口型、时间线和渲染闭环 | 待提交 |

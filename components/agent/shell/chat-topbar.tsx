@@ -2,6 +2,7 @@
 
 import { Pencil } from "lucide-react";
 
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 
@@ -21,7 +22,7 @@ export function ChatTopbar({
   topbarActions,
 }: ChatTopbarProps) {
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-card/80 px-3 shadow-sm shadow-primary/5 backdrop-blur supports-backdrop-filter:bg-card/70">
+    <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b bg-card/80 px-3 shadow-sm shadow-primary/5 backdrop-blur supports-backdrop-filter:bg-card/70">
       <div className="flex min-w-0 items-center gap-2">
         <SidebarTrigger />
         <Button
@@ -40,6 +41,7 @@ export function ChatTopbar({
           <div className="flex min-w-0 items-center gap-2">{topbarActions}</div>
         ) : null}
       </div>
+      <ThemeToggle label={copy.switchTheme} />
     </header>
   );
 }

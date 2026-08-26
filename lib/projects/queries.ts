@@ -7,7 +7,22 @@ import type { EpisodeRecord, ProjectRecord } from "./types";
 
 const projectInclude = {
   config: true,
-  _count: { select: { episodes: true } },
+  _count: {
+    select: {
+      episodes: true,
+      mediaTasks: { where: { status: "failed" } },
+    },
+  },
+  workflowRuns: {
+    orderBy: { updatedAt: "desc" as const },
+    take: 1,
+    select: {
+      episodeId: true,
+      status: true,
+      updatedAt: true,
+      workflowType: true,
+    },
+  },
 } as const;
 
 export async function listProjects(
@@ -158,10 +173,13 @@ export async function deleteEpisode(
   return result.count > 0;
 }
 
-type ProjectWithRelations = Prisma.ProjectGetPayload<{ include: typeof projectInclude }>;
+type ProjectWithRelations = Prisma.ProjectGetPayload<{
+  include: typeof projectInclude;
+}>;
 
 function toProject(row: ProjectWithRelations): ProjectRecord {
   const config = row.config;
+  const latestWorkflow = row.workflowRuns[0] ?? null;
   return {
     id: row.id,
     name: row.name,
@@ -170,6 +188,15 @@ function toProject(row: ProjectWithRelations): ProjectRecord {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     episodeCount: row._count.episodes,
+    failedTaskCount: row._count.mediaTasks,
+    latestWorkflow: latestWorkflow
+      ? {
+          episodeId: latestWorkflow.episodeId,
+          status: latestWorkflow.status,
+          updatedAt: latestWorkflow.updatedAt.toISOString(),
+          workflowType: latestWorkflow.workflowType,
+        }
+      : null,
     config: {
       analysisModel: config?.analysisModel ?? null,
       characterModel: config?.characterModel ?? null,

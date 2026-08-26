@@ -24,6 +24,13 @@ export type ProjectRecord = {
   updatedAt: string;
   config: ProjectConfig;
   episodeCount: number;
+  failedTaskCount: number;
+  latestWorkflow: {
+    episodeId: string | null;
+    status: string;
+    updatedAt: string;
+    workflowType: string;
+  } | null;
 };
 
 export type EpisodeRecord = {
