@@ -2,13 +2,22 @@ import { jsonrepair } from "jsonrepair";
 import { z } from "zod";
 
 export type StructuredMessage = {
-  role: "user" | "assistant";
+  role: "system" | "user" | "assistant";
   content: string;
+};
+
+export type StructuredValidationIssue = {
+  code: string;
+  path: string;
+  message: string;
 };
 
 export class StructuredOutputError extends Error {
   constructor(
-    readonly code: "STRUCTURED_JSON_INVALID" | "STRUCTURED_SCHEMA_INVALID",
+    readonly code:
+      | "STRUCTURED_JSON_INVALID"
+      | "STRUCTURED_SCHEMA_INVALID"
+      | "STRUCTURED_SEMANTIC_INVALID",
     readonly details: string[],
     readonly rawText: string,
   ) {
@@ -51,20 +60,32 @@ export async function generateStructuredOutput<T>(input: {
   schema: z.ZodType<T>;
   request: (messages: StructuredMessage[]) => Promise<string>;
   prompt: string;
+  systemPrompt?: string;
+  validate?: (data: T) => StructuredValidationIssue[];
   maxCorrectionAttempts?: number;
 }) {
   const maxCorrectionAttempts = Math.max(
     0,
     Math.floor(input.maxCorrectionAttempts ?? 1),
   );
-  const messages: StructuredMessage[] = [
-    { role: "user", content: input.prompt },
-  ];
+  const messages: StructuredMessage[] = [];
+  if (input.systemPrompt)
+    messages.push({ role: "system", content: input.systemPrompt });
+  messages.push({ role: "user", content: input.prompt });
   let correctionAttempts = 0;
   while (true) {
-    const outputText = await input.request(messages);
+    const outputText = await input.request(messages.slice());
     try {
       const parsed = parseStructuredOutput(outputText, input.schema);
+      const semanticIssues = input.validate?.(parsed.data) ?? [];
+      if (semanticIssues.length)
+        throw new StructuredOutputError(
+          "STRUCTURED_SEMANTIC_INVALID",
+          semanticIssues.slice(0, 20).map(
+            (issue) => `${issue.path}: [${issue.code}] ${issue.message}`,
+          ),
+          outputText,
+        );
       return { ...parsed, correctionAttempts, outputText };
     } catch (error) {
       if (

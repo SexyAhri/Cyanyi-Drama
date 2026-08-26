@@ -1,6 +1,8 @@
 import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
+import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
+import type { PromptExecutionTrace } from "@/lib/llm/openai-structured";
 import {
   PROMPT_IDS,
   renderPrompt,
@@ -11,6 +13,11 @@ import {
   locationPropAnalysisSchema,
   storyboardPlanningSchema,
 } from "@/lib/prompts/schemas";
+import {
+  validateCharacterAnalysis,
+  validateLocationPropAnalysis,
+  validateStoryboardPlanning,
+} from "@/lib/prompts/validators";
 import {
   listNovelCharacters,
   listNovelLocations,
@@ -38,9 +45,18 @@ export type NovelParseOutput = {
     aliases?: string[];
     profile?: Record<string, unknown>;
     introduction?: string | null;
+    evidence: string[];
   }>;
-  locations: Array<{ name: string; summary?: string | null }>;
-  props: Array<{ name: string; summary?: string | null }>;
+  locations: Array<{
+    name: string;
+    summary?: string | null;
+    evidence: string[];
+  }>;
+  props: Array<{
+    name: string;
+    summary?: string | null;
+    evidence: string[];
+  }>;
   panels: Array<{
     panelIndex: number;
     shotType?: string | null;
@@ -51,7 +67,9 @@ export type NovelParseOutput = {
     props?: string[];
     imagePrompt?: string | null;
     videoPrompt?: string | null;
+    sourceEvidence: string[];
   }>;
+  promptTraces: PromptExecutionTrace[];
 };
 
 export async function parseNovelAndPersist(
@@ -94,7 +112,20 @@ export async function parseNovelAndPersist(
   );
   if (!characters || !locations || !props || !storyboard)
     throw new Error("NOVEL_PARSE_PERSIST_FAILED");
-  return { characters, locations, props, storyboard, sourceLength: sourceText.length };
+  return {
+    characters,
+    locations,
+    props,
+    storyboard,
+    analysis: {
+      characters: parsed.characters,
+      locations: parsed.locations,
+      props: parsed.props,
+      panels: parsed.panels,
+    },
+    promptTraces: parsed.promptTraces,
+    sourceLength: sourceText.length,
+  };
 }
 
 async function requestNovelParse(
@@ -132,7 +163,11 @@ async function requestNovelParse(
     apiKeys,
     model: input.model,
     temperature: 0.2,
-    maxCorrectionAttempts: 1,
+    structuredOutputMode: supportsStoredStructuredOutputs(
+      configuredModel.capabilitiesJson,
+    )
+      ? ("json_schema" as const)
+      : ("json_object" as const),
   };
   const [characterResult, assetResult] = await Promise.all([
     requestOpenAiStructured({
@@ -146,6 +181,7 @@ async function requestNovelParse(
         },
       }),
       schema: characterAnalysisSchema,
+      validate: (data) => validateCharacterAnalysis(data, sourceText),
     }),
     requestOpenAiStructured({
       ...provider,
@@ -159,6 +195,7 @@ async function requestNovelParse(
         },
       }),
       schema: locationPropAnalysisSchema,
+      validate: (data) => validateLocationPropAnalysis(data, sourceText),
     }),
   ]);
   const storyboardResult = await requestOpenAiStructured({
@@ -174,6 +211,15 @@ async function requestNovelParse(
       },
     }),
     schema: storyboardPlanningSchema,
+    validate: (data) =>
+      validateStoryboardPlanning(data, {
+        sourceText,
+        canonical: {
+          characters: characterResult.data.characters.map((item) => item.name),
+          locations: assetResult.data.locations.map((item) => item.name),
+          props: assetResult.data.props.map((item) => item.name),
+        },
+      }),
   });
 
   return {
@@ -181,6 +227,11 @@ async function requestNovelParse(
     locations: assetResult.data.locations,
     props: assetResult.data.props,
     panels: storyboardResult.data.panels,
+    promptTraces: [
+      characterResult.trace,
+      assetResult.trace,
+      storyboardResult.trace,
+    ],
   } satisfies NovelParseOutput;
 }
 

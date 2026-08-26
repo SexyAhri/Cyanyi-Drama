@@ -162,6 +162,7 @@ async function processClaimedWorkflowJob(
     await assertWorkflowRunActive({ runId, workerId });
     const outputJson = toInputJson(output);
     const outputText = JSON.stringify(output);
+    const promptTracePayload = getPromptTracePayload(output);
     const completedAt = new Date();
     await prisma.$transaction(async (tx) => {
       const owned = await tx.workflowRun.updateMany({
@@ -188,6 +189,7 @@ async function processClaimedWorkflowJob(
         data: {
           status: "succeeded",
           outputText,
+          usageJson: promptTracePayload,
           finishedAt: completedAt,
           updatedAt: completedAt,
         },
@@ -211,7 +213,10 @@ async function processClaimedWorkflowJob(
             runId,
             stepId: step.id,
             artifactType,
-            payload: outputJson,
+            payload:
+              artifactType === "prompt.trace" && promptTracePayload
+                ? promptTracePayload
+                : outputJson,
           })),
           skipDuplicates: true,
         });
@@ -478,7 +483,7 @@ async function runStep(
     const model = getString(stepInput.model ?? runInput.model);
     if (!channelId || !model)
       throw new Error("WORKFLOW_VOICE_ANALYZE_INPUT_REQUIRED");
-    const lines = await analyzeEpisodeVoices({
+    const result = await analyzeEpisodeVoices({
       userId,
       projectId: run.projectId,
       episodeId: run.episodeId,
@@ -487,7 +492,10 @@ async function runStep(
       locale:
         getString(stepInput.locale ?? runInput.locale) === "en" ? "en" : "zh",
     });
-    return { lineCount: lines.length };
+    return {
+      lineCount: result.voiceLines.length,
+      promptTraces: result.promptTraces,
+    };
   }
   throw new Error(`WORKFLOW_STEP_HANDLER_NOT_IMPLEMENTED:${step.stepType}`);
 }
@@ -556,6 +564,14 @@ function toInputJson(value: unknown) {
 
 function hashJson(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function getPromptTracePayload(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return undefined;
+  const promptTraces = (value as { promptTraces?: unknown }).promptTraces;
+  if (!Array.isArray(promptTraces)) return undefined;
+  return toInputJson({ promptTraces });
 }
 
 async function finishRun(runId: string, workerId: string, output: unknown) {

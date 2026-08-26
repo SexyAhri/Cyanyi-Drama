@@ -6,10 +6,11 @@ Rules:
 3. panelIndex must start at 0 and increase without gaps.
 4. Use canonical names from the supplied analyses.
 5. imagePrompt and videoPrompt may describe only existing visual facts and actions.
-6. Return strict JSON only with no extra fields.
+6. sourceEvidence must contain exact, unchanged source excerpts covered by the panel.
+7. Return strict JSON only with no extra fields.
 
 Output:
-{"panels":[{"panelIndex":0,"shotType":"Shot size or null","cameraMove":"Camera move or null","description":"Shot content","locationName":"Location or null","characters":["Character"],"props":["Prop"],"imagePrompt":"Static image prompt or null","videoPrompt":"Motion prompt or null"}]}
+{"panels":[{"panelIndex":0,"shotType":"Shot size or null","cameraMove":"Camera move or null","description":"Shot content","locationName":"Location or null","characters":["Character"],"props":["Prop"],"imagePrompt":"Static image prompt or null","videoPrompt":"Motion prompt or null","sourceEvidence":["Exact source excerpt"]}]}
 
 Character analysis: {{characters_json}}
 Location analysis: {{locations_json}}

@@ -6,6 +6,8 @@ export {
   renderPrompt,
 } from "./registry";
 export type {
+  AgentContract,
+  AgentContextScope,
   AgentIdentity,
   PromptCatalogEntry,
   PromptLocale,

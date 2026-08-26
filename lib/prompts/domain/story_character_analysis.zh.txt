@@ -5,11 +5,12 @@
 2. 合并同一角色的代词、昵称和称呼；name 使用最稳定的规范名称。
 3. character_library 中已有角色应复用原名称，禁止重复创建。
 4. profile 只写原文明示的信息；不确定的信息不要输出。
-5. 不做场景、道具、切片或分镜设计。
-6. 只返回严格 JSON，不得包含 Markdown、解释或额外字段。
+5. evidence 必须包含一个或多个能证明角色身份的原文精确摘录，不得改写。
+6. 不做场景、道具、切片或分镜设计。
+7. 只返回严格 JSON，不得包含 Markdown、解释或额外字段。
 
 输出格式：
-{"characters":[{"name":"角色名","aliases":["别名"],"profile":{"identity":"原文明示身份"},"introduction":"称呼映射和叙事作用，无法确定时为null"}]}
+{"characters":[{"name":"角色名","aliases":["别名"],"profile":{"identity":"原文明示身份"},"introduction":"称呼映射和叙事作用，无法确定时为null","evidence":["原文精确摘录"]}]}
 
 现有角色库：
 {{character_library}}

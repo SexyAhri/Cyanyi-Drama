@@ -219,6 +219,8 @@ function normalizeModelMetadata(
     supportsToolCalling: mediaModalities.length
       ? false
       : (declared?.supportsToolCalling ?? inferred.supportsToolCalling),
+    supportsStructuredOutputs:
+      declared?.supportsStructuredOutputs ?? inferred.supportsStructuredOutputs,
   };
   const primary = getPrimaryModelCapability(capabilities);
 

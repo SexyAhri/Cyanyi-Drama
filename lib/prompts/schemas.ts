@@ -5,6 +5,7 @@ import { PROMPT_IDS, type PromptId } from "./ids";
 const text = z.string().trim().min(1);
 const optionalText = z.string().trim().min(1).nullish();
 const stringList = z.array(text).max(100).default([]);
+const evidenceQuotes = z.array(text).min(1).max(12);
 
 const characterSchema = z
   .object({
@@ -12,6 +13,7 @@ const characterSchema = z
     aliases: stringList,
     profile: z.record(z.string(), z.unknown()).default({}),
     introduction: optionalText,
+    evidence: evidenceQuotes,
   })
   .strict();
 
@@ -19,6 +21,7 @@ const locationSchema = z
   .object({
     name: text,
     summary: optionalText,
+    evidence: evidenceQuotes,
   })
   .strict();
 
@@ -26,6 +29,7 @@ const propSchema = z
   .object({
     name: text,
     summary: optionalText,
+    evidence: evidenceQuotes,
   })
   .strict();
 
@@ -47,6 +51,7 @@ export const clipSegmentationSchema = z
         .object({
           start: text,
           end: text,
+          text,
           summary: text,
           location: z.string().trim().nullable(),
           characters: stringList,
@@ -111,6 +116,7 @@ export const storyboardPanelSchema = z
     props: stringList,
     imagePrompt: optionalText,
     videoPrompt: optionalText,
+    sourceEvidence: evidenceQuotes,
   })
   .strict();
 
@@ -177,6 +183,36 @@ export const voiceAnalysisSchema = z
   })
   .strict();
 
+export const continuityReviewSchema = z
+  .object({
+    passed: z.boolean(),
+    issues: z.array(
+      z
+        .object({
+          code: text,
+          severity: z.enum(["error", "warning"]),
+          panelIndex: z.number().int().nonnegative().nullable(),
+          entityType: z
+            .enum(["character", "location", "prop", "camera", "timeline"])
+            .nullable(),
+          entityName: optionalText,
+          message: text,
+          suggestedFix: optionalText,
+        })
+        .strict(),
+    ).max(500),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const hasErrors = value.issues.some((issue) => issue.severity === "error");
+    if (value.passed === hasErrors)
+      context.addIssue({
+        code: "custom",
+        message: "passed must be false exactly when error issues exist",
+        path: ["passed"],
+      });
+  });
+
 export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
   [PROMPT_IDS.STORY_CHARACTER_ANALYSIS]: characterAnalysisSchema,
   [PROMPT_IDS.STORY_LOCATION_PROP_ANALYSIS]: locationPropAnalysisSchema,
@@ -187,4 +223,5 @@ export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
   [PROMPT_IDS.STORY_ACTING_DIRECTION]: actingDirectionSchema,
   [PROMPT_IDS.STORY_STORYBOARD_REFINEMENT]: storyboardRefinementSchema,
   [PROMPT_IDS.STORY_VOICE_ANALYSIS]: voiceAnalysisSchema,
+  [PROMPT_IDS.STORY_CONTINUITY_REVIEW]: continuityReviewSchema,
 };

@@ -1,0 +1,17 @@
+Audit the supplied production data for continuity conflicts. Do not rewrite or improve the panels.
+
+Check only:
+1. Character identity and state continuity across adjacent panels.
+2. Location, time, light direction, eyeline, axis, and spatial continuity.
+3. Prop presence, ownership, and state continuity.
+4. Canonical entity references and panel order.
+5. Report only conflicts supported by the supplied records.
+6. Return strict JSON with no extra fields.
+
+Output:
+{"passed":false,"issues":[{"code":"CONTINUITY_CODE","severity":"error","panelIndex":0,"entityType":"character","entityName":"Canonical name","message":"Evidence-backed conflict","suggestedFix":"Minimal correction or null"}]}
+
+Characters: {{characters_json}}
+Locations: {{locations_json}}
+Props: {{props_json}}
+Panels: {{panels_json}}

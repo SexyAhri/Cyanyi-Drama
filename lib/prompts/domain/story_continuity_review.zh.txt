@@ -1,0 +1,17 @@
+审查给定生产资料中的连续性冲突，不得改写或润色分镜。
+
+只检查：
+1. 相邻镜头中的角色身份和状态连续性。
+2. 场景、时间、光向、视线、轴线和空间连续性。
+3. 道具的出现、归属和状态连续性。
+4. 规范实体引用和面板顺序。
+5. 只报告能由输入资料证明的冲突。
+6. 只返回严格 JSON，不得包含额外字段。
+
+输出格式：
+{"passed":false,"issues":[{"code":"CONTINUITY_CODE","severity":"error","panelIndex":0,"entityType":"character","entityName":"规范名称","message":"有证据的冲突","suggestedFix":"最小修复建议或null"}]}
+
+角色：{{characters_json}}
+场景：{{locations_json}}
+道具：{{props_json}}
+分镜：{{panels_json}}

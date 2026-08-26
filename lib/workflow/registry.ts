@@ -16,7 +16,11 @@ const templates = new Map<string, WorkflowTemplate>([
         {
           key: "parse",
           type: "parse_novel",
-          artifactTypes: ["novel.analysis", "storyboard.draft"],
+          artifactTypes: [
+            "novel.analysis",
+            "storyboard.draft",
+            "prompt.trace",
+          ],
         },
         {
           key: "split",
@@ -40,7 +44,7 @@ const templates = new Map<string, WorkflowTemplate>([
           key: "voice",
           type: "voice_analyze",
           dependsOn: ["storyboard"],
-          artifactTypes: ["voice.lines"],
+          artifactTypes: ["voice.lines", "prompt.trace"],
         },
       ],
     },

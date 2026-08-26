@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   getPrimaryModelCapability,
   inferModelCapabilities,
+  supportsStoredStructuredOutputs,
 } from "./provider-types";
 
 describe("model capability inference", () => {
@@ -28,6 +29,7 @@ describe("model capability inference", () => {
 
     expect(capabilities.modalities).toEqual(["text"]);
     expect(capabilities.supportsToolCalling).toBe(true);
+    expect(capabilities.supportsStructuredOutputs).toBe(false);
     expect(capabilities.supportsReferenceImages).toBe(false);
   });
 
@@ -37,5 +39,19 @@ describe("model capability inference", () => {
     expect(capabilities.modalities).toEqual(["image"]);
     expect(getPrimaryModelCapability(capabilities)).toBe("image");
     expect(capabilities.supportsToolCalling).toBe(false);
+  });
+
+  it("only enables strict structured outputs when explicitly stored", () => {
+    expect(
+      supportsStoredStructuredOutputs(
+        JSON.stringify({ supportsStructuredOutputs: true }),
+      ),
+    ).toBe(true);
+    expect(supportsStoredStructuredOutputs("invalid")).toBe(false);
+    expect(
+      supportsStoredStructuredOutputs(
+        JSON.stringify({ supportsStructuredOutputs: false }),
+      ),
+    ).toBe(false);
   });
 });

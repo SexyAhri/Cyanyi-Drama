@@ -1,5 +1,6 @@
 import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
+import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import {
   PROMPT_IDS,
@@ -7,6 +8,7 @@ import {
   type PromptLocale,
 } from "@/lib/prompts";
 import { voiceAnalysisSchema } from "@/lib/prompts/schemas";
+import { validateVoiceAnalysis } from "@/lib/prompts/validators";
 
 export type VoiceAnalyzeInput = {
   userId: string;
@@ -69,7 +71,7 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
   }
   const model = await prisma.providerModel.findFirst({
     where: { channelId: input.channelId, modelId: input.model, selected: true },
-    select: { modelId: true },
+    select: { modelId: true, capabilitiesJson: true },
   });
   if (!model) throw new VoiceAnalyzeError("分析模型未在该渠道中配置或未选中");
   const keys = parseKeys(channel.encryptedApiKeys);
@@ -105,6 +107,11 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
         introduction: character.introduction,
       })),
       panels: panelContext,
+      structuredOutputMode: supportsStoredStructuredOutputs(
+        model.capabilitiesJson,
+      )
+        ? "json_schema"
+        : "json_object",
     });
   } catch (error) {
     throw new VoiceAnalyzeError(
@@ -146,10 +153,11 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
       });
     }
   });
-  return prisma.voiceLine.findMany({
+  const voiceLines = await prisma.voiceLine.findMany({
     where: { episodeId: input.episodeId },
     orderBy: { lineIndex: "asc" },
   });
+  return { voiceLines, promptTraces: [analyzed.trace] };
 }
 
 function requestVoiceAnalysis(input: {
@@ -160,13 +168,14 @@ function requestVoiceAnalysis(input: {
   sourceText: string;
   characters: unknown[];
   panels: unknown[];
+  structuredOutputMode: "json_object" | "json_schema";
 }) {
   return requestOpenAiStructured({
     baseUrl: input.baseUrl,
     apiKeys: input.apiKeys,
     model: input.model,
     temperature: 0.1,
-    maxCorrectionAttempts: 1,
+    structuredOutputMode: input.structuredOutputMode,
     prompt: renderPrompt({
       id: PROMPT_IDS.STORY_VOICE_ANALYSIS,
       locale: input.locale,
@@ -177,6 +186,24 @@ function requestVoiceAnalysis(input: {
       },
     }),
     schema: voiceAnalysisSchema,
+    validate: (data) =>
+      validateVoiceAnalysis(data, {
+        sourceText: input.sourceText,
+        characters: input.characters.flatMap((value) =>
+          value &&
+          typeof value === "object" &&
+          typeof (value as { name?: unknown }).name === "string"
+            ? [(value as { name: string }).name]
+            : [],
+        ),
+        panelIndices: input.panels.flatMap((value) =>
+          value &&
+          typeof value === "object" &&
+          typeof (value as { panelIndex?: unknown }).panelIndex === "number"
+            ? [(value as { panelIndex: number }).panelIndex]
+            : [],
+        ),
+      }),
   });
 }
 

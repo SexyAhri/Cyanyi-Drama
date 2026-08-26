@@ -5,10 +5,11 @@
 2. 不新增、删除或改写剧情、对白、角色和动作。
 3. description、imagePrompt、videoPrompt 应吸收可见且可执行的摄影与表演信息。
 4. 每个镜头必须与原文一致；输入冲突时以原文事实为准。
-5. 只返回严格 JSON，不得包含额外字段。
+5. sourceEvidence 必须与对应基础分镜完全一致。
+6. 只返回严格 JSON，不得包含额外字段。
 
 输出格式：
-{"panels":[{"panelIndex":0,"shotType":"景别或null","cameraMove":"运镜或null","description":"细化镜头内容","locationName":"场景名或null","characters":["角色名"],"props":["道具名"],"imagePrompt":"生产级静态提示或null","videoPrompt":"生产级动作提示或null"}]}
+{"panels":[{"panelIndex":0,"shotType":"景别或null","cameraMove":"运镜或null","description":"细化镜头内容","locationName":"场景名或null","characters":["角色名"],"props":["道具名"],"imagePrompt":"生产级静态提示或null","videoPrompt":"生产级动作提示或null","sourceEvidence":["原文精确摘录"]}]}
 
 原文：{{source_text}}
 基础分镜：{{panels_json}}

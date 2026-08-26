@@ -15,6 +15,7 @@ export type ModelCapability =
 export type ModelCapabilities = {
   modalities: ModelCapability[];
   supportsToolCalling: boolean;
+  supportsStructuredOutputs: boolean;
   supportsReasoning: boolean;
   supportsAsync: boolean;
   supportsReferenceImages: boolean;
@@ -49,6 +50,7 @@ export function inferModelCapabilities(
       return {
         modalities: ["image"],
         supportsToolCalling: false,
+        supportsStructuredOutputs: false,
         supportsReasoning: false,
         supportsAsync: false,
         supportsReferenceImages: true,
@@ -60,6 +62,7 @@ export function inferModelCapabilities(
       return {
         modalities: ["video"],
         supportsToolCalling: false,
+        supportsStructuredOutputs: false,
         supportsReasoning: false,
         supportsAsync: true,
         supportsReferenceImages: true,
@@ -81,6 +84,7 @@ export function inferModelCapabilities(
   return {
     modalities: resolvedModalities,
     supportsToolCalling: !isMediaOnly,
+    supportsStructuredOutputs: false,
     supportsReasoning:
       !isMediaOnly && /reason|thinking|o[1-9]|r[1-9]/i.test(normalized),
     supportsAsync:
@@ -103,4 +107,18 @@ export function getPrimaryModelCapability(
     (capability) => capability !== "text",
   );
   return mediaCapability ?? capabilities.modalities[0] ?? "text";
+}
+
+export function supportsStoredStructuredOutputs(capabilitiesJson: string) {
+  try {
+    const value = JSON.parse(capabilitiesJson) as unknown;
+    return (
+      !!value &&
+      typeof value === "object" &&
+      (value as { supportsStructuredOutputs?: unknown })
+        .supportsStructuredOutputs === true
+    );
+  } catch {
+    return false;
+  }
 }

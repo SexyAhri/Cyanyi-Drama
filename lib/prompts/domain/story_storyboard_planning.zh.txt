@@ -6,10 +6,11 @@
 3. panelIndex 从 0 连续递增。
 4. 角色、场景、道具必须优先使用分析结果中的规范名称。
 5. imagePrompt 和 videoPrompt 只描述该镜头已存在的视觉事实和动作。
-6. 只返回严格 JSON，不得包含额外字段。
+6. sourceEvidence 必须包含该镜头覆盖的原文精确摘录，不得改写。
+7. 只返回严格 JSON，不得包含额外字段。
 
 输出格式：
-{"panels":[{"panelIndex":0,"shotType":"景别或null","cameraMove":"运镜或null","description":"镜头内容","locationName":"场景名或null","characters":["角色名"],"props":["道具名"],"imagePrompt":"静态画面提示或null","videoPrompt":"动作提示或null"}]}
+{"panels":[{"panelIndex":0,"shotType":"景别或null","cameraMove":"运镜或null","description":"镜头内容","locationName":"场景名或null","characters":["角色名"],"props":["道具名"],"imagePrompt":"静态画面提示或null","videoPrompt":"动作提示或null","sourceEvidence":["原文精确摘录"]}]}
 
 角色分析：{{characters_json}}
 场景分析：{{locations_json}}

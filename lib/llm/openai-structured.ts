@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { z } from "zod";
 
 import { fetchWithProviderRetry } from "@/lib/providers/http";
@@ -5,7 +7,30 @@ import type { RenderedPrompt } from "@/lib/prompts";
 import {
   generateStructuredOutput,
   type StructuredMessage,
+  type StructuredValidationIssue,
 } from "./structured-output";
+
+export type StructuredOutputMode = "json_object" | "json_schema";
+
+export type PromptTokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+};
+
+export type PromptExecutionTrace = {
+  promptId: string;
+  agentId: string;
+  promptVersion: number;
+  promptVersionHash: string;
+  systemHash: string;
+  model: string;
+  structuredOutputMode: StructuredOutputMode;
+  repaired: boolean;
+  correctionAttempts: number;
+  tokenUsage: PromptTokenUsage | null;
+  outputHash: string;
+};
 
 export async function requestOpenAiStructured<T>(input: {
   baseUrl: string;
@@ -13,40 +38,71 @@ export async function requestOpenAiStructured<T>(input: {
   model: string;
   prompt: RenderedPrompt;
   schema: z.ZodType<T>;
+  validate?: (data: T) => StructuredValidationIssue[];
+  structuredOutputMode?: StructuredOutputMode;
   temperature?: number;
   timeoutMs?: number;
-  maxCorrectionAttempts?: number;
 }) {
-  let lastError: unknown;
-  for (const apiKey of input.apiKeys) {
-    try {
-      const result = await generateStructuredOutput({
-        schema: input.schema,
-        prompt: input.prompt.text,
-        maxCorrectionAttempts: input.maxCorrectionAttempts,
-        request: (messages) =>
-          requestText({
+  let tokenUsage: PromptTokenUsage | null = null;
+  let apiKeyIndex = 0;
+  const responseFormat = buildStructuredResponseFormat({
+    mode: input.structuredOutputMode ?? "json_object",
+    schema: input.schema,
+    name: input.prompt.id,
+  });
+  const structuredOutputMode = responseFormat.type;
+  const result = await generateStructuredOutput({
+    schema: input.schema,
+    prompt: input.prompt.text,
+    systemPrompt: input.prompt.systemText,
+    validate: input.validate,
+    maxCorrectionAttempts: input.prompt.maxSemanticCorrections,
+    request: async (messages) => {
+      let lastError: unknown;
+      for (let offset = 0; offset < input.apiKeys.length; offset += 1) {
+        const candidateIndex = (apiKeyIndex + offset) % input.apiKeys.length;
+        try {
+          const response = await requestText({
             baseUrl: input.baseUrl,
-            apiKey,
+            apiKey: input.apiKeys[candidateIndex],
             model: input.model,
             messages,
+            responseFormat,
             temperature: input.temperature,
             timeoutMs: input.timeoutMs,
-          }),
-      });
-      return {
-        ...result,
-        promptId: input.prompt.id,
-        promptVersion: input.prompt.version,
-        promptVersionHash: input.prompt.versionHash,
-      };
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("STRUCTURED_PROVIDER_REQUEST_FAILED");
+          });
+          apiKeyIndex = candidateIndex;
+          tokenUsage = addTokenUsage(tokenUsage, response.tokenUsage);
+          return response.text;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError instanceof Error
+        ? lastError
+        : new Error("STRUCTURED_PROVIDER_REQUEST_FAILED");
+    },
+  });
+  const trace: PromptExecutionTrace = {
+    promptId: input.prompt.id,
+    agentId: input.prompt.agentId,
+    promptVersion: input.prompt.version,
+    promptVersionHash: input.prompt.versionHash,
+    systemHash: input.prompt.systemHash,
+    model: input.model,
+    structuredOutputMode,
+    repaired: result.repaired,
+    correctionAttempts: result.correctionAttempts,
+    tokenUsage,
+    outputHash: sha256(result.outputText),
+  };
+  return {
+    ...result,
+    promptId: input.prompt.id,
+    promptVersion: input.prompt.version,
+    promptVersionHash: input.prompt.versionHash,
+    trace,
+  };
 }
 
 async function requestText(input: {
@@ -54,6 +110,7 @@ async function requestText(input: {
   apiKey: string;
   model: string;
   messages: StructuredMessage[];
+  responseFormat: ReturnType<typeof buildStructuredResponseFormat>;
   temperature?: number;
   timeoutMs?: number;
 }) {
@@ -68,7 +125,7 @@ async function requestText(input: {
       body: JSON.stringify({
         model: input.model,
         temperature: input.temperature ?? 0.2,
-        response_format: { type: "json_object" },
+        response_format: input.responseFormat,
         messages: input.messages,
       }),
       signal: AbortSignal.timeout(input.timeoutMs ?? 120_000),
@@ -80,7 +137,54 @@ async function requestText(input: {
     throw new Error(
       `STRUCTURED_PROVIDER_FAILED:${response.status}:${providerMessage(payload)}`,
     );
-  return extractText(payload);
+  return {
+    text: extractText(payload),
+    tokenUsage: normalizeTokenUsage(payload),
+  };
+}
+
+export function buildStructuredResponseFormat(input: {
+  mode: StructuredOutputMode;
+  schema: z.ZodType;
+  name: string;
+}) {
+  if (input.mode === "json_object") return { type: "json_object" } as const;
+  const schema = normalizeStrictJsonSchema(z.toJSONSchema(input.schema));
+  if (!schema) return { type: "json_object" } as const;
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: input.name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64),
+      strict: true,
+      schema,
+    },
+  } as const;
+}
+
+function normalizeStrictJsonSchema(value: unknown): unknown | null {
+  if (Array.isArray(value)) {
+    const normalized = value.map(normalizeStrictJsonSchema);
+    return normalized.some((item) => item === null) ? null : normalized;
+  }
+  if (!isRecord(value)) return value;
+  if (
+    "additionalProperties" in value &&
+    value.additionalProperties !== false
+  )
+    return null;
+
+  const normalized: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (key === "$schema" || key === "default" || key === "required") continue;
+    const child = normalizeStrictJsonSchema(item);
+    if (child === null) return null;
+    normalized[key] = child;
+  }
+  if (isRecord(value.properties)) {
+    normalized.required = Object.keys(value.properties);
+    normalized.additionalProperties = false;
+  }
+  return normalized;
 }
 
 function extractText(payload: unknown) {
@@ -119,6 +223,50 @@ function providerMessage(payload: unknown) {
   return "unknown";
 }
 
+function normalizeTokenUsage(payload: unknown): PromptTokenUsage | null {
+  const usage = isRecord(payload) && isRecord(payload.usage) ? payload.usage : null;
+  if (!usage) return null;
+  const inputTokens = tokenCount(usage.prompt_tokens ?? usage.input_tokens);
+  const outputTokens = tokenCount(
+    usage.completion_tokens ?? usage.output_tokens,
+  );
+  const reportedTotal = tokenCount(usage.total_tokens);
+  if (
+    inputTokens === null &&
+    outputTokens === null &&
+    reportedTotal === null
+  )
+    return null;
+  return {
+    inputTokens: inputTokens ?? 0,
+    outputTokens: outputTokens ?? 0,
+    totalTokens: reportedTotal ?? (inputTokens ?? 0) + (outputTokens ?? 0),
+  };
+}
+
+function addTokenUsage(
+  current: PromptTokenUsage | null,
+  next: PromptTokenUsage | null,
+): PromptTokenUsage | null {
+  if (!next) return current;
+  if (!current) return next;
+  return {
+    inputTokens: current.inputTokens + next.inputTokens,
+    outputTokens: current.outputTokens + next.outputTokens,
+    totalTokens: current.totalTokens + next.totalTokens,
+  };
+}
+
+function tokenCount(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function sha256(value: string) {
+  return createHash("sha256").update(value).digest("hex");
 }

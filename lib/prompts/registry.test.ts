@@ -14,7 +14,7 @@ const LOCALES: PromptLocale[] = ["zh", "en"];
 
 describe("prompt registry", () => {
   it("provides catalog-aligned Chinese and English templates", () => {
-    expect(PROMPT_ID_LIST).toHaveLength(9);
+    expect(PROMPT_ID_LIST).toHaveLength(10);
 
     for (const id of PROMPT_ID_LIST) {
       for (const locale of LOCALES) {
@@ -74,9 +74,52 @@ describe("prompt registry", () => {
       const en = renderPrompt({ id, locale: "en", variables });
 
       expect(zhSecond.templateHash).toBe(zhFirst.templateHash);
+      expect(zhSecond.systemHash).toBe(zhFirst.systemHash);
       expect(zhSecond.versionHash).toBe(zhFirst.versionHash);
       expect(en.templateHash).not.toBe(zhFirst.templateHash);
+      expect(en.systemHash).not.toBe(zhFirst.systemHash);
       expect(en.versionHash).not.toBe(zhFirst.versionHash);
+    }
+  });
+
+  it("renders complete runtime agent contracts into system messages", () => {
+    for (const id of PROMPT_ID_LIST) {
+      const entry = PROMPT_CATALOG[id];
+      const rendered = renderPrompt({ id, variables: variablesFor(id) });
+
+      expect(entry.agent.successCriteria.length).toBeGreaterThan(0);
+      expect(entry.agent.qualityGates.length).toBeGreaterThan(0);
+      expect(entry.version).toBe(id === PROMPT_IDS.STORY_CONTINUITY_REVIEW ? 1 : 2);
+      expect(entry.agent.contextPolicy.trust).toBe("untrusted");
+      expect(entry.agent.retryPolicy).toEqual({
+        maxSemanticCorrections: 1,
+        mode: "targeted",
+      });
+      expect(rendered.agentId).toBe(entry.agent.id);
+      expect(rendered.maxSemanticCorrections).toBe(
+        entry.agent.retryPolicy.maxSemanticCorrections,
+      );
+      expect(rendered.systemText).toContain(entry.agent.id);
+      expect(rendered.systemText).toContain("不可信数据");
+      expect(rendered.systemText).toContain(
+        `scope=${entry.agent.contextPolicy.scope}`,
+      );
+      expect(rendered.systemText).toContain("允许工具");
+    }
+  });
+
+  it("uses input references for agents without direct source text", () => {
+    for (const id of [
+      PROMPT_IDS.STORY_CINEMATOGRAPHY,
+      PROMPT_IDS.STORY_ACTING_DIRECTION,
+    ]) {
+      expect(PROMPT_CATALOG[id].agent.evidencePolicy).toEqual({
+        required: true,
+        mode: "input_references",
+      });
+      expect(PROMPT_CATALOG[id].agent.qualityGates).toContain(
+        "input_references_valid",
+      );
     }
   });
 });

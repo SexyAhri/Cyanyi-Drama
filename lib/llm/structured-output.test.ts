@@ -62,4 +62,40 @@ describe("structured output", () => {
     ).rejects.toBeInstanceOf(StructuredOutputError);
     expect(request).toHaveBeenCalledTimes(2);
   });
+
+  it("separates system contracts and corrects semantic failures once", async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce('{"value":3}')
+      .mockResolvedValueOnce('{"value":6}');
+
+    const result = await generateStructuredOutput({
+      schema,
+      systemPrompt: "You are a bounded domain agent.",
+      prompt: "Return an even value",
+      request,
+      validate: (data) =>
+        data.value % 2 === 0
+          ? []
+          : [
+              {
+                code: "VALUE_NOT_EVEN",
+                path: "value",
+                message: "Value must be even",
+              },
+            ],
+    });
+
+    expect(result.data.value).toBe(6);
+    expect(result.correctionAttempts).toBe(1);
+    expect(
+      request.mock.calls[0][0].map(
+        (message: { role: string }) => message.role,
+      ),
+    ).toEqual([
+      "system",
+      "user",
+    ]);
+    expect(request.mock.calls[1][0][3].content).toContain("VALUE_NOT_EVEN");
+  });
 });

@@ -23,7 +23,7 @@ export async function POST(request: Request, context: Context) {
       sessionId,
     );
   try {
-    const voiceLines = await analyzeEpisodeVoices({
+    const result = await analyzeEpisodeVoices({
       userId: user.id,
       projectId,
       episodeId,
@@ -31,7 +31,13 @@ export async function POST(request: Request, context: Context) {
       model,
       locale,
     });
-    return attachSessionCookie(Response.json({ voiceLines }), sessionId);
+    return attachSessionCookie(
+      Response.json({
+        voiceLines: result.voiceLines,
+        promptTraces: result.promptTraces,
+      }),
+      sessionId,
+    );
   } catch (error) {
     if (error instanceof VoiceAnalyzeError)
       return attachSessionCookie(
