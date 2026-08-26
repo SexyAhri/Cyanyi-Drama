@@ -4,6 +4,7 @@ import {
   saveProductionClips,
   saveVoiceLines,
   saveEditorProject,
+  updateVoiceLine,
 } from "@/lib/production/domain-store";
 
 type Context = { params: Promise<{ projectId: string; episodeId: string }> };
@@ -67,6 +68,73 @@ export async function PUT(request: Request, context: Context) {
   }
   const data = await getProductionProjectData(user.id, projectId, episodeId);
   return attachSessionCookie(Response.json(data), sessionId);
+}
+
+export async function PATCH(request: Request, context: Context) {
+  const { user, sessionId } = await ensureAnonymousUser();
+  const { projectId, episodeId } = await context.params;
+  const body = await readObject(request);
+  const lineId = typeof body.lineId === "string" ? body.lineId.trim() : "";
+  if (!lineId) {
+    return attachSessionCookie(
+      Response.json({ message: "lineId 是必填项" }, { status: 400 }),
+      sessionId,
+    );
+  }
+  try {
+    const voiceLine = await updateVoiceLine(
+      user.id,
+      projectId,
+      episodeId,
+      lineId,
+      {
+        speaker:
+          typeof body.speaker === "string" ? body.speaker : undefined,
+        content:
+          typeof body.content === "string" ? body.content : undefined,
+        voicePresetId:
+          body.voicePresetId === null || typeof body.voicePresetId === "string"
+            ? body.voicePresetId
+            : undefined,
+        emotionPrompt:
+          body.emotionPrompt === null || typeof body.emotionPrompt === "string"
+            ? body.emotionPrompt
+            : undefined,
+        emotionStrength:
+          body.emotionStrength === null ||
+          (typeof body.emotionStrength === "number" &&
+            Number.isFinite(body.emotionStrength))
+            ? body.emotionStrength
+            : undefined,
+        matchedPanelId:
+          body.matchedPanelId === null || typeof body.matchedPanelId === "string"
+            ? body.matchedPanelId
+            : undefined,
+      },
+    );
+    if (!voiceLine) {
+      return attachSessionCookie(
+        Response.json(
+          { message: "台词、音色或关联镜头不存在" },
+          { status: 404 },
+        ),
+        sessionId,
+      );
+    }
+    return attachSessionCookie(Response.json({ voiceLine }), sessionId);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === "VOICE_LINE_SPEAKER_REQUIRED" ||
+        error.message === "VOICE_LINE_CONTENT_REQUIRED")
+    ) {
+      return attachSessionCookie(
+        Response.json({ message: error.message }, { status: 400 }),
+        sessionId,
+      );
+    }
+    throw error;
+  }
 }
 
 function isClip(

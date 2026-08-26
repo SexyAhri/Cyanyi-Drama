@@ -418,6 +418,7 @@ function toPanel(
     sourceEvidence: parseArray(row.sourceEvidenceJson),
     imageAssetId: row.imageAssetId,
     videoAssetId: row.videoAssetId,
+    lipSyncAssetId: row.lipSyncAssetId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

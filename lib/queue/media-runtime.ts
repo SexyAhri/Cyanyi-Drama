@@ -7,6 +7,7 @@ import { downloadAndStoreMedia, resolveStoredMediaUrl } from "@/lib/storage";
 import { mergeAudioUrls } from "@/lib/providers/local/ffmpeg-audio";
 import { renderTimelineVideo } from "@/lib/providers/local/ffmpeg-render";
 import { normalizeRenderSpecification } from "@/lib/providers/local/render-spec";
+import { parseTimelineSequence } from "@/lib/production/timeline";
 import { assertMediaTaskOutputBehavior } from "@/lib/quality/behavior-guards";
 import { buildVideoProviderContract } from "@/lib/providers/video-contract";
 import {
@@ -469,23 +470,41 @@ async function renderEpisodeTimeline(
   if (!episodeId || !projectId)
     throw new Error("TIMELINE_RENDER_EPISODE_REQUIRED");
 
-  const storyboard = await prisma.storyboard.findFirst({
-    where: { projectId, episodeId, project: { userId } },
-    select: {
-      panels: {
-        orderBy: { panelIndex: "asc" },
-        select: {
-          id: true,
-          panelIndex: true,
-          durationSeconds: true,
-          imageAsset: { select: { url: true, storageKey: true } },
-          videoAsset: { select: { url: true, storageKey: true } },
-          lipSyncAsset: { select: { url: true, storageKey: true } },
+  const [storyboard, editorProject] = await Promise.all([
+    prisma.storyboard.findFirst({
+      where: { projectId, episodeId, project: { userId } },
+      select: {
+        panels: {
+          orderBy: { panelIndex: "asc" },
+          select: {
+            id: true,
+            panelIndex: true,
+            imageAsset: { select: { url: true, storageKey: true } },
+            videoAsset: { select: { url: true, storageKey: true } },
+            lipSyncAsset: { select: { url: true, storageKey: true } },
+          },
         },
       },
-    },
-  });
+    }),
+    prisma.editorProject.findFirst({
+      where: {
+        episodeId,
+        episode: { projectId, project: { userId } },
+      },
+      select: { timelineJson: true },
+    }),
+  ]);
   if (!storyboard) throw new Error("TIMELINE_RENDER_STORYBOARD_NOT_FOUND");
+  const sequence = parseTimelineSequence(
+    parseJsonValue(editorProject?.timelineJson),
+  );
+  const panels = new Map(storyboard.panels.map((panel) => [panel.id, panel]));
+  const renderTracks = sequence.flatMap((track) => {
+    const panel = panels.get(track.id);
+    return panel ? [{ ...track, panel }] : [];
+  });
+  if (!renderTracks.length)
+    throw new Error("TIMELINE_RENDER_TRACKS_INVALID");
 
   const segments: Array<{
     url: string;
@@ -493,7 +512,8 @@ async function renderEpisodeTimeline(
     kind: "image" | "video";
     durationSeconds?: number;
   }> = [];
-  for (const panel of storyboard.panels) {
+  for (const track of renderTracks) {
+    const { panel } = track;
     const lipSyncUrl = await resolveAssetUrl(panel.lipSyncAsset);
     const videoUrl = lipSyncUrl ? undefined : await resolveAssetUrl(panel.videoAsset);
     const imageUrl =
@@ -504,7 +524,7 @@ async function renderEpisodeTimeline(
         url,
         panelIndex: panel.panelIndex,
         kind: imageUrl ? "image" : "video",
-        durationSeconds: panel.durationSeconds ?? undefined,
+        durationSeconds: track.duration,
       });
   }
   if (!segments.length) throw new Error("TIMELINE_RENDER_NO_MEDIA_PANELS");
@@ -538,6 +558,15 @@ async function renderEpisodeTimeline(
       },
     },
   ];
+}
+
+function parseJsonValue(value: string | null | undefined) {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 async function linkGeneratedAsset(

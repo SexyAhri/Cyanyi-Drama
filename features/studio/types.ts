@@ -98,8 +98,95 @@ export type ProductionPropRecord = {
 };
 
 export type ProductionData = {
+  audioTracks: EpisodeAudioTrackRecord[];
   clips: ProductionClipRecord[];
+  editorProject: EditorProjectRecord | null;
   props: ProductionPropRecord[];
+  voiceLines: VoiceLineRecord[];
+};
+
+export type VoicePresetRecord = {
+  id: string;
+  userId: string;
+  projectId: string | null;
+  name: string;
+  providerVoiceId: string | null;
+  language: string | null;
+  gender: string | null;
+  description: string | null;
+  sampleAssetId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type VoiceLineRecord = {
+  id: string;
+  episodeId: string;
+  lineIndex: number;
+  speaker: string;
+  content: string;
+  voicePresetId: string | null;
+  audioAssetId: string | null;
+  emotionPrompt: string | null;
+  emotionStrength: number | null;
+  matchedPanelId: string | null;
+  durationSeconds: number | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EpisodeAudioTrackRecord = {
+  id: string;
+  episodeId: string;
+  trackType: string;
+  assetId: string | null;
+  startSeconds: number | null;
+  endSeconds: number | null;
+  volume: number | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EditorTimelineTrack = {
+  id: string;
+  clipId: string | null;
+  shotIndex: number;
+  start: number;
+  end: number;
+  duration: number;
+  type: "image" | "video";
+  imageAssetId: string | null;
+  videoAssetId: string | null;
+  lipSyncAssetId: string | null;
+};
+
+export type EditorTimeline = {
+  version: number;
+  duration: number;
+  tracks: EditorTimelineTrack[];
+};
+
+export type EditorSubtitle = {
+  id: string;
+  index: number;
+  start: number;
+  end: number;
+  speaker: string;
+  text: string;
+};
+
+export type EditorProjectRecord = {
+  id: string;
+  episodeId: string;
+  timeline: EditorTimeline;
+  subtitles: EditorSubtitle[] | null;
+  renderStatus: string;
+  renderTaskId: string | null;
+  outputAssetId: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type EpisodeSplitDraft = {

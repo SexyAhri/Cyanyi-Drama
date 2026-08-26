@@ -27,6 +27,8 @@ import { useStudioModels } from "../hooks/use-studio-models";
 import { useWorkspace } from "../hooks/use-workspace";
 import { getStudioCopy } from "../i18n";
 import { AssetsWorkspace } from "../assets/assets-workspace";
+import { AudioWorkspace } from "../audio/audio-workspace";
+import { DeliveryWorkspace } from "../delivery/delivery-workspace";
 import { ShotsWorkspace } from "../shots/shots-workspace";
 import { StoryboardWorkspace } from "../storyboard/storyboard-workspace";
 import {
@@ -50,7 +52,13 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
   const searchParams = useSearchParams();
   const [episodesOpen, setEpisodesOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
-  const { analysisModels, imageModels, videoModels } = useStudioModels();
+  const {
+    analysisModels,
+    audioModels,
+    imageModels,
+    lipSyncModels,
+    videoModels,
+  } = useStudioModels();
   const { createEpisode, error, isLoading, isRefreshing, refresh, snapshot } =
     useWorkspace(projectId);
 
@@ -207,6 +215,24 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
               <ShotsWorkspace
                 episode={selectedEpisode}
                 imageModels={imageModels}
+                locale={locale}
+                onRefresh={() => refresh()}
+                snapshot={snapshot}
+                videoModels={videoModels}
+              />
+            ) : selectedStage?.id === "audio" && selectedEpisode ? (
+              <AudioWorkspace
+                analysisModels={analysisModels}
+                audioModels={audioModels}
+                episode={selectedEpisode}
+                lipSyncModels={lipSyncModels}
+                locale={locale}
+                onRefresh={() => refresh()}
+                snapshot={snapshot}
+              />
+            ) : selectedStage?.id === "delivery" && selectedEpisode ? (
+              <DeliveryWorkspace
+                episode={selectedEpisode}
                 locale={locale}
                 onRefresh={() => refresh()}
                 snapshot={snapshot}

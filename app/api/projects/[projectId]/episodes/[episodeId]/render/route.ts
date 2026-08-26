@@ -1,6 +1,7 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { createProductionTask, ProductionTaskError } from "@/lib/media/production-tasks";
 import { normalizeRenderSpecification } from "@/lib/providers/local/render-spec";
+import { prisma } from "@/lib/server/prisma";
 
 type Context = { params: Promise<{ projectId: string; episodeId: string }> };
 
@@ -37,6 +38,17 @@ export async function POST(request: Request, context: Context) {
       request: {
         operation: "render_timeline",
         ...specification,
+      },
+    });
+    await prisma.editorProject.updateMany({
+      where: {
+        episodeId,
+        episode: { projectId, project: { userId: user.id } },
+      },
+      data: {
+        renderStatus: "queued",
+        renderTaskId: task.id,
+        outputAssetId: null,
       },
     });
     return attachSessionCookie(Response.json({ task }, { status: 202 }), sessionId);

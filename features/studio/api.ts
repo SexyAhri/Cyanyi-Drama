@@ -3,6 +3,7 @@ import type { EpisodeRecord, ProjectRecord } from "@/lib/projects/types";
 
 import type {
   EpisodeSplitResult,
+  EditorProjectRecord,
   ProductionData,
   ProductionPropRecord,
   ProjectAssetCatalog,
@@ -12,6 +13,8 @@ import type {
   StudioModelOption,
   StudioStoryboardData,
   StudioStoryboardPanel,
+  VoiceLineRecord,
+  VoicePresetRecord,
   WorkflowRunSummary,
   WorkspaceSnapshot,
 } from "./types";
@@ -550,6 +553,192 @@ export async function controlStudioMediaTask(
     `/api/media/tasks/${encodeURIComponent(taskId)}`,
     {
       body: JSON.stringify({ action }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
+export async function loadStudioVoicePresets(
+  projectId: string,
+  signal?: AbortSignal,
+) {
+  return request<{ presets: VoicePresetRecord[] }>(
+    `/api/projects/${encodeURIComponent(projectId)}/voice-presets`,
+    { signal },
+  );
+}
+
+export async function createStudioVoicePreset(
+  projectId: string,
+  input: {
+    name: string;
+    providerVoiceId?: string;
+    language?: string;
+    gender?: string;
+    description?: string;
+  },
+) {
+  return request<{ preset: VoicePresetRecord }>(
+    `/api/projects/${encodeURIComponent(projectId)}/voice-presets`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "PUT",
+    },
+  );
+}
+
+export async function analyzeStudioVoiceLines(
+  projectId: string,
+  episodeId: string,
+  input: { channelId: string; model: string; locale: "en" | "zh" },
+) {
+  return request<{ voiceLines: VoiceLineRecord[] }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/voice-analyze`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
+export async function updateStudioVoiceLine(
+  projectId: string,
+  episodeId: string,
+  input: Partial<
+    Pick<
+      VoiceLineRecord,
+      | "speaker"
+      | "content"
+      | "voicePresetId"
+      | "emotionPrompt"
+      | "emotionStrength"
+      | "matchedPanelId"
+    >
+  > & { lineId: string },
+) {
+  return request<{ voiceLine: VoiceLineRecord }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/production`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "PATCH",
+    },
+  );
+}
+
+export async function generateStudioVoiceLine(
+  projectId: string,
+  episodeId: string,
+  lineId: string,
+  input: { channelId: string; model: string },
+) {
+  return request<{ task: MediaTask; line: { id: string } }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/voice-lines/${encodeURIComponent(lineId)}/generate`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
+export async function generateStudioVoiceLineBatch(
+  projectId: string,
+  episodeId: string,
+  input: { channelId: string; model: string; lineIds: string[] },
+) {
+  return request<{
+    count: number;
+    results: Array<{ lineId: string; task: MediaTask }>;
+    failures: Array<{ lineId: string; message: string }>;
+  }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/voice-lines/generate-batch`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
+export async function mergeStudioEpisodeAudio(
+  projectId: string,
+  episodeId: string,
+  input: { channelId: string; model: string },
+) {
+  return request<{ task: MediaTask }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/audio/merge`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
+export async function generateStudioLipSync(
+  projectId: string,
+  episodeId: string,
+  input: {
+    channelId: string;
+    model: string;
+    panelId: string;
+    audioAssetId: string;
+  },
+) {
+  return request<{ task: MediaTask }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/lip-sync`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
+export async function buildStudioTimeline(
+  projectId: string,
+  episodeId: string,
+) {
+  return request<{ editorProject: EditorProjectRecord }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/production/timeline`,
+    { method: "POST" },
+  );
+}
+
+export async function saveStudioTimeline(
+  projectId: string,
+  episodeId: string,
+  input: { timeline: EditorProjectRecord["timeline"]; subtitles?: unknown },
+) {
+  return request<ProductionData>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/production`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "PUT",
+    },
+  );
+}
+
+export async function renderStudioTimeline(
+  projectId: string,
+  episodeId: string,
+  input: {
+    channelId: string;
+    model: string;
+    ratio: string;
+    resolution: string;
+    fps: number;
+  },
+) {
+  return request<{ task: MediaTask }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/render`,
+    {
+      body: JSON.stringify(input),
       headers: { "Content-Type": "application/json" },
       method: "POST",
     },

@@ -85,6 +85,7 @@ export type StoryboardPanelRecord = {
   sourceEvidence: string[];
   imageAssetId: string | null;
   videoAssetId: string | null;
+  lipSyncAssetId: string | null;
   createdAt: string;
   updatedAt: string;
 };

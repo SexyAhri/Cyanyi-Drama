@@ -59,10 +59,28 @@ export async function createVoiceLineAudioTask(input: {
         project: { userId: input.userId },
       },
     },
-    select: { id: true, content: true, speaker: true },
+    select: {
+      id: true,
+      content: true,
+      speaker: true,
+      voicePreset: {
+        select: {
+          userId: true,
+          projectId: true,
+          providerVoiceId: true,
+        },
+      },
+    },
   });
   if (!line) throw new VoiceTaskError("语音行不存在", 404);
   if (!line.content.trim()) throw new VoiceTaskError("语音行内容不能为空", 400);
+  const voice = resolveVoiceTaskVoice({
+    explicitVoice: input.voice,
+    lineSpeaker: line.speaker,
+    preset: line.voicePreset,
+    projectId: input.projectId,
+    userId: input.userId,
+  });
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
@@ -77,7 +95,7 @@ export async function createVoiceLineAudioTask(input: {
     request: {
       input: line.content,
       prompt: line.content,
-      voice: input.voice || line.speaker,
+      voice,
       responseFormat: "mp3",
     },
   });
@@ -92,4 +110,24 @@ export async function createVoiceLineAudioTask(input: {
     throw error;
   }
   return { task: queued, line: { id: line.id } };
+}
+
+export function resolveVoiceTaskVoice(input: {
+  explicitVoice?: string;
+  lineSpeaker: string;
+  preset?: {
+    userId: string;
+    projectId: string | null;
+    providerVoiceId: string | null;
+  } | null;
+  projectId: string;
+  userId: string;
+}) {
+  const presetVoice =
+    input.preset?.userId === input.userId &&
+    (input.preset.projectId === null ||
+      input.preset.projectId === input.projectId)
+      ? input.preset.providerVoiceId?.trim()
+      : undefined;
+  return input.explicitVoice?.trim() || presetVoice || input.lineSpeaker;
 }

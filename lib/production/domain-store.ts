@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { buildSequentialTimeline } from "@/lib/production/timeline";
 import { prisma } from "@/lib/server/prisma";
 
 export type ProductionPropInput = {
@@ -240,14 +241,16 @@ export async function getProductionProjectData(
   projectId: string,
   episodeId: string,
 ) {
-  const [props, clips, voiceLines, editorProject] = await Promise.all([
+  const [props, clips, voiceLines, audioTracks, editorProject] =
+    await Promise.all([
     listProductionProps(userId, projectId),
     listProductionClips(userId, projectId, episodeId),
     listVoiceLines(userId, projectId, episodeId),
+    listEpisodeAudioTracks(userId, projectId, episodeId),
     getEditorProject(userId, projectId, episodeId),
   ]);
   if (!props || !clips) return null;
-  return { props, clips, voiceLines, editorProject };
+  return { props, clips, voiceLines, audioTracks, editorProject };
 }
 
 export async function listVoiceLines(
@@ -301,6 +304,104 @@ export async function saveVoiceLines(
   return listVoiceLines(userId, projectId, episodeId);
 }
 
+export async function updateVoiceLine(
+  userId: string,
+  projectId: string,
+  episodeId: string,
+  lineId: string,
+  input: {
+    content?: string;
+    emotionPrompt?: string | null;
+    emotionStrength?: number | null;
+    matchedPanelId?: string | null;
+    speaker?: string;
+    voicePresetId?: string | null;
+  },
+) {
+  const line = await prisma.voiceLine.findFirst({
+    where: {
+      id: lineId,
+      episodeId,
+      episode: { projectId, project: { userId } },
+    },
+    select: { id: true },
+  });
+  if (!line) return null;
+
+  if (input.voicePresetId) {
+    const preset = await prisma.voicePreset.count({
+      where: {
+        id: input.voicePresetId,
+        userId,
+        OR: [{ projectId }, { projectId: null }],
+      },
+    });
+    if (!preset) return null;
+  }
+  if (input.matchedPanelId) {
+    const panel = await prisma.storyboardPanel.count({
+      where: {
+        id: input.matchedPanelId,
+        storyboard: { projectId, episodeId, project: { userId } },
+      },
+    });
+    if (!panel) return null;
+  }
+
+  const speaker = input.speaker?.trim();
+  const content = input.content?.trim();
+  if (input.speaker !== undefined && !speaker) {
+    throw new Error("VOICE_LINE_SPEAKER_REQUIRED");
+  }
+  if (input.content !== undefined && !content) {
+    throw new Error("VOICE_LINE_CONTENT_REQUIRED");
+  }
+
+  const updated = await prisma.voiceLine.update({
+    where: { id: line.id },
+    data: {
+      ...(input.speaker !== undefined ? { speaker } : {}),
+      ...(input.content !== undefined ? { content } : {}),
+      ...(input.voicePresetId !== undefined
+        ? { voicePresetId: input.voicePresetId || null }
+        : {}),
+      ...(input.emotionPrompt !== undefined
+        ? { emotionPrompt: input.emotionPrompt?.trim() || null }
+        : {}),
+      ...(input.emotionStrength !== undefined
+        ? { emotionStrength: finiteNumber(input.emotionStrength) }
+        : {}),
+      ...(input.matchedPanelId !== undefined
+        ? { matchedPanelId: input.matchedPanelId || null }
+        : {}),
+    },
+  });
+  return toVoiceLine(updated);
+}
+
+export async function listEpisodeAudioTracks(
+  userId: string,
+  projectId: string,
+  episodeId: string,
+) {
+  const rows = await prisma.episodeAudioTrack.findMany({
+    where: { episodeId, episode: { projectId, project: { userId } } },
+    orderBy: { updatedAt: "desc" },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    episodeId: row.episodeId,
+    trackType: row.trackType,
+    assetId: row.assetId,
+    startSeconds: row.startSeconds,
+    endSeconds: row.endSeconds,
+    volume: row.volume,
+    metadata: parseObject(row.metadataJson),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  }));
+}
+
 export async function getEditorProject(
   userId: string,
   projectId: string,
@@ -346,6 +447,9 @@ export async function saveEditorProject(
       timelineJson: JSON.stringify(timeline),
       subtitleJson:
         subtitles === undefined ? undefined : JSON.stringify(subtitles),
+      renderStatus: "draft",
+      renderTaskId: null,
+      outputAssetId: null,
     },
   });
   return {
@@ -366,31 +470,54 @@ export async function buildEditorTimeline(
   projectId: string,
   episodeId: string,
 ) {
-  const clips = await prisma.storyClip.findMany({
-    where: { projectId, episodeId, project: { userId } },
-    include: { shots: { orderBy: { shotIndex: "asc" } } },
-    orderBy: { clipIndex: "asc" },
-  });
-  if (!clips.length) return null;
-  let cursor = 0;
-  const tracks = clips.flatMap((clip) =>
-    clip.shots.map((shot) => {
-      const duration = shot.durationSeconds && shot.durationSeconds > 0 ? shot.durationSeconds : 5;
-      const item = {
-        id: shot.id,
-        clipId: clip.id,
-        shotIndex: shot.shotIndex,
-        start: cursor,
-        end: cursor + duration,
-        duration,
-        imageAssetId: shot.imageAssetId,
-        videoAssetId: shot.videoAssetId,
-        type: shot.videoAssetId ? "video" : "image",
-      };
-      cursor += duration;
-      return item;
+  const [storyboard, clips] = await Promise.all([
+    prisma.storyboard.findFirst({
+      where: { projectId, episodeId, project: { userId } },
+      select: {
+        panels: {
+          orderBy: { panelIndex: "asc" },
+          select: {
+            id: true,
+            clipId: true,
+            panelIndex: true,
+            durationSeconds: true,
+            imageAssetId: true,
+            videoAssetId: true,
+            lipSyncAssetId: true,
+          },
+        },
+      },
     }),
+    prisma.storyClip.findMany({
+      where: { projectId, episodeId, project: { userId } },
+      include: { shots: { orderBy: { shotIndex: "asc" } } },
+      orderBy: { clipIndex: "asc" },
+    }),
+  ]);
+  const panelTracks = storyboard?.panels.map((panel) => ({
+    id: panel.id,
+    clipId: panel.clipId,
+    shotIndex: panel.panelIndex,
+    duration: panel.durationSeconds,
+    imageAssetId: panel.imageAssetId,
+    videoAssetId: panel.videoAssetId,
+    lipSyncAssetId: panel.lipSyncAssetId,
+  }));
+  const legacyTracks = clips.flatMap((clip) =>
+    clip.shots.map((shot) => ({
+      id: shot.id,
+      clipId: clip.id,
+      shotIndex: shot.shotIndex,
+      duration: shot.durationSeconds,
+      imageAssetId: shot.imageAssetId,
+      videoAssetId: shot.videoAssetId,
+      lipSyncAssetId: null,
+    })),
   );
+  const timeline = buildSequentialTimeline(
+    panelTracks?.length ? panelTracks : legacyTracks,
+  );
+  if (!timeline.tracks.length) return null;
   const voiceLines = await prisma.voiceLine.findMany({
     where: { episodeId, episode: { projectId, project: { userId } } },
     orderBy: { lineIndex: "asc" },
@@ -399,10 +526,12 @@ export async function buildEditorTimeline(
     id: line.id,
     index,
     start: line.matchedPanelId
-      ? tracks.find((track) => track.id === line.matchedPanelId)?.start ?? 0
+      ? timeline.tracks.find((track) => track.id === line.matchedPanelId)
+          ?.start ?? 0
       : 0,
     end: line.matchedPanelId
-      ? tracks.find((track) => track.id === line.matchedPanelId)?.end ?? 0
+      ? timeline.tracks.find((track) => track.id === line.matchedPanelId)?.end ??
+        0
       : 0,
     speaker: line.speaker,
     text: line.content,
@@ -411,7 +540,7 @@ export async function buildEditorTimeline(
     userId,
     projectId,
     episodeId,
-    { version: 1, duration: cursor, tracks },
+    timeline,
     subtitles,
   );
 }

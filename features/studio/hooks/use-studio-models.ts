@@ -51,12 +51,29 @@ export function useStudioModels() {
       ),
     [models],
   );
+  const audioModels = useMemo(
+    () =>
+      models.filter(
+        (model) => model.type === "audio" || model.modalities.includes("audio"),
+      ),
+    [models],
+  );
+  const lipSyncModels = useMemo(
+    () =>
+      models.filter(
+        (model) =>
+          model.type === "lipsync" || model.modalities.includes("lipsync"),
+      ),
+    [models],
+  );
 
   return {
     analysisModels,
+    audioModels,
     error,
     imageModels,
     isLoading,
+    lipSyncModels,
     models,
     refresh: () => load(),
     videoModels,

@@ -2,7 +2,7 @@
 
 ## 1. 开发目标
 
-在不照搬第三方 UI 或受限源码的前提下，使 Cyanyi-Drama 的影视生产工作流逐步达到与 `waoowaoo` 接近的行为能力，同时保留现有媒体任务 SSE、Fal/Vidu/百炼口型同步、音频合并和 Timeline Render，并为这些能力建设统一的生产工作台。
+在不照搬第三方 UI 或受限源码的前提下，使 Cyanyi-Drama 的影视生产工作流逐步达到同类成熟工具的行为能力，同时保留现有媒体任务 SSE、Fal/Vidu/百炼口型同步、音频合并和 Timeline Render，并为这些能力建设统一的生产工作台。
 
 开发顺序固定为：稳定基线、工作流可靠性、Prompt 与领域 Agent、两条生产工作流、外部能力、质量体系、生产工作台。功能只有通过对应恢复测试和验收门禁后才算完成。
 
@@ -104,7 +104,7 @@ M2.5 将既有 9 个 Prompt 升级为 V2，并新增连续性监督 Prompt，共
 | Clip 级恢复 | Workflow Runtime | 每个成功或失败 Clip 立即写独立 Artifact；重试只请求失败或无效 Clip | 已完成 |
 | 工作流收口 | Parse API 与 Workflow Registry | M3 固定为分析、切片、剧本三步，M4 分镜和台词步骤不再混入 | 已完成 |
 
-M3 与 `waoowaoo` 保持相同的分析、切片、逐 Clip 剧本顺序，但采用更强的原文完整覆盖约束，不依赖模糊边界猜测。增量 Artifact 写入与 Workflow Run 租约在同一事务校验，取消或租约丢失后不会继续提交 Artifact；领域写入在恢复时会通过有效性校验并补齐 Artifact。36 项 M3 定向测试覆盖原文空白、并发上限、稳定 Clip ID、剧本失效、部分失败恢复和工作流依赖；全量 114 项测试、TypeScript、变更文件 ESLint、生产构建、Prisma 校验和 13 组迁移状态均通过。
+M3 参考成熟工作流的分析、切片、逐 Clip 剧本顺序，但采用更强的原文完整覆盖约束，不依赖模糊边界猜测。增量 Artifact 写入与 Workflow Run 租约在同一事务校验，取消或租约丢失后不会继续提交 Artifact；领域写入在恢复时会通过有效性校验并补齐 Artifact。36 项 M3 定向测试覆盖原文空白、并发上限、稳定 Clip ID、剧本失效、部分失败恢复和工作流依赖；全量 114 项测试、TypeScript、变更文件 ESLint、生产构建、Prisma 校验和 13 组迁移状态均通过。
 
 ### 7.2 M4 Script-to-Storyboard 完成记录
 
@@ -118,7 +118,7 @@ M3 与 `waoowaoo` 保持相同的分析、切片、逐 Clip 剧本顺序，但�
 | 集级台词分析 | Workflow Runtime 与 Voice Analyze | 全部分镜落库后执行，并写 `voice.lines` 与 Prompt Trace 增量 Artifact | 已完成 |
 | 工作流入口 | Storyboard API 与 Workflow Registry | `POST /storyboard` 创建分镜、台词两步工作流，支持去重、租约、取消与独立重试 | 已完成 |
 
-M4 保留 `waoowaoo` 的规划、摄影/表演并行、细化和台词分析顺序，并增加连续性监督、Prompt 版本化恢复和严格的 Clip 所有权校验。分镜只在全部 Clip 成功后统一落库；中途失败时，已完成 Phase 仍以 Artifact 保存。7 项新增测试覆盖部分失败恢复、分支失效范围、连续性隔离、稳定 Panel ID、跨剧集 Clip 拒绝和工作流依赖；全量 121 项测试、TypeScript、ESLint、生产构建、Prisma 校验和 14 组本地迁移状态均通过。
+M4 保留参考成熟工作流的规划、摄影/表演并行、细化和台词分析顺序，并增加连续性监督、Prompt 版本化恢复和严格的 Clip 所有权校验。分镜只在全部 Clip 成功后统一落库；中途失败时，已完成 Phase 仍以 Artifact 保存。7 项新增测试覆盖部分失败恢复、分支失效范围、连续性隔离、稳定 Panel ID、跨剧集 Clip 拒绝和工作流依赖；全量 121 项测试、TypeScript、ESLint、生产构建、Prisma 校验和 14 组本地迁移状态均通过。
 
 ### 7.3 M5 外部能力完成记录
 
@@ -222,7 +222,7 @@ Project / Episode / Stage URL
 | M7.1 工作台基础 | 路由、项目首页、项目工作台骨架、剧集与阶段导航、语义 Token、明暗主题、响应式 Shell | 可创建并打开项目；深链和刷新可恢复；桌面/移动端无重叠或横向溢出 | 已完成 |
 | M7.2 小说与资产 | 原文/分集/剧本界面，角色/场景/道具资产库，上传、提取、生成、选择与批次反馈 | `story-to-script` 可完整操作；资产来源和当前基准可追踪；跨项目资产不可见 | 已完成 |
 | M7.3 分镜与镜头 | Clip/Panel 分镜编辑、连续性问题、图片/视频候选、单项与批量任务控制 | `script-to-storyboard` 可完整操作；失败只重试目标范围；任务结果不伪造 | 已完成 |
-| M7.4 声音与交付 | 音色与台词、语音、合并、口型、Timeline、渲染、预览与下载 | 真实任务可取消/重试；混合素材成片可渲染；失败有 Trace 和恢复入口 | 待开发 |
+| M7.4 声音与交付 | 音色与台词、语音、合并、口型、Timeline、渲染、预览与下载 | 真实任务可取消/重试；混合素材成片可渲染；失败有 Trace 和恢复入口 | 已完成 |
 | M7.5 Agent 与可观测 | 上下文 Agent、审批、任务中心、费用摘要、Run/Step/Task Trace 检查器 | Agent 工具调用携带当前结构化上下文；状态、费用和 Trace 可串联核对 | 待开发 |
 | M7.6 质量收口 | i18n、键盘与焦点、WCAG AA、空/载入/错误/部分成功状态、性能和端到端回归 | 中英文无溢出；关键路径端到端通过；生产构建、类型、Lint 和测试通过 | 待开发 |
 
@@ -272,7 +272,7 @@ Project / Episode / Stage URL
 | `feat(studio): build project workspace foundation / 构建项目工作台基础` | M7.1 路由、项目首页、工作台 Shell、导航和响应式基础 | 已提交 |
 | `feat(studio): connect writing and asset workflows / 接入编剧与资产工作流` | M7.2 小说、剧本和资产闭环 | 已提交 |
 | `feat(studio): connect storyboard and shot production / 接入分镜与镜头生产` | M7.3 分镜、图片和视频闭环 | 已提交 |
-| `feat(studio): connect audio timeline and delivery / 接入声音时间线与交付` | M7.4 声音、口型、时间线和渲染闭环 | 待提交 |
+| `feat(studio): connect audio timeline and delivery / 接入声音时间线与交付` | M7.4 声音、口型、时间线和渲染闭环 | 已提交 |
 | `feat(studio): add contextual agent and observability / 增加上下文智能体与可观测性` | M7.5 Agent、审批、任务、费用和 Trace | 待提交 |
 | `test(studio): complete M7 quality gates / 完成 M7 质量门禁` | M7.6 i18n、无障碍、响应式、端到端和回归测试 | 待提交 |
 

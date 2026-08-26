@@ -122,5 +122,6 @@ function createPanel(
     createdAt: "2026-08-26T00:00:00Z",
     updatedAt: "2026-08-26T00:00:00Z",
     ...input,
+    lipSyncAssetId: input.lipSyncAssetId ?? null,
   };
 }
