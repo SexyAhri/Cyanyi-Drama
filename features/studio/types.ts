@@ -2,7 +2,10 @@ import type { MediaTask } from "@/lib/media/task-contract";
 import type {
   NovelCharacterRecord,
   NovelLocationRecord,
+  StoryboardPanelRecord,
+  StoryboardRecord,
 } from "@/lib/novel/domain-types";
+import type { StoryboardContinuityIssue } from "@/lib/novel/continuity-store";
 import type { EpisodeRecord, ProjectRecord } from "@/lib/projects/types";
 
 export type StudioLocale = "en" | "zh-CN";
@@ -139,6 +142,13 @@ export type ProjectAssetCatalog = {
   characters: NovelCharacterRecord[];
   locations: NovelLocationRecord[];
   props: ProductionPropRecord[];
+};
+
+export type StudioStoryboardPanel = StoryboardPanelRecord;
+
+export type StudioStoryboardData = {
+  storyboard: StoryboardRecord | null;
+  continuityIssues: StoryboardContinuityIssue[];
 };
 
 export type StudioStageId =

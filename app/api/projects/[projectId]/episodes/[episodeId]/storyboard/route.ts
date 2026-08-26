@@ -1,5 +1,6 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { getStoryboard, saveStoryboard } from "@/lib/novel/domain-store";
+import { listLatestStoryboardContinuityIssues } from "@/lib/novel/continuity-store";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import { createOrReuseWorkflowRun } from "@/lib/workflow/store";
 
@@ -8,8 +9,14 @@ type Context = { params: Promise<{ projectId: string; episodeId: string }> };
 export async function GET(_request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { projectId, episodeId } = await context.params;
-  const storyboard = await getStoryboard(user.id, projectId, episodeId);
-  return attachSessionCookie(Response.json({ storyboard }), sessionId);
+  const [storyboard, continuityIssues] = await Promise.all([
+    getStoryboard(user.id, projectId, episodeId),
+    listLatestStoryboardContinuityIssues(user.id, projectId, episodeId),
+  ]);
+  return attachSessionCookie(
+    Response.json({ storyboard, continuityIssues }),
+    sessionId,
+  );
 }
 
 export async function POST(request: Request, context: Context) {

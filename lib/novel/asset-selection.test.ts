@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mediaAssetFindFirst = vi.hoisted(() => vi.fn());
+const storyboardPanelFindFirst = vi.hoisted(() => vi.fn());
+const storyboardPanelUpdate = vi.hoisted(() => vi.fn());
 const assetReferenceDeleteMany = vi.hoisted(() => vi.fn());
 const assetReferenceCreate = vi.hoisted(() => vi.fn());
 const transaction = vi.hoisted(() => vi.fn());
@@ -8,6 +10,7 @@ const transaction = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/server/prisma", () => ({
   prisma: {
     mediaAsset: { findFirst: mediaAssetFindFirst },
+    storyboardPanel: { findFirst: storyboardPanelFindFirst },
     $transaction: transaction,
   },
 }));
@@ -23,6 +26,7 @@ beforeEach(() => {
           create: assetReferenceCreate,
           deleteMany: assetReferenceDeleteMany,
         },
+        storyboardPanel: { update: storyboardPanelUpdate },
       }),
   );
 });
@@ -87,6 +91,83 @@ describe("project asset selection", () => {
         targetType: "prop",
         targetId: "prop-1",
         assetId: "foreign-asset",
+      }),
+    ).resolves.toBeNull();
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["image", "imageAssetId", "selected"],
+    ["video", "videoAssetId", "selected_video"],
+  ] as const)(
+    "selects a storyboard %s candidate produced for the owned panel",
+    async (assetKind, field, role) => {
+      storyboardPanelFindFirst.mockResolvedValue({
+        id: "panel-1",
+        imageAssetId: null,
+        videoAssetId: null,
+      });
+      mediaAssetFindFirst.mockResolvedValue({ id: `asset-${assetKind}` });
+
+      const result = await selectProjectAsset({
+        userId: "user-1",
+        projectId: "project-1",
+        targetType: "storyboard_panel",
+        targetId: "panel-1",
+        assetId: `asset-${assetKind}`,
+        assetKind,
+      });
+
+      expect(mediaAssetFindFirst).toHaveBeenCalledWith({
+        where: {
+          id: `asset-${assetKind}`,
+          kind: assetKind,
+          task: {
+            userId: "user-1",
+            projectId: "project-1",
+            targetType: "storyboard_panel",
+            targetId: "panel-1",
+          },
+        },
+        select: { id: true },
+      });
+      expect(storyboardPanelUpdate).toHaveBeenCalledWith({
+        where: { id: "panel-1" },
+        data: { [field]: `asset-${assetKind}` },
+      });
+      expect(assetReferenceDeleteMany).toHaveBeenCalledWith({
+        where: {
+          projectId: "project-1",
+          entityType: "storyboard_panel",
+          entityId: "panel-1",
+          role,
+        },
+      });
+      expect(result).toEqual({
+        entityType: "storyboard_panel",
+        entityId: "panel-1",
+        assetId: `asset-${assetKind}`,
+        assetKind,
+      });
+    },
+  );
+
+  it("rejects a storyboard candidate that belongs to another panel", async () => {
+    storyboardPanelFindFirst.mockResolvedValue({
+      id: "panel-1",
+      imageAssetId: null,
+      videoAssetId: null,
+    });
+    mediaAssetFindFirst.mockResolvedValue(null);
+
+    await expect(
+      selectProjectAsset({
+        userId: "user-1",
+        projectId: "project-1",
+        targetType: "storyboard_panel",
+        targetId: "panel-1",
+        assetId: "asset-from-panel-2",
+        assetKind: "image",
       }),
     ).resolves.toBeNull();
     expect(transaction).not.toHaveBeenCalled();

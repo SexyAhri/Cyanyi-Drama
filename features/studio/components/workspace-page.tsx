@@ -27,6 +27,8 @@ import { useStudioModels } from "../hooks/use-studio-models";
 import { useWorkspace } from "../hooks/use-workspace";
 import { getStudioCopy } from "../i18n";
 import { AssetsWorkspace } from "../assets/assets-workspace";
+import { ShotsWorkspace } from "../shots/shots-workspace";
+import { StoryboardWorkspace } from "../storyboard/storyboard-workspace";
 import {
   getSelectedEpisode,
   getStudioStageStates,
@@ -48,7 +50,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
   const searchParams = useSearchParams();
   const [episodesOpen, setEpisodesOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
-  const { analysisModels, imageModels } = useStudioModels();
+  const { analysisModels, imageModels, videoModels } = useStudioModels();
   const { createEpisode, error, isLoading, isRefreshing, refresh, snapshot } =
     useWorkspace(projectId);
 
@@ -192,6 +194,23 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
                 locale={locale}
                 onRefresh={() => refresh()}
                 snapshot={snapshot}
+              />
+            ) : selectedStage?.id === "storyboard" && selectedEpisode ? (
+              <StoryboardWorkspace
+                episode={selectedEpisode}
+                locale={locale}
+                models={analysisModels}
+                onRefresh={() => refresh()}
+                snapshot={snapshot}
+              />
+            ) : selectedStage?.id === "shots" && selectedEpisode ? (
+              <ShotsWorkspace
+                episode={selectedEpisode}
+                imageModels={imageModels}
+                locale={locale}
+                onRefresh={() => refresh()}
+                snapshot={snapshot}
+                videoModels={videoModels}
               />
             ) : selectedStage ? (
               <StageOverview

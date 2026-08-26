@@ -60,9 +60,6 @@ export async function selectProjectAsset(input: {
     const panel = await prisma.storyboardPanel.findFirst({
       where: {
         id: input.targetId,
-        ...(assetKind === "video"
-          ? { videoAssetId: { not: null } }
-          : { imageAssetId: { not: null } }),
         storyboard: {
           projectId: input.projectId,
           project: { userId: input.userId },
@@ -70,32 +67,60 @@ export async function selectProjectAsset(input: {
       },
       select: { id: true, imageAssetId: true, videoAssetId: true },
     });
-    const assetId = assetKind === "video" ? panel?.videoAssetId : panel?.imageAssetId;
-    if (!panel || !assetId) return null;
+    if (!panel) return null;
+    let assetId =
+      assetKind === "video" ? panel.videoAssetId : panel.imageAssetId;
+    if (input.assetId) {
+      const candidate = await prisma.mediaAsset.findFirst({
+        where: {
+          id: input.assetId,
+          kind: assetKind,
+          task: {
+            userId: input.userId,
+            projectId: input.projectId,
+            targetType: "storyboard_panel",
+            targetId: panel.id,
+          },
+        },
+        select: { id: true },
+      });
+      if (!candidate) return null;
+      assetId = candidate.id;
+    }
+    if (!assetId) return null;
+    const selectedAssetId = assetId;
     const role = assetKind === "video" ? "selected_video" : "selected";
-    await prisma.assetReference.upsert({
-      where: {
-        mediaAssetId_entityType_entityId_role: {
-          mediaAssetId: assetId,
+    await prisma.$transaction(async (tx) => {
+      await tx.storyboardPanel.update({
+        where: { id: panel.id },
+        data:
+          assetKind === "video"
+            ? { videoAssetId: selectedAssetId }
+            : { imageAssetId: selectedAssetId },
+      });
+      await tx.assetReference.deleteMany({
+        where: {
+          projectId: input.projectId,
           entityType: "storyboard_panel",
           entityId: panel.id,
           role,
         },
-      },
-      create: {
-        id: `${assetId}_storyboard_selected`,
-        projectId: input.projectId,
-        mediaAssetId: assetId,
-        entityType: "storyboard_panel",
-        entityId: panel.id,
-        role,
-      },
-      update: {},
+      });
+      await tx.assetReference.create({
+        data: {
+          id: `${selectedAssetId}_${panel.id}_${assetKind}_selected`,
+          projectId: input.projectId,
+          mediaAssetId: selectedAssetId,
+          entityType: "storyboard_panel",
+          entityId: panel.id,
+          role,
+        },
+      });
     });
     return {
       entityType: "storyboard_panel",
       entityId: panel.id,
-      assetId,
+      assetId: selectedAssetId,
       assetKind,
     };
   }

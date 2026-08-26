@@ -44,6 +44,13 @@ export function useStudioModels() {
       ),
     [models],
   );
+  const videoModels = useMemo(
+    () =>
+      models.filter(
+        (model) => model.type === "video" || model.modalities.includes("video"),
+      ),
+    [models],
+  );
 
   return {
     analysisModels,
@@ -52,5 +59,6 @@ export function useStudioModels() {
     isLoading,
     models,
     refresh: () => load(),
+    videoModels,
   };
 }

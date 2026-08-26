@@ -10,6 +10,8 @@ import type {
   ProjectListResponse,
   ProjectWithEpisodes,
   StudioModelOption,
+  StudioStoryboardData,
+  StudioStoryboardPanel,
   WorkflowRunSummary,
   WorkspaceSnapshot,
 } from "./types";
@@ -207,12 +209,9 @@ export async function loadStudioAssetCatalog(
   signal?: AbortSignal,
 ): Promise<ProjectAssetCatalog> {
   const encodedProjectId = encodeURIComponent(projectId);
-  const [assetResult, characterResult, locationResult, propResult] =
+  const [assets, characterResult, locationResult, propResult] =
     await Promise.all([
-      request<{ assets: ProjectMediaAsset[] }>(
-        `/api/projects/${encodedProjectId}/assets`,
-        { signal },
-      ),
+      loadStudioProjectAssets(projectId, signal),
       request<{ characters: NovelCharacterRecord[] }>(
         `/api/projects/${encodedProjectId}/characters`,
         { signal },
@@ -227,11 +226,22 @@ export async function loadStudioAssetCatalog(
       ),
     ]);
   return {
-    assets: assetResult.assets,
+    assets,
     characters: characterResult.characters,
     locations: locationResult.locations,
     props: propResult.props,
   };
+}
+
+export async function loadStudioProjectAssets(
+  projectId: string,
+  signal?: AbortSignal,
+) {
+  const result = await request<{ assets: ProjectMediaAsset[] }>(
+    `/api/projects/${encodeURIComponent(projectId)}/assets`,
+    { signal },
+  );
+  return result.assets;
 }
 
 export async function upsertStudioAssetEntity(
@@ -375,6 +385,171 @@ export async function selectStudioAsset(
     `/api/projects/${encodeURIComponent(projectId)}/assets/select`,
     {
       body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
+export async function loadStudioStoryboard(
+  projectId: string,
+  episodeId: string,
+  signal?: AbortSignal,
+) {
+  return request<StudioStoryboardData>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard`,
+    { signal },
+  );
+}
+
+export async function saveStudioStoryboard(
+  projectId: string,
+  episodeId: string,
+  input: {
+    status: string;
+    sourceHash: string | null;
+    panels: StudioStoryboardPanel[];
+  },
+) {
+  return request<StudioStoryboardData>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "PUT",
+    },
+  );
+}
+
+export async function startStudioStoryboardWorkflow(
+  projectId: string,
+  episodeId: string,
+  input: { channelId: string; model: string; locale: "en" | "zh" },
+) {
+  return request<{ workflow: WorkflowRunSummary; reused: boolean }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
+export async function generateStudioPanelImage(
+  projectId: string,
+  episodeId: string,
+  panelId: string,
+  input: { channelId: string; model: string; prompt?: string },
+) {
+  return request<{ task: MediaTask; panel: Record<string, unknown> }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard/${encodeURIComponent(panelId)}/generate`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
+export async function generateStudioPanelVideo(
+  projectId: string,
+  episodeId: string,
+  panelId: string,
+  input: {
+    channelId: string;
+    model: string;
+    prompt?: string;
+    mode?: "reference" | "first-last";
+    lastFramePanelId?: string;
+  },
+) {
+  return request<{ task: MediaTask; panel: Record<string, unknown> }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard/${encodeURIComponent(panelId)}/generate-video`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
+export async function generateStudioPanelBatch(
+  projectId: string,
+  episodeId: string,
+  input: {
+    channelId: string;
+    model: string;
+    kind: "image" | "video";
+    mode?: "reference" | "first-last";
+    items: Array<{
+      panelId: string;
+      prompt?: string;
+      mode?: "reference" | "first-last";
+      lastFramePanelId?: string;
+    }>;
+  },
+) {
+  const suffix =
+    input.kind === "video" ? "generate-video-batch" : "generate-batch";
+  return request<{ batchId: string; count: number }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard/${suffix}`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
+export async function uploadStudioPanelMedia(
+  projectId: string,
+  episodeId: string,
+  panelId: string,
+  file: File,
+  kind: "image" | "video",
+) {
+  const form = new FormData();
+  form.set("file", file);
+  form.set("kind", kind);
+  form.set("episodeId", episodeId);
+  form.set("targetType", "storyboard_panel");
+  form.set("targetId", panelId);
+  return request<{ asset: ProjectMediaAsset }>(
+    `/api/projects/${encodeURIComponent(projectId)}/assets/upload`,
+    { body: form, method: "POST" },
+  );
+}
+
+export async function selectStudioPanelMedia(
+  projectId: string,
+  panelId: string,
+  assetId: string,
+  assetKind: "image" | "video",
+) {
+  return request<{ selected: Record<string, unknown> }>(
+    `/api/projects/${encodeURIComponent(projectId)}/assets/select`,
+    {
+      body: JSON.stringify({
+        targetType: "storyboard_panel",
+        targetId: panelId,
+        assetId,
+        assetKind,
+      }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
+export async function controlStudioMediaTask(
+  taskId: string,
+  action: "cancel" | "retry",
+) {
+  return request<{ task: MediaTask }>(
+    `/api/media/tasks/${encodeURIComponent(taskId)}`,
+    {
+      body: JSON.stringify({ action }),
       headers: { "Content-Type": "application/json" },
       method: "POST",
     },
