@@ -220,7 +220,7 @@ Project / Episode / Stage URL
 | 批次 | 交付内容 | 验收门禁 | 状态 |
 | --- | --- | --- | --- |
 | M7.1 工作台基础 | 路由、项目首页、项目工作台骨架、剧集与阶段导航、语义 Token、明暗主题、响应式 Shell | 可创建并打开项目；深链和刷新可恢复；桌面/移动端无重叠或横向溢出 | 已完成 |
-| M7.2 小说与资产 | 原文/分集/剧本界面，角色/场景/道具资产库，上传、提取、生成、选择与批次反馈 | `story-to-script` 可完整操作；资产来源和当前基准可追踪；跨项目资产不可见 | 待开发 |
+| M7.2 小说与资产 | 原文/分集/剧本界面，角色/场景/道具资产库，上传、提取、生成、选择与批次反馈 | `story-to-script` 可完整操作；资产来源和当前基准可追踪；跨项目资产不可见 | 已完成 |
 | M7.3 分镜与镜头 | Clip/Panel 分镜编辑、连续性问题、图片/视频候选、单项与批量任务控制 | `script-to-storyboard` 可完整操作；失败只重试目标范围；任务结果不伪造 | 待开发 |
 | M7.4 声音与交付 | 音色与台词、语音、合并、口型、Timeline、渲染、预览与下载 | 真实任务可取消/重试；混合素材成片可渲染；失败有 Trace 和恢复入口 | 待开发 |
 | M7.5 Agent 与可观测 | 上下文 Agent、审批、任务中心、费用摘要、Run/Step/Task Trace 检查器 | Agent 工具调用携带当前结构化上下文；状态、费用和 Trace 可串联核对 | 待开发 |
@@ -270,7 +270,7 @@ Project / Episode / Stage URL
 | `feat: add production quality safeguards` | M6 计费对账、Trace、Canary、行为门禁、渲染归一化和系统回归 | 已提交 |
 | `docs(roadmap): plan M7 production workspace / 规划 M7 生产工作台` | M7 信息架构、设计与许可边界、交付批次、验收门禁和双语提交规范 | 已提交 |
 | `feat(studio): build project workspace foundation / 构建项目工作台基础` | M7.1 路由、项目首页、工作台 Shell、导航和响应式基础 | 已提交 |
-| `feat(studio): connect writing and asset workflows / 接入编剧与资产工作流` | M7.2 小说、剧本和资产闭环 | 待提交 |
+| `feat(studio): connect writing and asset workflows / 接入编剧与资产工作流` | M7.2 小说、剧本和资产闭环 | 已提交 |
 | `feat(studio): connect storyboard and shot production / 接入分镜与镜头生产` | M7.3 分镜、图片和视频闭环 | 待提交 |
 | `feat(studio): connect audio timeline and delivery / 接入声音时间线与交付` | M7.4 声音、口型、时间线和渲染闭环 | 待提交 |
 | `feat(studio): add contextual agent and observability / 增加上下文智能体与可观测性` | M7.5 Agent、审批、任务、费用和 Trace | 待提交 |

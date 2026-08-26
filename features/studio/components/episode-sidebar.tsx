@@ -16,7 +16,12 @@ import { cn } from "@/lib/utils";
 
 import { getStudioStageStates } from "../stage-state";
 import { getStudioCopy } from "../i18n";
-import type { StudioLocale, WorkspaceSnapshot } from "../types";
+import type {
+  StudioLocale,
+  StudioModelOption,
+  WorkspaceSnapshot,
+} from "../types";
+import { SplitNovelDialog } from "../writing/split-novel-dialog";
 import { CreateEpisodeDialog } from "./create-episode-dialog";
 import { StatusIndicator } from "./status-indicator";
 
@@ -25,8 +30,10 @@ export function EpisodeSidebar({
   locale,
   onCreated,
   onSelect,
+  onRefresh,
   selectedEpisodeId,
   snapshot,
+  models,
 }: {
   createEpisode: (input: {
     name: string;
@@ -34,9 +41,11 @@ export function EpisodeSidebar({
   }) => Promise<EpisodeRecord>;
   locale: StudioLocale;
   onCreated: (episode: EpisodeRecord) => void;
+  onRefresh: () => Promise<unknown> | void;
   onSelect: (episodeId: string) => void;
   selectedEpisodeId?: string;
   snapshot: WorkspaceSnapshot;
+  models: StudioModelOption[];
 }) {
   const copy = getStudioCopy(locale);
   const episodes = snapshot.project.episodes;
@@ -47,11 +56,19 @@ export function EpisodeSidebar({
         <h2 className="text-xs font-semibold text-sidebar-foreground">
           {copy.episodes}
         </h2>
-        <CreateEpisodeDialog
-          createEpisode={createEpisode}
-          locale={locale}
-          onCreated={onCreated}
-        />
+        <div className="flex items-center gap-0.5">
+          <SplitNovelDialog
+            locale={locale}
+            models={models}
+            onCompleted={onRefresh}
+            projectId={snapshot.project.id}
+          />
+          <CreateEpisodeDialog
+            createEpisode={createEpisode}
+            locale={locale}
+            onCreated={onCreated}
+          />
+        </div>
       </div>
 
       {episodes.length ? (
@@ -110,17 +127,25 @@ export function EpisodeSidebar({
               {copy.noEpisodes}
             </EmptyDescription>
           </EmptyHeader>
-          <CreateEpisodeDialog
-            createEpisode={createEpisode}
-            locale={locale}
-            onCreated={onCreated}
-            trigger={
-              <Button variant="outline">
-                <FilePlus2 className="size-4" />
-                {copy.addEpisode}
-              </Button>
-            }
-          />
+          <div className="flex flex-col gap-2">
+            <CreateEpisodeDialog
+              createEpisode={createEpisode}
+              locale={locale}
+              onCreated={onCreated}
+              trigger={
+                <Button variant="outline">
+                  <FilePlus2 className="size-4" />
+                  {copy.addEpisode}
+                </Button>
+              }
+            />
+            <SplitNovelDialog
+              locale={locale}
+              models={models}
+              onCompleted={onRefresh}
+              projectId={snapshot.project.id}
+            />
+          </div>
         </Empty>
       )}
     </div>

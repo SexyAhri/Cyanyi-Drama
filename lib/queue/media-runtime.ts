@@ -630,6 +630,36 @@ async function linkGeneratedAsset(
         data: { selectedImageId: image.id },
       });
     });
+  } else if (task.targetType === "prop") {
+    const prop = await prisma.novelProp.findFirst({
+      where: {
+        id: task.targetId,
+        projectId: task.projectId,
+        project: { userId },
+      },
+      select: { id: true },
+    });
+    if (!prop) return;
+    await prisma.assetReference.upsert({
+      where: {
+        mediaAssetId_entityType_entityId_role: {
+          mediaAssetId: asset.id,
+          entityType: "prop",
+          entityId: prop.id,
+          role: "generated_candidate",
+        },
+      },
+      create: {
+        id: `${asset.id}_prop_candidate`,
+        projectId: task.projectId,
+        episodeId: task.episodeId,
+        mediaAssetId: asset.id,
+        entityType: "prop",
+        entityId: prop.id,
+        role: "generated_candidate",
+      },
+      update: {},
+    });
   } else if (task.targetType === "storyboard_panel") {
     await prisma.storyboardPanel.updateMany({
       where: {

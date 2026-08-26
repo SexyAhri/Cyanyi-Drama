@@ -14,6 +14,7 @@ export async function POST(request: Request, context: Context) {
   const targetType =
     body.targetType === "character" ||
     body.targetType === "location" ||
+    body.targetType === "prop" ||
     body.targetType === "storyboard_panel"
       ? (body.targetType as SelectableAssetType)
       : null;
@@ -38,6 +39,7 @@ export async function POST(request: Request, context: Context) {
     projectId,
     targetType,
     targetId,
+    assetId: typeof body.assetId === "string" ? body.assetId.trim() : undefined,
     assetKind,
   });
   if (!selected) {

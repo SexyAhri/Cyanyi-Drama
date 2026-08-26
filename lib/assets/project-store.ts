@@ -14,6 +14,7 @@ export type ProjectAssetTargetType =
   | "character_appearance"
   | "location"
   | "location_image"
+  | "prop"
   | "storyboard_panel";
 
 export type ProjectAssetSource = {
@@ -254,6 +255,16 @@ async function resolveProjectAssetTarget(input: {
     if (!location) throw new ProjectAssetError("场景不存在", 404);
     return { entityType: "location", entityId: location.id };
   }
+  if (targetType === "prop") {
+    if (input.kind !== "image")
+      throw new ProjectAssetError("道具资产必须是图片", 400);
+    const prop = await prisma.novelProp.findFirst({
+      where: { id: targetId, projectId: input.projectId },
+      select: { id: true },
+    });
+    if (!prop) throw new ProjectAssetError("道具不存在", 404);
+    return { entityType: "prop", entityId: prop.id };
+  }
 
   const owned = await findOwnedConcreteTarget(
     targetType,
@@ -344,18 +355,33 @@ async function attachAssetToTarget(
   },
 ) {
   if (input.target.entityType === "character_appearance") {
+    const appearance = await tx.characterAppearance.findUniqueOrThrow({
+      where: { id: input.target.entityId },
+      select: { characterId: true },
+    });
+    await tx.characterAppearance.updateMany({
+      where: { characterId: appearance.characterId },
+      data: { selected: false },
+    });
     await tx.characterAppearance.update({
       where: { id: input.target.entityId },
       data: { imageAssetId: input.assetId, selected: true },
     });
   } else if (input.target.entityType === "location_image") {
-    const image = await tx.locationImage.update({
+    const image = await tx.locationImage.findUniqueOrThrow({
       where: { id: input.target.entityId },
-      data: { imageAssetId: input.assetId, selected: true },
       select: { locationId: true },
     });
-    await tx.novelLocation.updateMany({
-      where: { id: image.locationId, selectedImageId: null },
+    await tx.locationImage.updateMany({
+      where: { locationId: image.locationId },
+      data: { selected: false },
+    });
+    await tx.locationImage.update({
+      where: { id: input.target.entityId },
+      data: { imageAssetId: input.assetId, selected: true },
+    });
+    await tx.novelLocation.update({
+      where: { id: image.locationId },
       data: { selectedImageId: input.target.entityId },
     });
   } else if (input.target.entityType === "storyboard_panel") {

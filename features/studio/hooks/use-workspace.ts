@@ -43,6 +43,14 @@ export function useWorkspace(projectId: string) {
     return () => controller.abort();
   }, [load]);
 
+  useEffect(() => {
+    if (!snapshot || !hasActiveRuntime(snapshot)) return;
+    const timer = window.setInterval(() => {
+      void load({ background: true });
+    }, 3_000);
+    return () => window.clearInterval(timer);
+  }, [load, snapshot]);
+
   const createEpisode = useCallback(
     async (input: { name: string; novelText?: string }) => {
       const result = await createStudioEpisode(projectId, input);
@@ -60,4 +68,15 @@ export function useWorkspace(projectId: string) {
     refresh: () => load({ background: true }),
     snapshot,
   };
+}
+
+function hasActiveRuntime(snapshot: WorkspaceSnapshot) {
+  return (
+    snapshot.workflows.some((workflow) =>
+      ["queued", "running", "canceling"].includes(workflow.status),
+    ) ||
+    snapshot.tasks.some((task) =>
+      ["queued", "running"].includes(task.status),
+    )
+  );
 }

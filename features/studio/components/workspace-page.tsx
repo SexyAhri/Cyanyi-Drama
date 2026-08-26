@@ -23,8 +23,10 @@ import {
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 import { useStudioLocale } from "../hooks/use-studio-locale";
+import { useStudioModels } from "../hooks/use-studio-models";
 import { useWorkspace } from "../hooks/use-workspace";
 import { getStudioCopy } from "../i18n";
+import { AssetsWorkspace } from "../assets/assets-workspace";
 import {
   getSelectedEpisode,
   getStudioStageStates,
@@ -36,6 +38,7 @@ import { EpisodeSidebar } from "./episode-sidebar";
 import { StageNavigation } from "./stage-navigation";
 import { StageOverview } from "./stage-overview";
 import { WorkspaceTopbar } from "./workspace-topbar";
+import { WritingWorkspace } from "../writing/writing-workspace";
 
 export function WorkspacePage({ projectId }: { projectId: string }) {
   const { locale, toggleLocale } = useStudioLocale();
@@ -45,6 +48,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
   const searchParams = useSearchParams();
   const [episodesOpen, setEpisodesOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
+  const { analysisModels, imageModels } = useStudioModels();
   const { createEpisode, error, isLoading, isRefreshing, refresh, snapshot } =
     useWorkspace(projectId);
 
@@ -131,6 +135,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
     <EpisodeSidebar
       createEpisode={createEpisode}
       locale={locale}
+      models={analysisModels}
       onCreated={(episode) => {
         updateSelection({ episodeId: episode.id, stageId: "writing" });
         setEpisodesOpen(false);
@@ -139,6 +144,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
         updateSelection({ episodeId });
         setEpisodesOpen(false);
       }}
+      onRefresh={() => refresh()}
       selectedEpisodeId={selectedEpisode?.id}
       snapshot={snapshot}
     />
@@ -171,7 +177,23 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
           </aside>
 
           <main className="min-w-0 flex-1 overflow-y-auto">
-            {selectedStage ? (
+            {selectedStage?.id === "writing" && selectedEpisode ? (
+              <WritingWorkspace
+                episode={selectedEpisode}
+                locale={locale}
+                models={analysisModels}
+                onRefresh={() => refresh()}
+                snapshot={snapshot}
+              />
+            ) : selectedStage?.id === "assets" ? (
+              <AssetsWorkspace
+                analysisModels={analysisModels}
+                imageModels={imageModels}
+                locale={locale}
+                onRefresh={() => refresh()}
+                snapshot={snapshot}
+              />
+            ) : selectedStage ? (
               <StageOverview
                 episode={selectedEpisode}
                 locale={locale}

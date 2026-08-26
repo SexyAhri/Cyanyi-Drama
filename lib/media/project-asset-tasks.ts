@@ -11,7 +11,7 @@ import {
   listOwnedProjectMediaAssets,
 } from "@/lib/assets/project-store";
 
-export type ProjectAssetTarget = "character" | "location";
+export type ProjectAssetTarget = "character" | "location" | "prop";
 
 type CreateProjectImageTaskInput = {
   userId: string;
@@ -451,7 +451,28 @@ async function createTargetEntity(input: CreateProjectImageTaskInput) {
     return { id: row.id, entityType: "character_appearance" as const };
   }
 
-  const target = await prisma.novelLocation.findFirst({
+  if (input.targetType === "location") {
+    const target = await prisma.novelLocation.findFirst({
+      where: {
+        id: input.targetId,
+        projectId: input.projectId,
+        project: { userId: input.userId },
+      },
+      select: { id: true },
+    });
+    if (!target) throw new ProjectAssetTaskError("目标资产不存在", 404);
+    const row = await prisma.locationImage.create({
+      data: {
+        id: randomUUID(),
+        locationId: input.targetId,
+        imageIndex: await nextLocationIndex(input.targetId),
+        description: input.prompt,
+      },
+    });
+    return { id: row.id, entityType: "location_image" as const };
+  }
+
+  const prop = await prisma.novelProp.findFirst({
     where: {
       id: input.targetId,
       projectId: input.projectId,
@@ -459,16 +480,8 @@ async function createTargetEntity(input: CreateProjectImageTaskInput) {
     },
     select: { id: true },
   });
-  if (!target) throw new ProjectAssetTaskError("目标资产不存在", 404);
-  const row = await prisma.locationImage.create({
-    data: {
-      id: randomUUID(),
-      locationId: input.targetId,
-      imageIndex: await nextLocationIndex(input.targetId),
-      description: input.prompt,
-    },
-  });
-  return { id: row.id, entityType: "location_image" as const };
+  if (!prop) throw new ProjectAssetTaskError("目标资产不存在", 404);
+  return { id: prop.id, entityType: "prop" as const };
 }
 
 async function findExplicitReferenceImages(input: CreateProjectImageTaskInput) {
@@ -503,19 +516,42 @@ async function findSelectedReferenceImages(input: CreateProjectImageTaskInput) {
     );
   }
 
-  const rows = await prisma.locationImage.findMany({
+  if (input.targetType === "location") {
+    const rows = await prisma.locationImage.findMany({
+      where: {
+        locationId: input.targetId,
+        selected: true,
+        imageAsset: { url: { not: null } },
+      },
+      include: { imageAsset: { select: { url: true, mimeType: true } } },
+      orderBy: { updatedAt: "desc" },
+      take: 3,
+    });
+    return rows.flatMap((row) =>
+      row.imageAsset?.url
+        ? [{ url: row.imageAsset.url, mimeType: row.imageAsset.mimeType ?? undefined }]
+        : [],
+    );
+  }
+
+  const references = await prisma.assetReference.findMany({
     where: {
-      locationId: input.targetId,
-      selected: true,
-      imageAsset: { url: { not: null } },
+      projectId: input.projectId,
+      entityType: "prop",
+      entityId: input.targetId,
+      role: "selected",
+      mediaAsset: { kind: "image", url: { not: null } },
     },
-    include: { imageAsset: { select: { url: true, mimeType: true } } },
-    orderBy: { updatedAt: "desc" },
+    include: { mediaAsset: { select: { url: true, mimeType: true } } },
+    orderBy: { createdAt: "desc" },
     take: 3,
   });
-  return rows.flatMap((row) =>
-    row.imageAsset?.url
-      ? [{ url: row.imageAsset.url, mimeType: row.imageAsset.mimeType ?? undefined }]
+  return references.flatMap((reference) =>
+    reference.mediaAsset.url
+      ? [{
+          url: reference.mediaAsset.url,
+          mimeType: reference.mediaAsset.mimeType ?? undefined,
+        }]
       : [],
   );
 }

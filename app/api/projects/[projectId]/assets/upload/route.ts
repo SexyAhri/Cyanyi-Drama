@@ -70,6 +70,7 @@ function targetType(value: FormDataEntryValue | null) {
       "character_appearance",
       "location",
       "location_image",
+      "prop",
       "storyboard_panel",
     ].includes(value)
     ? (value as ProjectAssetTargetType)

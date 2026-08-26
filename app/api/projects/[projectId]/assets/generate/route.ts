@@ -10,7 +10,7 @@ export async function POST(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { projectId } = await context.params;
   const body = await readObject(request);
-  const targetType = body.targetType === "character" || body.targetType === "location" ? body.targetType : null;
+  const targetType = body.targetType === "character" || body.targetType === "location" || body.targetType === "prop" ? body.targetType : null;
   const targetId = typeof body.targetId === "string" ? body.targetId.trim() : "";
   const channelId = typeof body.channelId === "string" ? body.channelId.trim() : "";
   const model = typeof body.model === "string" ? body.model.trim() : "";

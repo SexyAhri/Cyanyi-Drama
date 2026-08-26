@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const projectFindFirst = vi.hoisted(() => vi.fn());
+const novelPropFindFirst = vi.hoisted(() => vi.fn());
 const mediaAssetFindMany = vi.hoisted(() => vi.fn());
 const mediaTaskCreate = vi.hoisted(() => vi.fn());
 const mediaAssetCreate = vi.hoisted(() => vi.fn());
@@ -11,6 +12,7 @@ const resolveStoredMediaUrl = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/server/prisma", () => ({
   prisma: {
     project: { findFirst: projectFindFirst },
+    novelProp: { findFirst: novelPropFindFirst },
     episode: { findFirst: vi.fn() },
     mediaAsset: { findMany: mediaAssetFindMany },
     $transaction: async (callback: (tx: unknown) => Promise<unknown>) =>
@@ -35,6 +37,7 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   projectFindFirst.mockResolvedValue({ id: "project-1" });
+  novelPropFindFirst.mockResolvedValue({ id: "prop-1" });
   storeMediaBytes.mockResolvedValue("projects/project-1/uploads/hash.png");
   resolveStoredMediaUrl.mockResolvedValue("https://media.test/signed.png");
   mediaAssetCreate.mockImplementation(async ({ data }) => ({
@@ -101,5 +104,38 @@ describe("project asset store", () => {
         }),
       }),
     );
+  });
+
+  it("keeps a prop upload scoped to its owned target", async () => {
+    await createUploadedProjectAsset({
+      userId: "user-1",
+      projectId: "project-1",
+      kind: "image",
+      bytes: new Uint8Array([1, 2, 3]),
+      mimeType: "image/png",
+      source: { sourceType: "upload", fileName: "prop.png" },
+      targetType: "prop",
+      targetId: "prop-1",
+    });
+
+    expect(novelPropFindFirst).toHaveBeenCalledWith({
+      where: { id: "prop-1", projectId: "project-1" },
+      select: { id: true },
+    });
+    expect(mediaTaskCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        projectId: "project-1",
+        targetType: "prop",
+        targetId: "prop-1",
+      }),
+    });
+    expect(assetReferenceCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        projectId: "project-1",
+        entityType: "prop",
+        entityId: "prop-1",
+        role: "uploaded_source",
+      }),
+    });
   });
 });

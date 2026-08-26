@@ -77,7 +77,7 @@ function isBatchItem(value: unknown): value is BatchItem {
   if (!value || typeof value !== "object") return false;
   const item = value as Record<string, unknown>;
   return (
-    (item.targetType === "character" || item.targetType === "location") &&
+    (item.targetType === "character" || item.targetType === "location" || item.targetType === "prop") &&
     typeof item.targetId === "string" &&
     item.targetId.trim().length > 0 &&
     (item.prompt === undefined || typeof item.prompt === "string")

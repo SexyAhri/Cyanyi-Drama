@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/server/prisma";
 
-export type SelectableAssetType = "character" | "location" | "storyboard_panel";
+export type SelectableAssetType = "character" | "location" | "prop" | "storyboard_panel";
 export type StoryboardAssetKind = "image" | "video";
 
 export async function selectProjectAsset(input: {
@@ -8,6 +8,7 @@ export async function selectProjectAsset(input: {
   projectId: string;
   targetType: SelectableAssetType;
   targetId: string;
+  assetId?: string;
   assetKind?: StoryboardAssetKind;
 }) {
   if (input.targetType === "character") {
@@ -96,6 +97,51 @@ export async function selectProjectAsset(input: {
       entityId: panel.id,
       assetId,
       assetKind,
+    };
+  }
+
+  if (input.targetType === "prop") {
+    if (!input.assetId) return null;
+    const asset = await prisma.mediaAsset.findFirst({
+      where: {
+        id: input.assetId,
+        kind: "image",
+        task: { userId: input.userId, projectId: input.projectId },
+        references: {
+          some: {
+            projectId: input.projectId,
+            entityType: "prop",
+            entityId: input.targetId,
+          },
+        },
+      },
+      select: { id: true },
+    });
+    if (!asset) return null;
+    await prisma.$transaction(async (tx) => {
+      await tx.assetReference.deleteMany({
+        where: {
+          projectId: input.projectId,
+          entityType: "prop",
+          entityId: input.targetId,
+          role: "selected",
+        },
+      });
+      await tx.assetReference.create({
+        data: {
+          id: `${asset.id}_${input.targetId}_prop_selected`,
+          projectId: input.projectId,
+          mediaAssetId: asset.id,
+          entityType: "prop",
+          entityId: input.targetId,
+          role: "selected",
+        },
+      });
+    });
+    return {
+      entityType: "prop",
+      entityId: input.targetId,
+      assetId: asset.id,
     };
   }
 
