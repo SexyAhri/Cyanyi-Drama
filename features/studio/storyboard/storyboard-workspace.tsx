@@ -4,11 +4,14 @@ import {
   Ban,
   CircleCheck,
   Clapperboard,
+  FileCheck2,
+  ListChecks,
   LoaderCircle,
   Pause,
   Play,
   RotateCcw,
   TriangleAlert,
+  Video,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -16,6 +19,7 @@ import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
 import {
@@ -27,6 +31,8 @@ import {
 import { ModelSelect } from "../components/model-select";
 import { StatusIndicator } from "../components/status-indicator";
 import { getStudioCopy } from "../i18n";
+import { getProductionCopy } from "../production/copy";
+import { DepartmentDeliverablesWorkspace } from "../production/department-deliverables";
 import {
   getWorkflowForStage,
   getWorkflowContentRevision,
@@ -45,6 +51,14 @@ import {
   getPanelContinuityIssues,
   replaceStoryboardPanel,
 } from "./storyboard-view-model";
+import {
+  getPrevisReadiness,
+  parseActingDirections,
+  parsePhotographyRules,
+  type PrevisSpecKey,
+} from "./previs-view-model";
+
+type StoryboardTab = "shots" | "previs" | "shot_list" | "animatic";
 
 export function StoryboardWorkspace({
   episode,
@@ -62,12 +76,14 @@ export function StoryboardWorkspace({
   snapshot: WorkspaceSnapshot;
 }) {
   const copy = getStudioCopy(locale);
+  const productionCopy = getProductionCopy(locale);
   const [data, setData] = useState<StudioStoryboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isActing, setIsActing] = useState(false);
   const [selectedPanelId, setSelectedPanelId] = useState("");
   const [modelId, setModelId] = useState("");
+  const [tab, setTab] = useState<StoryboardTab>("shots");
   const projectId = snapshot.project.id;
   const workflows = snapshot.workflows.filter(
     (workflow) => workflow.episodeId === episode.id,
@@ -121,6 +137,7 @@ export function StoryboardWorkspace({
     panels.find((panel) => panel.id === selectedPanelId) ?? panels[0];
 
   useEffect(() => {
+    if (tab !== "shots") return;
     onContextChange(
       selectedPanel
         ? {
@@ -134,7 +151,7 @@ export function StoryboardWorkspace({
           }
         : undefined,
     );
-  }, [copy.panel, onContextChange, selectedPanel]);
+  }, [copy.panel, onContextChange, selectedPanel, tab]);
 
   useEffect(() => {
     if (!panels.length) {
@@ -240,114 +257,201 @@ export function StoryboardWorkspace({
             ) : null}
           </div>
         </div>
-        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-          <ModelSelect
-            ariaLabel={copy.storyboardModel}
-            className="h-8 sm:w-64"
-            disabled={isActing || workflowActive}
-            models={models}
-            onChange={setModelId}
-            placeholder={copy.storyboardModel}
-            value={modelId}
-          />
-          <WorkflowButtons
-            disabled={isActing}
-            hasWorkflow={Boolean(workflow)}
-            locale={locale}
-            modelReady={Boolean(modelId)}
-            onAction={controlWorkflow}
-            onStart={startWorkflow}
-            status={workflow?.status}
-          />
-        </div>
+        {tab === "shots" ? (
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+            <ModelSelect
+              ariaLabel={copy.storyboardModel}
+              className="h-8 sm:w-64"
+              disabled={isActing || workflowActive}
+              models={models}
+              onChange={setModelId}
+              placeholder={copy.storyboardModel}
+              value={modelId}
+            />
+            <WorkflowButtons
+              disabled={isActing}
+              hasWorkflow={Boolean(workflow)}
+              locale={locale}
+              modelReady={Boolean(modelId)}
+              onAction={controlWorkflow}
+              onStart={startWorkflow}
+              status={workflow?.status}
+            />
+          </div>
+        ) : null}
       </header>
 
-      {!models.length ? (
-        <p className="border-b py-3 text-xs text-destructive">
-          {copy.noAnalysisModels}
-        </p>
-      ) : null}
-      {error ? (
-        <div className="flex items-center justify-between gap-3 border-b py-3">
-          <p className="text-sm text-destructive">{error}</p>
-          <Button onClick={() => void load()} size="sm" variant="outline">
-            {copy.retry}
-          </Button>
-        </div>
-      ) : null}
+      <Tabs
+        className="min-w-0 pt-4"
+        onValueChange={(value) => setTab(value as StoryboardTab)}
+        value={tab}
+      >
+        <TabsList className="max-w-full overflow-x-auto" variant="line">
+          <TabsTrigger value="shots">
+            <Clapperboard className="size-4" />
+            {productionCopy.shotDesign}
+          </TabsTrigger>
+          <TabsTrigger value="previs">
+            <FileCheck2 className="size-4" />
+            {productionCopy.previsDepartment}
+          </TabsTrigger>
+          <TabsTrigger value="shot_list">
+            <ListChecks className="size-4" />
+            {productionCopy.shotList}
+          </TabsTrigger>
+          <TabsTrigger value="animatic">
+            <Video className="size-4" />
+            {productionCopy.animatic}
+          </TabsTrigger>
+        </TabsList>
 
-      {data?.continuityIssues.length ? (
-        <ContinuityOverview data={data} locale={locale} />
-      ) : data?.storyboard ? (
-        <div className="flex items-center gap-2 border-b py-3 text-xs text-status-success">
-          <CircleCheck className="size-4" />
-          {copy.continuityClear}
-        </div>
-      ) : null}
-
-      {!panels.length ? (
-        <div className="flex min-h-96 flex-col items-center justify-center gap-3 border-b text-center text-muted-foreground">
-          <Clapperboard className="size-6" />
-          <p className="max-w-md text-sm leading-6">{copy.noStoryboard}</p>
-        </div>
-      ) : (
-        <div className="grid min-h-152 border-b lg:grid-cols-[18rem_minmax(0,1fr)]">
-          <aside className="border-b lg:border-r lg:border-b-0">
-            <div className="flex h-11 items-center justify-between border-b px-3">
-              <h2 className="text-xs font-semibold">{copy.storyboardPanels}</h2>
-              <Badge variant="secondary">{panels.length}</Badge>
+        <TabsContent className="mt-4" value="shots">
+          {!models.length ? (
+            <p className="border-b py-3 text-xs text-destructive">
+              {copy.noAnalysisModels}
+            </p>
+          ) : null}
+          {error ? (
+            <div className="flex items-center justify-between gap-3 border-b py-3">
+              <p className="text-sm text-destructive">{error}</p>
+              <Button onClick={() => void load()} size="sm" variant="outline">
+                {copy.retry}
+              </Button>
             </div>
-            <div className="max-h-80 overflow-y-auto p-1.5 lg:max-h-[calc(100dvh-17rem)]">
-              {panels.map((panel) => {
-                const issues = getPanelContinuityIssues(
-                  panel,
-                  data?.continuityIssues ?? [],
-                );
-                return (
-                  <button
-                    className={cn(
-                      "flex w-full items-start gap-3 rounded-md px-2.5 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-                      panel.id === selectedPanel?.id
-                        ? "bg-muted"
-                        : "hover:bg-muted/60",
-                    )}
-                    key={panel.id}
-                    onClick={() => setSelectedPanelId(panel.id)}
-                    type="button"
-                  >
-                    <span className="mt-0.5 w-6 shrink-0 font-mono text-[11px] text-muted-foreground">
-                      {String(panel.panelIndex + 1).padStart(2, "0")}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">
-                        {panel.shotType || copy.panel}
-                      </span>
-                      <span className="mt-0.5 block line-clamp-2 text-xs leading-5 text-muted-foreground">
-                        {panel.description || copy.panelDescription}
-                      </span>
-                    </span>
-                    {issues.length ? (
-                      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-status-warning" />
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-          </aside>
+          ) : null}
 
-          {selectedPanel ? (
-            <PanelDetails
-              issues={getPanelContinuityIssues(
-                selectedPanel,
-                data?.continuityIssues ?? [],
-              )}
+          {data?.continuityIssues.length ? (
+            <ContinuityOverview data={data} locale={locale} />
+          ) : data?.storyboard ? (
+            <div className="flex items-center gap-2 border-b py-3 text-xs text-status-success">
+              <CircleCheck className="size-4" />
+              {copy.continuityClear}
+            </div>
+          ) : null}
+
+          {!panels.length ? (
+            <div className="flex min-h-96 flex-col items-center justify-center gap-3 border-b text-center text-muted-foreground">
+              <Clapperboard className="size-6" />
+              <p className="max-w-md text-sm leading-6">{copy.noStoryboard}</p>
+            </div>
+          ) : (
+            <div className="grid min-h-152 border-b lg:grid-cols-[18rem_minmax(0,1fr)]">
+              <aside className="border-b lg:border-r lg:border-b-0">
+                <div className="flex h-11 items-center justify-between border-b px-3">
+                  <h2 className="text-xs font-semibold">
+                    {copy.storyboardPanels}
+                  </h2>
+                  <Badge variant="secondary">{panels.length}</Badge>
+                </div>
+                <div className="max-h-80 overflow-y-auto p-1.5 lg:max-h-[calc(100dvh-17rem)]">
+                  {panels.map((panel) => {
+                    const issues = getPanelContinuityIssues(
+                      panel,
+                      data?.continuityIssues ?? [],
+                    );
+                    const readiness = getPrevisReadiness(panel, issues);
+                    return (
+                      <button
+                      className={cn(
+                          "flex w-full items-start gap-3 rounded-md px-2.5 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                          panel.id === selectedPanel?.id
+                            ? "bg-muted"
+                            : "hover:bg-muted/60",
+                      )}
+                        key={panel.id}
+                        onClick={() => setSelectedPanelId(panel.id)}
+                        type="button"
+                      >
+                        <span className="mt-0.5 w-6 shrink-0 font-mono text-[11px] text-muted-foreground">
+                          {String(panel.panelIndex + 1).padStart(2, "0")}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">
+                            {panel.shotType || copy.panel}
+                          </span>
+                          <span className="mt-0.5 block line-clamp-2 text-xs leading-5 text-muted-foreground">
+                            {panel.description || copy.panelDescription}
+                          </span>
+                        </span>
+                        <Badge
+                          className={cn(
+                            "shrink-0 font-mono text-[10px]",
+                            readiness.isReady &&
+                              "border-status-success/30 text-status-success",
+                          )}
+                          variant="outline"
+                        >
+                          {readiness.complete}/{readiness.total}
+                        </Badge>
+                      </button>
+                    );
+                  })}
+                </div>
+              </aside>
+
+              {selectedPanel ? (
+                <PanelDetails
+                  issues={getPanelContinuityIssues(
+                    selectedPanel,
+                    data?.continuityIssues ?? [],
+                  )}
+                  locale={locale}
+                  onSave={savePanel}
+                  panel={selectedPanel}
+                />
+              ) : null}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent className="mt-4" value="previs">
+          {tab === "previs" ? (
+            <DepartmentDeliverablesWorkspace
+              defaultType="directors_treatment"
+              departments={["previs"]}
+              episodeId={episode.id}
               locale={locale}
-              onSave={savePanel}
-              panel={selectedPanel}
+              onContextChange={onContextChange}
+              projectId={projectId}
+              title={productionCopy.previsDepartment}
             />
           ) : null}
-        </div>
-      )}
+        </TabsContent>
+        <TabsContent className="mt-4" value="shot_list">
+          {tab === "shot_list" ? (
+            <DepartmentDeliverablesWorkspace
+              defaultType="shot_list"
+              departments={["previs"]}
+              episodeId={episode.id}
+              locale={locale}
+              onContextChange={onContextChange}
+              projectId={projectId}
+              title={productionCopy.shotList}
+              types={[
+                "blocking",
+                "shot_list",
+                "cinematography_plan",
+                "performance_plan",
+                "previs",
+              ]}
+            />
+          ) : null}
+        </TabsContent>
+        <TabsContent className="mt-4" value="animatic">
+          {tab === "animatic" ? (
+            <DepartmentDeliverablesWorkspace
+              defaultType="animatic"
+              departments={["previs"]}
+              episodeId={episode.id}
+              locale={locale}
+              onContextChange={onContextChange}
+              projectId={projectId}
+              title={productionCopy.animatic}
+              types={["animatic"]}
+            />
+          ) : null}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -364,6 +468,9 @@ function PanelDetails({
   panel: StudioStoryboardPanel;
 }) {
   const copy = getStudioCopy(locale);
+  const photography = parsePhotographyRules(panel.photographyRules);
+  const acting = parseActingDirections(panel.actingNotes);
+  const readiness = getPrevisReadiness(panel, issues);
   return (
     <section className="min-w-0 p-4 sm:p-6">
       <header className="flex items-start justify-between gap-4 border-b pb-4">
@@ -374,6 +481,21 @@ function PanelDetails({
           <h2 className="mt-1 text-base font-semibold">
             {panel.shotType || copy.panelDescription}
           </h2>
+          <p
+            className={cn(
+              "mt-1 text-xs",
+              readiness.isReady
+                ? "text-status-success"
+                : "text-status-warning",
+            )}
+          >
+            {readiness.isReady
+              ? copy.previsReady
+              : copy.previsIncomplete.replace(
+                  "{count}",
+                  String(readiness.missing.length),
+                )}
+          </p>
         </div>
         <PanelEditorDialog locale={locale} onSave={onSave} panel={panel} />
       </header>
@@ -382,9 +504,61 @@ function PanelDetails({
         {panel.description || copy.panelDescription}
       </p>
 
+      <div className="border-b py-4">
+        <div className="flex items-center justify-between gap-3 text-xs">
+          <span className="font-semibold">{copy.previsReadiness}</span>
+          <span className="font-mono text-muted-foreground">
+            {readiness.complete}/{readiness.total}
+          </span>
+        </div>
+        <div
+          aria-label={copy.previsReadiness}
+          className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
+          role="progressbar"
+          aria-valuemax={readiness.total}
+          aria-valuemin={0}
+          aria-valuenow={readiness.complete}
+        >
+          <div
+            className={cn(
+              "h-full bg-status-warning transition-[width]",
+              readiness.isReady && "bg-status-success",
+            )}
+            style={{
+              width: `${(readiness.complete / readiness.total) * 100}%`,
+            }}
+          />
+        </div>
+        {readiness.missing.length ? (
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 text-[11px] text-muted-foreground">
+              {copy.missingSpecifications}
+            </span>
+            {readiness.missing.map((key) => (
+              <Badge key={key} variant="outline">
+                {previsSpecLabel(copy, key)}
+              </Badge>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
       <dl className="grid gap-x-6 gap-y-4 border-b py-5 sm:grid-cols-2 xl:grid-cols-3">
         <PanelSpec label={copy.location} value={panel.locationName} />
+        <PanelSpec label={copy.composition} value={photography.composition} />
+        <PanelSpec label={copy.focalLength} value={photography.focalLength} />
+        <PanelSpec
+          label={copy.cameraPosition}
+          value={photography.cameraPosition}
+        />
+        <PanelSpec label={copy.cameraAngle} value={photography.camera} />
         <PanelSpec label={copy.cameraMove} value={panel.cameraMove} />
+        <PanelSpec label={copy.lighting} value={photography.lighting} />
+        <PanelSpec
+          label={copy.depthOfField}
+          value={photography.depthOfField}
+        />
+        <PanelSpec label={copy.colorTone} value={photography.colorTone} />
         <PanelSpec
           label={copy.duration}
           value={
@@ -397,6 +571,34 @@ function PanelDetails({
         <PanelSpec label={copy.propAssets} value={panel.props.join(" · ")} />
         <PanelSpec label={copy.subtitle} value={panel.subtitleText} />
       </dl>
+
+      {panel.characters.length ? (
+        <section className="border-b py-5">
+          <h3 className="text-sm font-semibold">{copy.actingDirection}</h3>
+          <div className="mt-3 divide-y border-y">
+            {panel.characters.map((character) => {
+              const direction = acting.find((item) => item.name === character);
+              return (
+                <div
+                  className="grid gap-3 py-3 sm:grid-cols-[10rem_repeat(3,minmax(0,1fr))]"
+                  key={character}
+                >
+                  <p className="text-sm font-medium">{character}</p>
+                  <PanelSpec
+                    label={copy.emotion}
+                    value={direction?.emotion}
+                  />
+                  <PanelSpec label={copy.action} value={direction?.action} />
+                  <PanelSpec
+                    label={copy.expression}
+                    value={direction?.expression}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
       {issues.length ? (
         <div className="space-y-2 py-5">
@@ -453,6 +655,15 @@ function PanelSpec({
       <dd className="mt-1 wrap-break-word text-sm">{value || "-"}</dd>
     </div>
   );
+}
+
+function previsSpecLabel(
+  copy: ReturnType<typeof getStudioCopy>,
+  key: PrevisSpecKey,
+) {
+  if (key === "cameraMovement") return copy.cameraMove;
+  if (key === "performance") return copy.actingDirection;
+  return copy[key];
 }
 
 function ContinuityOverview({

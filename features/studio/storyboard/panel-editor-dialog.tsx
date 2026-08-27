@@ -19,6 +19,12 @@ import { Textarea } from "@/components/ui/textarea";
 
 import { getStudioCopy } from "../i18n";
 import type { StudioLocale, StudioStoryboardPanel } from "../types";
+import {
+  parseActingDirections,
+  parsePhotographyRules,
+  serializeActingDirections,
+  serializePhotographyRules,
+} from "./previs-view-model";
 
 export function PanelEditorDialog({
   locale,
@@ -54,6 +60,19 @@ export function PanelEditorDialog({
         durationSeconds: numberOrNull(draft.durationSeconds),
         subtitleText: nullable(draft.subtitleText),
         linkedToNextPanel: draft.linkedToNextPanel,
+        photographyRules: serializePhotographyRules({
+          camera: draft.cameraAngle,
+          cameraPosition: draft.cameraPosition,
+          focalLength: draft.focalLength,
+          lighting: draft.lighting,
+          composition: draft.composition,
+          depthOfField: draft.depthOfField,
+          colorTone: draft.colorTone,
+        }),
+        actingNotes: serializeActingDirections(
+          panel.characters,
+          draft.actingDirections,
+        ),
       });
       setOpen(false);
     } finally {
@@ -131,6 +150,81 @@ export function PanelEditorDialog({
               value={draft.durationSeconds}
             />
           </Field>
+          <fieldset className="grid gap-4 border-y py-4 sm:col-span-2 sm:grid-cols-2">
+            <legend className="px-1 text-sm font-semibold">
+              {copy.previsReadiness}
+            </legend>
+            <Field label={copy.cameraAngle}>
+              <Input
+                disabled={isSaving}
+                maxLength={500}
+                onChange={(event) =>
+                  setDraft({ ...draft, cameraAngle: event.target.value })
+                }
+                value={draft.cameraAngle}
+              />
+            </Field>
+            <Field label={copy.cameraPosition}>
+              <Input
+                disabled={isSaving}
+                maxLength={500}
+                onChange={(event) =>
+                  setDraft({ ...draft, cameraPosition: event.target.value })
+                }
+                value={draft.cameraPosition}
+              />
+            </Field>
+            <Field label={copy.focalLength}>
+              <Input
+                disabled={isSaving}
+                maxLength={160}
+                onChange={(event) =>
+                  setDraft({ ...draft, focalLength: event.target.value })
+                }
+                value={draft.focalLength}
+              />
+            </Field>
+            <Field label={copy.lighting}>
+              <Input
+                disabled={isSaving}
+                maxLength={500}
+                onChange={(event) =>
+                  setDraft({ ...draft, lighting: event.target.value })
+                }
+                value={draft.lighting}
+              />
+            </Field>
+            <Field label={copy.composition}>
+              <Input
+                disabled={isSaving}
+                maxLength={500}
+                onChange={(event) =>
+                  setDraft({ ...draft, composition: event.target.value })
+                }
+                value={draft.composition}
+              />
+            </Field>
+            <Field label={copy.depthOfField}>
+              <Input
+                disabled={isSaving}
+                maxLength={160}
+                onChange={(event) =>
+                  setDraft({ ...draft, depthOfField: event.target.value })
+                }
+                value={draft.depthOfField}
+              />
+            </Field>
+            <Field className="sm:col-span-2" label={copy.colorTone}>
+              <Input
+                disabled={isSaving}
+                maxLength={500}
+                onChange={(event) =>
+                  setDraft({ ...draft, colorTone: event.target.value })
+                }
+                value={draft.colorTone}
+              />
+            </Field>
+          </fieldset>
           <Field label={copy.cast}>
             <Input
               disabled={isSaving}
@@ -151,6 +245,43 @@ export function PanelEditorDialog({
               value={draft.props}
             />
           </Field>
+          {panel.characters.length ? (
+            <fieldset className="space-y-4 border-y py-4 sm:col-span-2">
+              <legend className="px-1 text-sm font-semibold">
+                {copy.actingDirection}
+              </legend>
+              {panel.characters.map((character) => (
+                <div className="grid gap-3 sm:grid-cols-3" key={character}>
+                  <p className="text-sm font-medium sm:col-span-3">
+                    {character}
+                  </p>
+                  {(["emotion", "action", "expression"] as const).map(
+                    (key) => (
+                      <Field key={key} label={copy[key]}>
+                        <Input
+                          disabled={isSaving}
+                          maxLength={500}
+                          onChange={(event) =>
+                            setDraft({
+                              ...draft,
+                              actingDirections: {
+                                ...draft.actingDirections,
+                                [character]: {
+                                  ...draft.actingDirections[character],
+                                  [key]: event.target.value,
+                                },
+                              },
+                            })
+                          }
+                          value={draft.actingDirections[character]?.[key] ?? ""}
+                        />
+                      </Field>
+                    ),
+                  )}
+                </div>
+              ))}
+            </fieldset>
+          ) : null}
           <Field className="sm:col-span-2" label={copy.imagePrompt}>
             <Textarea
               className="h-24 resize-y overflow-y-auto field-sizing-fixed"
@@ -236,6 +367,10 @@ function Field({
 }
 
 function toDraft(panel: StudioStoryboardPanel) {
+  const photography = parsePhotographyRules(panel.photographyRules);
+  const acting = new Map(
+    parseActingDirections(panel.actingNotes).map((item) => [item.name, item]),
+  );
   return {
     description: panel.description ?? "",
     shotType: panel.shotType ?? "",
@@ -248,6 +383,26 @@ function toDraft(panel: StudioStoryboardPanel) {
     durationSeconds: panel.durationSeconds?.toString() ?? "",
     subtitleText: panel.subtitleText ?? "",
     linkedToNextPanel: panel.linkedToNextPanel ?? false,
+    cameraAngle: photography.camera,
+    cameraPosition: photography.cameraPosition,
+    focalLength: photography.focalLength,
+    lighting: photography.lighting,
+    composition: photography.composition,
+    depthOfField: photography.depthOfField,
+    colorTone: photography.colorTone,
+    actingDirections: Object.fromEntries(
+      panel.characters.map((name) => {
+        const value = acting.get(name);
+        return [
+          name,
+          {
+            emotion: value?.emotion ?? "",
+            action: value?.action ?? "",
+            expression: value?.expression ?? "",
+          },
+        ];
+      }),
+    ),
   };
 }
 

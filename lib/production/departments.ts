@@ -49,7 +49,10 @@ export const PRODUCTION_DEPARTMENTS = [
     ],
     deliverableTypes: [
       "directors_treatment",
+      "blocking",
       "shot_list",
+      "cinematography_plan",
+      "performance_plan",
       "previs",
       "animatic",
     ],

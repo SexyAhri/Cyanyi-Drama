@@ -4,6 +4,10 @@ const productionCopy = {
   "zh-CN": {
     artDepartment: "美术部门",
     scriptDepartment: "剧本交付",
+    previsDepartment: "导演与预演",
+    shotDesign: "镜头设计",
+    shotList: "镜头表",
+    animatic: "动态分镜",
     visualBible: "视觉圣经",
     colorScript: "色彩脚本",
     specifications: "资产规格",
@@ -56,6 +60,10 @@ const productionCopy = {
   en: {
     artDepartment: "Art department",
     scriptDepartment: "Script deliverables",
+    previsDepartment: "Direction & previs",
+    shotDesign: "Shot design",
+    shotList: "Shot list",
+    animatic: "Animatic",
     visualBible: "Visual bible",
     colorScript: "Color script",
     specifications: "Asset specifications",
@@ -123,17 +131,22 @@ const labels = {
     environment_designer: ["场景设计", "Environment designer"],
     prop_costume_designer: ["道具服装设计", "Prop & costume designer"],
     color_script_artist: ["色彩脚本", "Color script artist"],
+    cinematographer: ["摄影指导", "Cinematographer"],
+    storyboard_director: ["分镜导演", "Storyboard director"],
+    acting_director: ["表演指导", "Acting director"],
   },
   departments: {
     development: ["项目开发", "Development"],
     script: ["剧本部门", "Script"],
     art: ["美术部门", "Art"],
+    previs: ["导演与预演", "Direction & previs"],
   },
   gates: {
     creative: ["创意", "Creative"],
     production: ["制片", "Production"],
     continuity: ["连续性", "Continuity"],
     art: ["美术", "Art"],
+    camera: ["摄影", "Camera"],
   },
   statuses: {
     draft: ["草稿", "Draft"],
@@ -158,6 +171,13 @@ const labels = {
     character_design: ["角色设计规格", "Character design"],
     environment_design: ["场景设计规格", "Environment design"],
     prop_costume_design: ["道具服装规格", "Prop & costume design"],
+    directors_treatment: ["导演阐述", "Director's treatment"],
+    blocking: ["场面调度", "Blocking"],
+    shot_list: ["镜头表", "Shot list"],
+    cinematography_plan: ["摄影方案", "Cinematography plan"],
+    performance_plan: ["表演方案", "Performance plan"],
+    previs: ["预演方案", "Previs"],
+    animatic: ["动态分镜", "Animatic"],
   },
 } as const;
 

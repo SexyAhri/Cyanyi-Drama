@@ -83,7 +83,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_CINEMATOGRAPHY]: {
     pathStem: "domain/story_cinematography",
-    version: 2,
+    version: 3,
     variables: ["panels_json", "locations_json"],
     agent: defineAgent({
       id: "cinematographer",

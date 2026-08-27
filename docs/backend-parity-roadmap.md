@@ -282,7 +282,7 @@ M8 将现有六个功能页面升级为电影制作部门协作系统。Agent �
 | M8.0 可靠性修复 | 结构化 Provider 错误归一化；切片超时降级；轮询与心跳请求收敛 | 524 不再阻断整条工作流；降级结果保持原文逐字覆盖并可追踪 | 已完成 |
 | M8.1 制作核心模型 | Production Bible、Department、Deliverable、Approval Gate、依赖与版本状态 | 上游版本变化能精确计算失效范围；未批准交付物不能进入锁定阶段 | 已完成 |
 | M8.2 剧本与美术部门 | 创作简报、剧本拆解、美术指导、视觉圣经、色彩脚本、角色/场景/道具/服装规格 | 资产页可查看部门负责人、交付物、版本、来源、审批状态和阻塞原因 | 已完成 |
-| M8.3 导演与 Previs | 导演阐述、Blocking、镜头表、摄影与表演规则、Animatic | 每个镜头具备构图、焦段、机位、运动、灯光、时长和连续性依据 | 待开发 |
+| M8.3 导演与 Previs | 导演阐述、Blocking、镜头表、摄影与表演规则、Animatic | 每个镜头具备构图、焦段、机位、运动、灯光、时长和连续性依据 | 已完成 |
 | M8.4 VFX 与镜头生产 | VFX Breakdown、镜头依赖图、Plate/Element/Comp 任务、镜头 QC | VFX Shot 可独立排队、重试、换版本和回滚；普通镜头不承担无关 VFX 请求 | 待开发 |
 | M8.5 声音与后期 | EDL、对白/ADR、SFX/Foley、音乐、混录、调色、Online 与字幕 | 时间线版本可恢复；响度、同步、色彩与字幕检查有机器可读报告 | 待开发 |
 | M8.6 制片与总体验收 | 成本/用量预算、排期、部门看板、批量审批、端到端恢复与电影级 QC | 一集从剧本锁定到母版交付可审计；失败、费用、版本和批准链完整 | 待开发 |
@@ -327,7 +327,8 @@ M8 将现有六个功能页面升级为电影制作部门协作系统。Agent �
 | `docs(workflow): plan professional film production pipeline / 规划专业影视制作工作流` | M8 部门 Agent、交付物、审批门、编排原则与开发批次 | 已提交 |
 | `feat(workflow): add production deliverables and approval gates / 增加制作交付物与审批门` | M8.1 Production Bible、Department、Deliverable、版本依赖与审批状态 | 已提交 |
 | `feat(studio): add art department and visual development / 增加美术部门与视觉开发` | M8.2 美术指导、视觉圣经、色彩脚本和资产规格工作区 | 已提交 |
-| `feat(studio): add previs and vfx production / 增加预演与视效制作` | M8.3-M8.4 导演 Previs、VFX Breakdown、镜头依赖与 QC | 待开发 |
+| `feat(studio): add direction and previs workflow / 增加导演与预演工作流` | M8.3 导演阐述、Blocking、镜头表、摄影与表演规则、Animatic | 已提交 |
+| `feat(studio): add vfx and shot production / 增加视效与镜头制作` | M8.4 VFX Breakdown、镜头依赖与 QC | 待开发 |
 | `feat(studio): add post-production and mastering / 增加后期制作与母版交付` | M8.5-M8.6 声音、剪辑、调色、Online、QC、预算和验收 | 待开发 |
 
 当前 Prisma Schema、迁移、资产、计费、媒体和 Workflow 改动相互依赖，因此现有功能使用一个可编译、可迁移的基线提交，不拆成无法独立运行的中间提交。后续每个里程碑按功能和测试独立提交。

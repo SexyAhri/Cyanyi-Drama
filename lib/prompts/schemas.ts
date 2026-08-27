@@ -135,6 +135,8 @@ export const cinematographySchema = z
         .object({
           panelIndex: z.number().int().nonnegative(),
           camera: text,
+          cameraPosition: text,
+          focalLength: text,
           lighting: text,
           composition: text,
           depthOfField: text,

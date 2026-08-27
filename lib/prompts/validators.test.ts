@@ -179,6 +179,8 @@ describe("domain semantic validators", () => {
             {
               panelIndex: 0,
               camera: "正面",
+              cameraPosition: "角色正前方两米",
+              focalLength: "50mm",
               lighting: "侧光",
               composition: "中景",
               depthOfField: "浅景深",

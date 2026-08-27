@@ -201,6 +201,8 @@ function successfulPhaseResponse(input: PhaseRequest) {
           {
             panelIndex: 0,
             camera: "平视中景",
+            cameraPosition: "角色正前方两米",
+            focalLength: "50mm",
             lighting: "窗侧自然光",
             composition: "甲位于画面左侧",
             depthOfField: "中等景深",

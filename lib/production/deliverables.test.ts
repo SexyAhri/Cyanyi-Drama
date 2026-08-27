@@ -18,6 +18,10 @@ describe("production departments", () => {
       departmentOwnsDeliverableType("development", "production_bible"),
     ).toBe(true);
     expect(departmentOwnsDeliverableType("art", "visual_bible")).toBe(true);
+    expect(departmentOwnsDeliverableType("previs", "blocking")).toBe(true);
+    expect(
+      departmentOwnsDeliverableType("previs", "cinematography_plan"),
+    ).toBe(true);
     expect(departmentOwnsDeliverableType("art", "vfx_breakdown")).toBe(false);
     expect(departmentOwnsDeliverableType("vfx", "vfx_breakdown")).toBe(true);
   });
