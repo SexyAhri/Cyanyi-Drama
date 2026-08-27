@@ -25,8 +25,27 @@ export async function GET(request: Request, context: RouteContext) {
     Response.json({
       project: { ...project, episodes },
       workflows,
-      tasks: tasks.map((task) => ({ ...task, request: {} })),
+      tasks: tasks.map((task) => ({
+        ...task,
+        request:
+          task.targetType === "vfx_element" || task.targetType === "vfx_composite"
+            ? publicVfxRequest(task.request)
+            : {},
+      })),
     }),
     sessionId,
+  );
+}
+
+function publicVfxRequest(request: Record<string, unknown>) {
+  return Object.fromEntries(
+    ["vfxStage", "deliverableId", "deliverableVersion", "panelId"].flatMap(
+      (key) => {
+        const value = request[key];
+        return typeof value === "string" || typeof value === "number"
+          ? [[key, value]]
+          : [];
+      },
+    ),
   );
 }

@@ -285,7 +285,13 @@ export async function transitionStudioDeliverable(
   projectId: string,
   deliverableId: string,
   input: {
-    action: "submit" | "approve" | "reject" | "lock" | "supersede";
+    action:
+      | "submit"
+      | "approve"
+      | "reject"
+      | "lock"
+      | "supersede"
+      | "restore";
     gateKey?: string;
     note?: string;
   },
@@ -610,6 +616,31 @@ export async function controlStudioMediaTask(
     `/api/media/tasks/${encodeURIComponent(taskId)}`,
     {
       body: JSON.stringify({ action }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
+export async function generateStudioVfxTask(
+  projectId: string,
+  episodeId: string,
+  deliverableId: string,
+  input: {
+    stage: "element" | "composite";
+    kind: "image" | "video";
+    channelId: string;
+    model: string;
+    prompt: string;
+    ratio?: string;
+    resolution?: string;
+    duration?: string;
+  },
+) {
+  return request<{ task: MediaTask }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/vfx/${encodeURIComponent(deliverableId)}/generate`,
+    {
+      body: JSON.stringify(input),
       headers: { "Content-Type": "application/json" },
       method: "POST",
     },

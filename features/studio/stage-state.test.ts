@@ -11,6 +11,17 @@ import {
 import type { WorkspaceSnapshot } from "./types";
 
 describe("studio stage state", () => {
+  it("includes VFX element and composite tasks in shot production", () => {
+    const tasks = [
+      mediaTask("running", "vfx_element"),
+      { ...mediaTask("failed", "vfx_composite"), kind: "video" as const },
+      { ...mediaTask("succeeded", "voice_line"), kind: "audio" as const },
+    ];
+    expect(getTasksForStage(tasks, "shots").map((task) => task.targetType)).toEqual([
+      "vfx_element",
+      "vfx_composite",
+    ]);
+  });
   it("blocks downstream stages until an episode has input", () => {
     const stages = getStudioStageStates(snapshot(), "episode-1");
     expect(stages.map((stage) => stage.status)).toEqual([

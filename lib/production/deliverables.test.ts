@@ -46,6 +46,8 @@ describe("production deliverable lifecycle", () => {
   it("requires a new version for stale deliverables", () => {
     expect(canTransitionProductionDeliverable("stale", "submit")).toBe(false);
     expect(canTransitionProductionDeliverable("superseded", "submit")).toBe(false);
+    expect(canTransitionProductionDeliverable("superseded", "restore")).toBe(true);
+    expect(canTransitionProductionDeliverable("locked", "restore")).toBe(false);
   });
 
   it("hashes dependency versions independent of input order", () => {

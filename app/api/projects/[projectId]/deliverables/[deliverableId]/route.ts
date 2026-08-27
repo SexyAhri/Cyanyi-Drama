@@ -15,6 +15,7 @@ const ACTIONS = new Set<ProductionDeliverableAction>([
   "reject",
   "lock",
   "supersede",
+  "restore",
 ]);
 
 export async function PATCH(request: Request, context: Context) {

@@ -30,7 +30,8 @@ export type ProductionDeliverableAction =
   | "approve"
   | "reject"
   | "lock"
-  | "supersede";
+  | "supersede"
+  | "restore";
 
 export class ProductionDeliverableError extends Error {
   constructor(
@@ -196,6 +197,72 @@ export async function transitionProductionDeliverable(
     });
     if (!current) throw new ProductionDeliverableError("交付物不存在", 404);
     const now = new Date();
+    if (input.action === "restore") {
+      assertStatus(current.status, ["superseded"], input.action);
+      const latest = await tx.productionDeliverable.findFirst({
+        where: {
+          projectId,
+          userId,
+          scopeType: current.scopeType,
+          scopeId: current.scopeId,
+          deliverableType: current.deliverableType,
+        },
+        orderBy: { version: "desc" },
+        include: deliverableInclude,
+      });
+      if (!latest || latest.id === current.id)
+        throw new ProductionDeliverableError(
+          "PRODUCTION_DELIVERABLE_RESTORE_INVALID",
+          409,
+        );
+      if (latest.status !== "superseded") {
+        await tx.productionDeliverable.update({
+          where: { id: latest.id },
+          data: { status: "superseded", supersededAt: now },
+        });
+        await markDependentDeliverablesStale(tx, latest.id);
+      }
+      const restored = await tx.productionDeliverable.create({
+        data: {
+          id: randomUUID(),
+          userId,
+          projectId,
+          episodeId: current.episodeId,
+          scopeType: current.scopeType,
+          scopeId: current.scopeId,
+          department: current.department,
+          deliverableType: current.deliverableType,
+          title: current.title,
+          status: "draft",
+          version: latest.version + 1,
+          payload: toJson(current.payload),
+          sourceRefs:
+            current.sourceRefs === null ? undefined : toJson(current.sourceRefs),
+          promptTrace:
+            current.promptTrace === null
+              ? undefined
+              : toJson(current.promptTrace),
+          cost: current.cost,
+          dependencyHash: current.dependencyHash,
+          approvalGates: {
+            create: current.approvalGates.map((gate) => ({
+              id: randomUUID(),
+              gateKey: gate.gateKey,
+              status: "pending",
+            })),
+          },
+          dependencies: {
+            create: current.dependencies.map((dependency) => ({
+              id: randomUUID(),
+              dependsOnId: dependency.dependsOn.id,
+              requiredVersion: dependency.requiredVersion,
+            })),
+          },
+        },
+        include: deliverableInclude,
+      });
+      return toDeliverable(restored);
+    }
     if (input.action === "submit") {
       assertStatus(current.status, ["draft"], input.action);
       if (
@@ -306,6 +373,7 @@ export function canTransitionProductionDeliverable(
   status: string,
   action: ProductionDeliverableAction,
 ) {
+  if (action === "restore") return status === "superseded";
   if (action === "submit") return status === "draft";
   if (action === "approve" || action === "reject") return status === "review";
   if (action === "lock") return status === "approved";

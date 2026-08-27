@@ -19,8 +19,13 @@ export async function createProductionTask(input: {
   userId: string;
   projectId: string;
   episodeId: string;
-  kind: "audio" | "lipsync" | "video";
-  targetType: "episode_audio" | "lip_sync" | "editor_render";
+  kind: "audio" | "image" | "lipsync" | "video";
+  targetType:
+    | "episode_audio"
+    | "lip_sync"
+    | "editor_render"
+    | "vfx_element"
+    | "vfx_composite";
   targetId: string;
   channelId: string;
   model: string;
@@ -42,9 +47,11 @@ export async function createProductionTask(input: {
   const capability =
     input.targetType === "lip_sync"
       ? '"lipsync"'
-      : input.kind === "video"
-        ? '"video"'
-        : '"audio"';
+      : input.kind === "image"
+        ? '"image"'
+        : input.kind === "video"
+          ? '"video"'
+          : '"audio"';
   const selectedModel = await prisma.providerModel.count({
     where: {
       channelId: input.channelId,

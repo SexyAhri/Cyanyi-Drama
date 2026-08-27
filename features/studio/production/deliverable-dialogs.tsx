@@ -436,9 +436,10 @@ export function DeliverableConfirmDialog({
   variant?: "default" | "outline";
 }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [open, setOpen] = useState(false);
   const copy = getProductionCopy(locale);
   return (
-    <AlertDialog>
+    <AlertDialog onOpenChange={setOpen} open={open}>
       <AlertDialogTrigger
         render={<Button disabled={disabled} size="sm" variant={variant} />}
       >
@@ -460,6 +461,7 @@ export function DeliverableConfirmDialog({
               setIsSubmitting(true);
               try {
                 await onConfirm();
+                setOpen(false);
               } finally {
                 setIsSubmitting(false);
               }

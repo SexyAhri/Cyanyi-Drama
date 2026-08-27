@@ -47,6 +47,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   projectFindFirst.mockResolvedValue({ id: "project-1" });
   deliverableFindMany.mockResolvedValue([]);
+  dependencyFindMany.mockResolvedValue([]);
   deliverableUpdate.mockResolvedValue({});
   deliverableUpdateMany.mockResolvedValue({ count: 1 });
 });
@@ -128,5 +129,66 @@ describe("production deliverable persistence", () => {
       status: 409,
     });
     expect(gateUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("restores historical content as a new audited draft version", async () => {
+    const cost = { toFixed: () => "0.000000" };
+    deliverableFindFirst
+      .mockResolvedValueOnce({
+        id: "vfx-v1",
+        userId: "user-1",
+        projectId: "project-1",
+        episodeId: "episode-1",
+        scopeType: "storyboard_panel",
+        scopeId: "panel-1",
+        department: "vfx",
+        deliverableType: "vfx_shot_package",
+        title: "VFX 001",
+        status: "superseded",
+        version: 1,
+        payload: { summary: "Historical treatment" },
+        sourceRefs: [],
+        promptTrace: null,
+        cost,
+        dependencyHash: "old-hash",
+        approvalGates: [{ gateKey: "vfx" }, { gateKey: "technical" }],
+        dependencies: [],
+      })
+      .mockResolvedValueOnce({
+        id: "vfx-v3",
+        status: "approved",
+        version: 3,
+      });
+    deliverableCreate.mockImplementation(async ({ data }) => ({
+      ...data,
+      sourceRefs: data.sourceRefs ?? null,
+      promptTrace: data.promptTrace ?? null,
+      approvedByUserId: null,
+      submittedAt: null,
+      approvedAt: null,
+      lockedAt: null,
+      supersededAt: null,
+      approvalGates: [],
+      dependencies: [],
+      createdAt: new Date("2026-08-27T00:00:00.000Z"),
+      updatedAt: new Date("2026-08-27T00:00:00.000Z"),
+    }));
+
+    const restored = await transitionProductionDeliverable(
+      "user-1",
+      "project-1",
+      "vfx-v1",
+      { action: "restore" },
+    );
+
+    expect(deliverableUpdate).toHaveBeenCalledWith({
+      where: { id: "vfx-v3" },
+      data: expect.objectContaining({ status: "superseded" }),
+    });
+    expect(restored).toMatchObject({
+      status: "draft",
+      version: 4,
+      payload: { summary: "Historical treatment" },
+    });
   });
 });

@@ -3,6 +3,7 @@
 import {
   Ban,
   Clapperboard,
+  GitBranch,
   ImagePlus,
   Images,
   LoaderCircle,
@@ -24,6 +25,7 @@ import { cn } from "@/lib/utils";
 import {
   controlStudioMediaTask,
   loadStudioProjectAssets,
+  loadStudioDeliverables,
   loadStudioStoryboard,
   selectStudioPanelMedia,
   uploadStudioPanelMedia,
@@ -36,6 +38,7 @@ import {
 } from "../stage-state";
 import type {
   ProjectMediaAsset,
+  ProductionDeliverableCatalog,
   StudioLocale,
   StudioModelOption,
   StudioSelectionContext,
@@ -45,6 +48,7 @@ import type {
 } from "../types";
 import { BatchGenerationDialog, PanelGenerationDialog } from "./generation-dialogs";
 import { ShotCandidateGrid } from "./shot-candidates";
+import { VfxWorkspace } from "./vfx-workspace";
 import {
   buildShotMediaCandidates,
   latestPanelTasks,
@@ -73,9 +77,11 @@ export function ShotsWorkspace({
   const [storyboardData, setStoryboardData] =
     useState<StudioStoryboardData | null>(null);
   const [assets, setAssets] = useState<ProjectMediaAsset[]>([]);
+  const [catalog, setCatalog] = useState<ProductionDeliverableCatalog | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [kind, setKind] = useState<ShotMediaKind>("image");
+  const [tab, setTab] = useState<ShotMediaKind | "vfx">("image");
   const [selectedPanelId, setSelectedPanelId] = useState("");
   const [checkedPanelIds, setCheckedPanelIds] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -90,13 +96,15 @@ export function ShotsWorkspace({
     async (signal?: AbortSignal) => {
       setError(null);
       try {
-        const [nextStoryboard, nextAssets] = await Promise.all([
+        const [nextStoryboard, nextAssets, nextCatalog] = await Promise.all([
           loadStudioStoryboard(projectId, episode.id, signal),
           loadStudioProjectAssets(projectId, signal),
+          loadStudioDeliverables(projectId, signal),
         ]);
         if (!signal?.aborted) {
           setStoryboardData(nextStoryboard);
           setAssets(nextAssets);
+          setCatalog(nextCatalog);
         }
         return nextStoryboard;
       } catch (requestError) {
@@ -130,6 +138,7 @@ export function ShotsWorkspace({
     panels.find((panel) => panel.id === selectedPanelId) ?? panels[0];
 
   useEffect(() => {
+    if (tab === "vfx") return;
     onContextChange(
       selectedPanel
         ? {
@@ -143,7 +152,7 @@ export function ShotsWorkspace({
           }
         : undefined,
     );
-  }, [copy.panel, kind, onContextChange, selectedPanel]);
+  }, [copy.panel, kind, onContextChange, selectedPanel, tab]);
 
   useEffect(() => {
     if (!panels.length) {
@@ -307,7 +316,7 @@ export function ShotsWorkspace({
           </p>
           <h1 className="mt-1 text-xl font-semibold">{copy.shotWorkspace}</h1>
         </div>
-        {checkedPanels.length ? (
+        {tab !== "vfx" && checkedPanels.length ? (
           <div className="flex flex-wrap items-center gap-2">
             {activeTasks.length ? (
               <Button
@@ -377,8 +386,11 @@ export function ShotsWorkspace({
       ) : (
         <Tabs
           className="min-w-0 py-5"
-          onValueChange={(value) => setKind(value as ShotMediaKind)}
-          value={kind}
+          onValueChange={(value) => {
+            setTab(value as ShotMediaKind | "vfx");
+            if (value === "image" || value === "video") setKind(value);
+          }}
+          value={tab}
         >
           <TabsList variant="line">
             <TabsTrigger value="image">
@@ -388,6 +400,10 @@ export function ShotsWorkspace({
             <TabsTrigger value="video">
               <Video />
               {copy.videos}
+            </TabsTrigger>
+            <TabsTrigger value="vfx">
+              <GitBranch />
+              VFX
             </TabsTrigger>
           </TabsList>
 
@@ -514,6 +530,23 @@ export function ShotsWorkspace({
               </div>
             </TabsContent>
           ))}
+          <TabsContent className="mt-4" value="vfx">
+            {tab === "vfx" && catalog ? (
+              <VfxWorkspace
+                assets={assets}
+                catalog={catalog}
+                episodeId={episode.id}
+                imageModels={imageModels}
+                locale={locale}
+                onContextChange={onContextChange}
+                onRefresh={refreshAll}
+                panels={panels}
+                projectId={projectId}
+                snapshot={snapshot}
+                videoModels={videoModels}
+              />
+            ) : null}
+          </TabsContent>
         </Tabs>
       )}
     </div>

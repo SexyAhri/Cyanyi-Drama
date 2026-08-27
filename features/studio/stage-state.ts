@@ -71,11 +71,7 @@ export function getStudioStageStates(
     Boolean(episode),
   );
 
-  const shots = tasks.filter(
-    (task) =>
-      task.targetType === "storyboard_panel" &&
-      (task.kind === "image" || task.kind === "video"),
-  );
+  const shots = tasks.filter(isShotTask);
   const audio = tasks.filter((task) =>
     ["voice_line", "episode_audio", "lip_sync"].includes(task.targetType ?? ""),
   );
@@ -121,11 +117,7 @@ export function getTasksForStage(
     );
   }
   if (stageId === "shots") {
-    return tasks.filter(
-      (task) =>
-        task.targetType === "storyboard_panel" &&
-        (task.kind === "image" || task.kind === "video"),
-    );
+    return tasks.filter(isShotTask);
   }
   if (stageId === "audio") {
     return tasks.filter((task) =>
@@ -138,6 +130,15 @@ export function getTasksForStage(
     return tasks.filter((task) => task.targetType === "editor_render");
   }
   return [];
+}
+
+function isShotTask(task: WorkspaceSnapshot["tasks"][number]) {
+  return (
+    (["vfx_element", "vfx_composite"].includes(task.targetType ?? "") &&
+      (task.kind === "image" || task.kind === "video")) ||
+    (task.targetType === "storyboard_panel" &&
+      (task.kind === "image" || task.kind === "video"))
+  );
 }
 
 export function getWorkflowForStage(
