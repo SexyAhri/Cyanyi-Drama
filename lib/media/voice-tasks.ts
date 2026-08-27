@@ -129,5 +129,5 @@ export function resolveVoiceTaskVoice(input: {
       input.preset.projectId === input.projectId)
       ? input.preset.providerVoiceId?.trim()
       : undefined;
-  return input.explicitVoice?.trim() || presetVoice || input.lineSpeaker;
+  return input.explicitVoice?.trim() || presetVoice || undefined;
 }

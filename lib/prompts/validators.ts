@@ -226,6 +226,7 @@ export function validateStoryboardPlanning(
 ) {
   const issues = validateSequentialPanelIndices(data.panels, "panels");
   data.panels.forEach((panel, index) => {
+    validateMotionTimeline(panel, `panels.${index}`, issues);
     validateEvidence(
       panel.sourceEvidence,
       input.sourceText,
@@ -310,6 +311,43 @@ export function validateStoryboardRefinement(
   for (const base of basePanels) {
     const refined = refinedByIndex.get(base.panelIndex);
     if (!refined) continue;
+    validateMotionTimeline(
+      refined,
+      `panels.panel_${base.panelIndex}`,
+      issues,
+    );
+    if (refined.shotType !== base.shotType)
+      issues.push(
+        issue(
+          `panels.panel_${base.panelIndex}.shotType`,
+          "SHOT_TYPE_CHANGED",
+          "Refinement must preserve the planned shot type",
+        ),
+      );
+    if (refined.cameraMove !== base.cameraMove)
+      issues.push(
+        issue(
+          `panels.panel_${base.panelIndex}.cameraMove`,
+          "CAMERA_MOVE_CHANGED",
+          "Refinement must preserve the planned camera move",
+        ),
+      );
+    if (refined.durationSeconds !== base.durationSeconds)
+      issues.push(
+        issue(
+          `panels.panel_${base.panelIndex}.durationSeconds`,
+          "SHOT_DURATION_CHANGED",
+          "Refinement must preserve the planned shot duration",
+        ),
+      );
+    if (!sameTimelineBoundaries(refined.motionTimeline, base.motionTimeline))
+      issues.push(
+        issue(
+          `panels.panel_${base.panelIndex}.motionTimeline`,
+          "MOTION_TIMELINE_BOUNDARIES_CHANGED",
+          "Refinement may enrich each beat but must preserve every planned second boundary",
+        ),
+      );
     validateExactNames(
       refined.characters,
       base.characters,
@@ -338,6 +376,54 @@ export function validateStoryboardRefinement(
     );
   }
   return issues;
+}
+
+function validateMotionTimeline(
+  panel: StoryboardPlanning["panels"][number],
+  path: string,
+  issues: StructuredValidationIssue[],
+) {
+  if (panel.motionTimeline.length !== panel.durationSeconds)
+    issues.push(
+      issue(
+        `${path}.motionTimeline`,
+        "MOTION_TIMELINE_SECOND_COUNT_MISMATCH",
+        "motionTimeline must contain exactly one beat for every second of the shot",
+      ),
+    );
+  panel.motionTimeline.forEach((beat, beatIndex) => {
+    if (beat.startSecond !== beatIndex || beat.endSecond !== beatIndex + 1)
+      issues.push(
+        issue(
+          `${path}.motionTimeline.${beatIndex}`,
+          "MOTION_TIMELINE_NOT_CONTIGUOUS",
+          `Expected a continuous ${beatIndex}-${beatIndex + 1}s beat`,
+        ),
+      );
+  });
+  const finalBeat = panel.motionTimeline.at(-1);
+  if (finalBeat?.endSecond !== panel.durationSeconds)
+    issues.push(
+      issue(
+        `${path}.motionTimeline`,
+        "MOTION_TIMELINE_DURATION_MISMATCH",
+        "The final motion beat must end at durationSeconds",
+      ),
+    );
+}
+
+function sameTimelineBoundaries(
+  left: StoryboardPlanning["panels"][number]["motionTimeline"],
+  right: StoryboardPlanning["panels"][number]["motionTimeline"],
+) {
+  return (
+    left.length === right.length &&
+    left.every(
+      (beat, index) =>
+        beat.startSecond === right[index]?.startSecond &&
+        beat.endSecond === right[index]?.endSecond,
+    )
+  );
 }
 
 export function validateVoiceAnalysis(

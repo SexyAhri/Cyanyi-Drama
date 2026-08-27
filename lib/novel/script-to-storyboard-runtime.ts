@@ -300,7 +300,8 @@ export async function buildEpisodeStoryboard(
       characters: panel.characters,
       props: panel.props,
       imagePrompt: panel.imagePrompt,
-      videoPrompt: panel.videoPrompt,
+      videoPrompt: formatMotionTimelinePrompt(panel),
+      durationSeconds: panel.durationSeconds,
       phase: "continuity",
       status: continuity.passed ? "ready" : "continuity_warning",
       actingNotes: {
@@ -645,41 +646,73 @@ export function buildDeterministicStoryboardPhases(
     "clip" | "screenplay" | "sourceText" | "canonical" | "props"
   >,
 ) {
-  const panels: StoryboardPlanning["panels"] = context.screenplay.scenes.map(
-    (scene, panelIndex) => {
-      const sceneSource = JSON.stringify(scene);
+  const panelDrafts = context.screenplay.scenes.flatMap((scene) => {
+    const contentSegments = scene.content.flatMap((item) => {
+      const value = item.type === "dialogue" ? item.lines : item.text;
+      return splitFallbackShotText(value).map((text) => ({
+        characters:
+          item.type === "dialogue"
+            ? [item.character]
+            : scene.characters.filter((name) => text.includes(name)),
+        kind: item.type,
+        text,
+      }));
+    });
+    const segments = contentSegments.length
+      ? contentSegments
+      : splitFallbackShotText(scene.description).map((text) => ({
+          characters: scene.characters.filter((name) => text.includes(name)),
+          kind: "action" as const,
+          text,
+        }));
+    return (segments.length
+      ? segments
+      : [
+          {
+            characters: scene.characters,
+            kind: "action" as const,
+            text: `${scene.heading.location}中的剧情画面`,
+          },
+        ]
+    ).map((segment) => ({ scene, segment }));
+  });
+  const panels: StoryboardPlanning["panels"] = panelDrafts.map(
+    ({ scene, segment }, panelIndex) => {
+      const characters = segment.characters.length
+        ? segment.characters
+        : scene.characters;
       const props = context.props
         .map((prop) => prop.name)
         .filter(
           (name) =>
-            context.canonical.props.includes(name) && sceneSource.includes(name),
+            context.canonical.props.includes(name) && segment.text.includes(name),
         );
-      const content = scene.content
-        .map((item) => (item.type === "dialogue" ? item.lines : item.text))
-        .filter(Boolean)
-        .join(" ");
       const evidence = [
-        ...scene.content.map((item) =>
-          item.type === "dialogue" ? item.lines : item.text,
-        ),
-        scene.description,
+        segment.text,
         scene.heading.location,
-        ...scene.characters,
+        ...characters,
         context.screenplay.clipId,
       ].find((value) => Boolean(value) && context.sourceText.includes(value));
-      const description = compactShotDescription(
-        scene.description.trim() ||
-          content.trim() ||
-          `${scene.heading.location}中的剧情画面`,
-      );
-      const characterLabel = scene.characters.join("、") || "环境";
+      const description = compactShotDescription(segment.text);
+      const characterLabel = characters.join("、") || "环境";
+      const durationSeconds = fallbackShotDuration(description);
+      const cameraMove =
+        segment.kind === "dialogue" || segment.kind === "voiceover"
+          ? "从稳定中景缓慢推近，保持人物视线方向连续"
+          : "稳定跟随主体动作，沿动作方向轻缓移动";
       return {
         panelIndex,
-        shotType: scene.characters.length > 1 ? "全景" : "中景",
-        cameraMove: null,
+        shotType: characters.length > 1 ? "全景" : "中景",
+        cameraMove,
+        durationSeconds,
+        motionTimeline: buildFallbackMotionTimeline(
+          description,
+          durationSeconds,
+          cameraMove,
+        ),
         description,
         locationName: scene.heading.location,
-        characters: [...scene.characters],
+        characters: [...characters],
         props,
         imagePrompt: `${scene.heading.intExt} ${scene.heading.location}，${scene.heading.time}，${characterLabel}，${description}，电影级构图，统一角色设定与光影`,
         videoPrompt: `镜头保持场景与角色连续性，表现：${description}`,
@@ -718,11 +751,79 @@ export function buildDeterministicStoryboardPhases(
   return { planning, cinematography, acting, refinement, continuity };
 }
 
+function formatMotionTimelinePrompt(
+  panel: StoryboardRefinement["panels"][number],
+) {
+  const beats = panel.motionTimeline.map(
+    (beat) =>
+      `${beat.startSecond}-${beat.endSecond}s | 动作：${beat.action} | 镜头：${beat.camera}`,
+  );
+  return [
+    `总时长：${panel.durationSeconds}s`,
+    `整体运镜：${panel.cameraMove}`,
+    `连续动作：${panel.videoPrompt}`,
+    "逐秒节拍：",
+    ...beats,
+    "连续性：保持角色身份、服装、姿态、视线、运动方向、速度、场景空间和镜头轨迹前后连贯，无跳帧、瞬移或动作重置。",
+  ].join("\n");
+}
+
+function buildFallbackMotionTimeline(
+  description: string,
+  durationSeconds: number,
+  cameraMove: string,
+) {
+  return Array.from({ length: durationSeconds }, (_, second) => ({
+    startSecond: second,
+    endSecond: second + 1,
+    action:
+      second === 0
+        ? `建立主体、环境和初始姿态，开始表现：${description}`
+        : second === 1
+          ? `主体从上一秒姿态自然启动动作：${description}`
+        : second === durationSeconds - 1
+          ? `完成并收束动作：${description}，保持姿态与视线连续`
+          : `动作按上一秒的方向和速度连续推进：${description}`,
+    camera:
+      second === durationSeconds - 1
+        ? "保持构图连续并自然停稳"
+        : `${cameraMove}，承接上一秒机位与运动速度`,
+  }));
+}
+
+function fallbackShotDuration(description: string) {
+  return Math.max(3, Math.min(15, Math.ceil(description.length / 12)));
+}
+
+function splitFallbackShotText(value: string, maxLength = 96) {
+  const sentences = value
+    .split(/(?<=[。！？!?；;\n])/u)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const chunks: string[] = [];
+  let current = "";
+  for (const sentence of sentences) {
+    if (sentence.length > maxLength) {
+      if (current) chunks.push(current);
+      current = "";
+      for (let start = 0; start < sentence.length; start += maxLength)
+        chunks.push(sentence.slice(start, start + maxLength));
+      continue;
+    }
+    if (current && current.length + sentence.length > maxLength) {
+      chunks.push(current);
+      current = sentence;
+    } else current += sentence;
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
 function storyboardFallbackInputHash(
   context: Pick<ClipContext, "sourceText" | "canonical">,
 ) {
   return hashJson({
-    fallbackVersion: 2,
+    fallbackVersion: 3,
     sourceText: context.sourceText,
     canonical: context.canonical,
   });

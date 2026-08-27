@@ -108,6 +108,13 @@ export function AssetsWorkspace({
         : [],
     [catalog, projectId],
   );
+  const visualAssets = useMemo(
+    () =>
+      catalog?.assets.filter(
+        (asset) => asset.kind === "image" && Boolean(asset.url),
+      ) ?? [],
+    [catalog],
+  );
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -260,8 +267,8 @@ export function AssetsWorkspace({
   );
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-7 sm:py-7">
-      <header className="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-end sm:justify-between">
+    <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-7 sm:py-7 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:overflow-hidden">
+      <header className="flex shrink-0 flex-col gap-4 border-b pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-xs text-muted-foreground">
             {snapshot.project.name}
@@ -341,11 +348,14 @@ export function AssetsWorkspace({
       </header>
 
       <Tabs
-        className="min-w-0 py-5"
+        className="min-w-0 py-5 xl:min-h-0 xl:flex-1 xl:overflow-hidden"
         onValueChange={(value) => setTab(value as AssetTab)}
         value={tab}
       >
-        <TabsList className="max-w-full overflow-x-auto" variant="line">
+        <TabsList
+          className="max-w-full shrink-0 overflow-x-auto"
+          variant="line"
+        >
           <AssetTabTrigger
             label={productionCopy.artDepartment}
             value="department"
@@ -384,7 +394,7 @@ export function AssetsWorkspace({
           />
         </TabsList>
 
-        <TabsContent className="mt-4" value="department">
+        <TabsContent className="mt-4 xl:min-h-0 xl:overflow-hidden" value="department">
           {tab === "department" ? (
             <DepartmentDeliverablesWorkspace
               defaultType="visual_bible"
@@ -393,12 +403,12 @@ export function AssetsWorkspace({
               locale={locale}
               onContextChange={onContextChange}
               projectId={projectId}
-              sourceAssets={sourceAssets}
+              sourceAssets={visualAssets}
               title={productionCopy.artDepartment}
             />
           ) : null}
         </TabsContent>
-        <TabsContent className="mt-4" value="visual_bible">
+        <TabsContent className="mt-4 xl:min-h-0 xl:overflow-hidden" value="visual_bible">
           {tab === "visual_bible" ? (
             <DepartmentDeliverablesWorkspace
               defaultType="visual_bible"
@@ -406,13 +416,13 @@ export function AssetsWorkspace({
               locale={locale}
               onContextChange={onContextChange}
               projectId={projectId}
-              sourceAssets={sourceAssets}
+              sourceAssets={visualAssets}
               title={productionCopy.visualBible}
               types={["visual_bible"]}
             />
           ) : null}
         </TabsContent>
-        <TabsContent className="mt-4" value="color_script">
+        <TabsContent className="mt-4 xl:min-h-0 xl:overflow-hidden" value="color_script">
           {tab === "color_script" ? (
             <DepartmentDeliverablesWorkspace
               defaultType="color_script"
@@ -421,13 +431,13 @@ export function AssetsWorkspace({
               locale={locale}
               onContextChange={onContextChange}
               projectId={projectId}
-              sourceAssets={sourceAssets}
+              sourceAssets={visualAssets}
               title={productionCopy.colorScript}
               types={["color_script"]}
             />
           ) : null}
         </TabsContent>
-        <TabsContent className="mt-4" value="specifications">
+        <TabsContent className="mt-4 xl:min-h-0 xl:overflow-hidden" value="specifications">
           {tab === "specifications" ? (
             <DepartmentDeliverablesWorkspace
               defaultType="character_design"
@@ -436,7 +446,7 @@ export function AssetsWorkspace({
               locale={locale}
               onContextChange={onContextChange}
               projectId={projectId}
-              sourceAssets={sourceAssets}
+              sourceAssets={visualAssets}
               title={productionCopy.specifications}
               types={[
                 "character_design",
@@ -448,7 +458,11 @@ export function AssetsWorkspace({
         </TabsContent>
 
         {(["character", "location", "prop"] as const).map((kind) => (
-          <TabsContent className="mt-4" key={kind} value={kind}>
+          <TabsContent
+            className="mt-4 xl:min-h-0 xl:overflow-hidden"
+            key={kind}
+            value={kind}
+          >
             <DomainAssetView
               checkedEntityIds={checkedEntityIds}
               entities={entities}
@@ -472,7 +486,7 @@ export function AssetsWorkspace({
           </TabsContent>
         ))}
 
-        <TabsContent className="mt-4" value="source">
+        <TabsContent className="mt-4 xl:min-h-0 xl:overflow-y-auto" value="source">
           <SourceAssetGrid
             assets={sourceAssets}
             locale={locale}
@@ -555,8 +569,8 @@ function DomainAssetView({
   const allChecked =
     entities.length > 0 && checkedEntityIds.length === entities.length;
   return (
-    <div className="grid min-h-[34rem] border-y lg:grid-cols-[17rem_minmax(0,1fr)]">
-      <aside className="border-b lg:border-r lg:border-b-0">
+    <div className="grid min-h-[34rem] border-y lg:grid-cols-[17rem_minmax(0,1fr)] xl:h-full xl:min-h-0 xl:overflow-hidden">
+      <aside className="border-b lg:border-r lg:border-b-0 xl:flex xl:min-h-0 xl:flex-col">
         <label className="flex h-10 items-center gap-2 border-b px-3 text-xs text-muted-foreground">
           <Checkbox
             aria-label={copy.selectedCount}
@@ -569,7 +583,7 @@ function DomainAssetView({
           />
           {copy.selectedCount} · {checkedEntityIds.length}
         </label>
-        <div className="max-h-72 overflow-y-auto p-1.5 lg:max-h-[calc(100dvh-18rem)]">
+        <div className="max-h-72 overflow-y-auto p-1.5 xl:max-h-none xl:flex-1">
           {entities.map((entity) => {
             const task = latestEntityTask(entity, tasks);
             return (
@@ -617,7 +631,7 @@ function DomainAssetView({
       </aside>
 
       {selectedEntity ? (
-        <section className="min-w-0 p-4 sm:p-5">
+        <section className="min-w-0 p-4 sm:p-5 xl:min-h-0 xl:overflow-y-auto">
           <header className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <h2 className="truncate text-base font-semibold">

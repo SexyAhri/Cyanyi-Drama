@@ -67,12 +67,17 @@ export function DeliverableCreateDialog({
   types?: string[];
 }) {
   const copy = getProductionCopy(locale);
+  const initialTemplate = getDeliverableTemplate(locale, defaultType);
   const [open, setOpen] = useState(false);
   const [deliverableType, setDeliverableType] = useState(defaultType);
-  const [title, setTitle] = useState("");
-  const [summary, setSummary] = useState("");
-  const [directives, setDirectives] = useState("");
-  const [constraints, setConstraints] = useState("");
+  const [title, setTitle] = useState(initialTemplate.title);
+  const [summary, setSummary] = useState(initialTemplate.summary);
+  const [directives, setDirectives] = useState(
+    initialTemplate.directives.join("\n"),
+  );
+  const [constraints, setConstraints] = useState(
+    initialTemplate.constraints.join("\n"),
+  );
   const [sourceIds, setSourceIds] = useState<string[]>([]);
   const [dependencyIds, setDependencyIds] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -139,12 +144,13 @@ export function DeliverableCreateDialog({
   }
 
   function reset(type: string) {
+    const template = getDeliverableTemplate(locale, type);
     setDeliverableType(type);
-    setTitle("");
-    setSummary("");
-    setDirectives("");
-    setConstraints("");
-    setSourceIds([]);
+    setTitle(template.title);
+    setSummary(template.summary);
+    setDirectives(template.directives.join("\n"));
+    setConstraints(template.constraints.join("\n"));
+    setSourceIds(suggestedSourceIds(type, sourceAssets));
     setDependencyIds([]);
   }
 
@@ -152,7 +158,7 @@ export function DeliverableCreateDialog({
     <Dialog
       onOpenChange={(next) => {
         setOpen(next);
-        if (!next && !isSubmitting) reset(defaultType);
+        if (next || !isSubmitting) reset(defaultType);
       }}
       open={open}
     >
@@ -172,7 +178,7 @@ export function DeliverableCreateDialog({
             {copy.type}
             <Select
               disabled={isSubmitting}
-              onValueChange={(value) => value && setDeliverableType(value)}
+              onValueChange={(value) => value && reset(value)}
               value={deliverableType}
             >
               <SelectTrigger className="h-9 w-full">
@@ -188,6 +194,9 @@ export function DeliverableCreateDialog({
                 ))}
               </SelectContent>
             </Select>
+            <span className="text-xs leading-5 font-normal text-muted-foreground">
+              {getDeliverableTemplate(locale, deliverableType).purpose}
+            </span>
           </label>
           <label className="grid gap-1.5 text-sm font-medium">
             {copy.title}
@@ -481,4 +490,122 @@ function toLines(value: string) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function suggestedSourceIds(type: string, assets: ProjectMediaAsset[]) {
+  const entityTypes =
+    type === "character_design"
+      ? new Set(["character", "character_appearance"])
+      : type === "environment_design"
+        ? new Set(["location", "location_image"])
+        : type === "prop_costume_design"
+          ? new Set(["prop"])
+          : null;
+  const relevant = entityTypes
+    ? assets.filter((asset) =>
+        asset.references.some((reference) =>
+          entityTypes.has(reference.entityType),
+        ),
+      )
+    : assets;
+  return relevant.slice(0, 24).map((asset) => asset.id);
+}
+
+export function getDeliverableTemplate(locale: StudioLocale, type: string) {
+  const zh = locale !== "en";
+  const templates: Record<
+    string,
+    {
+      title: string;
+      purpose: string;
+      summary: string;
+      directives: string[];
+      constraints: string[];
+    }
+  > = {
+    visual_bible: {
+      title: zh ? "项目视觉规范" : "Project visual guidelines",
+      purpose: zh
+        ? "统一角色、场景、道具、材质、光影和构图，供分镜与镜头生产共同引用。"
+        : "Unifies character, environment, prop, material, lighting, and composition rules for storyboard and shot production.",
+      summary: zh
+        ? "建立本项目唯一的视觉基准，明确世界观、造型语言、材质细节、光影逻辑与构图原则。"
+        : "Establish the project's single visual source of truth for world design, form language, materials, lighting, and composition.",
+      directives: zh
+        ? ["保持角色身份与服装连续", "场景空间关系可供镜头复用", "关键材质与色彩必须可执行"]
+        : ["Preserve character identity and wardrobe", "Keep environment geography reusable across shots", "Make key materials and colors production-ready"],
+      constraints: zh
+        ? ["不得偏离已确认剧情设定", "已选资产优先作为视觉基准"]
+        : ["Do not contradict approved story facts", "Treat selected assets as primary visual references"],
+    },
+    color_script: {
+      title: zh ? "本集色彩脚本" : "Episode color script",
+      purpose: zh
+        ? "按剧情节拍规划每场戏的主色、对比度、光线方向和情绪过渡。"
+        : "Plans palette, contrast, light direction, and emotional transitions for each story beat.",
+      summary: zh
+        ? "依据本集叙事节拍建立连续的色彩与光影变化，确保镜头间情绪推进自然。"
+        : "Define continuous color and lighting progression from the episode's narrative beats.",
+      directives: zh
+        ? ["标明场景主色与强调色", "说明昼夜和光源变化", "相邻镜头色彩过渡连续"]
+        : ["Specify scene primary and accent colors", "Define time-of-day and light-source changes", "Keep color transitions continuous between shots"],
+      constraints: zh
+        ? ["角色肤色与服装色保持稳定", "不得用色彩变化制造不存在的剧情事件"]
+        : ["Keep skin and wardrobe colors stable", "Do not imply story events that do not exist"],
+    },
+    character_design: {
+      title: zh ? "角色设计规格" : "Character design specification",
+      purpose: zh
+        ? "确定角色可重复生成的外形、服装、比例、表情范围和多视图连续性。"
+        : "Defines repeatable appearance, wardrobe, proportions, expression range, and multi-view continuity.",
+      summary: zh
+        ? "整理主要角色的身份特征、体型比例、服装层级、发型妆造与表情动作边界。"
+        : "Document identity traits, proportions, wardrobe layers, hair and makeup, and expression boundaries for principal characters.",
+      directives: zh
+        ? ["提供正侧背关键视图", "列出不可变化的身份锚点", "覆盖常用表情与动作姿态"]
+        : ["Provide key front, side, and back views", "List immutable identity anchors", "Cover common expressions and action poses"],
+      constraints: zh
+        ? ["同一角色年龄、脸型和体态保持一致", "服装变化必须有剧情依据"]
+        : ["Keep age, facial structure, and body type consistent", "Wardrobe changes require story evidence"],
+    },
+    environment_design: {
+      title: zh ? "场景设计规格" : "Environment design specification",
+      purpose: zh
+        ? "确定场景空间布局、建筑语言、材质、光源和可供运镜使用的方位关系。"
+        : "Defines spatial layout, architecture, materials, light sources, and geography usable by camera blocking.",
+      summary: zh
+        ? "建立主要场景的空间地图、视觉地标、材质细节、出入口和昼夜光照规则。"
+        : "Establish spatial maps, visual landmarks, material detail, entrances, and day-night lighting rules for primary environments.",
+      directives: zh
+        ? ["明确空间朝向和出入口", "标注可重复出现的视觉地标", "说明主光源与材质响应"]
+        : ["Define orientation and entrances", "Mark reusable visual landmarks", "Specify key light sources and material response"],
+      constraints: zh
+        ? ["相同场景的结构与陈设位置保持连续", "镜头方位不得造成空间跳变"]
+        : ["Keep structure and set dressing positions continuous", "Camera geography must not create spatial jumps"],
+    },
+    prop_costume_design: {
+      title: zh ? "道具与服装规格" : "Prop and costume specification",
+      purpose: zh
+        ? "确定关键道具与服装的造型、材质、尺度、使用方式和跨镜头状态。"
+        : "Defines form, material, scale, usage, and cross-shot state for key props and costumes.",
+      summary: zh
+        ? "整理关键道具、服装与配饰的生产规格，记录尺寸、材质、磨损程度和剧情状态变化。"
+        : "Document production specifications for key props, wardrobe, and accessories, including dimensions, materials, wear, and story-state changes.",
+      directives: zh
+        ? ["给出尺度与角色的对照", "明确材质和表面细节", "记录持有者与状态变化"]
+        : ["Show scale against the character", "Define material and surface detail", "Track owner and state changes"],
+      constraints: zh
+        ? ["关键道具外形与损耗必须跨镜头一致", "服装层级符合角色身份和场景"]
+        : ["Keep key prop form and wear continuous", "Wardrobe layers must fit character identity and scene"],
+    },
+  };
+  return (
+    templates[type] ?? {
+      title: productionLabel(locale, "types", type),
+      purpose: zh ? "记录可审核、可追踪的制作方案。" : "Record an auditable and traceable production package.",
+      summary: zh ? "整理当前制作范围、执行要求和验收标准。" : "Define the current production scope, execution requirements, and acceptance criteria.",
+      directives: [],
+      constraints: [],
+    }
+  );
 }

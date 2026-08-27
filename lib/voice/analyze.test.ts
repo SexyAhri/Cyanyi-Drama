@@ -114,6 +114,23 @@ describe("voice analysis", () => {
     ).toEqual([]);
   });
 
+  it("uses dialogue attribution after a quote instead of a nearby character", () => {
+    const sourceText = "父亲看向门口。“我回来了。”韩宇轻声说道。";
+    const data = buildDeterministicVoiceAnalysis({
+      sourceText,
+      characters: [
+        { name: "父亲", aliases: [] },
+        { name: "韩宇", aliases: [] },
+      ],
+      panels: [],
+    });
+
+    expect(data.lines[0]).toMatchObject({
+      speaker: "韩宇",
+      content: "我回来了。",
+    });
+  });
+
   it("persists deterministic lines after a provider timeout", async () => {
     requestOpenAiStructured.mockRejectedValue(
       new Error("STRUCTURED_PROVIDER_TIMEOUT:120000"),

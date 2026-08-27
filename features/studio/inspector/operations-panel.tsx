@@ -38,6 +38,7 @@ import {
 import { formatStudioDate } from "../i18n";
 import { runtimeStatusToStageStatus } from "../stage-state";
 import type { StudioLocale, WorkspaceSnapshot } from "../types";
+import { mediaTaskLabel, workflowLabel } from "../workflow-labels";
 import { StatusIndicator } from "../components/status-indicator";
 import {
   buildOperationItems,
@@ -225,10 +226,8 @@ function OperationRow({
   const status = item.kind === "task" ? item.task.status : item.workflow.status;
   const label =
     item.kind === "task"
-      ? (item.task.targetType ?? item.task.model)
-      : item.workflow.workflowType;
-  const traceId =
-    item.kind === "task" ? item.task.traceId : item.workflow.traceId;
+      ? mediaTaskLabel(locale, item.task.targetType, item.task.kind)
+      : workflowLabel(locale, item.workflow.workflowType);
   const errorMessage = operationErrorMessage(
     item.kind === "task" ? item.task.error : item.workflow.error,
     locale,
@@ -252,13 +251,9 @@ function OperationRow({
             />
           </div>
           <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-            <span>{item.kind === "task" ? item.task.kind : "workflow"}</span>
             <span>{formatStudioDate(locale, item.updatedAt)}</span>
             {item.kind === "task" ? <span>{item.task.progress}%</span> : null}
           </div>
-          <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground/75">
-            {traceId}
-          </p>
           {errorMessage ? (
             <p
               className="mt-1 line-clamp-2 text-[10px] leading-4 text-destructive"

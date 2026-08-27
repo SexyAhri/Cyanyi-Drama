@@ -109,14 +109,23 @@ describe("domain semantic validators", () => {
         panels: [
           {
             panelIndex: 1,
-            shotType: null,
-            cameraMove: null,
+            shotType: "中景",
+            cameraMove: "固定镜头",
+            durationSeconds: 1,
+            motionTimeline: [
+              {
+                startSecond: 0,
+                endSecond: 1,
+                action: "陌生人进入",
+                camera: "固定镜头",
+              },
+            ],
             description: "陌生人进入未知地点",
             locationName: "未知地点",
             characters: ["陌生人"],
             props: [],
             imagePrompt: null,
-            videoPrompt: null,
+            videoPrompt: "陌生人进入未知地点",
             sourceEvidence: ["林澈走进书房"],
           },
         ],
@@ -129,6 +138,50 @@ describe("domain semantic validators", () => {
         "PANEL_INDEX_NOT_SEQUENTIAL",
         "UNKNOWN_CANONICAL_NAME",
         "UNKNOWN_LOCATION",
+      ]),
+    );
+  });
+
+  it("requires one continuous motion beat for every shot second", () => {
+    const issues = validateStoryboardPlanning(
+      {
+        panels: [
+          {
+            panelIndex: 0,
+            shotType: "中景",
+            cameraMove: "缓慢推近",
+            durationSeconds: 3,
+            motionTimeline: [
+              {
+                startSecond: 0,
+                endSecond: 1,
+                action: "林澈抬起怀表",
+                camera: "中景缓慢推近",
+              },
+              {
+                startSecond: 2,
+                endSecond: 3,
+                action: "林澈注视怀表",
+                camera: "近景停稳",
+              },
+            ],
+            description: "林澈看怀表",
+            locationName: "书房",
+            characters: ["林澈"],
+            props: ["怀表"],
+            imagePrompt: "林澈在书房举起怀表",
+            videoPrompt: "林澈连续举起并注视怀表",
+            sourceEvidence: ["林澈看怀表"],
+          },
+        ],
+      },
+      { sourceText: "林澈看怀表", canonical },
+    );
+
+    expect(issues.map((item) => item.code)).toEqual(
+      expect.arrayContaining([
+        "MOTION_TIMELINE_SECOND_COUNT_MISMATCH",
+        "MOTION_TIMELINE_NOT_CONTIGUOUS",
       ]),
     );
   });
@@ -203,14 +256,29 @@ describe("domain semantic validators", () => {
   it("rejects refinement changes to entities and source evidence", () => {
     const panel = {
       panelIndex: 0,
-      shotType: null,
-      cameraMove: null,
+      shotType: "中景",
+      cameraMove: "缓慢推近",
+      durationSeconds: 2,
+      motionTimeline: [
+        {
+          startSecond: 0,
+          endSecond: 1,
+          action: "林澈拿起怀表",
+          camera: "中景缓慢推近",
+        },
+        {
+          startSecond: 1,
+          endSecond: 2,
+          action: "林澈注视怀表",
+          camera: "近景停稳",
+        },
+      ],
       description: "林澈看怀表",
       locationName: "书房",
       characters: ["林澈"],
       props: ["怀表"],
       imagePrompt: null,
-      videoPrompt: null,
+      videoPrompt: "林澈连续拿起并注视怀表",
       sourceEvidence: ["林澈看怀表"],
     };
     const issues = validateStoryboardRefinement(
@@ -218,6 +286,22 @@ describe("domain semantic validators", () => {
         panels: [
           {
             ...panel,
+            cameraMove: "快速摇镜",
+            durationSeconds: 3,
+            motionTimeline: [
+              panel.motionTimeline[0],
+              {
+                ...panel.motionTimeline[1],
+                startSecond: 2,
+                endSecond: 3,
+              },
+              {
+                startSecond: 3,
+                endSecond: 4,
+                action: "林澈继续注视怀表",
+                camera: "镜头停稳",
+              },
+            ],
             characters: ["林澈", "林澈"],
             sourceEvidence: ["改写证据"],
           },
@@ -227,7 +311,13 @@ describe("domain semantic validators", () => {
     );
 
     expect(issues.map((item) => item.code)).toEqual(
-      expect.arrayContaining(["DUPLICATE_ENTITY", "SOURCE_EVIDENCE_CHANGED"]),
+      expect.arrayContaining([
+        "CAMERA_MOVE_CHANGED",
+        "SHOT_DURATION_CHANGED",
+        "MOTION_TIMELINE_BOUNDARIES_CHANGED",
+        "DUPLICATE_ENTITY",
+        "SOURCE_EVIDENCE_CHANGED",
+      ]),
     );
   });
 

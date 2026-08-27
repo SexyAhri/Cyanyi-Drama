@@ -30,6 +30,25 @@ describe("shot view model", () => {
     });
   });
 
+  it("hides empty completed tasks after their assets are deleted", () => {
+    const candidates = buildShotMediaCandidates(
+      createPanel(),
+      "image",
+      [],
+      [
+        task("deleted-output", "panel-1", "succeeded"),
+        task("canceled", "panel-1", "canceled"),
+        task("running", "panel-1", "running"),
+        task("failed", "panel-1", "failed"),
+      ],
+    );
+
+    expect(candidates.map((candidate) => candidate.id).sort()).toEqual([
+      "failed",
+      "running",
+    ]);
+  });
+
   it("keeps only the latest task per selected panel for bulk controls", () => {
     const tasks = [
       task("old", "panel-1", "failed", undefined, "2026-08-26T01:00:00Z"),

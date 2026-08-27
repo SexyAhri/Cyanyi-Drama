@@ -122,6 +122,10 @@ describe("script-to-storyboard runtime", () => {
             clipPanelIndex: 0,
             panelIndex: 0,
             phase: "continuity",
+            durationSeconds: 3,
+            videoPrompt: expect.stringContaining(
+              "0-1s | 动作：甲开始说你好",
+            ),
             sourceEvidence: ["你好"],
           }),
         ],
@@ -255,6 +259,50 @@ describe("script-to-storyboard runtime", () => {
       data: { status: "storyboard_failed" },
     });
   });
+
+  it("splits long fallback scenes into video-sized shots with complete beats", () => {
+    const longAction = Array.from(
+      { length: 12 },
+      (_, index) => `甲完成第${index + 1}个连续训练动作。`,
+    ).join("");
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: longAction,
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "书房", time: "夜" },
+          description: longAction,
+          characters: ["甲"],
+          content: [{ type: "action" as const, text: longAction }],
+        },
+      ],
+    };
+    const sourceText = JSON.stringify(screenplay, null, 2);
+    const result = buildDeterministicStoryboardPhases({
+      canonical: { characters: ["甲"], locations: ["书房"], props: [] },
+      clip: { ...clip(), content: longAction },
+      props: [],
+      screenplay,
+      sourceText,
+    });
+
+    expect(result.planning.panels.length).toBeGreaterThan(1);
+    expect(
+      result.planning.panels.every(
+        (panel) =>
+          panel.durationSeconds >= 1 &&
+          panel.durationSeconds <= 15 &&
+          panel.motionTimeline.length === panel.durationSeconds,
+      ),
+    ).toBe(true);
+    expect(
+      validateStoryboardPlanning(result.planning, {
+        sourceText,
+        canonical: { characters: ["甲"], locations: ["书房"], props: [] },
+      }),
+    ).toEqual([]);
+  });
 });
 
 type PhaseRequest = { prompt: { id: string } };
@@ -337,7 +385,28 @@ function planning() {
       {
         panelIndex: 0,
         shotType: "中景",
-        cameraMove: null,
+        cameraMove: "缓慢推近",
+        durationSeconds: 3,
+        motionTimeline: [
+          {
+            startSecond: 0,
+            endSecond: 1,
+            action: "甲开始说你好",
+            camera: "中景开始缓慢推近",
+          },
+          {
+            startSecond: 1,
+            endSecond: 2,
+            action: "甲自然说完后半句",
+            camera: "沿原方向继续推近",
+          },
+          {
+            startSecond: 2,
+            endSecond: 3,
+            action: "甲说完后自然停顿",
+            camera: "推近至近景并停稳",
+          },
+        ],
         description: "甲在书房说你好",
         locationName: "书房",
         characters: ["甲"],

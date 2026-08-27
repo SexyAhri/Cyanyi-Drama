@@ -74,6 +74,9 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
     requestedStage && STUDIO_STAGE_IDS.includes(requestedStage)
       ? requestedStage
       : "writing";
+  const fixedHeightWorkspace = ["writing", "assets", "storyboard", "audio"].includes(
+    activeStage,
+  );
   const selectedEpisode = snapshot
     ? getSelectedEpisode(snapshot.project.episodes, requestedEpisodeId)
     : undefined;
@@ -211,7 +214,13 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
             {sidebar}
           </aside>
 
-          <main className="min-w-0 flex-1 overflow-y-auto">
+          <main
+            className={
+              fixedHeightWorkspace
+                ? "min-w-0 flex-1 overflow-y-auto xl:overflow-hidden"
+                : "min-w-0 flex-1 overflow-y-auto"
+            }
+          >
             {productionView ? (
               <ProductionControlWorkspace
                 episode={selectedEpisode}

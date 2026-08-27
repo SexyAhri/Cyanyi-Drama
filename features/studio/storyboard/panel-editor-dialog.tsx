@@ -3,6 +3,12 @@
 import { LoaderCircle, Pencil, Save } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,6 +20,10 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  SuggestedInput,
+  type SuggestedInputOption,
+} from "@/components/ui/suggested-input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -25,6 +35,7 @@ import {
   serializeActingDirections,
   serializePhotographyRules,
 } from "./previs-view-model";
+import { getPanelEditorGuidance } from "./panel-editor-guidance";
 
 export function PanelEditorDialog({
   locale,
@@ -36,6 +47,7 @@ export function PanelEditorDialog({
   panel: StudioStoryboardPanel;
 }) {
   const copy = getStudioCopy(locale);
+  const guidance = getPanelEditorGuidance(locale);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(() => toDraft(panel));
   const [isSaving, setIsSaving] = useState(false);
@@ -86,7 +98,7 @@ export function PanelEditorDialog({
         <Pencil className="size-4" />
         {copy.edit}
       </DialogTrigger>
-      <DialogContent className="max-h-[min(90dvh,52rem)] overflow-hidden rounded-lg sm:max-w-2xl">
+      <DialogContent className="max-h-[calc(100dvh-1rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-hidden rounded-lg sm:max-h-[min(92dvh,52rem)] sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>
             {copy.editPanel} · {String(panel.panelIndex + 1).padStart(2, "0")}
@@ -95,238 +107,216 @@ export function PanelEditorDialog({
             {copy.panelDescription}
           </DialogDescription>
         </DialogHeader>
-        <div className="grid min-h-0 gap-4 overflow-y-auto px-1 py-0.5 sm:grid-cols-2">
-          <Field className="sm:col-span-2" label={copy.panelDescription}>
-            <Textarea
-              className="h-28 resize-y overflow-y-auto field-sizing-fixed"
-              disabled={isSaving}
-              maxLength={4_000}
-              onChange={(event) =>
-                setDraft({ ...draft, description: event.target.value })
-              }
-              value={draft.description}
-            />
-          </Field>
-          <Field label={copy.shotType}>
-            <Input
-              disabled={isSaving}
-              maxLength={160}
-              onChange={(event) =>
-                setDraft({ ...draft, shotType: event.target.value })
-              }
-              value={draft.shotType}
-            />
-          </Field>
-          <Field label={copy.cameraMove}>
-            <Input
-              disabled={isSaving}
-              maxLength={500}
-              onChange={(event) =>
-                setDraft({ ...draft, cameraMove: event.target.value })
-              }
-              value={draft.cameraMove}
-            />
-          </Field>
-          <Field label={copy.location}>
-            <Input
-              disabled={isSaving}
-              maxLength={160}
-              onChange={(event) =>
-                setDraft({ ...draft, locationName: event.target.value })
-              }
-              value={draft.locationName}
-            />
-          </Field>
-          <Field label={`${copy.duration} (${copy.seconds})`}>
-            <Input
-              disabled={isSaving}
-              inputMode="decimal"
-              min="0.1"
-              onChange={(event) =>
-                setDraft({ ...draft, durationSeconds: event.target.value })
-              }
-              step="0.1"
-              type="number"
-              value={draft.durationSeconds}
-            />
-          </Field>
-          <fieldset className="grid gap-4 border-y py-4 sm:col-span-2 sm:grid-cols-2">
-            <legend className="px-1 text-sm font-semibold">
-              {copy.previsReadiness}
-            </legend>
-            <Field label={copy.cameraAngle}>
-              <Input
-                disabled={isSaving}
-                maxLength={500}
-                onChange={(event) =>
-                  setDraft({ ...draft, cameraAngle: event.target.value })
-                }
-                value={draft.cameraAngle}
-              />
-            </Field>
-            <Field label={copy.cameraPosition}>
-              <Input
-                disabled={isSaving}
-                maxLength={500}
-                onChange={(event) =>
-                  setDraft({ ...draft, cameraPosition: event.target.value })
-                }
-                value={draft.cameraPosition}
-              />
-            </Field>
-            <Field label={copy.focalLength}>
-              <Input
-                disabled={isSaving}
-                maxLength={160}
-                onChange={(event) =>
-                  setDraft({ ...draft, focalLength: event.target.value })
-                }
-                value={draft.focalLength}
-              />
-            </Field>
-            <Field label={copy.lighting}>
-              <Input
-                disabled={isSaving}
-                maxLength={500}
-                onChange={(event) =>
-                  setDraft({ ...draft, lighting: event.target.value })
-                }
-                value={draft.lighting}
-              />
-            </Field>
-            <Field label={copy.composition}>
-              <Input
-                disabled={isSaving}
-                maxLength={500}
-                onChange={(event) =>
-                  setDraft({ ...draft, composition: event.target.value })
-                }
-                value={draft.composition}
-              />
-            </Field>
-            <Field label={copy.depthOfField}>
-              <Input
-                disabled={isSaving}
-                maxLength={160}
-                onChange={(event) =>
-                  setDraft({ ...draft, depthOfField: event.target.value })
-                }
-                value={draft.depthOfField}
-              />
-            </Field>
-            <Field className="sm:col-span-2" label={copy.colorTone}>
-              <Input
-                disabled={isSaving}
-                maxLength={500}
-                onChange={(event) =>
-                  setDraft({ ...draft, colorTone: event.target.value })
-                }
-                value={draft.colorTone}
-              />
-            </Field>
-          </fieldset>
-          <Field label={copy.cast}>
-            <Input
-              disabled={isSaving}
-              maxLength={1_000}
-              onChange={(event) =>
-                setDraft({ ...draft, characters: event.target.value })
-              }
-              value={draft.characters}
-            />
-          </Field>
-          <Field label={copy.propAssets}>
-            <Input
-              disabled={isSaving}
-              maxLength={1_000}
-              onChange={(event) =>
-                setDraft({ ...draft, props: event.target.value })
-              }
-              value={draft.props}
-            />
-          </Field>
-          {panel.characters.length ? (
-            <fieldset className="space-y-4 border-y py-4 sm:col-span-2">
-              <legend className="px-1 text-sm font-semibold">
-                {copy.actingDirection}
-              </legend>
-              {panel.characters.map((character) => (
-                <div className="grid gap-3 sm:grid-cols-3" key={character}>
-                  <p className="text-sm font-medium sm:col-span-3">
-                    {character}
-                  </p>
-                  {(["emotion", "action", "expression"] as const).map(
-                    (key) => (
-                      <Field key={key} label={copy[key]}>
-                        <Input
+        <div className="min-h-0 overflow-y-auto pr-1">
+          <Accordion defaultValue={["basics"]} multiple>
+            <AccordionItem value="basics">
+              <AccordionTrigger className="py-2">
+                <SectionTitle {...guidance.sections.basics} />
+              </AccordionTrigger>
+              <AccordionContent className="grid gap-3 px-1 sm:grid-cols-2">
+                <Field className="sm:col-span-2" label={copy.panelDescription}>
+                  <Textarea
+                    className="h-20 resize-y overflow-y-auto field-sizing-fixed"
+                    disabled={isSaving}
+                    maxLength={4_000}
+                    onChange={(event) =>
+                      setDraft({ ...draft, description: event.target.value })
+                    }
+                    value={draft.description}
+                  />
+                </Field>
+                <SuggestionField
+                  disabled={isSaving}
+                  label={copy.shotType}
+                  onChange={(shotType) => setDraft({ ...draft, shotType })}
+                  options={guidance.suggestions.shotType}
+                  placeholder={guidance.placeholders.shotType}
+                  suggestionsLabel={guidance.suggestionsLabel}
+                  value={draft.shotType}
+                />
+                <SuggestionField
+                  disabled={isSaving}
+                  label={copy.cameraMove}
+                  onChange={(cameraMove) => setDraft({ ...draft, cameraMove })}
+                  options={guidance.suggestions.cameraMove}
+                  placeholder={guidance.placeholders.cameraMove}
+                  suggestionsLabel={guidance.suggestionsLabel}
+                  value={draft.cameraMove}
+                />
+                <Field label={copy.location}>
+                  <Input
+                    disabled={isSaving}
+                    maxLength={160}
+                    onChange={(event) =>
+                      setDraft({ ...draft, locationName: event.target.value })
+                    }
+                    placeholder={guidance.placeholders.location}
+                    value={draft.locationName}
+                  />
+                </Field>
+                <Field label={`${copy.duration} (${copy.seconds})`}>
+                  <Input
+                    disabled={isSaving}
+                    inputMode="decimal"
+                    min="0.1"
+                    onChange={(event) =>
+                      setDraft({ ...draft, durationSeconds: event.target.value })
+                    }
+                    placeholder={guidance.placeholders.duration}
+                    step="0.1"
+                    type="number"
+                    value={draft.durationSeconds}
+                  />
+                </Field>
+                <Field label={copy.cast}>
+                  <Input
+                    disabled={isSaving}
+                    maxLength={1_000}
+                    onChange={(event) =>
+                      setDraft({ ...draft, characters: event.target.value })
+                    }
+                    placeholder={guidance.placeholders.cast}
+                    value={draft.characters}
+                  />
+                </Field>
+                <Field label={copy.propAssets}>
+                  <Input
+                    disabled={isSaving}
+                    maxLength={1_000}
+                    onChange={(event) =>
+                      setDraft({ ...draft, props: event.target.value })
+                    }
+                    placeholder={guidance.placeholders.props}
+                    value={draft.props}
+                  />
+                </Field>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="photography">
+              <AccordionTrigger className="py-2">
+                <SectionTitle {...guidance.sections.photography} />
+              </AccordionTrigger>
+              <AccordionContent className="grid gap-3 px-1 sm:grid-cols-2">
+                {(
+                  [
+                    ["cameraAngle", copy.cameraAngle],
+                    ["cameraPosition", copy.cameraPosition],
+                    ["focalLength", copy.focalLength],
+                    ["lighting", copy.lighting],
+                    ["composition", copy.composition],
+                    ["depthOfField", copy.depthOfField],
+                    ["colorTone", copy.colorTone],
+                  ] as const
+                ).map(([key, label]) => (
+                  <SuggestionField
+                    className={key === "colorTone" ? "sm:col-span-2" : undefined}
+                    disabled={isSaving}
+                    key={key}
+                    label={label}
+                    onChange={(value) => setDraft({ ...draft, [key]: value })}
+                    options={guidance.suggestions[key]}
+                    placeholder={guidance.placeholders[key]}
+                    suggestionsLabel={guidance.suggestionsLabel}
+                    value={draft[key]}
+                  />
+                ))}
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="performance">
+              <AccordionTrigger className="py-2">
+                <SectionTitle {...guidance.sections.performance} />
+              </AccordionTrigger>
+              <AccordionContent className="space-y-4 px-1">
+                {panel.characters.map((character) => (
+                  <div className="grid gap-3 sm:grid-cols-3" key={character}>
+                    <p className="text-sm font-semibold sm:col-span-3">
+                      {character}
+                    </p>
+                    {(["emotion", "action", "expression"] as const).map(
+                      (key) => (
+                        <SuggestionField
                           disabled={isSaving}
-                          maxLength={500}
-                          onChange={(event) =>
+                          key={key}
+                          label={copy[key]}
+                          onChange={(value) =>
                             setDraft({
                               ...draft,
                               actingDirections: {
                                 ...draft.actingDirections,
                                 [character]: {
                                   ...draft.actingDirections[character],
-                                  [key]: event.target.value,
+                                  [key]: value,
                                 },
                               },
                             })
                           }
+                          options={guidance.suggestions[key]}
+                          placeholder={guidance.placeholders[key]}
+                          suggestionsLabel={guidance.suggestionsLabel}
                           value={draft.actingDirections[character]?.[key] ?? ""}
                         />
-                      </Field>
-                    ),
-                  )}
-                </div>
-              ))}
-            </fieldset>
-          ) : null}
-          <Field className="sm:col-span-2" label={copy.imagePrompt}>
-            <Textarea
-              className="h-24 resize-y overflow-y-auto field-sizing-fixed"
-              disabled={isSaving}
-              maxLength={4_000}
-              onChange={(event) =>
-                setDraft({ ...draft, imagePrompt: event.target.value })
-              }
-              value={draft.imagePrompt}
-            />
-          </Field>
-          <Field className="sm:col-span-2" label={copy.videoPrompt}>
-            <Textarea
-              className="h-24 resize-y overflow-y-auto field-sizing-fixed"
-              disabled={isSaving}
-              maxLength={4_000}
-              onChange={(event) =>
-                setDraft({ ...draft, videoPrompt: event.target.value })
-              }
-              value={draft.videoPrompt}
-            />
-          </Field>
-          <Field className="sm:col-span-2" label={copy.subtitle}>
-            <Textarea
-              className="h-20 resize-y overflow-y-auto field-sizing-fixed"
-              disabled={isSaving}
-              maxLength={2_000}
-              onChange={(event) =>
-                setDraft({ ...draft, subtitleText: event.target.value })
-              }
-              value={draft.subtitleText}
-            />
-          </Field>
-          <label className="flex items-center justify-between gap-4 border-y py-3 text-sm font-medium sm:col-span-2">
-            {copy.linkedShot}
-            <Switch
-              checked={draft.linkedToNextPanel}
-              disabled={isSaving}
-              onCheckedChange={(checked) =>
-                setDraft({ ...draft, linkedToNextPanel: checked })
-              }
-            />
-          </label>
+                      ),
+                    )}
+                  </div>
+                ))}
+                <Field label={copy.subtitle}>
+                  <Textarea
+                    className="h-20 resize-y overflow-y-auto field-sizing-fixed"
+                    disabled={isSaving}
+                    maxLength={2_000}
+                    onChange={(event) =>
+                      setDraft({ ...draft, subtitleText: event.target.value })
+                    }
+                    value={draft.subtitleText}
+                  />
+                </Field>
+                <label className="flex items-center justify-between gap-4 border-y py-3 text-sm font-medium">
+                  {copy.linkedShot}
+                  <Switch
+                    checked={draft.linkedToNextPanel}
+                    disabled={isSaving}
+                    onCheckedChange={(checked) =>
+                      setDraft({ ...draft, linkedToNextPanel: checked })
+                    }
+                  />
+                </label>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="prompts">
+              <AccordionTrigger className="py-2">
+                <SectionTitle {...guidance.sections.prompts} />
+              </AccordionTrigger>
+              <AccordionContent className="grid gap-3 px-1">
+                <Field label={copy.imagePrompt}>
+                  <Textarea
+                    className="h-24 resize-y overflow-y-auto field-sizing-fixed"
+                    disabled={isSaving}
+                    maxLength={4_000}
+                    onChange={(event) =>
+                      setDraft({ ...draft, imagePrompt: event.target.value })
+                    }
+                    value={draft.imagePrompt}
+                  />
+                </Field>
+                <Field label={copy.videoPrompt}>
+                  <Textarea
+                    className="h-24 resize-y overflow-y-auto field-sizing-fixed"
+                    disabled={isSaving}
+                    maxLength={4_000}
+                    onChange={(event) =>
+                      setDraft({ ...draft, videoPrompt: event.target.value })
+                    }
+                    value={draft.videoPrompt}
+                  />
+                </Field>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
         </div>
-        <DialogFooter className="rounded-b-lg">
+        <DialogFooter className="rounded-b-lg p-3">
           <Button
             disabled={isSaving}
             onClick={() => setOpen(false)}
@@ -363,6 +353,58 @@ function Field({
       {label}
       {children}
     </label>
+  );
+}
+
+function SectionTitle({
+  description,
+  title,
+}: {
+  description: string;
+  title: string;
+}) {
+  return (
+    <span className="min-w-0">
+      <span className="block font-semibold">{title}</span>
+      <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+        {description}
+      </span>
+    </span>
+  );
+}
+
+function SuggestionField({
+  className,
+  disabled,
+  label,
+  onChange,
+  options,
+  placeholder,
+  suggestionsLabel,
+  value,
+}: {
+  className?: string;
+  disabled: boolean;
+  label: string;
+  onChange: (value: string) => void;
+  options: SuggestedInputOption[];
+  placeholder: string;
+  suggestionsLabel: string;
+  value: string;
+}) {
+  return (
+    <Field className={className} label={label}>
+      <SuggestedInput
+        ariaLabel={label}
+        disabled={disabled}
+        maxLength={500}
+        onChange={onChange}
+        options={options}
+        placeholder={placeholder}
+        suggestionsLabel={`${label} · ${suggestionsLabel}`}
+        value={value}
+      />
+    </Field>
   );
 }
 

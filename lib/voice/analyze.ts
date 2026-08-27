@@ -196,33 +196,71 @@ export function buildDeterministicVoiceAnalysis(input: {
       canonicalName: character.name,
     })),
   ]);
-  const lines = [...input.sourceText.matchAll(/[“\"]([^”\"\r\n]+)[”\"]/g)]
-    .slice(0, 500)
-    .map((match) => {
-      const content = match[1];
-      const before = input.sourceText.slice(
-        Math.max(0, (match.index ?? 0) - 120),
-        match.index,
-      );
-      const speaker = speakers
-        .map((candidate) => ({
-          ...candidate,
-          index: before.lastIndexOf(candidate.spokenName),
-        }))
-        .filter((candidate) => candidate.index >= 0)
-        .sort((left, right) => right.index - left.index)[0]?.canonicalName;
-      const matchedPanelIndex = input.panels.find((panel) =>
-        `${panel.description}\n${panel.subtitleText}`.includes(content),
-      )?.panelIndex;
-      return {
-        speaker: speaker ?? "旁白",
-        content,
-        emotionPrompt: null,
-        emotionStrength: 0.5,
-        matchedPanelIndex: matchedPanelIndex ?? null,
-      };
-    });
+  const matches = [...input.sourceText.matchAll(/[“\"]([^”\"\r\n]+)[”\"]/g)].slice(
+    0,
+    500,
+  );
+  const lines = matches.map((match) => {
+    const content = match[1];
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    const before = input.sourceText.slice(Math.max(0, start - 240), start);
+    const after = input.sourceText.slice(end, end + 160);
+    const speaker = inferDialogueSpeaker(speakers, before, after);
+    const matchedPanelIndex = input.panels.find((panel) =>
+      `${panel.description}\n${panel.subtitleText}`.includes(content),
+    )?.panelIndex;
+    return {
+      speaker: speaker ?? "旁白",
+      content,
+      emotionPrompt: null,
+      emotionStrength: 0.5,
+      matchedPanelIndex: matchedPanelIndex ?? null,
+    };
+  });
   return voiceAnalysisSchema.parse({ lines });
+}
+
+function inferDialogueSpeaker(
+  speakers: Array<{ spokenName: string; canonicalName: string }>,
+  before: string,
+  after: string,
+) {
+  const speechVerb =
+    "说(?:道)?|问(?:道)?|答(?:道)?|回答|喊(?:道)?|叫(?:道)?|喝(?:道)?|叹(?:道)?|笑(?:道)?|开口|回应|低声(?:说)?|轻声(?:说)?";
+  const attributed = speakers.flatMap((candidate) => {
+    const name = escapeRegex(candidate.spokenName);
+    const beforeMatch = before.match(
+      new RegExp(`${name}[^。！？!?“”\"]{0,28}(?:${speechVerb})[：:，,\s]*$`),
+    );
+    const afterMatch = after.match(
+      new RegExp(`^[。！？!?，,\s]*(?:${name}[^。！？!?]{0,28}(?:${speechVerb})|(?:${speechVerb})[^。！？!?]{0,12}${name})`),
+    );
+    return beforeMatch || afterMatch ? [candidate.canonicalName] : [];
+  });
+  if (attributed.length) return attributed[0];
+
+  return speakers
+    .map((candidate) => ({
+      ...candidate,
+      beforeIndex: before.lastIndexOf(candidate.spokenName),
+      afterIndex: after.indexOf(candidate.spokenName),
+    }))
+    .map((candidate) => ({
+      ...candidate,
+      distance:
+        candidate.beforeIndex >= 0
+          ? before.length - candidate.beforeIndex
+          : candidate.afterIndex >= 0
+            ? candidate.afterIndex + 1
+            : Number.POSITIVE_INFINITY,
+    }))
+    .filter((candidate) => Number.isFinite(candidate.distance))
+    .sort((left, right) => left.distance - right.distance)[0]?.canonicalName;
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function requestVoiceAnalysis(input: {

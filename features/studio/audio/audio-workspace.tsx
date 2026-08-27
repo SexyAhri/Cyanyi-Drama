@@ -22,6 +22,11 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from "@/components/ui/native-select";
+import {
+  SuggestedInput,
+  type SuggestedInputOption,
+} from "@/components/ui/suggested-input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Tooltip,
@@ -73,6 +78,7 @@ const copy = {
   "zh-CN": {
     title: "声音制作",
     analyze: "分析台词",
+    reanalyze: "重新分析台词",
     analysisModel: "分析模型",
     audioModel: "语音模型",
     lipModel: "口型模型",
@@ -87,7 +93,11 @@ const copy = {
     speaker: "角色",
     content: "台词内容",
     voice: "音色",
-    noVoice: "未绑定音色",
+    noVoice: "自动（语音模型默认）",
+    dialogueTab: "对白配音",
+    soundPostTab: "声音后期",
+    episodeMixTab: "整集音轨",
+    speakerSuggestions: "分镜角色",
     panel: "关联镜头",
     noPanel: "未关联镜头",
     emotion: "情绪提示",
@@ -114,6 +124,7 @@ const copy = {
   en: {
     title: "Audio production",
     analyze: "Analyze dialogue",
+    reanalyze: "Analyze again",
     analysisModel: "Analysis model",
     audioModel: "Speech model",
     lipModel: "Lip sync model",
@@ -129,7 +140,11 @@ const copy = {
     speaker: "Speaker",
     content: "Dialogue",
     voice: "Voice",
-    noVoice: "No voice assigned",
+    noVoice: "Auto (speech model default)",
+    dialogueTab: "Dialogue",
+    soundPostTab: "Sound post",
+    episodeMixTab: "Episode mix",
+    speakerSuggestions: "Storyboard cast",
     panel: "Linked shot",
     noPanel: "No linked shot",
     emotion: "Emotion",
@@ -268,6 +283,12 @@ export function AudioWorkspace({
     [data?.production.voiceLines],
   );
   const panels = data?.storyboard.storyboard?.panels ?? [];
+  const speakerOptions = [
+    ...new Set([
+      locale === "en" ? "Narrator" : "旁白",
+      ...panels.flatMap((panel) => panel.characters),
+    ]),
+  ].map((value) => ({ value }));
   const tasks = snapshot.tasks.filter((task) => task.episodeId === episode.id);
   const selectedLine =
     lines.find((line) => line.id === selectedLineId) ?? lines[0];
@@ -413,8 +434,8 @@ export function AudioWorkspace({
     );
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-7 sm:py-7">
-      <header className="flex flex-col gap-4 border-b pb-5 lg:flex-row lg:items-end lg:justify-between">
+    <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-7 sm:py-7 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:overflow-hidden">
+      <header className="flex shrink-0 flex-col gap-4 border-b pb-5 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
           <p className="truncate text-xs text-muted-foreground">
             {String(episode.episodeNumber).padStart(2, "0")} · {episode.name}
@@ -422,31 +443,32 @@ export function AudioWorkspace({
           <h1 className="mt-1 text-xl font-semibold">{text.title}</h1>
         </div>
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-          {!lines.length ? (
-            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-              <ModelSelect
-                ariaLabel={text.analysisModel}
-                className="h-8 sm:w-64"
-                disabled={busy}
-                models={analysisModels}
-                onChange={setAnalysisModelId}
-                placeholder={text.analysisModel}
-                value={analysisModelId}
-              />
-              <Button
-                disabled={busy || !analysisModelId}
-                onClick={analyze}
-                size="sm"
-              >
-                {busy ? (
-                  <LoaderCircle className="size-4 animate-spin" />
-                ) : (
-                  <Sparkles className="size-4" />
-                )}
-                {text.analyze}
-              </Button>
-            </div>
-          ) : null}
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+            <ModelSelect
+              ariaLabel={text.analysisModel}
+              className="h-8 sm:w-64"
+              disabled={busy}
+              models={analysisModels}
+              onChange={setAnalysisModelId}
+              placeholder={text.analysisModel}
+              value={analysisModelId}
+            />
+            <Button
+              disabled={busy || !analysisModelId}
+              onClick={analyze}
+              size="sm"
+              variant={lines.length ? "outline" : "default"}
+            >
+              {busy ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : lines.length ? (
+                <RotateCcw className="size-4" />
+              ) : (
+                <Sparkles className="size-4" />
+              )}
+              {lines.length ? text.reanalyze : text.analyze}
+            </Button>
+          </div>
           <VoicePresetDialog locale={locale} onCreate={createPreset} />
         </div>
       </header>
@@ -461,8 +483,28 @@ export function AudioWorkspace({
         </div>
       ) : null}
 
-      {lines.length ? (
-        <div className="flex flex-col gap-3 border-b py-4 2xl:flex-row 2xl:items-end 2xl:justify-between">
+      <Tabs
+        className="pt-4 xl:min-h-0 xl:flex-1 xl:overflow-hidden"
+        defaultValue="dialogue"
+      >
+        <TabsList
+          className="max-w-full shrink-0 overflow-x-auto"
+          variant="line"
+        >
+          <TabsTrigger value="dialogue">
+            <AudioLines />
+            {text.dialogueTab}
+          </TabsTrigger>
+          <TabsTrigger value="post">{text.soundPostTab}</TabsTrigger>
+          <TabsTrigger value="mix">{text.episodeMixTab}</TabsTrigger>
+        </TabsList>
+
+        <TabsContent
+          className="mt-4 xl:flex xl:min-h-0 xl:flex-col xl:overflow-hidden"
+          value="dialogue"
+        >
+        {lines.length ? (
+        <div className="flex shrink-0 flex-col gap-3 border-b py-4 xl:flex-row xl:items-end xl:justify-between">
           <label className="grid min-w-0 gap-1 text-xs font-medium sm:w-72">
             {text.audioModel}
             <ModelSelect
@@ -519,15 +561,15 @@ export function AudioWorkspace({
           <p className="max-w-md text-sm leading-6">{text.noLinesDetail}</p>
         </div>
       ) : (
-        <div className="grid min-h-160 border-b 2xl:grid-cols-[20rem_minmax(0,1fr)]">
-          <aside className="border-b 2xl:border-r 2xl:border-b-0">
+        <div className="grid border-y xl:min-h-0 xl:flex-1 xl:grid-cols-[20rem_minmax(0,1fr)] xl:overflow-hidden">
+          <aside className="flex min-h-0 flex-col border-b xl:border-r xl:border-b-0">
             <div className="flex h-11 items-center justify-between border-b px-3 text-xs font-semibold">
               <span>{text.lines}</span>
               <span className="text-muted-foreground">
                 {checkedIds.length} {text.selected}
               </span>
             </div>
-            <div className="max-h-80 overflow-y-auto p-1.5 2xl:max-h-[calc(100dvh-17rem)]">
+            <div className="max-h-80 overflow-y-auto p-1.5 xl:max-h-none xl:flex-1">
               {lines.map((line) => {
                 const task = latestVoiceTask(line.id, tasks);
                 const checked = checkedIds.includes(line.id);
@@ -595,6 +637,7 @@ export function AudioWorkspace({
               onRun={run}
               panels={panels}
               presets={data.presets}
+              speakerOptions={speakerOptions}
               projectId={projectId}
               episodeId={episode.id}
               setData={setData}
@@ -603,28 +646,34 @@ export function AudioWorkspace({
           ) : null}
         </div>
       )}
+        </TabsContent>
 
-      {data ? (
-        <SoundPostPanel
-          catalog={data.deliverables}
-          episodeId={episode.id}
-          lines={lines}
-          locale={locale}
-          onCompleted={refreshAll}
-          projectId={projectId}
-        />
-      ) : null}
+        <TabsContent className="xl:min-h-0 xl:overflow-y-auto" value="post">
+          {data ? (
+            <SoundPostPanel
+              catalog={data.deliverables}
+              episodeId={episode.id}
+              lines={lines}
+              locale={locale}
+              onCompleted={refreshAll}
+              projectId={projectId}
+            />
+          ) : null}
+        </TabsContent>
 
-      {data ? (
-        <MergedAudio
-          assets={data.assets}
-          audioTracks={data.production.audioTracks}
-          busyTaskId={busyTaskId}
-          locale={locale}
-          onControlTask={controlTask}
-          tasks={tasks}
-        />
-      ) : null}
+        <TabsContent className="xl:min-h-0 xl:overflow-y-auto" value="mix">
+          {data ? (
+            <MergedAudio
+              assets={data.assets}
+              audioTracks={data.production.audioTracks}
+              busyTaskId={busyTaskId}
+              locale={locale}
+              onControlTask={controlTask}
+              tasks={tasks}
+            />
+          ) : null}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -648,6 +697,7 @@ function VoiceLineDetails({
   presets,
   projectId,
   setData,
+  speakerOptions,
   tasks,
 }: {
   assets: ProjectMediaAsset[];
@@ -668,6 +718,7 @@ function VoiceLineDetails({
   presets: VoicePresetRecord[];
   projectId: string;
   setData: React.Dispatch<React.SetStateAction<AudioData | null>>;
+  speakerOptions: SuggestedInputOption[];
   tasks: MediaTask[];
 }) {
   const text = copy[locale];
@@ -743,7 +794,7 @@ function VoiceLineDetails({
   }
 
   return (
-    <section className="min-w-0 p-4 sm:p-6">
+    <section className="min-w-0 p-4 sm:p-5 xl:min-h-0 xl:overflow-y-auto">
       <header className="flex items-center justify-between gap-3 border-b pb-4">
         <div className="min-w-0">
           <p className="font-mono text-xs text-muted-foreground">
@@ -764,8 +815,11 @@ function VoiceLineDetails({
 
       <div className="grid gap-4 border-b py-5 sm:grid-cols-2">
         <Field label={text.speaker}>
-          <Input
-            onChange={(event) => setSpeaker(event.target.value)}
+          <SuggestedInput
+            ariaLabel={text.speaker}
+            onChange={setSpeaker}
+            options={speakerOptions}
+            suggestionsLabel={text.speakerSuggestions}
             value={speaker}
           />
         </Field>

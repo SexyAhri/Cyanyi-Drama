@@ -14,6 +14,10 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  SuggestedInput,
+  type SuggestedInputOption,
+} from "@/components/ui/suggested-input";
 import { Textarea } from "@/components/ui/textarea";
 
 import type { StudioLocale } from "../types";
@@ -25,8 +29,9 @@ const copy = {
     description: "保存项目可复用的声音配置。",
     name: "音色名称",
     namePlaceholder: "例如：旁白",
-    voice: "声音标识",
-    voicePlaceholder: "渠道支持的声音名称",
+    voice: "声音标识（可选）",
+    voicePlaceholder: "留空时使用语音模型默认音色",
+    voiceSuggestions: "常用音色",
     language: "语言",
     languagePlaceholder: "例如：zh-CN",
     notes: "备注",
@@ -40,8 +45,9 @@ const copy = {
     description: "Save a reusable voice configuration for this project.",
     name: "Voice name",
     namePlaceholder: "For example, Narrator",
-    voice: "Voice identifier",
-    voicePlaceholder: "A voice supported by the channel",
+    voice: "Voice identifier (optional)",
+    voicePlaceholder: "Leave empty to use the speech model default",
+    voiceSuggestions: "Common voices",
     language: "Language",
     languagePlaceholder: "For example, en-US",
     notes: "Notes",
@@ -114,9 +120,12 @@ export function VoicePresetDialog({
               />
             </Field>
             <Field label={text.voice}>
-              <Input
-                onChange={(event) => setVoice(event.target.value)}
+              <SuggestedInput
+                ariaLabel={text.voice}
+                onChange={setVoice}
+                options={commonVoiceOptions(locale)}
                 placeholder={text.voicePlaceholder}
+                suggestionsLabel={text.voiceSuggestions}
                 value={voice}
               />
             </Field>
@@ -153,6 +162,26 @@ export function VoicePresetDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function commonVoiceOptions(locale: StudioLocale): SuggestedInputOption[] {
+  const values = [
+    ["alloy", "均衡自然", "Balanced and natural"],
+    ["ash", "沉稳清晰", "Calm and clear"],
+    ["ballad", "温暖叙事", "Warm and narrative"],
+    ["coral", "明亮亲切", "Bright and friendly"],
+    ["echo", "平稳有力", "Steady and strong"],
+    ["fable", "富有表现力", "Expressive and lively"],
+    ["nova", "清亮自然", "Clear and natural"],
+    ["onyx", "低沉厚重", "Deep and weighty"],
+    ["sage", "成熟克制", "Mature and restrained"],
+    ["shimmer", "柔和细腻", "Soft and nuanced"],
+    ["verse", "自然对话感", "Conversational and natural"],
+  ] as const;
+  return values.map(([value, zh, en]) => ({
+    value,
+    description: locale === "en" ? en : zh,
+  }));
 }
 
 function Field({

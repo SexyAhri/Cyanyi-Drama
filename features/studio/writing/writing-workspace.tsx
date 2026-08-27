@@ -40,6 +40,7 @@ import type {
   StudioSelectionContext,
   WorkspaceSnapshot,
 } from "../types";
+import { workflowStepLabel } from "../workflow-labels";
 import { StatusIndicator } from "../components/status-indicator";
 import { getProductionCopy } from "../production/copy";
 import { DepartmentDeliverablesWorkspace } from "../production/department-deliverables";
@@ -219,8 +220,8 @@ export function WritingWorkspace({
     : false;
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-7 sm:py-7">
-      <header className="flex flex-col gap-4 border-b pb-5 md:flex-row md:items-end md:justify-between">
+    <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-7 sm:py-7 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:overflow-hidden">
+      <header className="flex shrink-0 flex-col gap-4 border-b pb-5 md:flex-row md:items-end md:justify-between">
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">
             {String(episode.episodeNumber).padStart(2, "0")} · {episode.name}
@@ -251,14 +252,14 @@ export function WritingWorkspace({
 
       <div
         className={cn(
-          "grid min-w-0",
+          "grid min-w-0 xl:min-h-0 xl:flex-1 xl:overflow-hidden",
           tab !== "deliverables" &&
             "xl:grid-cols-[minmax(0,1fr)_19rem]",
         )}
       >
         <Tabs
           className={cn(
-            "min-w-0 py-5",
+            "min-w-0 py-5 xl:min-h-0 xl:overflow-hidden",
             tab !== "deliverables" && "xl:pr-7",
           )}
           onValueChange={(value) =>
@@ -283,17 +284,17 @@ export function WritingWorkspace({
               </Badge>
             </TabsTrigger>
           </TabsList>
-          <TabsContent className="mt-4" value="source">
+          <TabsContent className="mt-4 xl:min-h-0 xl:overflow-hidden" value="source">
             <Textarea
               aria-label={copy.novelText}
-              className="h-[min(60dvh,44rem)] min-h-80 resize-y overflow-y-auto rounded-md bg-card p-4 leading-7 field-sizing-fixed"
+              className="h-[min(60dvh,44rem)] min-h-80 resize-y overflow-y-auto rounded-md bg-card p-4 leading-7 field-sizing-fixed xl:h-full xl:min-h-0 xl:resize-none"
               disabled={isSaving || workflowActive}
               onChange={(event) => setNovelText(event.target.value)}
               placeholder={copy.novelTextPlaceholder}
               value={novelText}
             />
           </TabsContent>
-          <TabsContent className="mt-4" value="screenplay">
+          <TabsContent className="mt-4 xl:min-h-0 xl:overflow-y-auto" value="screenplay">
             <ScreenplayList
               clips={clips}
               emptyLabel={copy.noClips}
@@ -303,7 +304,7 @@ export function WritingWorkspace({
               selectedClipId={selectedClip?.id}
             />
           </TabsContent>
-          <TabsContent className="mt-4" value="deliverables">
+          <TabsContent className="mt-4 xl:min-h-0 xl:overflow-hidden" value="deliverables">
             {tab === "deliverables" ? (
               <DepartmentDeliverablesWorkspace
                 defaultType="screenplay_lock"
@@ -319,7 +320,7 @@ export function WritingWorkspace({
         </Tabs>
 
         {tab !== "deliverables" ? (
-          <aside className="border-t py-5 xl:border-t-0 xl:border-l xl:pl-6">
+          <aside className="border-t py-5 xl:min-h-0 xl:overflow-y-auto xl:border-t-0 xl:border-l xl:pl-6">
             <div className="xl:sticky xl:top-0">
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-semibold">{copy.workflow}</h2>
@@ -342,7 +343,7 @@ export function WritingWorkspace({
                         {String(step.index + 1).padStart(2, "0")}
                       </span>
                       <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                        {step.key}
+                        {workflowStepLabel(locale, step.key)}
                       </span>
                       <StatusIndicator
                         locale={locale}
@@ -399,10 +400,9 @@ export function WritingWorkspace({
                 />
               </div>
               {workflow ? (
-                <div className="mt-5 space-y-1 text-[11px] text-muted-foreground">
-                  <p className="truncate font-mono">{workflow.traceId}</p>
-                  <p>{formatStudioDate(locale, workflow.updatedAt)}</p>
-                </div>
+                <p className="mt-5 text-[11px] text-muted-foreground">
+                  {formatStudioDate(locale, workflow.updatedAt)}
+                </p>
               ) : null}
             </div>
           </aside>

@@ -90,6 +90,7 @@ export function buildShotMediaCandidates(
   const pending = panelTasks
     .filter(
       (task) =>
+        ["queued", "running", "failed"].includes(task.status) &&
         !task.output?.length &&
         ![...candidates.values()].some(
           (candidate) => candidate.task?.id === task.id,

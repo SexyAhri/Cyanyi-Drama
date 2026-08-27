@@ -20,6 +20,7 @@ import type {
   StudioStageState,
   WorkspaceSnapshot,
 } from "../types";
+import { mediaTaskLabel, workflowStepLabel } from "../workflow-labels";
 import { StatusIndicator } from "./status-indicator";
 
 export function StageOverview({
@@ -180,7 +181,7 @@ function WorkflowSection({
               {String(step.index + 1).padStart(2, "0")}
             </span>
             <span className="min-w-0 flex-1 truncate text-sm font-medium">
-              {step.key}
+              {workflowStepLabel(locale, step.key)}
             </span>
             <span className="hidden text-xs text-muted-foreground sm:inline">
               {step.attempt}/{step.maxAttempts}
@@ -192,8 +193,7 @@ function WorkflowSection({
           </div>
         ))}
       </div>
-      <div className="mt-3 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
-        <span className="truncate font-mono">{workflow.traceId}</span>
+      <div className="mt-3 flex items-center justify-end text-[11px] text-muted-foreground">
         <span className="shrink-0">
           {formatStudioDate(locale, workflow.updatedAt)}
         </span>
@@ -224,7 +224,7 @@ function TaskSection({
           <div className="py-3" key={task.id}>
             <div className="flex min-w-0 items-center gap-3">
               <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                {task.targetType ?? task.model}
+                {mediaTaskLabel(locale, task.targetType, task.kind)}
               </span>
               <span className="font-mono text-[11px] text-muted-foreground">
                 {task.progress}%

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { resolveVoiceTaskVoice } from "./voice-tasks";
 
 describe("voice task selection", () => {
-  it("prefers an explicit voice, then an owned preset, then the speaker", () => {
+  it("prefers an explicit voice, then an owned preset, then the model default", () => {
     const base = {
       lineSpeaker: "Narrator",
       projectId: "project-1",
@@ -23,7 +23,7 @@ describe("voice task selection", () => {
         ...base,
         preset: { ...base.preset, userId: "another-user" },
       }),
-    ).toBe("Narrator");
+    ).toBeUndefined();
   });
 
   it("allows a global preset owned by the current user", () => {

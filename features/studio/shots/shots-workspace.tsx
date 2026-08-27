@@ -90,7 +90,8 @@ export function ShotsWorkspace({
   const [busyTaskId, setBusyTaskId] = useState("");
   const [deletingAssetId, setDeletingAssetId] = useState("");
   const [batchAction, setBatchAction] = useState<"cancel" | "retry" | "">("");
-  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const imageUploadInputRef = useRef<HTMLInputElement>(null);
+  const videoUploadInputRef = useRef<HTMLInputElement>(null);
   const projectId = snapshot.project.id;
   const revision = getTaskOutputRevision(snapshot.tasks);
 
@@ -202,7 +203,7 @@ export function ShotsWorkspace({
     await Promise.all([load(), onRefresh()]);
   }
 
-  async function upload(file: File) {
+  async function upload(file: File, mediaKind: ShotMediaKind) {
     if (!selectedPanel) return;
     setIsUploading(true);
     try {
@@ -211,7 +212,7 @@ export function ShotsWorkspace({
         episode.id,
         selectedPanel.id,
         file,
-        kind,
+        mediaKind,
       );
       toast.success(copy.mediaUploaded);
       await refreshAll();
@@ -221,7 +222,11 @@ export function ShotsWorkspace({
       );
     } finally {
       setIsUploading(false);
-      if (uploadInputRef.current) uploadInputRef.current.value = "";
+      const input =
+        mediaKind === "image"
+          ? imageUploadInputRef.current
+          : videoUploadInputRef.current;
+      if (input) input.value = "";
     }
   }
 
@@ -479,6 +484,14 @@ export function ShotsWorkspace({
                             {selectedPanel.description}
                           </p>
                         ) : null}
+                        {mediaKind === "video" ? (
+                          <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <Images className="size-3.5 shrink-0" />
+                            {selectedPanel.imageAssetId
+                              ? copy.videoUsesReferenceImage
+                              : copy.videoHasNoReferenceImage}
+                          </p>
+                        ) : null}
                       </div>
                       <div className="flex shrink-0 flex-wrap gap-2">
                         <input
@@ -486,14 +499,23 @@ export function ShotsWorkspace({
                           className="sr-only"
                           onChange={(event) => {
                             const file = event.target.files?.[0];
-                            if (file) void upload(file);
+                            if (file) void upload(file, mediaKind);
                           }}
-                          ref={uploadInputRef}
+                          ref={
+                            mediaKind === "image"
+                              ? imageUploadInputRef
+                              : videoUploadInputRef
+                          }
                           type="file"
                         />
                         <Button
                           disabled={isUploading}
-                          onClick={() => uploadInputRef.current?.click()}
+                          onClick={() =>
+                            (mediaKind === "image"
+                              ? imageUploadInputRef.current
+                              : videoUploadInputRef.current
+                            )?.click()
+                          }
                           size="sm"
                           type="button"
                           variant="outline"

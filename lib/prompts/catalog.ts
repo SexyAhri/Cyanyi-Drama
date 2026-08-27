@@ -68,7 +68,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_STORYBOARD_PLANNING]: {
     pathStem: "domain/story_storyboard_planning",
-    version: 2,
+    version: 3,
     variables: [
       "source_text",
       "characters_json",
@@ -77,7 +77,8 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
     ],
     agent: defineAgent({
       id: "storyboard_director",
-      responsibility: "Plan ordered shots that cover the source narrative.",
+      responsibility:
+        "Plan ordered shots with complete one-second motion beats that cover the source narrative.",
       prohibited: ["cinematography rules", "acting notes", "new plot"],
     }),
   },
@@ -109,7 +110,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_STORYBOARD_REFINEMENT]: {
     pathStem: "domain/story_storyboard_refinement",
-    version: 2,
+    version: 3,
     variables: [
       "source_text",
       "panels_json",

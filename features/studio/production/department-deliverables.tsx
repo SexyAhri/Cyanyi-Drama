@@ -7,6 +7,7 @@ import {
   FileCheck2,
   LoaderCircle,
   LockKeyhole,
+  Maximize2,
   Send,
   UsersRound,
 } from "lucide-react";
@@ -15,6 +16,7 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { MediaPreviewDialog } from "@/components/ui/media-preview-dialog";
 import { cn } from "@/lib/utils";
 
 import {
@@ -41,6 +43,7 @@ import {
   DeliverableConfirmDialog,
   DeliverableCreateDialog,
   DeliverableRejectDialog,
+  getDeliverableTemplate,
 } from "./deliverable-dialogs";
 
 export function DepartmentDeliverablesWorkspace({
@@ -199,10 +202,13 @@ export function DepartmentDeliverablesWorkspace({
   const visibleDepartments = catalog.departments.filter((department) =>
     departments.includes(department.id),
   );
+  const visibleTypes = visibleDepartments
+    .flatMap((department) => department.deliverableTypes)
+    .filter((type) => !types || types.includes(type));
 
   return (
-    <section className="border-y">
-      <header className="flex flex-col gap-3 border-b px-3 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+    <section className="border-y xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:overflow-hidden">
+      <header className="flex shrink-0 flex-col gap-3 border-b px-3 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-4">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold">{title}</h2>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -222,7 +228,7 @@ export function DepartmentDeliverablesWorkspace({
         />
       </header>
 
-      <div className="grid border-b bg-muted/20 md:grid-cols-2">
+      <div className="grid shrink-0 border-b bg-muted/20 md:grid-cols-2">
         {visibleDepartments.map((department) => (
           <div
             className="border-b px-4 py-3 last:border-b-0 md:border-r md:border-b-0 md:last:border-r-0"
@@ -249,14 +255,31 @@ export function DepartmentDeliverablesWorkspace({
       </div>
 
       {!deliverables.length ? (
-        <div className="flex min-h-64 flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground">
-          <FileCheck2 className="size-5" />
-          <p className="text-sm">{copy.noDeliverables}</p>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+          <div className="flex items-center gap-2 border-b pb-3">
+            <FileCheck2 className="size-4 text-muted-foreground" />
+            <p className="text-sm font-medium">{copy.noDeliverables}</p>
+          </div>
+          <div className="divide-y">
+            {visibleTypes.map((type) => (
+              <div
+                className="grid gap-1 py-3 sm:grid-cols-[12rem_minmax(0,1fr)] sm:gap-4"
+                key={type}
+              >
+                <p className="text-sm font-medium">
+                  {productionLabel(locale, "types", type)}
+                </p>
+                <p className="text-xs leading-5 text-muted-foreground">
+                  {getDeliverableTemplate(locale, type).purpose}
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
       ) : (
-        <div className="grid min-h-[34rem] lg:grid-cols-[18rem_minmax(0,1fr)]">
-          <aside className="border-b lg:border-r lg:border-b-0">
-            <div className="max-h-80 overflow-y-auto p-1.5 lg:max-h-[42rem]">
+        <div className="grid min-h-[34rem] lg:grid-cols-[18rem_minmax(0,1fr)] xl:min-h-0 xl:flex-1 xl:overflow-hidden">
+          <aside className="border-b lg:border-r lg:border-b-0 xl:flex xl:min-h-0 xl:flex-col">
+            <div className="max-h-80 overflow-y-auto p-1.5 xl:max-h-none xl:flex-1">
               {deliverables.map((deliverable) => (
                 <button
                   className={cn(
@@ -297,6 +320,7 @@ export function DepartmentDeliverablesWorkspace({
               disabled={isActing}
               locale={locale}
               onTransition={transition}
+              sourceAssets={sourceAssets}
             />
           ) : null}
         </div>
@@ -310,6 +334,7 @@ function DeliverableDetail({
   disabled,
   locale,
   onTransition,
+  sourceAssets,
 }: {
   deliverable: ProductionDeliverableRecord;
   disabled: boolean;
@@ -318,6 +343,7 @@ function DeliverableDetail({
     action: "submit" | "approve" | "reject" | "lock" | "supersede",
     input?: { gateKey?: string; note?: string },
   ) => Promise<void>;
+  sourceAssets: ProjectMediaAsset[];
 }) {
   const copy = getProductionCopy(locale);
   const blockers = getDeliverableBlockers(deliverable);
@@ -328,9 +354,21 @@ function DeliverableDetail({
       : "";
   const directives = payloadLines(deliverable.payload.directives);
   const constraints = payloadLines(deliverable.payload.constraints);
+  const [previewAsset, setPreviewAsset] =
+    useState<ProjectMediaAsset | null>(null);
+  const sourceIds = new Set(
+    deliverable.sourceRefs.flatMap((reference) => {
+      if (!reference || typeof reference !== "object") return [];
+      const id = (reference as Record<string, unknown>).id;
+      return typeof id === "string" ? [id] : [];
+    }),
+  );
+  const linkedSourceAssets = sourceAssets.filter((asset) =>
+    sourceIds.has(asset.id),
+  );
 
   return (
-    <article className="min-w-0 p-4 sm:p-5">
+    <article className="min-w-0 p-4 sm:p-5 xl:min-h-0 xl:overflow-y-auto">
       <header className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -374,6 +412,35 @@ function DeliverableDetail({
         />
         <Metric label={copy.cost} value={deliverable.cost} />
       </div>
+
+      {linkedSourceAssets.length ? (
+        <section className="border-b py-4">
+          <h4 className="text-xs font-semibold">{copy.sourceAssets}</h4>
+          <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-6">
+            {linkedSourceAssets.map((asset) => (
+              <button
+                aria-label={copy.sourceAssets}
+                className="group relative aspect-square overflow-hidden rounded-md border bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                key={asset.id}
+                onClick={() => setPreviewAsset(asset)}
+                type="button"
+              >
+                {asset.url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    alt={copy.sourceAssets}
+                    className="size-full object-cover"
+                    src={asset.url}
+                  />
+                ) : null}
+                <span className="absolute right-1.5 bottom-1.5 flex size-6 items-center justify-center rounded-md bg-black/65 text-white opacity-80 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-visible:opacity-100">
+                  <Maximize2 className="size-3" />
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {blockers.length ? (
         <div className="mt-4 border-l-2 border-destructive bg-destructive/5 px-3 py-2.5">
@@ -432,6 +499,19 @@ function DeliverableDetail({
           )}
         </aside>
       </div>
+      {previewAsset?.url ? (
+        <MediaPreviewDialog
+          alt={deliverable.title}
+          description={deliverable.title}
+          kind="image"
+          onOpenChange={(open) => {
+            if (!open) setPreviewAsset(null);
+          }}
+          open={Boolean(previewAsset)}
+          title={deliverable.title}
+          url={previewAsset.url}
+        />
+      ) : null}
     </article>
   );
 }

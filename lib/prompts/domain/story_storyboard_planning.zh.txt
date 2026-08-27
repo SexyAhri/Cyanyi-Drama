@@ -2,15 +2,19 @@
 
 规则：
 1. 每个原文事件至少被一个镜头覆盖，不得新增剧情或对白。
-2. 只决定镜头边界、景别、运镜和画面内容；不写摄影光照规则或演技指导。
+2. 只决定镜头边界、景别、运镜、时长和画面内容；不写摄影光照规则或演技指导。
 3. panelIndex 从 0 连续递增。
 4. 角色、场景、道具必须优先使用分析结果中的规范名称。
-5. imagePrompt 和 videoPrompt 只描述该镜头已存在的视觉事实和动作。
-6. sourceEvidence 必须包含该镜头覆盖的原文精确摘录，不得改写。
-7. 只返回严格 JSON，不得包含额外字段。
+5. 每个镜头必须设置 1 到 15 的整数秒 durationSeconds；单镜头内容无法在 15 秒内自然完成时，必须拆成多个镜头。
+6. motionTimeline 必须从 0 秒开始，以连续、不重叠、不留空的 1 秒节拍覆盖到 durationSeconds。每个节拍明确该秒内的角色动作、表情或环境变化，以及镜头如何连续运动；没有新动作时描述上一动作的自然延续、停顿或收束，不得新增剧情。
+7. 相邻节拍必须在姿态、视线、运动方向、速度和镜头位置上自然衔接，禁止逐秒跳变。15 秒镜头必须恰好提供 0-1 秒至 14-15 秒共 15 个节拍。
+8. imagePrompt 和 videoPrompt 只描述该镜头已存在的视觉事实和动作；videoPrompt 先概括整段连续运动，逐秒细节写入 motionTimeline。
+9. sourceEvidence 必须包含该镜头覆盖的原文精确摘录，不得改写。
+10. shotType、cameraMove 和 videoPrompt 不得为空。
+11. 只返回严格 JSON，不得包含额外字段。
 
 输出格式：
-{"panels":[{"panelIndex":0,"shotType":"景别或null","cameraMove":"运镜或null","description":"镜头内容","locationName":"场景名或null","characters":["角色名"],"props":["道具名"],"imagePrompt":"静态画面提示或null","videoPrompt":"动作提示或null","sourceEvidence":["原文精确摘录"]}]}
+{"panels":[{"panelIndex":0,"shotType":"景别","cameraMove":"贯穿整段的镜头运动","durationSeconds":3,"motionTimeline":[{"startSecond":0,"endSecond":1,"action":"第 1 秒动作","camera":"第 1 秒镜头状态"},{"startSecond":1,"endSecond":2,"action":"承接上一秒的动作","camera":"连续镜头运动"},{"startSecond":2,"endSecond":3,"action":"动作自然收束","camera":"镜头自然停稳"}],"description":"镜头内容","locationName":"场景名或null","characters":["角色名"],"props":["道具名"],"imagePrompt":"静态画面提示或null","videoPrompt":"整段连续动作与运镜概述","sourceEvidence":["原文精确摘录"]}]}
 
 角色分析：{{characters_json}}
 场景分析：{{locations_json}}

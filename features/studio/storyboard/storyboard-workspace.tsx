@@ -4,6 +4,8 @@ import {
   Ban,
   CircleCheck,
   Clapperboard,
+  ChevronDown,
+  ChevronUp,
   FileCheck2,
   ListChecks,
   LoaderCircle,
@@ -253,8 +255,8 @@ export function StoryboardWorkspace({
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-7 sm:py-7">
-      <header className="flex flex-col gap-4 border-b pb-5 lg:flex-row lg:items-end lg:justify-between">
+    <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-7 sm:py-7 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:overflow-hidden">
+      <header className="flex shrink-0 flex-col gap-4 border-b pb-5 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
           <p className="truncate text-xs text-muted-foreground">
             {String(episode.episodeNumber).padStart(2, "0")} · {episode.name}
@@ -296,11 +298,14 @@ export function StoryboardWorkspace({
       </header>
 
       <Tabs
-        className="min-w-0 pt-4"
+        className="min-w-0 pt-4 xl:min-h-0 xl:flex-1 xl:overflow-hidden"
         onValueChange={(value) => setTab(value as StoryboardTab)}
         value={tab}
       >
-        <TabsList className="max-w-full overflow-x-auto" variant="line">
+        <TabsList
+          className="max-w-full shrink-0 overflow-x-auto"
+          variant="line"
+        >
           <TabsTrigger value="shots">
             <Clapperboard className="size-4" />
             {productionCopy.shotDesign}
@@ -319,7 +324,10 @@ export function StoryboardWorkspace({
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent className="mt-4" value="shots">
+        <TabsContent
+          className="mt-4 xl:flex xl:min-h-0 xl:flex-col xl:overflow-hidden"
+          value="shots"
+        >
           {!models.length ? (
             <p className="border-b py-3 text-xs text-destructive">
               {copy.noAnalysisModels}
@@ -349,15 +357,15 @@ export function StoryboardWorkspace({
               <p className="max-w-md text-sm leading-6">{copy.noStoryboard}</p>
             </div>
           ) : (
-            <div className="grid min-h-152 border-b lg:grid-cols-[18rem_minmax(0,1fr)]">
-              <aside className="border-b lg:border-r lg:border-b-0">
+            <div className="grid min-h-152 border-b lg:grid-cols-[18rem_minmax(0,1fr)] xl:min-h-0 xl:flex-1 xl:overflow-hidden">
+              <aside className="border-b lg:border-r lg:border-b-0 xl:flex xl:min-h-0 xl:flex-col">
                 <div className="flex h-11 items-center justify-between border-b px-3">
                   <h2 className="text-xs font-semibold">
                     {copy.storyboardPanels}
                   </h2>
                   <Badge variant="secondary">{panels.length}</Badge>
                 </div>
-                <div className="max-h-80 overflow-y-auto p-1.5 lg:max-h-[calc(100dvh-17rem)]">
+                <div className="max-h-80 overflow-y-auto p-1.5 xl:max-h-none xl:flex-1">
                   {panels.map((panel) => {
                     const issues = getPanelContinuityIssues(
                       panel,
@@ -367,7 +375,7 @@ export function StoryboardWorkspace({
                     return (
                       <button
                         className={cn(
-                          "flex w-full items-start gap-3 rounded-md px-2.5 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                          "grid h-16 w-full grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md px-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                           panel.id === selectedPanel?.id
                             ? "bg-muted"
                             : "hover:bg-muted/60",
@@ -376,15 +384,18 @@ export function StoryboardWorkspace({
                         onClick={() => setSelectedPanelId(panel.id)}
                         type="button"
                       >
-                        <span className="mt-0.5 w-6 shrink-0 font-mono text-[11px] text-muted-foreground">
+                        <span className="font-mono text-[11px] text-muted-foreground">
                           {String(panel.panelIndex + 1).padStart(2, "0")}
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-medium">
                             {panel.shotType || copy.panel}
                           </span>
-                          <span className="mt-0.5 block line-clamp-2 text-xs leading-5 text-muted-foreground">
-                            {panel.description || copy.panelDescription}
+                          <span
+                            className="mt-1 block truncate text-xs text-muted-foreground"
+                            title={panelListMetadata(panel, copy.seconds)}
+                          >
+                            {panelListMetadata(panel, copy.seconds)}
                           </span>
                         </span>
                         <Badge
@@ -418,7 +429,7 @@ export function StoryboardWorkspace({
           )}
         </TabsContent>
 
-        <TabsContent className="mt-4" value="previs">
+        <TabsContent className="mt-4 xl:min-h-0 xl:overflow-y-auto" value="previs">
           {tab === "previs" ? (
             <DepartmentDeliverablesWorkspace
               defaultType="directors_treatment"
@@ -431,7 +442,7 @@ export function StoryboardWorkspace({
             />
           ) : null}
         </TabsContent>
-        <TabsContent className="mt-4" value="shot_list">
+        <TabsContent className="mt-4 xl:min-h-0 xl:overflow-y-auto" value="shot_list">
           {tab === "shot_list" ? (
             <DepartmentDeliverablesWorkspace
               defaultType="shot_list"
@@ -451,7 +462,7 @@ export function StoryboardWorkspace({
             />
           ) : null}
         </TabsContent>
-        <TabsContent className="mt-4" value="animatic">
+        <TabsContent className="mt-4 xl:min-h-0 xl:overflow-y-auto" value="animatic">
           {tab === "animatic" ? (
             <DepartmentDeliverablesWorkspace
               defaultType="animatic"
@@ -470,6 +481,18 @@ export function StoryboardWorkspace({
   );
 }
 
+function panelListMetadata(panel: StudioStoryboardPanel, secondsLabel: string) {
+  return [
+    panel.locationName,
+    panel.cameraMove,
+    panel.durationSeconds
+      ? `${panel.durationSeconds} ${secondsLabel}`
+      : null,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(" · ");
+}
+
 function PanelDetails({
   issues,
   locale,
@@ -485,8 +508,16 @@ function PanelDetails({
   const photography = parsePhotographyRules(panel.photographyRules);
   const acting = parseActingDirections(panel.actingNotes);
   const readiness = getPrevisReadiness(panel, issues);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const description = panel.description || copy.panelDescription;
+  const canExpandDescription = description.length > 180;
+
+  useEffect(() => {
+    setDescriptionExpanded(false);
+  }, [panel.id]);
+
   return (
-    <section className="min-w-0 p-4 sm:p-6">
+    <section className="min-w-0 p-4 sm:p-6 xl:min-h-0 xl:overflow-y-auto">
       <header className="flex items-start justify-between gap-4 border-b pb-4">
         <div className="min-w-0">
           <p className="font-mono text-xs text-muted-foreground">
@@ -512,9 +543,34 @@ function PanelDetails({
         <PanelEditorDialog locale={locale} onSave={onSave} panel={panel} />
       </header>
 
-      <p className="max-w-3xl border-b py-5 text-sm leading-7 text-foreground/90">
-        {panel.description || copy.panelDescription}
-      </p>
+      <div className="max-w-4xl border-b py-4">
+        <p
+          className={cn(
+            "whitespace-pre-wrap text-sm leading-6 text-foreground/90",
+            canExpandDescription && !descriptionExpanded && "line-clamp-5",
+          )}
+        >
+          {description}
+        </p>
+        {canExpandDescription ? (
+          <Button
+            className="mt-1.5 h-7 px-0 text-xs text-muted-foreground hover:bg-transparent hover:text-foreground"
+            onClick={() => setDescriptionExpanded((expanded) => !expanded)}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            {descriptionExpanded ? (
+              <ChevronUp className="size-3.5" />
+            ) : (
+              <ChevronDown className="size-3.5" />
+            )}
+            {descriptionExpanded
+              ? copy.collapseDescription
+              : copy.expandDescription}
+          </Button>
+        ) : null}
+      </div>
 
       <div className="border-b py-4">
         <div className="flex items-center justify-between gap-3 text-xs">

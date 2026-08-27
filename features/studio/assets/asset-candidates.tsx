@@ -1,10 +1,18 @@
 "use client";
 
-import { Check, Download, ImageIcon, LoaderCircle } from "lucide-react";
+import {
+  Check,
+  Download,
+  ImageIcon,
+  LoaderCircle,
+  Maximize2,
+} from "lucide-react";
+import { useState } from "react";
 
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { MediaPreviewDialog } from "@/components/ui/media-preview-dialog";
 import {
   Tooltip,
   TooltipContent,
@@ -36,6 +44,8 @@ export function AssetCandidateGrid({
   tasks: MediaTask[];
 }) {
   const copy = getStudioCopy(locale);
+  const [previewTarget, setPreviewTarget] =
+    useState<StudioAssetCandidate | null>(null);
   const visibleTasks = tasks.filter((task) => {
     if (entity.kind === "prop") return task.targetId === entity.id;
     return entity.candidates.some((candidate) => candidate.id === task.targetId);
@@ -57,28 +67,44 @@ export function AssetCandidateGrid({
   }
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
-      {entity.candidates.map((candidate) => {
-        const task = visibleTasks.find(
-          (item) =>
-            item.targetId === candidate.id ||
-            item.output?.some((asset) => asset.id === candidate.assetId),
-        );
-        return (
-          <Candidate
-            candidate={candidate}
-            isSelecting={isSelecting}
-            key={candidate.id}
-            locale={locale}
-            onSelect={onSelect}
-            task={task}
-          />
-        );
-      })}
-      {unmatchedTasks.map((task) => (
-        <PendingCandidate key={task.id} locale={locale} task={task} />
-      ))}
-    </div>
+    <>
+      <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+        {entity.candidates.map((candidate) => {
+          const task = visibleTasks.find(
+            (item) =>
+              item.targetId === candidate.id ||
+              item.output?.some((asset) => asset.id === candidate.assetId),
+          );
+          return (
+            <Candidate
+              candidate={candidate}
+              isSelecting={isSelecting}
+              key={candidate.id}
+              locale={locale}
+              onPreview={() => setPreviewTarget(candidate)}
+              onSelect={onSelect}
+              task={task}
+            />
+          );
+        })}
+        {unmatchedTasks.map((task) => (
+          <PendingCandidate key={task.id} locale={locale} task={task} />
+        ))}
+      </div>
+      {previewTarget?.url ? (
+        <MediaPreviewDialog
+          alt={previewTarget.description || entity.name}
+          description={previewTarget.description || entity.name}
+          kind="image"
+          onOpenChange={(open) => {
+            if (!open) setPreviewTarget(null);
+          }}
+          open={Boolean(previewTarget)}
+          title={entity.name}
+          url={previewTarget.url}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -86,12 +112,14 @@ function Candidate({
   candidate,
   isSelecting,
   locale,
+  onPreview,
   onSelect,
   task,
 }: {
   candidate: StudioAssetCandidate;
   isSelecting: boolean;
   locale: StudioLocale;
+  onPreview: () => void;
   onSelect: (candidate: StudioAssetCandidate) => void;
   task?: MediaTask;
 }) {
@@ -107,12 +135,22 @@ function Candidate({
       <div className="relative bg-muted/35">
         <AspectRatio ratio={4 / 3}>
           {candidate.url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              alt={candidate.description || copy.candidates}
-              className="size-full object-contain"
-              src={candidate.url}
-            />
+            <button
+              aria-label={copy.previewMedia}
+              className="group relative size-full cursor-zoom-in"
+              onClick={onPreview}
+              type="button"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                alt={candidate.description || copy.candidates}
+                className="size-full object-contain"
+                src={candidate.url}
+              />
+              <span className="absolute right-2 bottom-2 flex size-7 items-center justify-center rounded-md bg-black/65 text-white opacity-80 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-visible:opacity-100">
+                <Maximize2 className="size-3.5" />
+              </span>
+            </button>
           ) : (
             <div className="flex size-full items-center justify-center text-muted-foreground">
               {status === "queued" || status === "running" ? (

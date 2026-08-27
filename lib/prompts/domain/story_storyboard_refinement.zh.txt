@@ -2,14 +2,16 @@
 
 规则：
 1. 保持 panelIndex、镜头数量和顺序不变。
-2. 不新增、删除或改写剧情、对白、角色和动作。
-3. description、imagePrompt、videoPrompt 应吸收可见且可执行的摄影与表演信息。
-4. 每个镜头必须与原文一致；输入冲突时以原文事实为准。
-5. sourceEvidence 必须与对应基础分镜完全一致。
-6. 只返回严格 JSON，不得包含额外字段。
+2. 不新增、删除或改写剧情、对白、角色和动作；保持 shotType、cameraMove 和 durationSeconds 不变。
+3. 保持 motionTimeline 的数量及每个 1 秒节拍边界不变，在对应节拍内吸收可见且可执行的摄影与表演信息。
+4. description、imagePrompt、videoPrompt 应吸收可见且可执行的摄影与表演信息；videoPrompt 概括完整连续运动，motionTimeline 明确每一秒的动作和镜头状态。
+5. 每个镜头必须与原文一致；输入冲突时以原文事实为准。
+6. 相邻秒必须保持姿态、视线、运动方向、速度和镜头位置连续，不得把同一动作拆成互不相干的跳变。
+7. sourceEvidence 必须与对应基础分镜完全一致。
+8. 只返回严格 JSON，不得包含额外字段。
 
 输出格式：
-{"panels":[{"panelIndex":0,"shotType":"景别或null","cameraMove":"运镜或null","description":"细化镜头内容","locationName":"场景名或null","characters":["角色名"],"props":["道具名"],"imagePrompt":"生产级静态提示或null","videoPrompt":"生产级动作提示或null","sourceEvidence":["原文精确摘录"]}]}
+{"panels":[{"panelIndex":0,"shotType":"保持基础景别","cameraMove":"保持基础运镜","durationSeconds":3,"motionTimeline":[{"startSecond":0,"endSecond":1,"action":"细化后的第 1 秒表演动作","camera":"细化后的第 1 秒镜头状态"},{"startSecond":1,"endSecond":2,"action":"自然承接上一秒","camera":"连续承接上一秒"},{"startSecond":2,"endSecond":3,"action":"动作自然收束","camera":"镜头自然停稳"}],"description":"细化镜头内容","locationName":"场景名或null","characters":["角色名"],"props":["道具名"],"imagePrompt":"生产级静态提示或null","videoPrompt":"生产级连续动作概述","sourceEvidence":["原文精确摘录"]}]}
 
 原文：{{source_text}}
 基础分镜：{{panels_json}}

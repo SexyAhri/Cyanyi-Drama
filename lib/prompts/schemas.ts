@@ -112,14 +112,28 @@ export const screenplayConversionSchema = z
 export const storyboardPanelSchema = z
   .object({
     panelIndex: z.number().int().nonnegative(),
-    shotType: optionalText,
-    cameraMove: optionalText,
+    shotType: text,
+    cameraMove: text,
+    durationSeconds: z.number().int().min(1).max(15),
+    motionTimeline: z
+      .array(
+        z
+          .object({
+            startSecond: z.number().int().min(0).max(14),
+            endSecond: z.number().int().min(1).max(15),
+            action: text,
+            camera: text,
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(15),
     description: text,
     locationName: optionalText,
     characters: stringList,
     props: stringList,
     imagePrompt: optionalText,
-    videoPrompt: optionalText,
+    videoPrompt: text,
     sourceEvidence: evidenceQuotes,
   })
   .strict();
