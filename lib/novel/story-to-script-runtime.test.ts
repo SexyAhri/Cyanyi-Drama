@@ -40,6 +40,7 @@ vi.mock("@/lib/server/prisma", () => ({
 
 import {
   buildDeterministicClipSegmentation,
+  buildDeterministicScreenplay,
   convertEpisodeClipsToScreenplays,
   hasCompleteClipCoverage,
   mapWithConcurrency,
@@ -298,6 +299,72 @@ describe("story-to-script runtime", () => {
     expect(retried.convertedCount).toBe(1);
     expect(currentClips.every((item) => item.status === "screenplay_ready"))
       .toBe(true);
+  });
+
+  it("uses exact screenplay skeletons when a workflow retry resumes", async () => {
+    currentClips = [
+      clip("clip-1", 0, "甲说：你好。"),
+      clip("clip-2", 1, "乙走进书房。"),
+    ];
+    listProductionClips.mockImplementation(async () => currentClips);
+    const result = await convertEpisodeClipsToScreenplays(
+      "user-1",
+      { ...runtimeInput, concurrency: 2, resumeExisting: true },
+      runtimeHooks(),
+    );
+
+    expect(requestOpenAiStructured).not.toHaveBeenCalled();
+    expect(result.degradedCount).toBe(2);
+    expect(currentClips.every((item) => item.status === "screenplay_ready"))
+      .toBe(true);
+    expect(
+      currentClips.map((item) => JSON.parse(item.screenplay ?? "{}").originalText),
+    ).toEqual(["甲说：你好。", "乙走进书房。"]);
+  });
+
+  it("falls back per clip for temporary screenplay provider failures", async () => {
+    currentClips = [clip("clip-1", 0, "甲说：你好。")];
+    listProductionClips.mockImplementation(async () => currentClips);
+    requestOpenAiStructured.mockRejectedValue(
+      new Error("STRUCTURED_PROVIDER_FAILED:524:Provider gateway timeout"),
+    );
+
+    const result = await convertEpisodeClipsToScreenplays(
+      "user-1",
+      runtimeInput,
+      runtimeHooks(),
+    );
+
+    expect(result.degradedCount).toBe(1);
+    expect(result.results[0]).toMatchObject({
+      degraded: true,
+      fallbackReason: "PROVIDER_HTTP_524",
+      success: true,
+    });
+  });
+
+  it("builds a validator-safe deterministic screenplay", () => {
+    const screenplay = buildDeterministicScreenplay(
+      "clip-1",
+      "甲走进书房。",
+      {
+        characters: ["甲"],
+        locations: ["书房"],
+        props: [],
+      },
+    );
+
+    expect(screenplay).toMatchObject({
+      clipId: "clip-1",
+      originalText: "甲走进书房。",
+      scenes: [
+        {
+          heading: { intExt: "INT", location: "书房" },
+          characters: ["甲"],
+          content: [{ type: "action", text: "甲走进书房。" }],
+        },
+      ],
+    });
   });
 });
 

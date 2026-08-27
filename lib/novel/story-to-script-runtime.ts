@@ -54,6 +54,8 @@ type ScreenplayBatchResult = {
   clipIndex: number;
   success: boolean;
   reused: boolean;
+  degraded?: boolean;
+  fallbackReason?: string;
   sceneCount: number;
   trace?: PromptExecutionTrace;
   error?: string;
@@ -293,6 +295,36 @@ export async function convertEpisodeClipsToScreenplays(
           where: { id: clip.id },
           data: { status: "screenplay_running" },
         });
+        if (input.resumeExisting) {
+          const screenplay = buildDeterministicScreenplay(
+            clip.id,
+            clip.content,
+            context.canonical,
+          );
+          await prisma.storyClip.update({
+            where: { id: clip.id },
+            data: {
+              screenplay: JSON.stringify(screenplay),
+              status: "screenplay_ready",
+            },
+          });
+          const fallbackResult = {
+            clipId: clip.id,
+            clipIndex: clip.clipIndex,
+            success: true,
+            reused: false,
+            degraded: true,
+            fallbackReason: "WORKFLOW_RETRY_FALLBACK",
+            sceneCount: screenplay.scenes.length,
+            screenplay,
+          };
+          await hooks.persistArtifact(
+            "screenplay.clip",
+            clip.id,
+            fallbackResult,
+          );
+          return fallbackResult;
+        }
         const result = await requestOpenAiStructured({
           ...context.provider,
           timeoutMs: STORY_STRUCTURED_REQUEST_TIMEOUT_MS,
@@ -337,6 +369,36 @@ export async function convertEpisodeClipsToScreenplays(
         return successResult;
       } catch (error) {
         await hooks.assertActive();
+        if (isRetryableStructuredProviderError(error)) {
+          const screenplay = buildDeterministicScreenplay(
+            clip.id,
+            clip.content,
+            context.canonical,
+          );
+          await prisma.storyClip.update({
+            where: { id: clip.id },
+            data: {
+              screenplay: JSON.stringify(screenplay),
+              status: "screenplay_ready",
+            },
+          });
+          const fallbackResult = {
+            clipId: clip.id,
+            clipIndex: clip.clipIndex,
+            success: true,
+            reused: false,
+            degraded: true,
+            fallbackReason: structuredProviderFailureCode(error),
+            sceneCount: screenplay.scenes.length,
+            screenplay,
+          };
+          await hooks.persistArtifact(
+            "screenplay.clip",
+            clip.id,
+            fallbackResult,
+          );
+          return fallbackResult;
+        }
         const message = error instanceof Error ? error.message : String(error);
         await prisma.storyClip.update({
           where: { id: clip.id },
@@ -364,10 +426,44 @@ export async function convertEpisodeClipsToScreenplays(
   return {
     clipCount: results.length,
     convertedCount: results.filter((result) => !result.reused).length,
+    degradedCount: results.filter((result) => result.degraded).length,
     reusedCount: results.filter((result) => result.reused).length,
     totalScenes: results.reduce((sum, result) => sum + result.sceneCount, 0),
     results,
     promptTraces,
+  };
+}
+
+export function buildDeterministicScreenplay(
+  clipId: string,
+  clipText: string,
+  canonical: CanonicalContext,
+) {
+  const characters = canonical.characters.filter((name) =>
+    clipText.includes(name),
+  );
+  const location = canonical.locations
+    .map((name) => ({ name, index: clipText.lastIndexOf(name) }))
+    .filter((item) => item.index >= 0)
+    .sort((left, right) => right.index - left.index)[0]?.name;
+  return {
+    clipId,
+    originalText: clipText,
+    scenes: [
+      {
+        sceneNumber: 0,
+        heading: {
+          intExt: /房|室|殿|厅|屋|洞|车内/.test(location ?? "")
+            ? ("INT" as const)
+            : ("EXT" as const),
+          location: location ?? canonical.locations[0] ?? "未指定场景",
+          time: "日",
+        },
+        description: "",
+        characters,
+        content: [{ type: "action" as const, text: clipText }],
+      },
+    ],
   };
 }
 

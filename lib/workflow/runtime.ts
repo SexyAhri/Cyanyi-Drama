@@ -442,6 +442,7 @@ async function runStep(
         model,
         locale: getString(input.locale) === "en" ? "en" : "zh",
         concurrency: getNumber(input.concurrency),
+        resumeExisting: runtime.attempt > 1,
       },
       runtime,
     );
@@ -624,8 +625,7 @@ async function persistIncrementalArtifact(input: {
       },
       data: { heartbeatAt: now, updatedAt: now },
     });
-    if (!owned.count)
-      throw new WorkflowControlError("lease_lost", input.runId);
+    if (!owned.count) throw new WorkflowControlError("lease_lost", input.runId);
     await tx.workflowArtifact.upsert({
       where: { id },
       create: {
