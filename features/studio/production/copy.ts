@@ -297,6 +297,8 @@ const labels = {
     qc_report: ["母版质检报告", "Master QC report"],
     subtitle_package: ["字幕包", "Subtitle package"],
     delivery_master: ["交付母版", "Delivery master"],
+    production_control: ["制片计划", "Production control"],
+    production_acceptance: ["总体验收报告", "Production acceptance"],
   },
   vfxCategories: {
     cleanup: ["清理与移除", "Cleanup"],

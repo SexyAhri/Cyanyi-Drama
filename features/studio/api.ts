@@ -306,6 +306,20 @@ export async function transitionStudioDeliverable(
   );
 }
 
+export async function approveStudioDeliverablesBatch(
+  projectId: string,
+  ids: string[],
+) {
+  return request<{ deliverables: ProductionDeliverableRecord[] }>(
+    `/api/projects/${encodeURIComponent(projectId)}/deliverables/batch`,
+    {
+      body: JSON.stringify({ action: "approve_all", ids }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
 export async function upsertStudioAssetEntity(
   projectId: string,
   input:

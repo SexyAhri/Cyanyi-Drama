@@ -285,7 +285,7 @@ M8 将现有六个功能页面升级为电影制作部门协作系统。Agent �
 | M8.3 导演与 Previs | 导演阐述、Blocking、镜头表、摄影与表演规则、Animatic | 每个镜头具备构图、焦段、机位、运动、灯光、时长和连续性依据 | 已完成 |
 | M8.4 VFX 与镜头生产 | VFX Breakdown、镜头依赖图、Plate/Element/Comp 任务、镜头 QC | VFX Shot 可独立排队、重试、换版本和回滚；普通镜头不承担无关 VFX 请求 | 已完成 |
 | M8.5 声音与后期 | EDL、对白/ADR、SFX/Foley、音乐、混录、调色、Online 与字幕 | 时间线版本可恢复；响度、同步、色彩与字幕检查有机器可读报告 | 已完成 |
-| M8.6 制片与总体验收 | 成本/用量预算、排期、部门看板、批量审批、端到端恢复与电影级 QC | 一集从剧本锁定到母版交付可审计；失败、费用、版本和批准链完整 | 待开发 |
+| M8.6 制片与总体验收 | 成本/用量预算、排期、部门看板、批量审批、端到端恢复与电影级 QC | 一集从剧本锁定到母版交付可审计；失败、费用、版本和批准链完整 | 已完成 |
 
 ### 9.4 UI 调整方向
 
@@ -330,7 +330,7 @@ M8 将现有六个功能页面升级为电影制作部门协作系统。Agent �
 | `feat(studio): add direction and previs workflow / 增加导演与预演工作流` | M8.3 导演阐述、Blocking、镜头表、摄影与表演规则、Animatic | 已提交 |
 | `feat(studio): add vfx and shot production / 增加视效与镜头制作` | M8.4 VFX Breakdown、镜头依赖与 QC | 已提交 |
 | `feat(studio): add sound and post-production workflow / 增加声音与后期制作工作流` | M8.5 声音、剪辑、调色、Online、字幕、结构化 QC 与版本恢复 | 已提交 |
-| `feat(studio): add mastering and production acceptance / 增加母版交付与制片验收` | M8.6 预算、排期、部门看板、批量审批和端到端验收 | 待开发 |
+| `feat(studio): add mastering and production acceptance / 增加母版交付与制片验收` | M8.6 预算、排期、部门看板、批量审批和端到端验收 | 已提交 |
 
 当前 Prisma Schema、迁移、资产、计费、媒体和 Workflow 改动相互依赖，因此现有功能使用一个可编译、可迁移的基线提交，不拆成无法独立运行的中间提交。后续每个里程碑按功能和测试独立提交。
 

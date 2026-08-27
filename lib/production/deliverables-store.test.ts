@@ -14,6 +14,7 @@ vi.mock("@/lib/server/prisma", () => {
     productionDeliverable: {
       create: deliverableCreate,
       findFirst: deliverableFindFirst,
+      findMany: deliverableFindMany,
       findUniqueOrThrow: vi.fn(),
       update: deliverableUpdate,
       updateMany: deliverableUpdateMany,
@@ -38,6 +39,7 @@ vi.mock("@/lib/server/prisma", () => {
 });
 
 import {
+  approveProductionDeliverablesBatch,
   createDependencyHash,
   createProductionDeliverable,
   transitionProductionDeliverable,
@@ -53,6 +55,70 @@ beforeEach(() => {
 });
 
 describe("production deliverable persistence", () => {
+  it("approves every pending gate in one atomic batch", async () => {
+    deliverableFindMany
+      .mockResolvedValueOnce([
+        {
+          id: "art-v1",
+          status: "review",
+          approvalGates: [{ status: "pending" }],
+          dependencies: [],
+        },
+        {
+          id: "post-v1",
+          status: "review",
+          approvalGates: [{ status: "pending" }],
+          dependencies: [],
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    deliverableUpdateMany.mockResolvedValueOnce({ count: 2 });
+
+    await approveProductionDeliverablesBatch("user-1", "project-1", [
+      "art-v1",
+      "post-v1",
+    ]);
+
+    expect(gateUpdateMany).toHaveBeenCalledWith({
+      where: {
+        deliverableId: { in: ["art-v1", "post-v1"] },
+        status: "pending",
+      },
+      data: expect.objectContaining({
+        status: "approved",
+        decidedByUserId: "user-1",
+      }),
+    });
+    expect(deliverableUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ["art-v1", "post-v1"] },
+        projectId: "project-1",
+        userId: "user-1",
+        status: "review",
+      },
+      data: expect.objectContaining({ status: "approved" }),
+    });
+  });
+
+  it("rejects a batch when a deliverable changes during approval", async () => {
+    deliverableFindMany.mockResolvedValueOnce([
+      {
+        id: "art-v1",
+        status: "review",
+        approvalGates: [{ status: "pending" }],
+        dependencies: [],
+      },
+    ]);
+    deliverableUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(
+      approveProductionDeliverablesBatch("user-1", "project-1", ["art-v1"]),
+    ).rejects.toMatchObject({
+      message: "PRODUCTION_BATCH_CONFLICT",
+      status: 409,
+    });
+  });
+
   it("marks every downstream level stale when creating an upstream version", async () => {
     deliverableFindFirst.mockResolvedValue({ id: "bible-v2", version: 2 });
     dependencyFindMany

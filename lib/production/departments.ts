@@ -5,6 +5,7 @@ export const PRODUCTION_DEPARTMENTS = [
     deliverableTypes: [
       "creative_brief",
       "production_bible",
+      "production_control",
       "story_bible",
       "screenplay_lock",
     ],
@@ -105,7 +106,12 @@ export const PRODUCTION_DEPARTMENTS = [
   {
     id: "delivery",
     agents: ["qc_supervisor", "delivery_producer"],
-    deliverableTypes: ["qc_report", "subtitle_package", "delivery_master"],
+    deliverableTypes: [
+      "qc_report",
+      "subtitle_package",
+      "delivery_master",
+      "production_acceptance",
+    ],
     requiredGates: ["technical", "content", "delivery"],
   },
 ] as const;

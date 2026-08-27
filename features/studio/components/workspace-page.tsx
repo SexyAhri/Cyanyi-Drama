@@ -45,6 +45,7 @@ import { StageNavigation } from "./stage-navigation";
 import { StageOverview } from "./stage-overview";
 import { WorkspaceTopbar } from "./workspace-topbar";
 import { WritingWorkspace } from "../writing/writing-workspace";
+import { ProductionControlWorkspace } from "../production-control/production-control-workspace";
 
 export function WorkspacePage({ projectId }: { projectId: string }) {
   const { locale, toggleLocale } = useStudioLocale();
@@ -68,6 +69,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
 
   const requestedEpisodeId = searchParams.get("episode") ?? undefined;
   const requestedStage = searchParams.get("stage") as StudioStageId | null;
+  const productionView = searchParams.get("view") === "production";
   const activeStage =
     requestedStage && STUDIO_STAGE_IDS.includes(requestedStage)
       ? requestedStage
@@ -121,6 +123,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
     stageId?: StudioStageId;
   }) {
     const params = new URLSearchParams(searchParams.toString());
+    params.delete("view");
     if (input.episodeId) params.set("episode", input.episodeId);
     if (input.stageId) params.set("stage", input.stageId);
     router.replace(`${pathname}?${params}`, { scroll: false });
@@ -186,6 +189,12 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
           onLocaleChange={toggleLocale}
           onOpenActivity={() => setActivityOpen(true)}
           onOpenEpisodes={() => setEpisodesOpen(true)}
+          onOpenProduction={() => {
+            const params = new URLSearchParams(searchParams.toString());
+            if (productionView) params.delete("view");
+            else params.set("view", "production");
+            router.replace(`${pathname}?${params}`, { scroll: false });
+          }}
           onRefresh={() => void refresh()}
           projectName={snapshot.project.name}
         />
@@ -203,7 +212,15 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
           </aside>
 
           <main className="min-w-0 flex-1 overflow-y-auto">
-            {selectedStage?.id === "writing" && selectedEpisode ? (
+            {productionView ? (
+              <ProductionControlWorkspace
+                episode={selectedEpisode}
+                locale={locale}
+                onRefresh={() => refresh()}
+                snapshot={snapshot}
+                stages={stages}
+              />
+            ) : selectedStage?.id === "writing" && selectedEpisode ? (
               <WritingWorkspace
                 episode={selectedEpisode}
                 locale={locale}

@@ -369,6 +369,77 @@ export async function transitionProductionDeliverable(
   });
 }
 
+export async function approveProductionDeliverablesBatch(
+  userId: string,
+  projectId: string,
+  deliverableIds: string[],
+) {
+  const ids = [...new Set(deliverableIds.map((id) => id.trim()).filter(Boolean))];
+  if (!ids.length || ids.length > 100)
+    throw new ProductionDeliverableError("PRODUCTION_BATCH_INPUT_INVALID");
+  return prisma.$transaction(async (tx) => {
+    const rows = await tx.productionDeliverable.findMany({
+      where: { id: { in: ids }, projectId, userId },
+      include: deliverableInclude,
+    });
+    if (rows.length !== ids.length)
+      throw new ProductionDeliverableError("PRODUCTION_BATCH_SCOPE_INVALID", 404);
+    for (const row of rows) {
+      assertStatus(row.status, ["review"], "approve");
+      if (!row.approvalGates.some((gate) => gate.status === "pending"))
+        throw new ProductionDeliverableError(
+          "PRODUCTION_APPROVAL_GATE_ALREADY_DECIDED",
+          409,
+        );
+      if (
+        row.dependencies.some(
+          (dependency) =>
+            !["approved", "locked"].includes(dependency.dependsOn.status) ||
+            dependency.requiredVersion !== dependency.dependsOn.version,
+        )
+      )
+        throw new ProductionDeliverableError(
+          "PRODUCTION_DEPENDENCY_NOT_APPROVED",
+          409,
+        );
+    }
+    const now = new Date();
+    await tx.productionApprovalGate.updateMany({
+      where: { deliverableId: { in: ids }, status: "pending" },
+      data: {
+        status: "approved",
+        decidedByUserId: userId,
+        decidedAt: now,
+        note: null,
+      },
+    });
+    const approved = await tx.productionDeliverable.updateMany({
+      where: { id: { in: ids }, projectId, userId, status: "review" },
+      data: {
+        status: "approved",
+        approvedAt: now,
+        approvedByUserId: userId,
+      },
+    });
+    if (approved.count !== ids.length)
+      throw new ProductionDeliverableError(
+        "PRODUCTION_BATCH_CONFLICT",
+        409,
+      );
+    const updated = await tx.productionDeliverable.findMany({
+      where: { id: { in: ids }, projectId, userId },
+      include: deliverableInclude,
+    });
+    const positions = new Map(ids.map((id, index) => [id, index]));
+    return updated
+      .sort(
+        (left, right) =>
+          (positions.get(left.id) ?? 0) - (positions.get(right.id) ?? 0),
+      )
+      .map(toDeliverable);
+  });
+}
+
 export function canTransitionProductionDeliverable(
   status: string,
   action: ProductionDeliverableAction,

@@ -5,6 +5,7 @@ import {
   BellDot,
   Clapperboard,
   Languages,
+  LayoutDashboard,
   ListTree,
   LoaderCircle,
   RefreshCw,
@@ -29,6 +30,7 @@ export function WorkspaceTopbar({
   onLocaleChange,
   onOpenActivity,
   onOpenEpisodes,
+  onOpenProduction,
   onRefresh,
   projectName,
 }: {
@@ -38,6 +40,7 @@ export function WorkspaceTopbar({
   onLocaleChange: () => void;
   onOpenActivity: () => void;
   onOpenEpisodes: () => void;
+  onOpenProduction: () => void;
   onRefresh: () => void;
   projectName: string;
 }) {
@@ -90,6 +93,22 @@ export function WorkspaceTopbar({
       </div>
 
       <div className="flex shrink-0 items-center gap-0.5">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label={copy.productionControl}
+                onClick={onOpenProduction}
+                size="icon"
+                type="button"
+                variant="ghost"
+              />
+            }
+          >
+            <LayoutDashboard className="size-4" />
+          </TooltipTrigger>
+          <TooltipContent>{copy.productionControl}</TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger
             render={
