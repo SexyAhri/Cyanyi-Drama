@@ -35,6 +35,7 @@ const copy = {
     attributes: "属性",
     events: "事件",
     loadFailed: "Trace 载入失败",
+    loading: "正在载入 Trace",
     noEvents: "没有事件记录",
     noSpans: "没有 Span 记录",
     spans: "调用链",
@@ -44,6 +45,7 @@ const copy = {
     attributes: "Attributes",
     events: "Events",
     loadFailed: "Unable to load trace",
+    loading: "Loading trace",
     noEvents: "No events",
     noSpans: "No spans",
     spans: "Spans",
@@ -110,13 +112,20 @@ export function TraceDialog({
           </DialogDescription>
         </DialogHeader>
         {error ? (
-          <div className="flex min-h-0 items-center justify-center gap-2 px-6 text-sm text-destructive">
-            <TriangleAlert className="size-4" />
+          <div
+            className="flex min-h-0 items-center justify-center gap-2 px-6 text-sm text-destructive"
+            role="alert"
+          >
+            <TriangleAlert aria-hidden="true" className="size-4" />
             {error}
           </div>
         ) : !trace ? (
-          <div className="flex min-h-0 items-center justify-center text-muted-foreground">
-            <LoaderCircle className="size-5 animate-spin" />
+          <div
+            className="flex min-h-0 items-center justify-center text-muted-foreground"
+            role="status"
+          >
+            <LoaderCircle aria-hidden="true" className="size-5 animate-spin" />
+            <span className="sr-only">{text.loading}</span>
           </div>
         ) : (
           <Tabs className="min-h-0 gap-0" defaultValue="spans">
@@ -137,7 +146,7 @@ export function TraceDialog({
                     {rows.map(({ depth, span }) => (
                       <button
                         className={cn(
-                          "flex w-full items-center gap-2 border-b px-3 py-2 text-left hover:bg-muted/50",
+                          "flex w-full items-center gap-2 border-b px-3 py-2 text-left hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                           selectedSpanId === span.spanId && "bg-muted",
                         )}
                         key={span.spanId}

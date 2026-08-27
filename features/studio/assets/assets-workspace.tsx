@@ -484,7 +484,7 @@ function DomainAssetView({
                   }
                 />
                 <button
-                  className="min-w-0 flex-1 px-1 py-2 text-left"
+                  className="min-w-0 flex-1 px-1 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                   onClick={() => onSelectEntity(entity.id)}
                   type="button"
                 >

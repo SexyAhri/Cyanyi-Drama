@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { MediaTask } from "@/lib/media/task-contract";
 
-import { getStudioStageStates } from "./stage-state";
+import { getStudioStageStates, getTasksForStage } from "./stage-state";
 import type { WorkspaceSnapshot } from "./types";
 
 describe("studio stage state", () => {
@@ -79,6 +79,31 @@ describe("studio stage state", () => {
       totalTasks: 1,
     });
   });
+
+  it("includes prop tasks and preserves partial-success counts for assets", () => {
+    const tasks = [
+      mediaTask("succeeded", "prop"),
+      mediaTask("failed", "character"),
+    ];
+    const stages = getStudioStageStates(
+      snapshot({
+        novelText: "第一章",
+        workflows: [
+          workflow("story-to-script", "succeeded", "2026-08-26T01:00:00Z"),
+        ],
+        tasks,
+      }),
+      "episode-1",
+    );
+
+    expect(getTasksForStage(tasks, "assets")).toHaveLength(2);
+    expect(stages[1]).toMatchObject({
+      status: "failed",
+      completedTasks: 1,
+      failedTasks: 1,
+      totalTasks: 2,
+    });
+  });
 });
 
 function snapshot(input?: {
@@ -150,14 +175,17 @@ function workflow(
   };
 }
 
-function mediaTask(status: MediaTask["status"]): MediaTask {
+function mediaTask(
+  status: MediaTask["status"],
+  targetType: MediaTask["targetType"] = "storyboard_panel",
+): MediaTask {
   return {
     id: `task-${status}`,
     traceId: "trace",
     spanId: "span",
     projectId: "project-1",
     episodeId: "episode-1",
-    targetType: "storyboard_panel",
+    targetType,
     targetId: "panel-1",
     kind: "image",
     status,

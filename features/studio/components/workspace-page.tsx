@@ -25,6 +25,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 
 import { useStudioLocale } from "../hooks/use-studio-locale";
 import { useStudioModels } from "../hooks/use-studio-models";
+import { useStudioWideLayout } from "../hooks/use-studio-wide-layout";
 import { useWorkspace } from "../hooks/use-workspace";
 import { getStudioCopy } from "../i18n";
 import { AssetsWorkspace } from "../assets/assets-workspace";
@@ -47,6 +48,7 @@ import { WritingWorkspace } from "../writing/writing-workspace";
 
 export function WorkspacePage({ projectId }: { projectId: string }) {
   const { locale, toggleLocale } = useStudioLocale();
+  const wideLayout = useStudioWideLayout();
   const copy = getStudioCopy(locale);
   const pathname = usePathname();
   const router = useRouter();
@@ -273,12 +275,14 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
           </main>
 
           <aside className="hidden w-80 shrink-0 border-l xl:block">
-            <StudioInspector
-              context={inspectorContext}
-              locale={locale}
-              onRefresh={() => refresh()}
-              snapshot={snapshot}
-            />
+            {wideLayout ? (
+              <StudioInspector
+                context={inspectorContext}
+                locale={locale}
+                onRefresh={() => refresh()}
+                snapshot={snapshot}
+              />
+            ) : null}
           </aside>
         </div>
 
@@ -299,14 +303,16 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
             side="right"
           >
             <SheetHeader className="flex h-12 shrink-0 flex-row items-center justify-between border-b px-3 py-0">
-              <SheetTitle className="text-sm">{copy.productionActivity}</SheetTitle>
+              <SheetTitle className="text-sm">
+                {copy.productionActivity}
+              </SheetTitle>
               <SheetDescription className="sr-only">
                 {copy.productionActivity}
               </SheetDescription>
               <SheetClose
                 render={
                   <Button
-                    aria-label={locale === "en" ? "Close" : "关闭"}
+                    aria-label={copy.close}
                     size="icon-sm"
                     type="button"
                     variant="ghost"
@@ -316,12 +322,14 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
                 <X className="size-4" />
               </SheetClose>
             </SheetHeader>
-            <StudioInspector
-              context={inspectorContext}
-              locale={locale}
-              onRefresh={() => refresh()}
-              snapshot={snapshot}
-            />
+            {activityOpen ? (
+              <StudioInspector
+                context={inspectorContext}
+                locale={locale}
+                onRefresh={() => refresh()}
+                snapshot={snapshot}
+              />
+            ) : null}
           </SheetContent>
         </Sheet>
       </div>

@@ -514,7 +514,7 @@ export function AudioWorkspace({
           <p className="max-w-md text-sm leading-6">{text.noLinesDetail}</p>
         </div>
       ) : (
-        <div className="grid min-h-[40rem] border-b 2xl:grid-cols-[20rem_minmax(0,1fr)]">
+        <div className="grid min-h-160 border-b 2xl:grid-cols-[20rem_minmax(0,1fr)]">
           <aside className="border-b 2xl:border-r 2xl:border-b-0">
             <div className="flex h-11 items-center justify-between border-b px-3 text-xs font-semibold">
               <span>{text.lines}</span>
@@ -547,7 +547,7 @@ export function AudioWorkspace({
                       }
                     />
                     <button
-                      className="min-w-0 flex-1 py-2 text-left"
+                      className="min-w-0 flex-1 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                       onClick={() => setSelectedLineId(line.id)}
                       type="button"
                     >

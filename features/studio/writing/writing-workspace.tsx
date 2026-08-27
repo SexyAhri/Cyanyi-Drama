@@ -475,7 +475,7 @@ function ScreenplayList({
           key={clip.id}
         >
           <button
-            className="flex w-full min-w-0 items-start gap-3 text-left"
+            className="flex w-full min-w-0 items-start gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
             onClick={() => onSelect(clip.id)}
             type="button"
           >

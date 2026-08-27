@@ -17,6 +17,8 @@ import type {
 } from "../types";
 import { StatusIndicator } from "./status-indicator";
 
+const NAVIGATION_KEYS = new Set(["ArrowLeft", "ArrowRight", "Home", "End"]);
+
 const icons = {
   writing: BookOpenText,
   assets: UsersRound,
@@ -52,13 +54,30 @@ export function StageNavigation({
             <button
               aria-current={active ? "step" : undefined}
               className={cn(
-                "relative flex min-w-24 items-center justify-center gap-2 border-b-2 px-3 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground sm:min-w-32",
+                "relative flex min-w-24 items-center justify-center gap-2 border-b-2 px-3 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:min-w-32",
                 active
                   ? "border-foreground text-foreground"
                   : "border-transparent",
               )}
               key={stage.id}
               onClick={() => onSelect(stage.id)}
+              onKeyDown={(event) => {
+                if (!NAVIGATION_KEYS.has(event.key)) return;
+                event.preventDefault();
+                const targetIndex = getStageNavigationTarget(
+                  index,
+                  event.key,
+                  stages.length,
+                );
+                const buttons =
+                  event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(
+                    "button[data-stage-navigation-item]",
+                  );
+                buttons?.[targetIndex]?.focus();
+                onSelect(stages[targetIndex].id);
+              }}
+              data-stage-navigation-item
+              tabIndex={active ? 0 : -1}
               type="button"
             >
               <span className="text-[10px] text-muted-foreground">
@@ -77,4 +96,17 @@ export function StageNavigation({
       </div>
     </nav>
   );
+}
+
+export function getStageNavigationTarget(
+  currentIndex: number,
+  key: string,
+  itemCount: number,
+) {
+  if (itemCount <= 0) return 0;
+  if (key === "Home") return 0;
+  if (key === "End") return itemCount - 1;
+  if (key === "ArrowLeft") return (currentIndex - 1 + itemCount) % itemCount;
+  if (key === "ArrowRight") return (currentIndex + 1) % itemCount;
+  return currentIndex;
 }

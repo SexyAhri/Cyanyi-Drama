@@ -31,6 +31,7 @@ import {
 const copy = {
   "zh-CN": {
     active: "进行中",
+    actionFailed: "操作失败",
     cancel: "取消",
     empty: "当前剧集还没有运行记录",
     failed: "失败",
@@ -41,6 +42,7 @@ const copy = {
   },
   en: {
     active: "Active",
+    actionFailed: "Action failed",
     cancel: "Cancel",
     empty: "No runs for this episode",
     failed: "Failed",
@@ -93,7 +95,7 @@ export function OperationsPanel({
       }
       await onRefresh();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Action failed");
+      toast.error(error instanceof Error ? error.message : text.actionFailed);
     } finally {
       setBusyId("");
     }

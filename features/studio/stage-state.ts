@@ -36,7 +36,7 @@ export function getStudioStageStates(
   const writingWorkflow = latestWorkflow(workflows, "story-to-script");
   const storyboardWorkflow = latestWorkflow(workflows, "script-to-storyboard");
   const assetTasks = tasks.filter((task) =>
-    ["character", "location"].includes(task.targetType ?? ""),
+    ["character", "location", "prop"].includes(task.targetType ?? ""),
   );
   const writingStatus = workflowStatus(
     writingWorkflow,
@@ -95,7 +95,7 @@ export function getTasksForStage(
 ) {
   if (stageId === "assets") {
     return tasks.filter((task) =>
-      ["character", "location"].includes(task.targetType ?? ""),
+      ["character", "location", "prop"].includes(task.targetType ?? ""),
     );
   }
   if (stageId === "shots") {

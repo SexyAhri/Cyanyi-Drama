@@ -31,6 +31,8 @@ const copy = {
     retry: "重试失败媒体任务",
     send: "发送",
     selected: "当前选择",
+    messages: "Agent 消息",
+    working: "Agent 正在处理",
   },
   en: {
     ask: "Ask about the current production state",
@@ -40,6 +42,8 @@ const copy = {
     retry: "Retry failed media task",
     send: "Send",
     selected: "Selected",
+    messages: "Agent messages",
+    working: "Agent is working",
   },
 } as const;
 
@@ -138,7 +142,19 @@ export function AgentPanel({
         </p>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
+      <div
+        aria-busy={agent.isLoading || agent.isStreaming}
+        aria-label={text.messages}
+        aria-live="polite"
+        aria-relevant="additions text"
+        className="min-h-0 flex-1 overflow-y-auto px-3 py-4"
+        role="log"
+      >
+        {agent.isLoading || agent.isStreaming ? (
+          <span className="sr-only" role="status">
+            {text.working}
+          </span>
+        ) : null}
         {agent.messages.length ? (
           <MessageList
             locale={locale}

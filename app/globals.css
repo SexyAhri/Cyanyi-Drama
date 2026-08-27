@@ -134,9 +134,11 @@
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
   }
+
   html {
     @apply font-sans;
   }
@@ -144,8 +146,7 @@
 
 @layer utilities {
   * {
-    scrollbar-color: color-mix(in oklch, var(--foreground) 18%, transparent)
-      transparent;
+    scrollbar-color: color-mix(in oklch, var(--foreground) 18%, transparent) transparent;
     scrollbar-width: thin;
   }
 
@@ -192,5 +193,17 @@
     width: 0;
     height: 0;
     background: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

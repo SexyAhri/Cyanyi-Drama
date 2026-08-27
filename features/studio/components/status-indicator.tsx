@@ -56,12 +56,15 @@ export function StatusIndicator({
       )}
     >
       <Icon
+        aria-hidden="true"
         className={cn(
           "size-3.5 shrink-0",
           status === "running" && "animate-spin",
         )}
       />
-      {compact ? null : <span>{getStageStatusCopy(locale, status)}</span>}
+      <span className={compact ? "sr-only" : undefined}>
+        {getStageStatusCopy(locale, status)}
+      </span>
     </span>
   );
 }

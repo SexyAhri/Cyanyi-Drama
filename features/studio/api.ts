@@ -113,7 +113,7 @@ export async function updateStudioEpisode(
   );
 }
 
-export async function loadStudioModels() {
+export async function loadStudioModels(signal?: AbortSignal) {
   const result = await request<{
     channels: Array<{
       id: string;
@@ -127,7 +127,7 @@ export async function loadStudioModels() {
         capabilities?: { modalities?: string[] };
       }>;
     }>;
-  }>("/api/channels");
+  }>("/api/channels", { signal });
 
   return result.channels.flatMap((channel) =>
     channel.models.flatMap((model): StudioModelOption[] =>
@@ -780,19 +780,45 @@ export async function loadStudioTrace(traceId: string, signal?: AbortSignal) {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    credentials: "same-origin",
-    ...init,
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      credentials: "same-origin",
+      ...init,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError")
+      throw error;
+    throw new StudioApiError(studioRequestFallback(), 0);
+  }
   const body = (await response.json().catch(() => null)) as Record<
     string,
     unknown
   > | null;
   if (!response.ok) {
+    const serverMessage =
+      typeof body?.message === "string" ? body.message.trim() : "";
     throw new StudioApiError(
-      typeof body?.message === "string" ? body.message : "请求失败",
+      isRuntimeLocaleCompatible(serverMessage)
+        ? serverMessage
+        : studioRequestFallback(),
       response.status,
     );
   }
   return body as T;
+}
+
+function studioRequestFallback() {
+  return getRuntimeStudioLocale() === "en" ? "Request failed" : "请求失败";
+}
+
+function isRuntimeLocaleCompatible(message: string) {
+  if (!message) return false;
+  const containsHan = /[\u3400-\u9fff]/.test(message);
+  return getRuntimeStudioLocale() === "en" ? !containsHan : containsHan;
+}
+
+function getRuntimeStudioLocale() {
+  if (typeof document === "undefined") return "zh-CN";
+  return document.documentElement.lang === "en" ? "en" : "zh-CN";
 }

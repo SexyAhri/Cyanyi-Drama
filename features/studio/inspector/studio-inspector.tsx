@@ -20,6 +20,8 @@ const copy = {
   en: { agent: "Agent", costs: "Costs", operations: "Runs" },
 } as const;
 
+type InspectorTab = "agent" | "operations" | "costs";
+
 export function StudioInspector({
   context,
   locale,
@@ -32,10 +34,15 @@ export function StudioInspector({
   snapshot: WorkspaceSnapshot;
 }) {
   const text = copy[locale];
+  const [activeTab, setActiveTab] = useState<InspectorTab>("agent");
   const [traceId, setTraceId] = useState("");
   return (
     <>
-      <Tabs className="h-full min-h-0 gap-0 bg-background" defaultValue="agent">
+      <Tabs
+        className="h-full min-h-0 gap-0 bg-background"
+        onValueChange={(value) => setActiveTab(value as InspectorTab)}
+        value={activeTab}
+      >
         <TabsList
           className="m-2 grid w-auto shrink-0 grid-cols-3"
           variant="default"
@@ -71,7 +78,9 @@ export function StudioInspector({
           />
         </TabsContent>
         <TabsContent className="min-h-0 border-t" value="costs">
-          <CostsPanel locale={locale} projectId={snapshot.project.id} />
+          {activeTab === "costs" ? (
+            <CostsPanel locale={locale} projectId={snapshot.project.id} />
+          ) : null}
         </TabsContent>
       </Tabs>
       <TraceDialog

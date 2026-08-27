@@ -14,7 +14,7 @@ export function useStudioModels() {
     setIsLoading(true);
     setError(null);
     try {
-      const result = await loadStudioModels();
+      const result = await loadStudioModels(signal);
       if (!signal?.aborted) setModels(result);
     } catch (requestError) {
       if (!signal?.aborted) {
@@ -34,7 +34,8 @@ export function useStudioModels() {
   }, [load]);
 
   const analysisModels = useMemo(
-    () => models.filter((model) => model.type === "llm" || model.type === "text"),
+    () =>
+      models.filter((model) => model.type === "llm" || model.type === "text"),
     [models],
   );
   const imageModels = useMemo(

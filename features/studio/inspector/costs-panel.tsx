@@ -16,6 +16,7 @@ const copy = {
     empty: "当前项目还没有费用记录",
     frozen: "冻结",
     loadFailed: "费用数据载入失败",
+    loading: "正在载入费用数据",
     projectCost: "项目费用",
     retry: "重试",
     units: "计费用量",
@@ -25,6 +26,7 @@ const copy = {
     empty: "No usage costs for this project",
     frozen: "Frozen",
     loadFailed: "Unable to load billing data",
+    loading: "Loading billing data",
     projectCost: "Project cost",
     retry: "Retry",
     units: "Billable units",
@@ -75,14 +77,20 @@ export function CostsPanel({
 
   if (loading && !balance)
     return (
-      <div className="flex h-full items-center justify-center text-muted-foreground">
-        <LoaderCircle className="size-5 animate-spin" />
+      <div
+        className="flex h-full items-center justify-center text-muted-foreground"
+        role="status"
+      >
+        <LoaderCircle aria-hidden="true" className="size-5 animate-spin" />
+        <span className="sr-only">{text.loading}</span>
       </div>
     );
   if (error)
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-        <p className="text-sm text-destructive">{error}</p>
+        <p className="text-sm text-destructive" role="alert">
+          {error}
+        </p>
         <Button onClick={() => void load()} size="sm" variant="outline">
           <RotateCcw className="size-4" />
           {text.retry}
