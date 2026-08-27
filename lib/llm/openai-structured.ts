@@ -162,13 +162,24 @@ function isTimeoutError(error: unknown) {
   );
 }
 
+export function isRetryableStructuredProviderError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  return (
+    /^STRUCTURED_PROVIDER_TIMEOUT:/.test(error.message) ||
+    /^STRUCTURED_PROVIDER_FAILED:(408|425|429|5\d\d):/.test(error.message) ||
+    /fetch failed|ECONNRESET|ETIMEDOUT|socket hang up/i.test(error.message)
+  );
+}
+
 function buildOpenAiMessages(
   messages: StructuredMessage[],
   imageUrls: string[] | undefined,
 ) {
   const images = (imageUrls ?? []).map((url) => url.trim()).filter(Boolean);
   if (!images.length) return messages;
-  const firstUserIndex = messages.findIndex((message) => message.role === "user");
+  const firstUserIndex = messages.findIndex(
+    (message) => message.role === "user",
+  );
   return messages.map((message, index) =>
     index === firstUserIndex
       ? {
@@ -209,10 +220,7 @@ function normalizeStrictJsonSchema(value: unknown): unknown | null {
     return normalized.some((item) => item === null) ? null : normalized;
   }
   if (!isRecord(value)) return value;
-  if (
-    "additionalProperties" in value &&
-    value.additionalProperties !== false
-  )
+  if ("additionalProperties" in value && value.additionalProperties !== false)
     return null;
 
   const normalized: Record<string, unknown> = {};
@@ -255,29 +263,37 @@ async function readJson(response: Response) {
 
 function providerMessage(payload: unknown) {
   if (isRecord(payload) && typeof payload.message === "string")
-    return payload.message;
+    return sanitizeProviderMessage(payload.message);
   if (
     isRecord(payload) &&
     isRecord(payload.error) &&
     typeof payload.error.message === "string"
   )
-    return payload.error.message;
+    return sanitizeProviderMessage(payload.error.message);
   return "unknown";
 }
 
+function sanitizeProviderMessage(message: string) {
+  const normalized = message.trim();
+  if (!normalized) return "unknown";
+  if (/<(?:!doctype|html|head|body)\b/i.test(normalized)) {
+    if (/a timeout occurred/i.test(normalized))
+      return "Provider gateway timeout";
+    return "Provider returned an HTML error page";
+  }
+  return normalized.slice(0, 1_000);
+}
+
 function normalizeTokenUsage(payload: unknown): PromptTokenUsage | null {
-  const usage = isRecord(payload) && isRecord(payload.usage) ? payload.usage : null;
+  const usage =
+    isRecord(payload) && isRecord(payload.usage) ? payload.usage : null;
   if (!usage) return null;
   const inputTokens = tokenCount(usage.prompt_tokens ?? usage.input_tokens);
   const outputTokens = tokenCount(
     usage.completion_tokens ?? usage.output_tokens,
   );
   const reportedTotal = tokenCount(usage.total_tokens);
-  if (
-    inputTokens === null &&
-    outputTokens === null &&
-    reportedTotal === null
-  )
+  if (inputTokens === null && outputTokens === null && reportedTotal === null)
     return null;
   return {
     inputTokens: inputTokens ?? 0,

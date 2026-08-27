@@ -11,7 +11,12 @@ const channelFindFirst = vi.hoisted(() => vi.fn());
 const providerModelFindFirst = vi.hoisted(() => vi.fn());
 const storyClipUpdate = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/llm/openai-structured", () => ({ requestOpenAiStructured }));
+vi.mock("@/lib/llm/openai-structured", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/lib/llm/openai-structured")
+  >()),
+  requestOpenAiStructured,
+}));
 vi.mock("@/lib/production/domain-store", () => ({
   listProductionClips,
   listProductionProps,
@@ -34,6 +39,7 @@ vi.mock("@/lib/server/prisma", () => ({
 }));
 
 import {
+  buildDeterministicClipSegmentation,
   convertEpisodeClipsToScreenplays,
   hasCompleteClipCoverage,
   mapWithConcurrency,
@@ -167,6 +173,85 @@ describe("story-to-script runtime", () => {
       "episode-1",
       expect.objectContaining({ clips: saved }),
     );
+  });
+
+  it("falls back to exact editorial boundaries after a provider timeout", async () => {
+    const sourceText = `${"甲在练武场挥剑。".repeat(120)}\n\n${"乙回到书房。".repeat(120)}`;
+    episodeFindFirst.mockResolvedValue({ novelText: sourceText });
+    listProductionClips.mockResolvedValue([]);
+    requestOpenAiStructured.mockRejectedValue(
+      new Error("STRUCTURED_PROVIDER_FAILED:524:Provider gateway timeout"),
+    );
+    saveProductionClips.mockImplementation(
+      async (_userId, _projectId, _episodeId, clips) =>
+        clips.map((item: { content: string }, index: number) => ({
+          id: `clip-${index}`,
+          clipIndex: index,
+          content: item.content,
+        })),
+    );
+
+    const result = await splitEpisodeIntoClips(
+      "user-1",
+      runtimeInput,
+      runtimeHooks(),
+    );
+
+    expect(result.degraded).toBe(true);
+    expect(result.fallbackReason).toBe("PROVIDER_HTTP_524");
+    expect(result.promptTraces).toEqual([]);
+    expect(
+      saveProductionClips.mock.calls[0][3]
+        .map((clip: { content: string }) => clip.content)
+        .join(""),
+    ).toBe(sourceText);
+  });
+
+  it("skips the provider when a failed segmentation step is retried", async () => {
+    const sourceText = `${"甲在练武场挥剑。".repeat(120)}\n\n乙回到书房。`;
+    episodeFindFirst.mockResolvedValue({ novelText: sourceText });
+    listProductionClips.mockResolvedValue([]);
+    saveProductionClips.mockImplementation(
+      async (_userId, _projectId, _episodeId, clips) =>
+        clips.map((item: { content: string }, index: number) => ({
+          id: `clip-${index}`,
+          clipIndex: index,
+          content: item.content,
+        })),
+    );
+
+    const result = await splitEpisodeIntoClips(
+      "user-1",
+      { ...runtimeInput, resumeExisting: true },
+      runtimeHooks(),
+    );
+
+    expect(requestOpenAiStructured).not.toHaveBeenCalled();
+    expect(result.degraded).toBe(true);
+    expect(result.fallbackReason).toBe("WORKFLOW_RETRY_FALLBACK");
+    expect(result.clips.map((clip) => clip.content).join("")).toBe(sourceText);
+  });
+
+  it("builds bounded fallback clips with canonical production assets", () => {
+    const sourceText = `${"甲在练武场挥剑。".repeat(120)}\n\n乙拿起长剑回到书房。`;
+    const clips = buildDeterministicClipSegmentation(
+      sourceText,
+      {
+        characters: ["甲", "乙"],
+        locations: ["练武场", "书房"],
+        props: ["长剑"],
+      },
+      400,
+    );
+
+    expect(clips.length).toBeGreaterThan(1);
+    expect(clips.map((clip) => clip.text).join("")).toBe(sourceText);
+    expect(clips.every((clip) => clip.text.length <= 400)).toBe(true);
+    expect(clips.at(-1)).toMatchObject({
+      location: "书房",
+      props: ["长剑"],
+    });
+    expect(clips.at(-1)?.characters).toEqual(expect.arrayContaining(["乙"]));
   });
 
   it("keeps successful clips and retries only failed screenplay work", async () => {

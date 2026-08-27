@@ -1,13 +1,10 @@
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import {
+  isRetryableStructuredProviderError,
   requestOpenAiStructured,
   type PromptExecutionTrace,
 } from "@/lib/llm/openai-structured";
-import {
-  PROMPT_IDS,
-  renderPrompt,
-  type PromptLocale,
-} from "@/lib/prompts";
+import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import {
   clipSegmentationSchema,
   screenplayConversionSchema,
@@ -62,6 +59,16 @@ type ScreenplayBatchResult = {
   error?: string;
 };
 
+type SegmentedClip = {
+  start: string;
+  end: string;
+  text: string;
+  summary: string;
+  location: string | null;
+  characters: string[];
+  props: string[];
+};
+
 export class ScreenplayBatchError extends Error {
   constructor(readonly results: ScreenplayBatchResult[]) {
     const failed = results.filter((result) => !result.success);
@@ -92,38 +99,66 @@ export async function splitEpisodeIntoClips(
     existing &&
     hasCompleteClipCoverage(context.sourceText, existing)
   ) {
-    const payload = { clips: existing, reused: true, promptTraces: [] };
+    const payload = {
+      clips: existing,
+      degraded: false,
+      fallbackReason: undefined,
+      reused: true,
+      promptTraces: [] as PromptExecutionTrace[],
+    };
     await hooks.persistArtifact("clips.split", input.episodeId, payload);
     return { clipCount: existing.length, ...payload };
   }
 
-  const result = await requestOpenAiStructured({
-    ...context.provider,
-    timeoutMs: STORY_STRUCTURED_REQUEST_TIMEOUT_MS,
-    prompt: renderPrompt({
-      id: PROMPT_IDS.STORY_CLIP_SEGMENTATION,
-      locale: input.locale ?? "zh",
-      variables: {
-        source_text: context.sourceText,
-        character_library: JSON.stringify(context.characters),
-        location_library: JSON.stringify(context.locations),
-        prop_library: JSON.stringify(context.props),
-      },
-    }),
-    schema: clipSegmentationSchema,
-    validate: (data) =>
-      validateClipSegmentation(data, {
-        sourceText: context.sourceText,
-        canonical: context.canonical,
-      }),
-  });
+  let segmentedClips: SegmentedClip[];
+  let promptTraces: PromptExecutionTrace[] = [];
+  let fallbackReason: string | undefined;
+  if (input.resumeExisting) {
+    segmentedClips = buildDeterministicClipSegmentation(
+      context.sourceText,
+      context.canonical,
+    );
+    fallbackReason = "WORKFLOW_RETRY_FALLBACK";
+  } else {
+    try {
+      const result = await requestOpenAiStructured({
+        ...context.provider,
+        timeoutMs: STORY_STRUCTURED_REQUEST_TIMEOUT_MS,
+        prompt: renderPrompt({
+          id: PROMPT_IDS.STORY_CLIP_SEGMENTATION,
+          locale: input.locale ?? "zh",
+          variables: {
+            source_text: context.sourceText,
+            character_library: JSON.stringify(context.characters),
+            location_library: JSON.stringify(context.locations),
+            prop_library: JSON.stringify(context.props),
+          },
+        }),
+        schema: clipSegmentationSchema,
+        validate: (data) =>
+          validateClipSegmentation(data, {
+            sourceText: context.sourceText,
+            canonical: context.canonical,
+          }),
+      });
+      segmentedClips = result.data.clips;
+      promptTraces = [result.trace];
+    } catch (error) {
+      if (!isRetryableStructuredProviderError(error)) throw error;
+      segmentedClips = buildDeterministicClipSegmentation(
+        context.sourceText,
+        context.canonical,
+      );
+      fallbackReason = structuredProviderFailureCode(error);
+    }
+  }
 
   await hooks.assertActive();
   const saved = await saveProductionClips(
     userId,
     input.projectId,
     input.episodeId,
-    result.data.clips.map((clip, clipIndex) => ({
+    segmentedClips.map((clip, clipIndex) => ({
       clipIndex,
       summary: clip.summary,
       content: clip.text,
@@ -138,12 +173,77 @@ export async function splitEpisodeIntoClips(
 
   const payload = {
     clips: saved,
+    degraded: Boolean(fallbackReason),
+    fallbackReason,
     reused: false,
-    promptTraces: [result.trace],
+    promptTraces,
   };
   await hooks.persistArtifact("clips.split", input.episodeId, payload);
-  await hooks.persistArtifact("prompt.trace", input.episodeId, result.trace);
+  for (const trace of promptTraces)
+    await hooks.persistArtifact("prompt.trace", input.episodeId, trace);
   return { clipCount: saved.length, ...payload };
+}
+
+export function buildDeterministicClipSegmentation(
+  sourceText: string,
+  canonical: CanonicalContext,
+  maxChars = 1_600,
+): SegmentedClip[] {
+  const chunks = splitAtEditorialBoundaries(
+    sourceText,
+    Math.max(200, maxChars),
+  );
+  return chunks.map((text) => {
+    const characters = canonical.characters.filter((name) =>
+      text.includes(name),
+    );
+    const location = canonical.locations
+      .map((name) => ({ name, index: text.lastIndexOf(name) }))
+      .filter((item) => item.index >= 0)
+      .sort((left, right) => right.index - left.index)[0]?.name;
+    const props = canonical.props.filter((name) => text.includes(name));
+    const excerpt = text.trim().replace(/\s+/g, " ").slice(0, 80);
+    return {
+      start: text.slice(0, Math.min(40, text.length)),
+      end: text.slice(Math.max(0, text.length - 40)),
+      text,
+      summary: excerpt || "Untitled clip",
+      location: location ?? null,
+      characters,
+      props,
+    };
+  });
+}
+
+function splitAtEditorialBoundaries(sourceText: string, maxChars: number) {
+  if (sourceText.length <= maxChars) return [sourceText];
+  const chunks: string[] = [];
+  let cursor = 0;
+  while (sourceText.length - cursor > maxChars) {
+    const minimum = cursor + Math.floor(maxChars * 0.55);
+    const maximum = cursor + maxChars;
+    const window = sourceText.slice(minimum, maximum);
+    let boundary = -1;
+    for (const pattern of [/\n\s*\n/g, /\n/g, /[。！？!?；;]/g]) {
+      for (const match of window.matchAll(pattern))
+        boundary = Math.max(boundary, match.index! + match[0].length);
+      if (boundary >= 0) break;
+    }
+    const end = boundary >= 0 ? minimum + boundary : maximum;
+    chunks.push(sourceText.slice(cursor, end));
+    cursor = end;
+  }
+  if (cursor < sourceText.length) chunks.push(sourceText.slice(cursor));
+  return chunks;
+}
+
+function structuredProviderFailureCode(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  const status = message.match(/^STRUCTURED_PROVIDER_FAILED:(\d{3}):/)?.[1];
+  if (status) return `PROVIDER_HTTP_${status}`;
+  if (message.startsWith("STRUCTURED_PROVIDER_TIMEOUT:"))
+    return "PROVIDER_TIMEOUT";
+  return "PROVIDER_TEMPORARY_FAILURE";
 }
 
 export async function convertEpisodeClipsToScreenplays(
@@ -334,10 +434,7 @@ function parseReusableScreenplay(
   }
 }
 
-async function loadStoryContext(
-  userId: string,
-  input: StoryToScriptStepInput,
-) {
+async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
   const [episode, channel, configuredModel, characters, locations, props] =
     await Promise.all([
       prisma.episode.findFirst({

@@ -323,6 +323,34 @@ describe("OpenAI structured requests", () => {
     ).rejects.toThrow("STRUCTURED_PROVIDER_TIMEOUT:600000");
   });
 
+  it("stores a concise message for an HTML gateway timeout", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          "<!DOCTYPE html><html><head><title>524: A timeout occurred</title></head></html>",
+          { status: 524 },
+        ),
+      ),
+    );
+    const prompt = renderPrompt({
+      id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+      variables: { source_text: "source", character_library: "[]" },
+    });
+
+    await expect(
+      requestOpenAiStructured({
+        baseUrl: "https://provider.test/v1",
+        apiKeys: ["test-key"],
+        model: "test-model",
+        prompt,
+        schema,
+      }),
+    ).rejects.toThrow(
+      "STRUCTURED_PROVIDER_FAILED:524:Provider gateway timeout",
+    );
+  });
+
   it("does not reset the semantic budget when correction changes API key", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
