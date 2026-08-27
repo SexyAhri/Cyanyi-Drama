@@ -224,6 +224,43 @@ describe("domain semantic validators", () => {
     );
   });
 
+  it("accepts punctuation-aligned and ordered source actions", () => {
+    const source =
+      "林澈皱眉道：\"你好。\"他拿起怀表。林澈走到窗边。";
+    const issues = validateScreenplayConversion(
+      {
+        clipId: "clip-1",
+        originalText: source,
+        scenes: [
+          {
+            sceneNumber: 0,
+            heading: { intExt: "INT", location: "书房", time: "夜" },
+            description: "",
+            characters: ["林澈"],
+            content: [
+              { type: "action", text: "林澈皱眉道。" },
+              {
+                type: "dialogue",
+                character: "林澈",
+                parenthetical: null,
+                lines: "你好。",
+              },
+              {
+                type: "action",
+                text: "他拿起怀表。林澈走到窗边。",
+              },
+            ],
+          },
+        ],
+      },
+      { clipId: "clip-1", clipText: source, canonical },
+    );
+
+    expect(issues.map((item) => item.code)).not.toContain(
+      "ACTION_NOT_IN_SOURCE",
+    );
+  });
+
   it("detects missing photography and acting outputs per panel", () => {
     expect(
       validateCinematographyCoverage(

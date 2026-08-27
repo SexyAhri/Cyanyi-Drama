@@ -98,6 +98,8 @@ describe("OpenAI structured requests", () => {
     ) as {
       messages: Array<{ role: string; content: string }>;
       response_format: { type: string };
+      stream: boolean;
+      stream_options: { include_usage: boolean };
     };
     expect(requestBody.messages.map((message) => message.role)).toEqual([
       "system",
@@ -105,6 +107,8 @@ describe("OpenAI structured requests", () => {
     ]);
     expect(requestBody.messages[0].content).toContain("casting_director");
     expect(requestBody.response_format.type).toBe("json_object");
+    expect(requestBody.stream).toBe(true);
+    expect(requestBody.stream_options).toEqual({ include_usage: true });
     expect(result.trace).toMatchObject({
       promptId: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
       agentId: "casting_director",
@@ -118,6 +122,41 @@ describe("OpenAI structured requests", () => {
       },
     });
     expect(result.trace.outputHash).toHaveLength(64);
+  });
+
+  it("assembles structured JSON and usage from an event stream", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        [
+          'data: {"choices":[{"delta":{"content":"{\\"value\\":"}}]}',
+          'data: {"choices":[{"delta":{"content":"7}"}}]}',
+          'data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16}}',
+          "data: [DONE]",
+          "",
+        ].join("\n\n"),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const prompt = renderPrompt({
+      id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+      variables: { source_text: "source", character_library: "[]" },
+    });
+
+    const result = await requestOpenAiStructured({
+      baseUrl: "https://provider.test/v1",
+      apiKeys: ["test-key"],
+      model: "test-model",
+      prompt,
+      schema,
+    });
+
+    expect(result.data).toEqual({ value: 7 });
+    expect(result.trace.tokenUsage).toEqual({
+      inputTokens: 12,
+      outputTokens: 4,
+      totalTokens: 16,
+    });
   });
 
   it("attaches owned visual references to the first user message", async () => {

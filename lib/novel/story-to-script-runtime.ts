@@ -1,6 +1,5 @@
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import {
-  isRetryableStructuredProviderError,
   requestOpenAiStructured,
   type PromptExecutionTrace,
 } from "@/lib/llm/openai-structured";
@@ -112,48 +111,28 @@ export async function splitEpisodeIntoClips(
     return { clipCount: existing.length, ...payload };
   }
 
-  let segmentedClips: SegmentedClip[];
-  let promptTraces: PromptExecutionTrace[] = [];
-  let fallbackReason: string | undefined;
-  if (input.resumeExisting) {
-    segmentedClips = buildDeterministicClipSegmentation(
-      context.sourceText,
-      context.canonical,
-    );
-    fallbackReason = "WORKFLOW_RETRY_FALLBACK";
-  } else {
-    try {
-      const result = await requestOpenAiStructured({
-        ...context.provider,
-        timeoutMs: STORY_STRUCTURED_REQUEST_TIMEOUT_MS,
-        prompt: renderPrompt({
-          id: PROMPT_IDS.STORY_CLIP_SEGMENTATION,
-          locale: input.locale ?? "zh",
-          variables: {
-            source_text: context.sourceText,
-            character_library: JSON.stringify(context.characters),
-            location_library: JSON.stringify(context.locations),
-            prop_library: JSON.stringify(context.props),
-          },
-        }),
-        schema: clipSegmentationSchema,
-        validate: (data) =>
-          validateClipSegmentation(data, {
-            sourceText: context.sourceText,
-            canonical: context.canonical,
-          }),
-      });
-      segmentedClips = result.data.clips;
-      promptTraces = [result.trace];
-    } catch (error) {
-      if (!isRetryableStructuredProviderError(error)) throw error;
-      segmentedClips = buildDeterministicClipSegmentation(
-        context.sourceText,
-        context.canonical,
-      );
-      fallbackReason = structuredProviderFailureCode(error);
-    }
-  }
+  const result = await requestOpenAiStructured({
+    ...context.provider,
+    timeoutMs: STORY_STRUCTURED_REQUEST_TIMEOUT_MS,
+    prompt: renderPrompt({
+      id: PROMPT_IDS.STORY_CLIP_SEGMENTATION,
+      locale: input.locale ?? "zh",
+      variables: {
+        source_text: context.sourceText,
+        character_library: JSON.stringify(context.characters),
+        location_library: JSON.stringify(context.locations),
+        prop_library: JSON.stringify(context.props),
+      },
+    }),
+    schema: clipSegmentationSchema,
+    validate: (data) =>
+      validateClipSegmentation(data, {
+        sourceText: context.sourceText,
+        canonical: context.canonical,
+      }),
+  });
+  const segmentedClips = result.data.clips;
+  const promptTraces = [result.trace];
 
   await hooks.assertActive();
   const saved = await saveProductionClips(
@@ -175,8 +154,8 @@ export async function splitEpisodeIntoClips(
 
   const payload = {
     clips: saved,
-    degraded: Boolean(fallbackReason),
-    fallbackReason,
+    degraded: false,
+    fallbackReason: undefined,
     reused: false,
     promptTraces,
   };
@@ -239,15 +218,6 @@ function splitAtEditorialBoundaries(sourceText: string, maxChars: number) {
   return chunks;
 }
 
-function structuredProviderFailureCode(error: unknown) {
-  const message = error instanceof Error ? error.message : "";
-  const status = message.match(/^STRUCTURED_PROVIDER_FAILED:(\d{3}):/)?.[1];
-  if (status) return `PROVIDER_HTTP_${status}`;
-  if (message.startsWith("STRUCTURED_PROVIDER_TIMEOUT:"))
-    return "PROVIDER_TIMEOUT";
-  return "PROVIDER_TEMPORARY_FAILURE";
-}
-
 export async function convertEpisodeClipsToScreenplays(
   userId: string,
   input: StoryToScriptStepInput,
@@ -295,36 +265,6 @@ export async function convertEpisodeClipsToScreenplays(
           where: { id: clip.id },
           data: { status: "screenplay_running" },
         });
-        if (input.resumeExisting) {
-          const screenplay = buildDeterministicScreenplay(
-            clip.id,
-            clip.content,
-            context.canonical,
-          );
-          await prisma.storyClip.update({
-            where: { id: clip.id },
-            data: {
-              screenplay: JSON.stringify(screenplay),
-              status: "screenplay_ready",
-            },
-          });
-          const fallbackResult = {
-            clipId: clip.id,
-            clipIndex: clip.clipIndex,
-            success: true,
-            reused: false,
-            degraded: true,
-            fallbackReason: "WORKFLOW_RETRY_FALLBACK",
-            sceneCount: screenplay.scenes.length,
-            screenplay,
-          };
-          await hooks.persistArtifact(
-            "screenplay.clip",
-            clip.id,
-            fallbackResult,
-          );
-          return fallbackResult;
-        }
         const result = await requestOpenAiStructured({
           ...context.provider,
           timeoutMs: STORY_STRUCTURED_REQUEST_TIMEOUT_MS,
@@ -369,36 +309,6 @@ export async function convertEpisodeClipsToScreenplays(
         return successResult;
       } catch (error) {
         await hooks.assertActive();
-        if (isRetryableStructuredProviderError(error)) {
-          const screenplay = buildDeterministicScreenplay(
-            clip.id,
-            clip.content,
-            context.canonical,
-          );
-          await prisma.storyClip.update({
-            where: { id: clip.id },
-            data: {
-              screenplay: JSON.stringify(screenplay),
-              status: "screenplay_ready",
-            },
-          });
-          const fallbackResult = {
-            clipId: clip.id,
-            clipIndex: clip.clipIndex,
-            success: true,
-            reused: false,
-            degraded: true,
-            fallbackReason: structuredProviderFailureCode(error),
-            sceneCount: screenplay.scenes.length,
-            screenplay,
-          };
-          await hooks.persistArtifact(
-            "screenplay.clip",
-            clip.id,
-            fallbackResult,
-          );
-          return fallbackResult;
-        }
         const message = error instanceof Error ? error.message : String(error);
         await prisma.storyClip.update({
           where: { id: clip.id },

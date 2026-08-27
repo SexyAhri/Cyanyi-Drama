@@ -176,7 +176,7 @@ describe("story-to-script runtime", () => {
     );
   });
 
-  it("falls back to exact editorial boundaries after a provider timeout", async () => {
+  it("does not degrade segmentation after a provider timeout", async () => {
     const sourceText = `${"甲在练武场挥剑。".repeat(120)}\n\n${"乙回到书房。".repeat(120)}`;
     episodeFindFirst.mockResolvedValue({ novelText: sourceText });
     listProductionClips.mockResolvedValue([]);
@@ -192,23 +192,13 @@ describe("story-to-script runtime", () => {
         })),
     );
 
-    const result = await splitEpisodeIntoClips(
-      "user-1",
-      runtimeInput,
-      runtimeHooks(),
-    );
-
-    expect(result.degraded).toBe(true);
-    expect(result.fallbackReason).toBe("PROVIDER_HTTP_524");
-    expect(result.promptTraces).toEqual([]);
-    expect(
-      saveProductionClips.mock.calls[0][3]
-        .map((clip: { content: string }) => clip.content)
-        .join(""),
-    ).toBe(sourceText);
+    await expect(
+      splitEpisodeIntoClips("user-1", runtimeInput, runtimeHooks()),
+    ).rejects.toThrow("STRUCTURED_PROVIDER_FAILED:524");
+    expect(saveProductionClips).not.toHaveBeenCalled();
   });
 
-  it("skips the provider when a failed segmentation step is retried", async () => {
+  it("calls the provider when a failed segmentation step is retried", async () => {
     const sourceText = `${"甲在练武场挥剑。".repeat(120)}\n\n乙回到书房。`;
     episodeFindFirst.mockResolvedValue({ novelText: sourceText });
     listProductionClips.mockResolvedValue([]);
@@ -220,6 +210,22 @@ describe("story-to-script runtime", () => {
           content: item.content,
         })),
     );
+    requestOpenAiStructured.mockResolvedValue({
+      data: {
+        clips: [
+          {
+            start: sourceText.slice(0, 20),
+            end: sourceText.slice(-20),
+            text: sourceText,
+            summary: "重试后拆分",
+            location: null,
+            characters: [],
+            props: [],
+          },
+        ],
+      },
+      trace: trace("story_clip_segmentation"),
+    });
 
     const result = await splitEpisodeIntoClips(
       "user-1",
@@ -227,9 +233,8 @@ describe("story-to-script runtime", () => {
       runtimeHooks(),
     );
 
-    expect(requestOpenAiStructured).not.toHaveBeenCalled();
-    expect(result.degraded).toBe(true);
-    expect(result.fallbackReason).toBe("WORKFLOW_RETRY_FALLBACK");
+    expect(requestOpenAiStructured).toHaveBeenCalledTimes(1);
+    expect(result.degraded).toBe(false);
     expect(result.clips.map((clip) => clip.content).join("")).toBe(sourceText);
   });
 
@@ -301,20 +306,23 @@ describe("story-to-script runtime", () => {
       .toBe(true);
   });
 
-  it("uses exact screenplay skeletons when a workflow retry resumes", async () => {
+  it("calls the model for missing screenplays when a workflow retry resumes", async () => {
     currentClips = [
       clip("clip-1", 0, "甲说：你好。"),
       clip("clip-2", 1, "乙走进书房。"),
     ];
     listProductionClips.mockImplementation(async () => currentClips);
+    requestOpenAiStructured
+      .mockResolvedValueOnce(structuredScreenplay("clip-1", "甲说：你好。"))
+      .mockResolvedValueOnce(structuredScreenplay("clip-2", "乙走进书房。"));
     const result = await convertEpisodeClipsToScreenplays(
       "user-1",
       { ...runtimeInput, concurrency: 2, resumeExisting: true },
       runtimeHooks(),
     );
 
-    expect(requestOpenAiStructured).not.toHaveBeenCalled();
-    expect(result.degradedCount).toBe(2);
+    expect(requestOpenAiStructured).toHaveBeenCalledTimes(2);
+    expect(result.degradedCount).toBe(0);
     expect(currentClips.every((item) => item.status === "screenplay_ready"))
       .toBe(true);
     expect(
@@ -322,25 +330,21 @@ describe("story-to-script runtime", () => {
     ).toEqual(["甲说：你好。", "乙走进书房。"]);
   });
 
-  it("falls back per clip for temporary screenplay provider failures", async () => {
+  it("does not degrade temporary screenplay provider failures", async () => {
     currentClips = [clip("clip-1", 0, "甲说：你好。")];
     listProductionClips.mockImplementation(async () => currentClips);
     requestOpenAiStructured.mockRejectedValue(
       new Error("STRUCTURED_PROVIDER_FAILED:524:Provider gateway timeout"),
     );
 
-    const result = await convertEpisodeClipsToScreenplays(
-      "user-1",
-      runtimeInput,
-      runtimeHooks(),
-    );
-
-    expect(result.degradedCount).toBe(1);
-    expect(result.results[0]).toMatchObject({
-      degraded: true,
-      fallbackReason: "PROVIDER_HTTP_524",
-      success: true,
-    });
+    await expect(
+      convertEpisodeClipsToScreenplays(
+        "user-1",
+        runtimeInput,
+        runtimeHooks(),
+      ),
+    ).rejects.toBeInstanceOf(ScreenplayBatchError);
+    expect(currentClips[0].status).toBe("screenplay_failed");
   });
 
   it("builds a validator-safe deterministic screenplay", () => {

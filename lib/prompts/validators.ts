@@ -191,14 +191,20 @@ export function validateScreenplayConversion(
     scene.content.forEach((content, contentIndex) => {
       const value =
         content.type === "dialogue" ? content.lines : content.text;
-      if (value && !input.clipText.includes(value))
+      const isGrounded =
+        content.type === "action"
+          ? isOrderedActionExcerpt(value, input.clipText)
+          : !value || input.clipText.includes(value);
+      if (!isGrounded)
         issues.push(
           issue(
             `scenes.${sceneIndex}.content.${contentIndex}`,
             content.type === "action"
               ? "ACTION_NOT_IN_SOURCE"
               : "SPOKEN_TEXT_NOT_IN_SOURCE",
-            "Screenplay content must be an exact source excerpt",
+            content.type === "action"
+              ? "Action must consist of ordered source excerpts; punctuation may differ"
+              : "Spoken content must be an exact source excerpt",
           ),
         );
       if (
@@ -218,6 +224,27 @@ export function validateScreenplayConversion(
     });
   });
   return issues;
+}
+
+function isOrderedActionExcerpt(value: string, sourceText: string) {
+  if (!value || sourceText.includes(value)) return true;
+  const normalizedSource = normalizeActionText(sourceText);
+  const fragments = value
+    .split(/[。！？!?；;]+/u)
+    .map(normalizeActionText)
+    .filter(Boolean);
+  if (!fragments.length) return false;
+  let cursor = 0;
+  for (const fragment of fragments) {
+    const index = normalizedSource.indexOf(fragment, cursor);
+    if (index < 0) return false;
+    cursor = index + fragment.length;
+  }
+  return true;
+}
+
+function normalizeActionText(value: string) {
+  return value.replace(/[\p{P}\p{S}\s]/gu, "");
 }
 
 export function validateStoryboardPlanning(

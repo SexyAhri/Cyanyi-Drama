@@ -132,6 +132,8 @@ async function requestText(input: {
           model: input.model,
           temperature: input.temperature ?? 0.2,
           response_format: input.responseFormat,
+          stream: true,
+          stream_options: { include_usage: true },
           messages: buildOpenAiMessages(input.messages, input.imageUrls),
         }),
         signal: AbortSignal.timeout(timeoutMs),
@@ -143,11 +145,14 @@ async function requestText(input: {
       throw new Error(`STRUCTURED_PROVIDER_TIMEOUT:${timeoutMs}`);
     throw error;
   }
-  const payload = await readJson(response);
+  const responseText = await response.text();
+  const payload = parseJsonText(responseText);
   if (!response.ok)
     throw new Error(
       `STRUCTURED_PROVIDER_FAILED:${response.status}:${providerMessage(payload)}`,
     );
+  if (isEventStreamResponse(response, responseText))
+    return parseOpenAiEventStream(responseText);
   return {
     text: extractText(payload),
     tokenUsage: normalizeTokenUsage(payload),
@@ -252,13 +257,57 @@ function extractText(payload: unknown) {
   throw new Error("STRUCTURED_PROVIDER_TEXT_MISSING");
 }
 
-async function readJson(response: Response) {
-  const text = await response.text();
+function parseJsonText(text: string) {
   try {
     return JSON.parse(text) as unknown;
   } catch {
     return { message: text };
   }
+}
+
+function isEventStreamResponse(response: Response, text: string) {
+  return (
+    response.headers.get("content-type")?.includes("text/event-stream") ||
+    text.trimStart().startsWith("data:")
+  );
+}
+
+function parseOpenAiEventStream(text: string) {
+  let content = "";
+  let tokenUsage: PromptTokenUsage | null = null;
+  for (const event of text.split(/\r?\n\r?\n/)) {
+    const data = event
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n")
+      .trim();
+    if (!data || data === "[DONE]") continue;
+    const payload = parseJsonText(data);
+    if (isRecord(payload) && payload.error)
+      throw new Error(
+        `STRUCTURED_PROVIDER_STREAM_FAILED:${providerMessage(payload)}`,
+      );
+    content += extractStreamText(payload);
+    tokenUsage = normalizeTokenUsage(payload) ?? tokenUsage;
+  }
+  if (!content) throw new Error("STRUCTURED_PROVIDER_TEXT_MISSING");
+  return { text: content, tokenUsage };
+}
+
+function extractStreamText(payload: unknown) {
+  const choices = isRecord(payload) ? payload.choices : undefined;
+  const choice = Array.isArray(choices) ? choices[0] : undefined;
+  const delta = isRecord(choice) ? choice.delta : undefined;
+  const content = isRecord(delta) ? delta.content : undefined;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content))
+    return content
+      .map((part) =>
+        isRecord(part) && typeof part.text === "string" ? part.text : "",
+      )
+      .join("");
+  return "";
 }
 
 function providerMessage(payload: unknown) {
