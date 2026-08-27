@@ -102,7 +102,7 @@ export async function createProjectImageTask(
     protocol: channel.protocol,
     model: input.model,
     request: {
-      prompt: input.prompt,
+      prompt: withAssetContinuityRequirements(input.targetType, input.prompt),
       ratio: input.ratio ?? "1:1",
       resolution: input.resolution ?? "2k",
       format: "png",
@@ -178,6 +178,7 @@ export async function createStoryboardPanelImageTask(input: {
       description: true,
       imagePrompt: true,
       charactersJson: true,
+      propsJson: true,
       locationName: true,
     },
   });
@@ -189,6 +190,7 @@ export async function createStoryboardPanelImageTask(input: {
   const referenceImages = await findStoryboardReferenceImages({
     projectId: input.projectId,
     characters: parseStringArray(panel.charactersJson),
+    props: parseStringArray(panel.propsJson),
     locationName: panel.locationName,
   });
   const task = createMediaTask({
@@ -204,7 +206,12 @@ export async function createStoryboardPanelImageTask(input: {
     protocol: channel.protocol,
     model: input.model,
     request: {
-      prompt,
+      prompt: withStoryboardImageContinuityRequirements({
+        prompt,
+        characters: parseStringArray(panel.charactersJson),
+        props: parseStringArray(panel.propsJson),
+        locationName: panel.locationName,
+      }),
       ratio: input.ratio ?? "16:9",
       resolution: input.resolution ?? "2k",
       format: "png",
@@ -288,6 +295,7 @@ export async function createStoryboardPanelVideoTask(input: {
         select: { url: true, storageKey: true, mimeType: true },
       },
       charactersJson: true,
+      propsJson: true,
       locationName: true,
     },
   });
@@ -303,6 +311,7 @@ export async function createStoryboardPanelVideoTask(input: {
   const supportingReferences = await findStoryboardReferenceImages({
     projectId: input.projectId,
     characters: parseStringArray(panel.charactersJson),
+    props: parseStringArray(panel.propsJson),
     locationName: panel.locationName,
   });
   const referenceImages: Array<{
@@ -359,7 +368,7 @@ export async function createStoryboardPanelVideoTask(input: {
       parseDurationSeconds(input.duration) ?? panel.durationSeconds ?? 5,
     useNativeAudio: generatesNativeAudio,
   });
-  const prompt = dialogue.lines.length
+  const dialoguePrompt = dialogue.lines.length
     ? dialogueVideoPrompt({
         description: panel.description ?? basePrompt,
         durationSeconds: dialogue.durationSeconds,
@@ -369,6 +378,12 @@ export async function createStoryboardPanelVideoTask(input: {
         nativeAudio: generatesNativeAudio,
       })
     : basePrompt;
+  const prompt = withStoryboardVideoContinuityRequirements({
+    prompt: dialoguePrompt,
+    characters: parseStringArray(panel.charactersJson),
+    props: parseStringArray(panel.propsJson),
+    locationName: panel.locationName,
+  });
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
@@ -750,6 +765,7 @@ async function findSelectedReferenceImages(input: CreateProjectImageTaskInput) {
 async function findStoryboardReferenceImages(input: {
   projectId: string;
   characters: string[];
+  props?: string[];
   locationName: string | null;
 }) {
   const references: Array<{ url: string; mimeType?: string }> = [];
@@ -792,7 +808,100 @@ async function findStoryboardReferenceImages(input: {
     const asset = location?.images[0]?.imageAsset;
     if (asset?.url) references.push({ url: asset.url, mimeType: asset.mimeType ?? undefined });
   }
-  return references.slice(0, 9);
+  const propNames = input.props?.map((name) => name.trim()).filter(Boolean) ?? [];
+  if (propNames.length) {
+    const props = await prisma.novelProp.findMany({
+      where: { projectId: input.projectId, name: { in: propNames } },
+      select: { id: true },
+    });
+    if (props.length) {
+      const propAssets = await prisma.assetReference.findMany({
+        where: {
+          projectId: input.projectId,
+          entityType: "prop",
+          entityId: { in: props.map((prop) => prop.id) },
+          role: "selected",
+          mediaAsset: { kind: "image", url: { not: null } },
+        },
+        select: { mediaAsset: { select: { url: true, mimeType: true } } },
+      });
+      for (const reference of propAssets) {
+        const asset = reference.mediaAsset;
+        if (asset.url)
+          references.push({
+            url: asset.url,
+            mimeType: asset.mimeType ?? undefined,
+          });
+      }
+    }
+  }
+  const seen = new Set<string>();
+  return references
+    .filter((reference) => {
+      if (seen.has(reference.url)) return false;
+      seen.add(reference.url);
+      return true;
+    })
+    .slice(0, 9);
+}
+
+function withAssetContinuityRequirements(
+  targetType: ProjectAssetTarget,
+  prompt: string,
+) {
+  if (targetType === "character")
+    return [
+      prompt,
+      "角色主设定图，不是剧情场景图。使用干净无文字的浅色背景，在同一张宽幅画面中清晰呈现头像特写、全身正面、全身侧面、全身背面；四个视图必须是同一个人、同一套服装、同一发型、同一配饰与配色，比例和细节一致。不要多余人物、不要镜面反射、不要文字、水印或拼贴边框。",
+    ].join("\n");
+  if (targetType === "location")
+    return [
+      prompt,
+      "影视场景主设定图，不是一次性气氛图。清晰固定空间布局、主要出入口、训练区或行动区、不可移动地标、光源方向和关键陈设的位置，便于后续镜头从不同机位保持同一地点。不要人物、不要文字、水印或会遮挡空间结构的特写。",
+    ].join("\n");
+  return prompt;
+}
+
+function withStoryboardImageContinuityRequirements(input: {
+  prompt: string;
+  characters: string[];
+  props: string[];
+  locationName: string | null;
+}) {
+  const anchors = [
+    input.characters.length ? `角色锚点：${input.characters.join("、")}` : null,
+    input.locationName ? `场景锚点：${input.locationName}` : null,
+    input.props.length ? `关键道具锚点：${input.props.join("、")}` : null,
+  ].filter(Boolean);
+  return [
+    input.prompt,
+    "连续性约束：严格匹配提供的角色、场景和道具参考图；同一角色保持脸部、发型、服装、体型和配色不变，同一场景保持空间布局、主光方向和固定地标不变，同一关键道具保持单一实例和一致外观。",
+    ...anchors,
+  ].join("\n");
+}
+
+function withStoryboardVideoContinuityRequirements(input: {
+  prompt: string;
+  characters: string[];
+  props: string[];
+  locationName: string | null;
+}) {
+  const anchorLines = [
+    input.characters.length
+      ? `角色锁定：${input.characters.join("、")}。角色脸部、发型、服装、体型、配色和初始朝向必须与参考图和前一镜头保持一致；只有动作时间线明确转身时才改变朝向。`
+      : null,
+    input.locationName
+      ? `场景锁定：${input.locationName}。保持同一空间布局、出入口、固定地标、主光方向和运动轴线。`
+      : null,
+    input.props.length
+      ? `道具锁定：${input.props.join("、")}。同一连续动作中每件关键道具只能有一个实例；不得复制、替换、凭空新增、消失或随换镜头改变位置。摄影机可以换机位，但对象仍是同一实例。`
+      : null,
+  ].filter(Boolean);
+  return [
+    input.prompt,
+    "跨镜头连续性硬约束：镜头只改变摄影机位置、景别或已写明的角色动作，不得重置人物姿态、生成额外人物或重复关键道具；首帧承接前一镜头的末帧状态，动作沿同一方向连续完成。",
+    ...anchorLines,
+  ].join("\n");
 }
 
 function parseStringArray(value: string | null) {

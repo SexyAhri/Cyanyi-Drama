@@ -52,7 +52,7 @@ export async function POST(request: Request, context: Context) {
       throw new ProjectAssetError("指定已有外观时 count 只能为 1", 400);
     const prompt =
       stringValue(body.prompt) ||
-      "基于参考图片生成一致的角色设定图，保持面部、发型、体型、服装与配色稳定，使用干净背景并展示清晰全身比例。";
+      "基于参考图片生成角色主设定三视图。使用干净无文字的浅色背景，在同一张宽幅画面中展示头像特写、全身正面、全身侧面、全身背面；四个视图必须是同一个角色，保持面部、发型、体型、服装、配饰、配色和全身比例完全一致。不要剧情场景、不要额外人物、不要文字、水印、镜面反射或拼贴边框。";
     const tasks = [];
     for (let index = 0; index < count; index += 1) {
       const result = await createProjectImageTask({
@@ -64,7 +64,7 @@ export async function POST(request: Request, context: Context) {
         targetId: characterId,
         targetAppearanceId: appearanceId,
         prompt,
-        ratio: stringValue(body.ratio) || "3:4",
+        ratio: stringValue(body.ratio) || "16:9",
         resolution: stringValue(body.resolution) || "2k",
         referenceAssetIds: assetIds,
         idempotencyKey: referenceIdempotencyKey({

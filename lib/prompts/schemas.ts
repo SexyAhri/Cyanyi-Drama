@@ -67,7 +67,15 @@ export const clipSegmentationSchema = z
   .strict();
 
 const screenplayContentSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("action"), text: exactText }).strict(),
+  z
+    .object({
+      type: z.literal("action"),
+      text: exactText,
+      // A bridge is a bounded, filmable connective action inferred from source evidence.
+      origin: z.enum(["source", "bridge"]).optional(),
+      evidence: evidenceQuotes.optional(),
+    })
+    .strict(),
   z
     .object({
       type: z.literal("dialogue"),

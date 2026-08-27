@@ -193,17 +193,23 @@ export function validateScreenplayConversion(
         content.type === "dialogue" ? content.lines : content.text;
       const isGrounded =
         content.type === "action"
-          ? isOrderedActionExcerpt(value, input.clipText)
+          ? content.origin === "bridge"
+            ? isGroundedBridgeAction(content, input.clipText)
+            : isOrderedActionExcerpt(value, input.clipText)
           : !value || input.clipText.includes(value);
       if (!isGrounded)
         issues.push(
           issue(
             `scenes.${sceneIndex}.content.${contentIndex}`,
             content.type === "action"
-              ? "ACTION_NOT_IN_SOURCE"
+              ? content.origin === "bridge"
+                ? "BRIDGE_ACTION_NOT_GROUNDED"
+                : "ACTION_NOT_IN_SOURCE"
               : "SPOKEN_TEXT_NOT_IN_SOURCE",
             content.type === "action"
-              ? "Action must consist of ordered source excerpts; punctuation may differ"
+              ? content.origin === "bridge"
+                ? "Bridge action must cite exact source evidence and cannot introduce spoken dialogue"
+                : "Action must consist of ordered source excerpts; punctuation may differ"
               : "Spoken content must be an exact source excerpt",
           ),
         );
@@ -252,6 +258,21 @@ function isOrderedActionExcerpt(value: string, sourceText: string) {
     cursor = index + fragment.length;
   }
   return true;
+}
+
+function isGroundedBridgeAction(
+  content: Extract<
+    ScreenplayConversion["scenes"][number]["content"][number],
+    { type: "action" }
+  >,
+  sourceText: string,
+) {
+  const evidence = content.evidence ?? [];
+  if (!evidence.length || !evidence.every((quote) => sourceText.includes(quote)))
+    return false;
+  // Connecting actions are visual only. Dialogue belongs to the source as dialogue/voiceover.
+  return !/[“”"][^“”"]+[“”"]/.test(content.text) &&
+    !/(?:说|问|答|回应|喊|叫|开口|低声|轻声)[：:]/.test(content.text);
 }
 
 function normalizeActionText(value: string) {

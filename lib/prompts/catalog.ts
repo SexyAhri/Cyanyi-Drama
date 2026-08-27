@@ -46,7 +46,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_SCREENPLAY_CONVERSION]: {
     pathStem: "domain/story_screenplay_conversion",
-    version: 5,
+    version: 6,
     variables: [
       "clip_id",
       "clip_text",
@@ -68,7 +68,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_STORYBOARD_PLANNING]: {
     pathStem: "domain/story_storyboard_planning",
-    version: 3,
+    version: 4,
     variables: [
       "source_text",
       "characters_json",

@@ -261,6 +261,60 @@ describe("domain semantic validators", () => {
     );
   });
 
+  it("accepts a source-grounded visual bridge but rejects an uncited bridge", () => {
+    const source = "韩子枫从暗格取出铁盒，交给韩宇。";
+    const base = {
+      clipId: "clip-1",
+      originalText: source,
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "书房", time: "夜" },
+          description: "",
+          characters: ["韩子枫", "韩宇"],
+          content: [
+            {
+              type: "action" as const,
+              text: "韩子枫走到暗格前，取出铁盒，转身双手递向韩宇。",
+              origin: "bridge" as const,
+              evidence: ["韩子枫从暗格取出铁盒，交给韩宇。"],
+            },
+          ],
+        },
+      ],
+    };
+    const input = {
+      clipId: "clip-1",
+      clipText: source,
+      canonical: {
+        characters: ["韩子枫", "韩宇"],
+        locations: ["书房"],
+        props: ["铁盒"],
+      },
+    };
+
+    expect(validateScreenplayConversion(base, input)).toEqual([]);
+    expect(
+      validateScreenplayConversion(
+        {
+          ...base,
+          scenes: [
+            {
+              ...base.scenes[0],
+              content: [
+                {
+                  ...base.scenes[0].content[0],
+                  evidence: ["不存在的原文依据"],
+                },
+              ],
+            },
+          ],
+        },
+        input,
+      ).map((item) => item.code),
+    ).toContain("BRIDGE_ACTION_NOT_GROUNDED");
+  });
+
   it("rejects narration and accepts an explicitly introduced unquoted line", () => {
     const source =
       "韩子枫望着儿子，既欣慰又愧疚。若自己没有重伤，韩宇本可早早突破。韩宇反而安慰父亲，只要坚持，终有一天能让轻视他们的人闭嘴。";

@@ -14,7 +14,7 @@ export function normalizeScreenplayDialogue(
     scenes: screenplay.scenes.map((scene) => ({
       ...scene,
       content: scene.content.flatMap((content) =>
-        content.type === "action"
+        content.type === "action" && content.origin !== "bridge"
           ? splitQuotedDialogue(content.text, scene.characters).flatMap(
               (quoted) =>
                 quoted.type === "action"
