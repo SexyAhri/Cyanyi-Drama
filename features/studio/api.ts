@@ -5,6 +5,8 @@ import type {
   EpisodeSplitResult,
   EditorProjectRecord,
   ProductionData,
+  ProductionDeliverableCatalog,
+  ProductionDeliverableRecord,
   ProductionPropRecord,
   ProjectAssetCatalog,
   ProjectMediaAsset,
@@ -243,6 +245,59 @@ export async function loadStudioProjectAssets(
     { signal },
   );
   return result.assets;
+}
+
+export async function loadStudioDeliverables(
+  projectId: string,
+  signal?: AbortSignal,
+) {
+  return request<ProductionDeliverableCatalog>(
+    `/api/projects/${encodeURIComponent(projectId)}/deliverables`,
+    { signal },
+  );
+}
+
+export async function createStudioDeliverable(
+  projectId: string,
+  input: {
+    department: string;
+    deliverableType: string;
+    title: string;
+    scopeType: string;
+    scopeId: string;
+    episodeId?: string;
+    payload: Record<string, unknown>;
+    sourceRefs?: unknown[];
+    dependencyIds?: string[];
+  },
+) {
+  return request<{ deliverable: ProductionDeliverableRecord }>(
+    `/api/projects/${encodeURIComponent(projectId)}/deliverables`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
+export async function transitionStudioDeliverable(
+  projectId: string,
+  deliverableId: string,
+  input: {
+    action: "submit" | "approve" | "reject" | "lock" | "supersede";
+    gateKey?: string;
+    note?: string;
+  },
+) {
+  return request<{ deliverable: ProductionDeliverableRecord }>(
+    `/api/projects/${encodeURIComponent(projectId)}/deliverables/${encodeURIComponent(deliverableId)}`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "PATCH",
+    },
+  );
 }
 
 export async function upsertStudioAssetEntity(

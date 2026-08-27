@@ -231,6 +231,59 @@ export type ProjectAssetCatalog = {
   props: ProductionPropRecord[];
 };
 
+export type ProductionDepartmentDefinition = {
+  id: string;
+  agents: string[];
+  deliverableTypes: string[];
+  requiredGates: string[];
+};
+
+export type ProductionApprovalGateRecord = {
+  key: string;
+  status: string;
+  decidedByUserId?: string;
+  note?: string;
+  decidedAt?: string;
+};
+
+export type ProductionDeliverableRecord = {
+  id: string;
+  projectId: string;
+  episodeId?: string;
+  scopeType: string;
+  scopeId: string;
+  department: string;
+  deliverableType: string;
+  title: string;
+  status: string;
+  version: number;
+  payload: Record<string, unknown>;
+  sourceRefs: unknown[];
+  promptTrace?: unknown;
+  cost: string;
+  dependencyHash: string;
+  approvedByUserId?: string;
+  approvalGates: ProductionApprovalGateRecord[];
+  dependencies: Array<{
+    id: string;
+    title: string;
+    status: string;
+    requiredVersion: number;
+    currentVersion: number;
+  }>;
+  submittedAt?: string;
+  approvedAt?: string;
+  lockedAt?: string;
+  supersededAt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProductionDeliverableCatalog = {
+  departments: ProductionDepartmentDefinition[];
+  deliverables: ProductionDeliverableRecord[];
+};
+
 export type StudioStoryboardPanel = StoryboardPanelRecord;
 
 export type StudioStoryboardData = {
@@ -270,6 +323,7 @@ export type StudioSelectionContext = {
   kind:
     | "character"
     | "clip"
+    | "deliverable"
     | "location"
     | "panel"
     | "prop"

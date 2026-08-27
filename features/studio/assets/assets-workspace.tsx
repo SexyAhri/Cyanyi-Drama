@@ -23,6 +23,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { MediaTask } from "@/lib/media/task-contract";
+import type { EpisodeRecord } from "@/lib/projects/types";
 import { cn } from "@/lib/utils";
 
 import {
@@ -40,6 +41,8 @@ import type {
   StudioSelectionContext,
   WorkspaceSnapshot,
 } from "../types";
+import { getProductionCopy } from "../production/copy";
+import { DepartmentDeliverablesWorkspace } from "../production/department-deliverables";
 import { StatusIndicator } from "../components/status-indicator";
 import { runtimeStatusToStageStatus } from "../stage-state";
 import { AssetCandidateGrid } from "./asset-candidates";
@@ -56,10 +59,17 @@ import {
   type StudioAssetKind,
 } from "./asset-view-model";
 
-type AssetTab = StudioAssetKind | "source";
+type AssetTab =
+  | StudioAssetKind
+  | "source"
+  | "department"
+  | "visual_bible"
+  | "color_script"
+  | "specifications";
 
 export function AssetsWorkspace({
   analysisModels,
+  episode,
   imageModels,
   locale,
   onContextChange,
@@ -67,6 +77,7 @@ export function AssetsWorkspace({
   snapshot,
 }: {
   analysisModels: StudioModelOption[];
+  episode?: EpisodeRecord;
   imageModels: StudioModelOption[];
   locale: StudioLocale;
   onContextChange: (selection?: StudioSelectionContext) => void;
@@ -74,10 +85,11 @@ export function AssetsWorkspace({
   snapshot: WorkspaceSnapshot;
 }) {
   const copy = getStudioCopy(locale);
+  const productionCopy = getProductionCopy(locale);
   const [catalog, setCatalog] = useState<ProjectAssetCatalog | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [tab, setTab] = useState<AssetTab>("character");
+  const [tab, setTab] = useState<AssetTab>("department");
   const [selectedEntityId, setSelectedEntityId] = useState("");
   const [checkedEntityIds, setCheckedEntityIds] = useState<string[]>([]);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
@@ -87,6 +99,15 @@ export function AssetsWorkspace({
   const sourceInputRef = useRef<HTMLInputElement>(null);
   const projectId = snapshot.project.id;
   const revision = getTaskOutputRevision(snapshot.tasks);
+  const sourceAssets = useMemo(
+    () =>
+      catalog
+        ? getProjectSourceAssets(catalog, projectId).filter(
+            (asset) => asset.kind === "image",
+          )
+        : [],
+    [catalog, projectId],
+  );
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -119,13 +140,19 @@ export function AssetsWorkspace({
 
   const entities = useMemo(
     () =>
-      catalog && tab !== "source" ? buildStudioAssetEntities(catalog, tab) : [],
+      catalog && isDomainAssetTab(tab)
+        ? buildStudioAssetEntities(catalog, tab)
+        : [],
     [catalog, tab],
   );
   const selectedEntity =
     entities.find((entity) => entity.id === selectedEntityId) ?? entities[0];
 
   useEffect(() => {
+    if (!isDomainAssetTab(tab)) {
+      if (tab === "source") onContextChange(undefined);
+      return;
+    }
     onContextChange(
       selectedEntity
         ? {
@@ -136,7 +163,7 @@ export function AssetsWorkspace({
           }
         : undefined,
     );
-  }, [onContextChange, selectedEntity]);
+  }, [onContextChange, selectedEntity, tab]);
 
   useEffect(() => {
     if (!entities.length) {
@@ -231,9 +258,6 @@ export function AssetsWorkspace({
   const checkedEntities = entities.filter((entity) =>
     checkedEntityIds.includes(entity.id),
   );
-  const sourceAssets = getProjectSourceAssets(catalog, projectId).filter(
-    (asset) => asset.kind === "image",
-  );
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-7 sm:py-7">
@@ -245,7 +269,7 @@ export function AssetsWorkspace({
           <h1 className="mt-1 text-xl font-semibold">{copy.assetLibrary}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {tab !== "source" ? (
+          {isDomainAssetTab(tab) ? (
             <>
               {checkedEntities.length ? (
                 <GenerateAssetDialog
@@ -269,7 +293,7 @@ export function AssetsWorkspace({
                 projectId={projectId}
               />
             </>
-          ) : (
+          ) : tab === "source" ? (
             <>
               <input
                 accept="image/*"
@@ -312,7 +336,7 @@ export function AssetsWorkspace({
                 }
               />
             </>
-          )}
+          ) : null}
         </div>
       </header>
 
@@ -322,6 +346,22 @@ export function AssetsWorkspace({
         value={tab}
       >
         <TabsList className="max-w-full overflow-x-auto" variant="line">
+          <AssetTabTrigger
+            label={productionCopy.artDepartment}
+            value="department"
+          />
+          <AssetTabTrigger
+            label={productionCopy.visualBible}
+            value="visual_bible"
+          />
+          <AssetTabTrigger
+            label={productionCopy.colorScript}
+            value="color_script"
+          />
+          <AssetTabTrigger
+            label={productionCopy.specifications}
+            value="specifications"
+          />
           <AssetTabTrigger
             count={catalog.characters.length}
             label={copy.characterAssets}
@@ -343,6 +383,69 @@ export function AssetsWorkspace({
             value="source"
           />
         </TabsList>
+
+        <TabsContent className="mt-4" value="department">
+          {tab === "department" ? (
+            <DepartmentDeliverablesWorkspace
+              defaultType="visual_bible"
+              departments={["art"]}
+              episodeId={episode?.id}
+              locale={locale}
+              onContextChange={onContextChange}
+              projectId={projectId}
+              sourceAssets={sourceAssets}
+              title={productionCopy.artDepartment}
+            />
+          ) : null}
+        </TabsContent>
+        <TabsContent className="mt-4" value="visual_bible">
+          {tab === "visual_bible" ? (
+            <DepartmentDeliverablesWorkspace
+              defaultType="visual_bible"
+              departments={["art"]}
+              locale={locale}
+              onContextChange={onContextChange}
+              projectId={projectId}
+              sourceAssets={sourceAssets}
+              title={productionCopy.visualBible}
+              types={["visual_bible"]}
+            />
+          ) : null}
+        </TabsContent>
+        <TabsContent className="mt-4" value="color_script">
+          {tab === "color_script" ? (
+            <DepartmentDeliverablesWorkspace
+              defaultType="color_script"
+              departments={["art"]}
+              episodeId={episode?.id}
+              locale={locale}
+              onContextChange={onContextChange}
+              projectId={projectId}
+              sourceAssets={sourceAssets}
+              title={productionCopy.colorScript}
+              types={["color_script"]}
+            />
+          ) : null}
+        </TabsContent>
+        <TabsContent className="mt-4" value="specifications">
+          {tab === "specifications" ? (
+            <DepartmentDeliverablesWorkspace
+              defaultType="character_design"
+              departments={["art"]}
+              episodeId={episode?.id}
+              locale={locale}
+              onContextChange={onContextChange}
+              projectId={projectId}
+              sourceAssets={sourceAssets}
+              title={productionCopy.specifications}
+              types={[
+                "character_design",
+                "environment_design",
+                "prop_costume_design",
+              ]}
+            />
+          ) : null}
+        </TabsContent>
 
         {(["character", "location", "prop"] as const).map((kind) => (
           <TabsContent className="mt-4" key={kind} value={kind}>
@@ -387,16 +490,22 @@ function AssetTabTrigger({
   label,
   value,
 }: {
-  count: number;
+  count?: number;
   label: string;
   value: AssetTab;
 }) {
   return (
     <TabsTrigger value={value}>
       {label}
-      <Badge variant="secondary">{count}</Badge>
+      {typeof count === "number" ? (
+        <Badge variant="secondary">{count}</Badge>
+      ) : null}
     </TabsTrigger>
   );
+}
+
+function isDomainAssetTab(value: AssetTab): value is StudioAssetKind {
+  return value === "character" || value === "location" || value === "prop";
 }
 
 function DomainAssetView({

@@ -5,6 +5,7 @@ import {
   Ban,
   BookOpenText,
   Braces,
+  FileCheck2,
   LoaderCircle,
   Pause,
   Play,
@@ -40,6 +41,8 @@ import type {
   WorkspaceSnapshot,
 } from "../types";
 import { StatusIndicator } from "../components/status-indicator";
+import { getProductionCopy } from "../production/copy";
+import { DepartmentDeliverablesWorkspace } from "../production/department-deliverables";
 
 export function WritingWorkspace({
   episode,
@@ -57,6 +60,10 @@ export function WritingWorkspace({
   snapshot: WorkspaceSnapshot;
 }) {
   const copy = getStudioCopy(locale);
+  const productionCopy = getProductionCopy(locale);
+  const [tab, setTab] = useState<"source" | "screenplay" | "deliverables">(
+    "source",
+  );
   const [novelText, setNovelText] = useState(episode.novelText ?? "");
   const [savedText, setSavedText] = useState(episode.novelText ?? "");
   const serverTextRef = useRef({
@@ -131,6 +138,7 @@ export function WritingWorkspace({
   }, [clips, onContextChange, selectedClipId]);
 
   useEffect(() => {
+    if (tab === "deliverables") return;
     onContextChange(
       selectedClip
         ? {
@@ -144,7 +152,7 @@ export function WritingWorkspace({
           }
         : undefined,
     );
-  }, [onContextChange, selectedClip]);
+  }, [onContextChange, selectedClip, tab]);
 
   async function saveSource() {
     setIsSaving(true);
@@ -241,12 +249,31 @@ export function WritingWorkspace({
         </div>
       </header>
 
-      <div className="grid min-w-0 xl:grid-cols-[minmax(0,1fr)_19rem]">
-        <Tabs className="min-w-0 py-5 xl:pr-7" defaultValue="source">
+      <div
+        className={cn(
+          "grid min-w-0",
+          tab !== "deliverables" &&
+            "xl:grid-cols-[minmax(0,1fr)_19rem]",
+        )}
+      >
+        <Tabs
+          className={cn(
+            "min-w-0 py-5",
+            tab !== "deliverables" && "xl:pr-7",
+          )}
+          onValueChange={(value) =>
+            setTab(value as "source" | "screenplay" | "deliverables")
+          }
+          value={tab}
+        >
           <TabsList variant="line">
             <TabsTrigger value="source">
               <BookOpenText className="size-4" />
               {copy.sourceText}
+            </TabsTrigger>
+            <TabsTrigger value="deliverables">
+              <FileCheck2 className="size-4" />
+              {productionCopy.deliverables}
             </TabsTrigger>
             <TabsTrigger value="screenplay">
               <Braces className="size-4" />
@@ -276,92 +303,110 @@ export function WritingWorkspace({
               selectedClipId={selectedClip?.id}
             />
           </TabsContent>
+          <TabsContent className="mt-4" value="deliverables">
+            {tab === "deliverables" ? (
+              <DepartmentDeliverablesWorkspace
+                defaultType="screenplay_lock"
+                departments={["development", "script"]}
+                episodeId={episode.id}
+                locale={locale}
+                onContextChange={onContextChange}
+                projectId={snapshot.project.id}
+                title={productionCopy.scriptDepartment}
+              />
+            ) : null}
+          </TabsContent>
         </Tabs>
 
-        <aside className="border-t py-5 xl:border-t-0 xl:border-l xl:pl-6">
-          <div className="xl:sticky xl:top-0">
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold">{copy.workflow}</h2>
+        {tab !== "deliverables" ? (
+          <aside className="border-t py-5 xl:border-t-0 xl:border-l xl:pl-6">
+            <div className="xl:sticky xl:top-0">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold">{copy.workflow}</h2>
+                {workflow ? (
+                  <StatusIndicator
+                    className="ml-auto"
+                    locale={locale}
+                    status={runtimeStatusToStageStatus(workflow.status)}
+                  />
+                ) : null}
+              </div>
               {workflow ? (
-                <StatusIndicator
-                  className="ml-auto"
-                  locale={locale}
-                  status={runtimeStatusToStageStatus(workflow.status)}
-                />
-              ) : null}
-            </div>
-            {workflow ? (
-              <div className="mt-4 divide-y border-y">
-                {workflow.steps.map((step) => (
-                  <div className="flex items-center gap-2 py-2.5" key={step.id}>
-                    <span className="w-5 font-mono text-[10px] text-muted-foreground">
-                      {String(step.index + 1).padStart(2, "0")}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                      {step.key}
-                    </span>
-                    <StatusIndicator
-                      locale={locale}
-                      status={runtimeStatusToStageStatus(step.status)}
-                    />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                {copy.noWorkflow}
-              </p>
-            )}
-
-            <div className="mt-5 space-y-2">
-              <ModelSelect
-                ariaLabel={copy.analysisModel}
-                className="h-8"
-                disabled={isActing || workflowActive}
-                models={models}
-                onChange={setModelId}
-                placeholder={copy.analysisModel}
-                value={modelId}
-              />
-              {!models.length ? (
-                <p className="text-xs leading-5 text-destructive">
-                  {copy.noAnalysisModels}
+                <div className="mt-4 divide-y border-y">
+                  {workflow.steps.map((step) => (
+                    <div
+                      className="flex items-center gap-2 py-2.5"
+                      key={step.id}
+                    >
+                      <span className="w-5 font-mono text-[10px] text-muted-foreground">
+                        {String(step.index + 1).padStart(2, "0")}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                        {step.key}
+                      </span>
+                      <StatusIndicator
+                        locale={locale}
+                        status={runtimeStatusToStageStatus(step.status)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                  {copy.noWorkflow}
                 </p>
-              ) : null}
-              {!workflowActive ? (
-                <Button
-                  className="w-full"
-                  disabled={
-                    isActing || !savedText.trim() || isDirty || !modelId
-                  }
-                  onClick={() => void startWorkflow()}
-                  type="button"
-                >
-                  {isActing ? (
-                    <LoaderCircle className="size-4 animate-spin" />
-                  ) : workflow ? (
-                    <RotateCcw className="size-4" />
-                  ) : (
-                    <Play className="size-4" />
-                  )}
-                  {workflow ? copy.rerunAnalysis : copy.startAnalysis}
-                </Button>
-              ) : null}
-              <WorkflowActions
-                disabled={isActing}
-                locale={locale}
-                onAction={controlWorkflow}
-                status={workflow?.status}
-              />
-            </div>
-            {workflow ? (
-              <div className="mt-5 space-y-1 text-[11px] text-muted-foreground">
-                <p className="truncate font-mono">{workflow.traceId}</p>
-                <p>{formatStudioDate(locale, workflow.updatedAt)}</p>
+              )}
+
+              <div className="mt-5 space-y-2">
+                <ModelSelect
+                  ariaLabel={copy.analysisModel}
+                  className="h-8"
+                  disabled={isActing || workflowActive}
+                  models={models}
+                  onChange={setModelId}
+                  placeholder={copy.analysisModel}
+                  value={modelId}
+                />
+                {!models.length ? (
+                  <p className="text-xs leading-5 text-destructive">
+                    {copy.noAnalysisModels}
+                  </p>
+                ) : null}
+                {!workflowActive ? (
+                  <Button
+                    className="w-full"
+                    disabled={
+                      isActing || !savedText.trim() || isDirty || !modelId
+                    }
+                    onClick={() => void startWorkflow()}
+                    type="button"
+                  >
+                    {isActing ? (
+                      <LoaderCircle className="size-4 animate-spin" />
+                    ) : workflow ? (
+                      <RotateCcw className="size-4" />
+                    ) : (
+                      <Play className="size-4" />
+                    )}
+                    {workflow ? copy.rerunAnalysis : copy.startAnalysis}
+                  </Button>
+                ) : null}
+                <WorkflowActions
+                  disabled={isActing}
+                  locale={locale}
+                  onAction={controlWorkflow}
+                  status={workflow?.status}
+                />
               </div>
-            ) : null}
-          </div>
-        </aside>
+              {workflow ? (
+                <div className="mt-5 space-y-1 text-[11px] text-muted-foreground">
+                  <p className="truncate font-mono">{workflow.traceId}</p>
+                  <p>{formatStudioDate(locale, workflow.updatedAt)}</p>
+                </div>
+              ) : null}
+            </div>
+          </aside>
+        ) : null}
       </div>
     </div>
   );

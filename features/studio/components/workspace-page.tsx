@@ -215,6 +215,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
             ) : selectedStage?.id === "assets" ? (
               <AssetsWorkspace
                 analysisModels={analysisModels}
+                episode={selectedEpisode}
                 imageModels={imageModels}
                 locale={locale}
                 onContextChange={setSelection}
