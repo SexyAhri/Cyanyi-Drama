@@ -129,6 +129,7 @@ export type VoiceLineRecord = {
   audioAssetId: string | null;
   emotionPrompt: string | null;
   emotionStrength: number | null;
+  delivery: "dialogue" | "inner_monologue" | "voiceover";
   matchedPanelId: string | null;
   durationSeconds: number | null;
   status: string;

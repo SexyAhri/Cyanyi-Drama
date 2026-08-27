@@ -1,7 +1,7 @@
 "use client";
 
 import { LoaderCircle, Plus } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -34,6 +34,7 @@ const copy = {
     voiceSuggestions: "常用音色",
     language: "语言",
     languagePlaceholder: "例如：zh-CN",
+    sample: "参考音频",
     notes: "备注",
     notesPlaceholder: "可选",
     cancel: "取消",
@@ -50,6 +51,7 @@ const copy = {
     voiceSuggestions: "Common voices",
     language: "Language",
     languagePlaceholder: "For example, en-US",
+    sample: "Reference audio",
     notes: "Notes",
     notesPlaceholder: "Optional",
     cancel: "Cancel",
@@ -67,6 +69,7 @@ export function VoicePresetDialog({
     providerVoiceId?: string;
     language?: string;
     description?: string;
+    sample?: File;
   }) => Promise<unknown>;
 }) {
   const text = copy[locale];
@@ -75,7 +78,9 @@ export function VoicePresetDialog({
   const [voice, setVoice] = useState("");
   const [language, setLanguage] = useState("");
   const [description, setDescription] = useState("");
+  const [sample, setSample] = useState<File>();
   const [busy, setBusy] = useState(false);
+  const sampleInputRef = useRef<HTMLInputElement>(null);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -87,11 +92,14 @@ export function VoicePresetDialog({
         providerVoiceId: voice.trim() || undefined,
         language: language.trim() || undefined,
         description: description.trim() || undefined,
+        sample,
       });
       setName("");
       setVoice("");
       setLanguage("");
       setDescription("");
+      setSample(undefined);
+      if (sampleInputRef.current) sampleInputRef.current.value = "";
       setOpen(false);
     } finally {
       setBusy(false);
@@ -134,6 +142,14 @@ export function VoicePresetDialog({
                 onChange={(event) => setLanguage(event.target.value)}
                 placeholder={text.languagePlaceholder}
                 value={language}
+              />
+            </Field>
+            <Field label={text.sample}>
+              <Input
+                accept="audio/mpeg,audio/mp4,audio/ogg,audio/wav,audio/webm,audio/flac"
+                onChange={(event) => setSample(event.target.files?.[0])}
+                ref={sampleInputRef}
+                type="file"
               />
             </Field>
             <Field label={text.notes}>

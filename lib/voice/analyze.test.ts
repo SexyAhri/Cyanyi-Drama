@@ -40,6 +40,7 @@ import { validateVoiceAnalysis } from "@/lib/prompts/validators";
 import {
   analyzeEpisodeVoices,
   buildDeterministicVoiceAnalysis,
+  buildScreenplayVoiceAnalysis,
   VoiceAnalyzeError,
 } from "./analyze";
 
@@ -129,6 +130,52 @@ describe("voice analysis", () => {
       speaker: "韩宇",
       content: "我回来了。",
     });
+  });
+
+  it("uses screenplay dialogue instead of reinterpreting narrative prose", () => {
+    const data = buildScreenplayVoiceAnalysis({
+      clips: [
+        {
+          id: "clip-1",
+          screenplay: JSON.stringify({
+            clipId: "clip-1",
+            originalText:
+              "若自己没有重伤，韩宇本可早早突破。韩宇反而安慰父亲，只要坚持，终有一天能让轻视他们的人闭嘴。",
+            scenes: [
+              {
+                sceneNumber: 0,
+                heading: { intExt: "INT", location: "书房", time: "夜" },
+                description: "",
+                characters: ["韩宇"],
+                content: [
+                  {
+                    type: "action",
+                    text:
+                      "若自己没有重伤，韩宇本可早早突破。韩宇反而安慰父亲，只要坚持，终有一天能让轻视他们的人闭嘴。",
+                  },
+                ],
+              },
+            ],
+          }),
+        },
+      ],
+      panels: [
+        {
+          clipId: "clip-1",
+          panelIndex: 2,
+          description: "韩宇安慰父亲。",
+          subtitleText: "",
+        },
+      ],
+    });
+
+    expect(data?.lines).toEqual([
+      expect.objectContaining({
+        speaker: "韩宇",
+        content: "只要坚持，终有一天能让轻视他们的人闭嘴。",
+        matchedPanelIndex: 2,
+      }),
+    ]);
   });
 
   it("persists deterministic lines after a provider timeout", async () => {

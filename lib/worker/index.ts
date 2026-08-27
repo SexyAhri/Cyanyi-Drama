@@ -69,17 +69,35 @@ const worker = new Worker<MediaJob>(
       },
     });
 
-    const succeeded = await processQueuedMediaTask(
-      job.data.taskId,
-      job.data.userId,
-    );
-    await settleChargeSafely(job.data.userId, job.data.taskId, succeeded);
+    const stopHeartbeat = startMediaTaskHeartbeat(job.data.taskId);
+    try {
+      const succeeded = await processQueuedMediaTask(
+        job.data.taskId,
+        job.data.userId,
+      );
+      await settleChargeSafely(job.data.userId, job.data.taskId, succeeded);
+    } finally {
+      stopHeartbeat();
+    }
   },
   {
     connection: getRedisConnection(),
     concurrency: Number(process.env.MEDIA_WORKER_CONCURRENCY || 2),
   },
 );
+
+function startMediaTaskHeartbeat(taskId: string) {
+  const timer = setInterval(() => {
+    void prisma.mediaTask
+      .updateMany({
+        where: { id: taskId, status: "running" },
+        data: { heartbeatAt: new Date() },
+      })
+      .catch(() => undefined);
+  }, 30_000);
+  timer.unref();
+  return () => clearInterval(timer);
+}
 
 const workflowWorker = new Worker<WorkflowJob>(
   WORKFLOW_QUEUE_NAME,

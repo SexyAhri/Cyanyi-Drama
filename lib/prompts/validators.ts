@@ -208,6 +208,17 @@ export function validateScreenplayConversion(
           ),
         );
       if (
+        content.type === "dialogue" &&
+        !isDirectSpeechExcerpt(content.lines, content.character, input.clipText)
+      )
+        issues.push(
+          issue(
+            `scenes.${sceneIndex}.content.${contentIndex}.lines`,
+            "DIALOGUE_NOT_DIRECT_SPEECH",
+            "Dialogue must be a direct utterance attributed to its listed speaker, not narration or unspoken thought",
+          ),
+        );
+      if (
         content.type !== "action" &&
         content.character &&
         !nameSet(input.canonical.characters).has(
@@ -474,6 +485,19 @@ export function validateVoiceAnalysis(
           "Voice content must be an exact source excerpt",
         ),
       );
+    if (
+      line.delivery === "dialogue" &&
+      line.speaker !== "旁白" &&
+      line.speaker !== "Narrator" &&
+      !isDirectSpeechExcerpt(line.content, line.speaker, input.sourceText)
+    )
+      issues.push(
+        issue(
+          `lines.${index}.content`,
+          "VOICE_NOT_DIRECT_SPEECH",
+          "Voice lines must be direct speech, not narration or unspoken thought",
+        ),
+      );
     if (!speakers.has(normalizeName(line.speaker)))
       issues.push(
         issue(
@@ -508,6 +532,25 @@ export function validateVoiceAnalysis(
       previousPanelIndex = line.matchedPanelIndex;
   });
   return issues;
+}
+
+export function isDirectSpeechExcerpt(
+  content: string,
+  speaker: string,
+  sourceText: string,
+) {
+  const escapedContent = escapeRegex(content.trim());
+  if (!escapedContent) return false;
+  const quoted = new RegExp(`[“\\"]${escapedContent}[”\\"]`);
+  if (quoted.test(sourceText)) return true;
+
+  const escapedSpeaker = escapeRegex(speaker.trim());
+  if (!escapedSpeaker) return false;
+  const speechVerb =
+    "说(?:道)?|问(?:道)?|答(?:道)?|回答|回应|喊(?:道)?|叫(?:道)?|喝(?:道)?|叹(?:道)?|笑(?:道)?|开口|低声(?:说)?|轻声(?:说)?|安慰|劝(?:说|慰)?|安抚|鼓励";
+  return new RegExp(
+    `${escapedSpeaker}[^。！？!?“”\\"]{0,32}(?:${speechVerb})[^。！？!?“”\\"]{0,24}[：:，,]\\s*${escapedContent}`,
+  ).test(sourceText);
 }
 
 export function validateContinuityReview(
@@ -696,6 +739,10 @@ function nameSet(values: readonly string[]) {
 
 function normalizeName(value: string) {
   return value.trim().toLocaleLowerCase();
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function counts(values: readonly number[]) {

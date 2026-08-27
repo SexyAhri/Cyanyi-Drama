@@ -17,6 +17,8 @@ export type AutoDlWorkflowDefinition = {
   maxReferenceAudios?: number;
   resolutions?: Array<"480p" | "768p" | "1080p">;
   square?: boolean;
+  /** The workflow emits an audio track as part of the generated MP4. */
+  generatesNativeAudio?: boolean;
 };
 
 export const AUTODL_COMFYUI_BASE_URL = "https://autodl.art/api/v1";
@@ -31,6 +33,7 @@ export const AUTODL_COMFYUI_WORKFLOWS: AutoDlWorkflowDefinition[] = [
     maxDurationSeconds: 15,
     resolutions: ["480p", "768p"],
     square: true,
+    generatesNativeAudio: true,
   },
   {
     id: "minimax_h3_lightx2v",
@@ -41,6 +44,7 @@ export const AUTODL_COMFYUI_WORKFLOWS: AutoDlWorkflowDefinition[] = [
     maxDurationSeconds: 15,
     maxReferenceImages: 2,
     resolutions: ["480p", "768p"],
+    generatesNativeAudio: true,
   },
   {
     id: "minimax_h3_lightx2v_v5",
@@ -52,6 +56,7 @@ export const AUTODL_COMFYUI_WORKFLOWS: AutoDlWorkflowDefinition[] = [
     maxReferenceImages: 9,
     resolutions: ["480p", "768p", "1080p"],
     square: true,
+    generatesNativeAudio: true,
   },
   {
     id: "minimax_h3_lightx2v_v5_15s",
@@ -63,6 +68,7 @@ export const AUTODL_COMFYUI_WORKFLOWS: AutoDlWorkflowDefinition[] = [
     maxReferenceImages: 9,
     resolutions: ["480p", "768p"],
     square: true,
+    generatesNativeAudio: true,
   },
   {
     id: "minimax_h3_image_audio_to_video_v2",
@@ -74,6 +80,7 @@ export const AUTODL_COMFYUI_WORKFLOWS: AutoDlWorkflowDefinition[] = [
     maxReferenceImages: 9,
     maxReferenceAudios: 3,
     resolutions: ["480p", "768p", "1080p"],
+    generatesNativeAudio: true,
   },
   {
     id: "minimax_h3_image_audio_to_video_v2_15s",
@@ -85,6 +92,7 @@ export const AUTODL_COMFYUI_WORKFLOWS: AutoDlWorkflowDefinition[] = [
     maxReferenceImages: 9,
     maxReferenceAudios: 3,
     resolutions: ["480p", "768p"],
+    generatesNativeAudio: true,
   },
   {
     id: "minimax_h3_image_audio_to_video",
@@ -96,6 +104,7 @@ export const AUTODL_COMFYUI_WORKFLOWS: AutoDlWorkflowDefinition[] = [
     maxReferenceImages: 1,
     maxReferenceAudios: 1,
     resolutions: ["480p", "768p", "1080p"],
+    generatesNativeAudio: true,
   },
   {
     id: "indextts2-v1",

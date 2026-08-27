@@ -261,6 +261,55 @@ describe("domain semantic validators", () => {
     );
   });
 
+  it("rejects narration and accepts an explicitly introduced unquoted line", () => {
+    const source =
+      "韩子枫望着儿子，既欣慰又愧疚。若自己没有重伤，韩宇本可早早突破。韩宇反而安慰父亲，只要坚持，终有一天能让轻视他们的人闭嘴。";
+    const issues = validateScreenplayConversion(
+      {
+        clipId: "clip-1",
+        originalText: source,
+        scenes: [
+          {
+            sceneNumber: 0,
+            heading: { intExt: "INT", location: "书房", time: "夜" },
+            description: "",
+            characters: ["韩宇", "韩子枫"],
+            content: [
+              {
+                type: "dialogue",
+                character: "韩宇",
+                parenthetical: null,
+                lines: "韩宇本可早早突破。",
+              },
+              {
+                type: "dialogue",
+                character: "韩宇",
+                parenthetical: null,
+                lines: "只要坚持，终有一天能让轻视他们的人闭嘴。",
+              },
+            ],
+          },
+        ],
+      },
+      {
+        clipId: "clip-1",
+        clipText: source,
+        canonical: {
+          characters: ["韩宇", "韩子枫"],
+          locations: ["书房"],
+          props: [],
+        },
+      },
+    );
+
+    expect(issues.map((item) => item.code)).toContain(
+      "DIALOGUE_NOT_DIRECT_SPEECH",
+    );
+    expect(
+      issues.filter((item) => item.path.endsWith(".lines")).map((item) => item.code),
+    ).toEqual(["DIALOGUE_NOT_DIRECT_SPEECH"]);
+  });
+
   it("detects missing photography and acting outputs per panel", () => {
     expect(
       validateCinematographyCoverage(
@@ -365,6 +414,7 @@ describe("domain semantic validators", () => {
           {
             speaker: "林澈",
             content: "模型补写的台词",
+            delivery: "dialogue",
             emotionPrompt: null,
             emotionStrength: 0.5,
             matchedPanelIndex: 9,

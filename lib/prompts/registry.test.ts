@@ -144,12 +144,15 @@ function expectedVersion(id: PromptId) {
     return 1;
   if (
     id === PROMPT_IDS.STORY_CLIP_SEGMENTATION ||
-    id === PROMPT_IDS.STORY_SCREENPLAY_CONVERSION ||
     id === PROMPT_IDS.STORY_STORYBOARD_PLANNING ||
     id === PROMPT_IDS.STORY_CINEMATOGRAPHY ||
-    id === PROMPT_IDS.STORY_STORYBOARD_REFINEMENT ||
-    id === PROMPT_IDS.STORY_VOICE_ANALYSIS
+    id === PROMPT_IDS.STORY_STORYBOARD_REFINEMENT
   )
     return 3;
+  if (
+    id === PROMPT_IDS.STORY_SCREENPLAY_CONVERSION ||
+    id === PROMPT_IDS.STORY_VOICE_ANALYSIS
+  )
+    return 5;
   return 2;
 }

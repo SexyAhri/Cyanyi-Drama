@@ -1,3 +1,5 @@
+import { planPanelDialogue } from "@/lib/media/dialogue-timeline";
+
 export type EditorTimelineTrack = {
   clipId: string | null;
   duration: number;
@@ -53,6 +55,25 @@ export function parseTimelineSequence(value: unknown) {
     seen.add(id);
     return [{ id, duration: normalizeDuration(entry.duration) }];
   });
+}
+
+export function buildPanelSubtitleTimings(input: {
+  lineDurations: number[];
+  trackDuration: number;
+  trackStart: number;
+}) {
+  const plan = planPanelDialogue({
+    lineDurations: input.lineDurations,
+    requestedDurationSeconds: input.trackDuration,
+    maxDurationSeconds: Math.max(1, Math.ceil(input.trackDuration)),
+  });
+  return plan.timings.map((timing) => ({
+    start: input.trackStart + timing.startSeconds,
+    end: Math.min(
+      input.trackStart + input.trackDuration,
+      input.trackStart + timing.endSeconds,
+    ),
+  }));
 }
 
 function normalizeDuration(value: unknown) {

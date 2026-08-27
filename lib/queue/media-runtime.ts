@@ -2,8 +2,16 @@ import { decryptSecret } from "@/lib/server/crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/server/prisma";
 import type { MediaAsset, MediaTaskKind } from "@/lib/media/task-contract";
-import { downloadAndStoreMedia, resolveStoredMediaUrl } from "@/lib/storage";
-import { mergeAudioUrls } from "@/lib/providers/local/ffmpeg-audio";
+import {
+  downloadAndStoreMedia,
+  resolveStoredMediaInput,
+  resolveStoredMediaUrl,
+} from "@/lib/storage";
+import {
+  composeAudioTimeline,
+  probeAudioUrlDuration,
+} from "@/lib/providers/local/ffmpeg-audio";
+import { planPanelDialogue } from "@/lib/media/dialogue-timeline";
 import { renderTimelineVideo } from "@/lib/providers/local/ffmpeg-render";
 import { normalizeRenderSpecification } from "@/lib/providers/local/render-spec";
 import { parseTimelineSequence } from "@/lib/production/timeline";
@@ -131,7 +139,7 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
         createMany: {
           data: await Promise.all(
             output.map(async (asset) => {
-              const storageKey = `projects/${task.projectId ?? "global"}/media/${asset.kind}/${asset.id}.${asset.kind === "video" ? "mp4" : asset.kind === "audio" ? "mp3" : "png"}`;
+              const storageKey = `projects/${task.projectId ?? "global"}/media/${asset.kind}/${asset.id}.${mediaAssetExtension(asset)}`;
               let storedKey: string | null = null;
               try {
                 storedKey = await downloadAndStoreMedia(
@@ -151,10 +159,7 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
                   ? await resolveStoredMediaUrl(storedKey)
                   : asset.url,
                 mimeType: asset.mimeType,
-                metadataJson: JSON.stringify({
-                  ...(asset.metadata ?? {}),
-                  originalUrl: asset.url,
-                }),
+                metadataJson: JSON.stringify(mediaAssetMetadata(asset)),
               };
             }),
           ),
@@ -182,6 +187,46 @@ export function isSourceMediaDownloadFailure(error: unknown) {
         error.message,
       ))
   );
+}
+
+export function mediaAssetExtension(
+  asset: Pick<MediaAsset, "kind" | "mimeType" | "url">,
+) {
+  const mimeType = asset.mimeType?.split(";")[0]?.trim().toLowerCase();
+  const byMime: Record<string, string> = {
+    "audio/flac": "flac",
+    "audio/mp4": "m4a",
+    "audio/mpeg": "mp3",
+    "audio/ogg": "ogg",
+    "audio/wav": "wav",
+    "audio/webm": "webm",
+    "image/gif": "gif",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "video/mp4": "mp4",
+    "video/quicktime": "mov",
+    "video/webm": "webm",
+  };
+  if (mimeType && byMime[mimeType]) return byMime[mimeType];
+  try {
+    const extension = new URL(asset.url).pathname
+      .match(/\.([a-z0-9]{2,5})$/i)?.[1]
+      ?.toLowerCase();
+    if (extension) return extension;
+  } catch {
+    // Data URLs and malformed provider URLs fall through to the kind default.
+  }
+  return asset.kind === "video" ? "mp4" : asset.kind === "audio" ? "mp3" : "png";
+}
+
+export function mediaAssetMetadata(
+  asset: Pick<MediaAsset, "metadata" | "url">,
+) {
+  return {
+    ...(asset.metadata ?? {}),
+    ...(!asset.url.startsWith("data:") ? { originalUrl: asset.url } : {}),
+  };
 }
 
 async function findMediaTemplate(
@@ -219,43 +264,108 @@ async function mergeEpisodeAudio(
   userId: string,
 ) {
   if (!episodeId || !projectId) throw new Error("AUDIO_MERGE_EPISODE_REQUIRED");
-  const lines = await prisma.voiceLine.findMany({
-    where: { episodeId, episode: { projectId, project: { userId } } },
-    orderBy: { lineIndex: "asc" },
+  const panels = await prisma.storyboardPanel.findMany({
+    where: {
+      storyboard: { episodeId, projectId, project: { userId } },
+    },
+    orderBy: { panelIndex: "asc" },
     select: {
-      lineIndex: true,
-      audioAsset: { select: { url: true, storageKey: true } },
+      id: true,
+      durationSeconds: true,
+      voiceLines: {
+        orderBy: { lineIndex: "asc" },
+        select: {
+          id: true,
+          lineIndex: true,
+          durationSeconds: true,
+          audioAsset: {
+            select: { url: true, storageKey: true, mimeType: true },
+          },
+        },
+      },
     },
   });
-  if (!lines.length) throw new Error("AUDIO_MERGE_LINES_EMPTY");
-  const urls: string[] = [];
-  for (const line of lines) {
-    const url =
-      line.audioAsset?.url ||
-      (line.audioAsset?.storageKey
-        ? await resolveStoredMediaUrl(line.audioAsset.storageKey)
-        : null);
-    if (!url) throw new Error(`AUDIO_MERGE_INPUT_MISSING:${line.lineIndex}`);
-    urls.push(url);
+  if (!panels.length) throw new Error("AUDIO_MERGE_PANELS_EMPTY");
+  const clips: Array<{
+    url: string;
+    startSeconds: number;
+    durationSeconds: number;
+    playbackRate?: number;
+  }> = [];
+  let timelineCursor = 0;
+  let lineCount = 0;
+  for (const panel of panels) {
+    const resolvedLines: Array<{
+      id: string;
+      durationSeconds: number;
+      url: string;
+    }> = [];
+    for (const line of panel.voiceLines) {
+      const url =
+        line.audioAsset?.storageKey
+          ? await resolveStoredMediaInput(
+              line.audioAsset.storageKey,
+              line.audioAsset.mimeType,
+            )
+          : line.audioAsset?.url;
+      if (!url) throw new Error(`AUDIO_MERGE_INPUT_MISSING:${line.lineIndex}`);
+      const durationSeconds =
+        line.durationSeconds ?? (await probeAudioUrlDuration(url));
+      resolvedLines.push({ id: line.id, durationSeconds, url });
+      if (line.durationSeconds === null)
+        await prisma.voiceLine.update({
+          where: { id: line.id },
+          data: { durationSeconds },
+        });
+    }
+    const plan = planPanelDialogue({
+      lineDurations: resolvedLines.map((line) => line.durationSeconds),
+      requestedDurationSeconds: panel.durationSeconds ?? 1,
+    });
+    resolvedLines.forEach((line, index) => {
+      clips.push({
+        url: line.url,
+        startSeconds: timelineCursor + plan.timings[index].startSeconds,
+        durationSeconds: plan.timings[index].durationSeconds,
+        playbackRate: plan.playbackRate,
+      });
+    });
+    if (panel.durationSeconds !== plan.durationSeconds)
+      await prisma.storyboardPanel.update({
+        where: { id: panel.id },
+        data: { durationSeconds: plan.durationSeconds },
+      });
+    lineCount += resolvedLines.length;
+    timelineCursor += plan.durationSeconds;
   }
-  const url = await mergeAudioUrls(urls);
+  if (!clips.length) throw new Error("AUDIO_MERGE_LINES_EMPTY");
+  const url = await composeAudioTimeline(clips, timelineCursor);
   return [
     {
       id: `audio-merged-${crypto.randomUUID()}`,
       kind: "audio" as const,
       url,
       mimeType: "audio/mpeg",
-      metadata: { operation: "merge_episode_audio", lineCount: lines.length },
+      metadata: {
+        operation: "merge_episode_audio",
+        lineCount,
+        durationSeconds: timelineCursor,
+        alignedToStoryboard: true,
+      },
     },
   ];
 }
 
 async function resolveAssetUrl(
-  asset: { url: string | null; storageKey: string | null } | null | undefined,
+  asset:
+    | { url: string | null; storageKey: string | null; mimeType?: string | null }
+    | null
+    | undefined,
 ) {
   if (!asset) return null;
+  if (asset.storageKey)
+    return resolveStoredMediaInput(asset.storageKey, asset.mimeType);
   if (asset.url) return asset.url;
-  if (asset.storageKey) return resolveStoredMediaUrl(asset.storageKey);
   return null;
 }
 
@@ -631,16 +741,22 @@ async function linkGeneratedAsset(
       },
     });
   } else if (task.targetType === "episode_audio" && task.kind === "audio") {
-    await prisma.episodeAudioTrack
-      .create({
+    await prisma.$transaction([
+      prisma.episodeAudioTrack.deleteMany({
+        where: {
+          episodeId: task.episodeId ?? task.targetId,
+          trackType: "merged",
+        },
+      }),
+      prisma.episodeAudioTrack.create({
         data: {
           id: `${task.id}_track`,
           episodeId: task.episodeId ?? task.targetId,
           trackType: "merged",
           assetId: asset.id,
         },
-      })
-      .catch(() => undefined);
+      }),
+    ]);
   } else {
     return;
   }

@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import { buildSequentialTimeline } from "@/lib/production/timeline";
+import {
+  buildPanelSubtitleTimings,
+  buildSequentialTimeline,
+} from "@/lib/production/timeline";
 import { prisma } from "@/lib/server/prisma";
 
 export type ProductionPropInput = {
@@ -276,6 +279,7 @@ export async function saveVoiceLines(
     voicePresetId?: string | null;
     emotionPrompt?: string | null;
     emotionStrength?: number | null;
+    delivery?: "dialogue" | "inner_monologue" | "voiceover";
     matchedPanelId?: string | null;
   }>,
 ) {
@@ -296,6 +300,7 @@ export async function saveVoiceLines(
           voicePresetId: line.voicePresetId || null,
           emotionPrompt: line.emotionPrompt?.trim() || null,
           emotionStrength: finiteNumber(line.emotionStrength),
+          delivery: line.delivery ?? "dialogue",
           matchedPanelId: line.matchedPanelId || null,
         })),
       });
@@ -313,6 +318,7 @@ export async function updateVoiceLine(
     content?: string;
     emotionPrompt?: string | null;
     emotionStrength?: number | null;
+    delivery?: "dialogue" | "inner_monologue" | "voiceover";
     matchedPanelId?: string | null;
     speaker?: string;
     voicePresetId?: string | null;
@@ -371,6 +377,7 @@ export async function updateVoiceLine(
       ...(input.emotionStrength !== undefined
         ? { emotionStrength: finiteNumber(input.emotionStrength) }
         : {}),
+      ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
       ...(input.matchedPanelId !== undefined
         ? { matchedPanelId: input.matchedPanelId || null }
         : {}),
@@ -522,20 +529,34 @@ export async function buildEditorTimeline(
     where: { episodeId, episode: { projectId, project: { userId } } },
     orderBy: { lineIndex: "asc" },
   });
-  const subtitles = voiceLines.map((line, index) => ({
-    id: line.id,
-    index,
-    start: line.matchedPanelId
-      ? timeline.tracks.find((track) => track.id === line.matchedPanelId)
-          ?.start ?? 0
-      : 0,
-    end: line.matchedPanelId
-      ? timeline.tracks.find((track) => track.id === line.matchedPanelId)?.end ??
-        0
-      : 0,
-    speaker: line.speaker,
-    text: line.content,
-  }));
+  const subtitleTiming = new Map<string, { start: number; end: number }>();
+  for (const track of timeline.tracks) {
+    const matchedLines = voiceLines.filter(
+      (line) => line.matchedPanelId === track.id,
+    );
+    if (!matchedLines.length) continue;
+    const fallbackDuration = track.duration / matchedLines.length;
+    const timings = buildPanelSubtitleTimings({
+      lineDurations: matchedLines.map(
+        (line) => line.durationSeconds ?? fallbackDuration,
+      ),
+      trackDuration: track.duration,
+      trackStart: track.start,
+    });
+    matchedLines.forEach((line, index) =>
+      subtitleTiming.set(line.id, timings[index]),
+    );
+  }
+  const subtitles = voiceLines.map((line, index) => {
+    const timing = subtitleTiming.get(line.id) ?? { start: 0, end: 0 };
+    return {
+      id: line.id,
+      index,
+      ...timing,
+      speaker: line.speaker,
+      text: line.content,
+    };
+  });
   return saveEditorProject(
     userId,
     projectId,
@@ -555,6 +576,7 @@ function toVoiceLine(row: {
   audioAssetId: string | null;
   emotionPrompt: string | null;
   emotionStrength: number | null;
+  delivery: string;
   matchedPanelId: string | null;
   durationSeconds: number | null;
   status: string;
@@ -571,6 +593,7 @@ function toVoiceLine(row: {
     audioAssetId: row.audioAssetId,
     emotionPrompt: row.emotionPrompt,
     emotionStrength: row.emotionStrength,
+    delivery: row.delivery,
     matchedPanelId: row.matchedPanelId,
     durationSeconds: row.durationSeconds,
     status: row.status,

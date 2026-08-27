@@ -507,6 +507,7 @@ model VoiceLine {
   audioAssetId    String?          @map("audio_asset_id")
   emotionPrompt   String?          @map("emotion_prompt") @db.Text
   emotionStrength Float?           @map("emotion_strength")
+  delivery        String           @default("dialogue")
   matchedPanelId  String?          @map("matched_panel_id")
   durationSeconds Float?           @map("duration_seconds")
   status          String           @default("draft")

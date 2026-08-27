@@ -131,6 +131,7 @@ function voiceLine(input: Partial<VoiceLineRecord> = {}): VoiceLineRecord {
     audioAssetId: null,
     emotionPrompt: null,
     emotionStrength: null,
+    delivery: "dialogue",
     matchedPanelId: null,
     durationSeconds: null,
     status: "draft",

@@ -20,6 +20,7 @@ import {
 import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
 import { listNovelCharacters, listNovelLocations } from "./domain-store";
+import { normalizeScreenplayDialogue } from "./screenplay-dialogue";
 import { STORY_STRUCTURED_REQUEST_TIMEOUT_MS } from "./story-runtime-config";
 
 export type StoryToScriptStepInput = {
@@ -287,11 +288,21 @@ export async function convertEpisodeClipsToScreenplays(
               canonical: context.canonical,
             }),
         });
+        const screenplay = normalizeScreenplayDialogue(result.data);
+        const normalizationIssues = validateScreenplayConversion(screenplay, {
+          clipId: clip.id,
+          clipText: clip.content,
+          canonical: context.canonical,
+        });
+        if (normalizationIssues.length)
+          throw new Error(
+            `SCREENPLAY_DIALOGUE_NORMALIZATION_INVALID:${normalizationIssues.map((item) => item.code).join(",")}`,
+          );
         await hooks.assertActive();
         await prisma.storyClip.update({
           where: { id: clip.id },
           data: {
-            screenplay: JSON.stringify(result.data),
+            screenplay: JSON.stringify(screenplay),
             status: "screenplay_ready",
           },
         });
@@ -300,8 +311,8 @@ export async function convertEpisodeClipsToScreenplays(
           clipIndex: clip.clipIndex,
           success: true,
           reused: false,
-          sceneCount: result.data.scenes.length,
-          screenplay: result.data,
+          sceneCount: screenplay.scenes.length,
+          screenplay,
           trace: result.trace,
         };
         await hooks.persistArtifact("screenplay.clip", clip.id, successResult);
@@ -428,13 +439,14 @@ function parseReusableScreenplay(
   try {
     const parsed = screenplayConversionSchema.safeParse(JSON.parse(value));
     if (!parsed.success) return null;
-    return validateScreenplayConversion(parsed.data, {
+    const screenplay = normalizeScreenplayDialogue(parsed.data);
+    return validateScreenplayConversion(screenplay, {
       clipId,
       clipText,
       canonical,
     }).length
       ? null
-      : parsed.data;
+      : screenplay;
   } catch {
     return null;
   }

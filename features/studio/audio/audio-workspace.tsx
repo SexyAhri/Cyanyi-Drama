@@ -76,25 +76,25 @@ import { VoicePresetDialog } from "./voice-preset-dialog";
 
 const copy = {
   "zh-CN": {
-    title: "声音制作",
+    title: "对白与声音后期",
     analyze: "分析台词",
     reanalyze: "重新分析台词",
     analysisModel: "分析模型",
-    audioModel: "语音模型",
+    audioModel: "后期替换配音模型",
     lipModel: "口型模型",
     noLines: "还没有台词",
-    noLinesDetail: "从当前剧本分析角色与台词后，可在这里编辑和生成语音。",
-    noAudioModel: "没有可用的语音模型",
+    noLinesDetail: "从当前剧本提取直接对白后，可在这里校对并按需替换配音。",
+    noAudioModel: "没有可用的后期替换配音模型",
     lines: "台词",
     selected: "已选择",
-    generateSelected: "生成所选",
+    generateSelected: "生成替换配音",
     retryFailed: "重试失败项",
-    merge: "合并音轨",
+    merge: "合并替换配音",
     speaker: "角色",
     content: "台词内容",
     voice: "音色",
-    noVoice: "自动（语音模型默认）",
-    dialogueTab: "对白配音",
+    noVoice: "自动（后期配音模型默认）",
+    dialogueTab: "对白校对与替换",
     soundPostTab: "声音后期",
     episodeMixTab: "整集音轨",
     speakerSuggestions: "分镜角色",
@@ -103,12 +103,13 @@ const copy = {
     emotion: "情绪提示",
     strength: "情绪强度",
     save: "保存台词",
-    generate: "生成语音",
-    audioPreview: "语音预览",
+    generate: "生成替换配音",
+    audioPreview: "替换配音预览",
     noAudio: "尚未生成语音",
     mergedAudio: "整集音轨",
     noMergedAudio: "尚未合并整集音轨",
     lipSync: "口型同步",
+    innerMonologue: "内心独白（无口型）",
     generateLip: "生成口型",
     noLip: "尚未生成口型视频",
     download: "下载",
@@ -122,26 +123,26 @@ const copy = {
     actionFailed: "操作失败",
   },
   en: {
-    title: "Audio production",
+    title: "Dialogue and sound post",
     analyze: "Analyze dialogue",
     reanalyze: "Analyze again",
     analysisModel: "Analysis model",
-    audioModel: "Speech model",
+    audioModel: "Replacement speech model",
     lipModel: "Lip sync model",
     noLines: "No dialogue yet",
     noLinesDetail:
-      "Analyze the current script to edit dialogue and generate speech here.",
-    noAudioModel: "No speech model is available",
+      "Extract direct dialogue from the current script, then review it and replace speech only when needed.",
+    noAudioModel: "No replacement speech model is available",
     lines: "Dialogue",
     selected: "selected",
-    generateSelected: "Generate selected",
+    generateSelected: "Generate replacements",
     retryFailed: "Retry failed",
-    merge: "Merge audio",
+    merge: "Merge replacements",
     speaker: "Speaker",
     content: "Dialogue",
     voice: "Voice",
-    noVoice: "Auto (speech model default)",
-    dialogueTab: "Dialogue",
+    noVoice: "Auto (replacement model default)",
+    dialogueTab: "Dialogue review",
     soundPostTab: "Sound post",
     episodeMixTab: "Episode mix",
     speakerSuggestions: "Storyboard cast",
@@ -150,12 +151,13 @@ const copy = {
     emotion: "Emotion",
     strength: "Emotion strength",
     save: "Save dialogue",
-    generate: "Generate speech",
-    audioPreview: "Speech preview",
+    generate: "Generate replacement",
+    audioPreview: "Replacement preview",
     noAudio: "No speech generated",
     mergedAudio: "Episode mix",
     noMergedAudio: "No episode mix yet",
     lipSync: "Lip sync",
+    innerMonologue: "Inner monologue (no lip movement)",
     generateLip: "Generate lip sync",
     noLip: "No lip sync video yet",
     download: "Download",
@@ -780,7 +782,8 @@ function VoiceLineDetails({
   }
 
   async function generateLip() {
-    if (!lipModel || !panel || !audio?.id) return;
+    if (line.delivery !== "dialogue" || !lipModel || !panel || !audio?.id)
+      return;
     await onRun(
       () =>
         generateStudioLipSync(projectId, episodeId, {
@@ -800,7 +803,14 @@ function VoiceLineDetails({
           <p className="font-mono text-xs text-muted-foreground">
             {String(line.lineIndex + 1).padStart(2, "0")}
           </p>
-          <h2 className="truncate text-base font-semibold">{line.speaker}</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="truncate text-base font-semibold">{line.speaker}</h2>
+            {line.delivery === "inner_monologue" ? (
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {text.innerMonologue}
+              </span>
+            ) : null}
+          </div>
         </div>
         <Button
           disabled={busy || !speaker.trim() || !content.trim()}
@@ -877,7 +887,7 @@ function VoiceLineDetails({
         </Field>
       </div>
 
-      <div className="grid gap-5 py-5 2xl:grid-cols-2">
+      <div className={cn("grid gap-5 py-5", line.delivery === "dialogue" && "2xl:grid-cols-2")}>
         <section>
           <div className="mb-2 flex items-center justify-between gap-3">
             <h3 className="text-sm font-semibold">{text.audioPreview}</h3>
@@ -901,6 +911,7 @@ function VoiceLineDetails({
           />
         </section>
 
+        {line.delivery === "dialogue" ? (
         <section>
           <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <label className="grid min-w-0 flex-1 gap-1 text-xs font-medium">
@@ -932,6 +943,7 @@ function VoiceLineDetails({
             url={lipAsset?.url ?? lipOutput?.url}
           />
         </section>
+        ) : null}
       </div>
     </section>
   );

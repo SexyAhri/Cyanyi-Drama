@@ -109,6 +109,8 @@ export const screenplayConversionSchema = z
   })
   .strict();
 
+export type ScreenplayConversion = z.infer<typeof screenplayConversionSchema>;
+
 export const storyboardPanelSchema = z
   .object({
     panelIndex: z.number().int().nonnegative(),
@@ -194,6 +196,9 @@ export const voiceAnalysisSchema = z
         .object({
           speaker: text,
           content: exactText,
+          delivery: z
+            .enum(["dialogue", "inner_monologue", "voiceover"])
+            .default("dialogue"),
           emotionPrompt: optionalText,
           emotionStrength: z.number().min(0).max(1),
           matchedPanelIndex: z.number().int().nonnegative().nullable(),

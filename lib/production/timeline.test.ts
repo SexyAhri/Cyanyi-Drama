@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { buildSequentialTimeline, parseTimelineSequence } from "./timeline";
+import {
+  buildPanelSubtitleTimings,
+  buildSequentialTimeline,
+  parseTimelineSequence,
+} from "./timeline";
 
 describe("production timeline", () => {
   it("keeps panel order and recalculates sequential boundaries", () => {
@@ -47,5 +51,18 @@ describe("production timeline", () => {
       { id: "panel-1", duration: 2 },
       { id: "panel-2", duration: 30 },
     ]);
+  });
+
+  it("places dialogue lines sequentially inside the shot", () => {
+    const timings = buildPanelSubtitleTimings({
+      lineDurations: [5.45, 1.92, 2.83, 6.75],
+      trackDuration: 15,
+      trackStart: 19,
+    });
+
+    expect(timings[0].start).toBe(19);
+    expect(timings[0].end).toBeCloseTo(23.82, 1);
+    expect(timings[1].start).toBeCloseTo(timings[0].end);
+    expect(timings[3].end).toBeCloseTo(34);
   });
 });

@@ -4,7 +4,12 @@ const fetchWithProviderRetry = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/providers/http", () => ({ fetchWithProviderRetry }));
 
-import { generateImage, isSourceMediaDownloadFailure } from "./media-runtime";
+import {
+  mediaAssetMetadata,
+  generateImage,
+  isSourceMediaDownloadFailure,
+  mediaAssetExtension,
+} from "./media-runtime";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -19,6 +24,41 @@ describe("image generation runtime", () => {
     expect(
       isSourceMediaDownloadFailure(new Error("S3_BUCKET must be configured.")),
     ).toBe(false);
+  });
+
+  it("uses the provider MIME type for generated media storage", () => {
+    expect(
+      mediaAssetExtension({
+        kind: "audio",
+        mimeType: "audio/wav",
+        url: "https://provider.test/result",
+      }),
+    ).toBe("wav");
+    expect(
+      mediaAssetExtension({
+        kind: "image",
+        mimeType: "image/jpeg; charset=binary",
+        url: "https://provider.test/result",
+      }),
+    ).toBe("jpg");
+  });
+
+  it("does not duplicate inline media bytes into asset metadata", () => {
+    expect(
+      mediaAssetMetadata({
+        url: "data:audio/mpeg;base64,AQID",
+        metadata: { operation: "merge_episode_audio" },
+      }),
+    ).toEqual({ operation: "merge_episode_audio" });
+    expect(
+      mediaAssetMetadata({
+        url: "https://provider.test/result.mp4",
+        metadata: { model: "video-1" },
+      }),
+    ).toEqual({
+      model: "video-1",
+      originalUrl: "https://provider.test/result.mp4",
+    });
   });
 
   it("does not hide unrelated provider failures", async () => {

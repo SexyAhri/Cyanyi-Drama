@@ -42,6 +42,15 @@ export function verifyLocalObjectUrl(
   const expires = Number(expiresValue);
   if (!Number.isInteger(expires) || expires < Math.floor(Date.now() / 1000))
     return false;
+  return verifyLocalObjectSignature(key, expires, signatureValue);
+}
+
+export function verifyLocalObjectSignature(
+  key: string,
+  expires: number,
+  signatureValue: string | null,
+) {
+  if (!Number.isInteger(expires)) return false;
   if (!signatureValue) return false;
   const expected = Buffer.from(sign(key, expires), "hex");
   const provided = Buffer.from(signatureValue, "hex");

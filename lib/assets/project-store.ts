@@ -6,7 +6,7 @@ import { createMediaTaskTraceContext } from "@/lib/observability/trace-context";
 import { prisma } from "@/lib/server/prisma";
 import { resolveStoredMediaUrl, storeMediaBytes } from "@/lib/storage";
 
-export type UploadAssetKind = "image" | "video";
+export type UploadAssetKind = "image" | "video" | "audio";
 export type ProjectAssetTargetType =
   | "project"
   | "episode"
@@ -15,7 +15,8 @@ export type ProjectAssetTargetType =
   | "location"
   | "location_image"
   | "prop"
-  | "storyboard_panel";
+  | "storyboard_panel"
+  | "voice_preset";
 
 export type ProjectAssetSource = {
   fileName?: string;
@@ -265,6 +266,8 @@ async function resolveProjectAssetTarget(input: {
     if (!prop) throw new ProjectAssetError("道具不存在", 404);
     return { entityType: "prop", entityId: prop.id };
   }
+  if (targetType === "voice_preset" && input.kind !== "audio")
+    throw new ProjectAssetError("音色样本必须是音频", 400);
 
   const owned = await findOwnedConcreteTarget(
     targetType,
@@ -339,6 +342,11 @@ async function findOwnedConcreteTarget(
       where: { id: targetId, storyboard: { projectId } },
       select: { id: true },
     });
+  if (targetType === "voice_preset")
+    return prisma.voicePreset.findFirst({
+      where: { id: targetId, projectId },
+      select: { id: true },
+    });
   return null;
 }
 
@@ -392,6 +400,11 @@ async function attachAssetToTarget(
           ? { videoAssetId: input.assetId }
           : { imageAssetId: input.assetId },
     });
+  } else if (input.target.entityType === "voice_preset") {
+    await tx.voicePreset.update({
+      where: { id: input.target.entityId },
+      data: { sampleAssetId: input.assetId },
+    });
   }
   await tx.assetReference.create({
     data: {
@@ -415,6 +428,11 @@ function extensionForMime(mimeType: string, kind: UploadAssetKind) {
   if (normalized.includes("gif")) return "gif";
   if (normalized.includes("quicktime")) return "mov";
   if (normalized.includes("webm")) return "webm";
+  if (normalized.includes("wav")) return "wav";
+  if (normalized.includes("mpeg")) return "mp3";
+  if (normalized.includes("mp4")) return kind === "audio" ? "m4a" : "mp4";
+  if (normalized.includes("ogg")) return "ogg";
+  if (normalized.includes("flac")) return "flac";
   return kind === "video" ? "mp4" : "bin";
 }
 

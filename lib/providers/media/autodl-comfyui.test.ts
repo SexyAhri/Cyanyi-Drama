@@ -7,6 +7,7 @@ vi.mock("@/lib/providers/http", () => ({ fetchWithProviderRetry }));
 import { autoDlComfyUiMediaProvider } from "./autodl-comfyui";
 
 beforeEach(() => {
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
   vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void) => {
     callback();
@@ -117,10 +118,97 @@ describe("AutoDL ComfyUI media provider", () => {
       prompt_text: "别回头。",
       prompt_simple: "https://cdn.test/voice-reference.wav",
       emo_ref_audio: "https://cdn.test/voice-reference.wav",
-      emo_control_method: "使用情感参考音频",
+      emo_control_method: "与音色参考音频相同",
       emo_angry: 0.8,
       emo_calm: 0,
+      emo_surprised: "0",
     });
+  });
+
+  it("maps surprise into a supported emotion while preserving the fixed enum", async () => {
+    fetchWithProviderRetry
+      .mockResolvedValueOnce(
+        Response.json({ code: "Success", data: { task_id: "tts-2" } }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          code: "Success",
+          data: {
+            status: "completed",
+            results: [
+              { url: "https://cdn.test/voice.wav", type: "audio", file_type: "wav" },
+            ],
+          },
+        }),
+      );
+
+    await autoDlComfyUiMediaProvider.generate({
+      protocol: "autodl-comfyui",
+      providerKey: "autodl",
+      baseUrl: "https://autodl.art",
+      apiKey: "tts-token",
+      model: "indextts2-v1",
+      kind: "audio",
+      request: {
+        input: "你怎么在这里？",
+        emotionPrompt: "惊讶",
+        emotionStrength: 0.7,
+        referenceAudios: [{ url: "https://cdn.test/voice-reference.wav" }],
+      },
+    });
+
+    expect(JSON.parse(fetchWithProviderRetry.mock.calls[0][1].body)).toMatchObject({
+      emo_control_method: "与音色参考音频相同",
+      emo_calm: 0,
+      emo_afraid: 0.7,
+      emo_surprised: "0",
+    });
+  });
+
+  it("embeds a localhost TTS reference before submitting it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(Uint8Array.from([1, 2, 3]), {
+          status: 200,
+          headers: { "Content-Type": "audio/wav" },
+        }),
+      ),
+    );
+    fetchWithProviderRetry
+      .mockResolvedValueOnce(
+        Response.json({ code: "Success", data: { task_id: "tts-local" } }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          code: "Success",
+          data: {
+            status: "completed",
+            results: [
+              { url: "https://cdn.test/voice.wav", type: "audio", file_type: "wav" },
+            ],
+          },
+        }),
+      );
+
+    await autoDlComfyUiMediaProvider.generate({
+      protocol: "autodl-comfyui",
+      providerKey: "autodl",
+      baseUrl: "https://autodl.art",
+      apiKey: "tts-token",
+      model: "indextts2-v1",
+      kind: "audio",
+      request: {
+        input: "测试本地音色。",
+        referenceAudios: [
+          { url: "http://localhost:3000/api/files/voice.wav", mimeType: "audio/wav" },
+        ],
+      },
+    });
+
+    const body = JSON.parse(fetchWithProviderRetry.mock.calls[0][1].body);
+    expect(body.prompt_simple).toBe("data:audio/wav;base64,AQID");
+    expect(body.emo_ref_audio).toBe("data:audio/wav;base64,AQID");
   });
 
   it("surfaces the workflow failure reason", async () => {
@@ -148,5 +236,26 @@ describe("AutoDL ComfyUI media provider", () => {
     ).rejects.toThrow(
       "AUTODL_WORKFLOW_FAILED:minimax_h3_lightx2v_no_pic:reference audio cannot be read",
     );
+  });
+
+  it("rejects dialogue audio when the selected video model cannot consume it", async () => {
+    await expect(
+      autoDlComfyUiMediaProvider.generate({
+        protocol: "autodl-comfyui",
+        providerKey: "autodl",
+        baseUrl: "https://autodl.art",
+        apiKey: "token",
+        model: "minimax_h3_lightx2v_v5_15s",
+        kind: "video",
+        request: {
+          prompt: "角色说出台词",
+          referenceImages: [{ url: "https://cdn.test/shot.png" }],
+          referenceAudios: [{ url: "https://cdn.test/dialogue.wav" }],
+        },
+      }),
+    ).rejects.toThrow(
+      "AUTODL_AUDIO_REFERENCE_UNSUPPORTED:minimax_h3_lightx2v_v5_15s",
+    );
+    expect(fetchWithProviderRetry).not.toHaveBeenCalled();
   });
 });

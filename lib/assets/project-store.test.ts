@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const projectFindFirst = vi.hoisted(() => vi.fn());
 const novelPropFindFirst = vi.hoisted(() => vi.fn());
+const voicePresetFindFirst = vi.hoisted(() => vi.fn());
+const voicePresetUpdate = vi.hoisted(() => vi.fn());
 const mediaAssetFindMany = vi.hoisted(() => vi.fn());
 const mediaTaskCreate = vi.hoisted(() => vi.fn());
 const mediaAssetCreate = vi.hoisted(() => vi.fn());
@@ -13,6 +15,7 @@ vi.mock("@/lib/server/prisma", () => ({
   prisma: {
     project: { findFirst: projectFindFirst },
     novelProp: { findFirst: novelPropFindFirst },
+    voicePreset: { findFirst: voicePresetFindFirst },
     episode: { findFirst: vi.fn() },
     mediaAsset: { findMany: mediaAssetFindMany },
     $transaction: async (callback: (tx: unknown) => Promise<unknown>) =>
@@ -20,6 +23,7 @@ vi.mock("@/lib/server/prisma", () => ({
         mediaTask: { create: mediaTaskCreate },
         mediaAsset: { create: mediaAssetCreate },
         assetReference: { create: assetReferenceCreate },
+        voicePreset: { update: voicePresetUpdate },
       }),
   },
 }));
@@ -38,6 +42,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   projectFindFirst.mockResolvedValue({ id: "project-1" });
   novelPropFindFirst.mockResolvedValue({ id: "prop-1" });
+  voicePresetFindFirst.mockResolvedValue({ id: "voice-1" });
   storeMediaBytes.mockResolvedValue("projects/project-1/uploads/hash.png");
   resolveStoredMediaUrl.mockResolvedValue("https://media.test/signed.png");
   mediaAssetCreate.mockImplementation(async ({ data }) => ({
@@ -135,6 +140,36 @@ describe("project asset store", () => {
         entityType: "prop",
         entityId: "prop-1",
         role: "uploaded_source",
+      }),
+    });
+  });
+
+  it("attaches an uploaded audio sample to an owned voice preset", async () => {
+    await createUploadedProjectAsset({
+      userId: "user-1",
+      projectId: "project-1",
+      kind: "audio",
+      bytes: new Uint8Array([1, 2, 3]),
+      mimeType: "audio/wav",
+      source: { sourceType: "upload", fileName: "voice.wav" },
+      targetType: "voice_preset",
+      targetId: "voice-1",
+      role: "voice_sample",
+    });
+
+    expect(voicePresetFindFirst).toHaveBeenCalledWith({
+      where: { id: "voice-1", projectId: "project-1" },
+      select: { id: true },
+    });
+    expect(voicePresetUpdate).toHaveBeenCalledWith({
+      where: { id: "voice-1" },
+      data: { sampleAssetId: expect.stringMatching(/^media_asset_/) },
+    });
+    expect(assetReferenceCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        entityType: "voice_preset",
+        entityId: "voice-1",
+        role: "voice_sample",
       }),
     });
   });

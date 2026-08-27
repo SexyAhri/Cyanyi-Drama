@@ -6,7 +6,11 @@ import {
   getAutoDlWorkflow,
   type AutoDlWorkflowDefinition,
 } from "./autodl-comfyui-workflows";
-import { providerErrorMessage, readProviderJson } from "./shared";
+import {
+  localReferencesAsDataUrls,
+  providerErrorMessage,
+  readProviderJson,
+} from "./shared";
 import type {
   GenerateProviderMediaInput,
   MediaProviderAdapter,
@@ -23,10 +27,10 @@ export const autoDlComfyUiMediaProvider: MediaProviderAdapter = {
       return executeWorkflow(
         input,
         workflow,
-        buildVideoBody(workflow, input.request),
+        await buildVideoBody(workflow, input.request),
       );
     if (input.kind === "audio" && workflow.kind === "tts")
-      return executeWorkflow(input, workflow, buildTtsBody(input.request));
+      return executeWorkflow(input, workflow, await buildTtsBody(input.request));
     throw new Error(
       `AUTODL_WORKFLOW_KIND_MISMATCH:${input.model}:${input.kind}`,
     );
@@ -36,6 +40,10 @@ export const autoDlComfyUiMediaProvider: MediaProviderAdapter = {
     if (workflow.kind !== "image-audio-video")
       throw new Error(`AUTODL_LIPSYNC_MODEL_REQUIRED:${input.model}`);
     if (!input.imageUrl) throw new Error("AUTODL_LIPSYNC_IMAGE_REQUIRED");
+    const [imageUrl, audioUrl] = await localReferencesAsDataUrls([
+      { url: input.imageUrl },
+      { url: input.audioUrl },
+    ]);
     return executeWorkflow(
       {
         baseUrl: input.baseUrl,
@@ -46,8 +54,8 @@ export const autoDlComfyUiMediaProvider: MediaProviderAdapter = {
       workflow,
       {
         resolution: autoDlResolution(workflow, "9:16", "768p"),
-        ref_audio_0: input.audioUrl,
-        ref_image_0: input.imageUrl,
+        ref_audio_0: audioUrl,
+        ref_image_0: imageUrl,
         audio_duration: clampDuration(
           input.durationSeconds,
           workflow.maxDurationSeconds,
@@ -121,7 +129,7 @@ async function executeWorkflow(
   throw new Error(`AUTODL_POLL_TIMEOUT:${workflow.id}`);
 }
 
-function buildVideoBody(
+async function buildVideoBody(
   workflow: AutoDlWorkflowDefinition,
   request: MediaProviderRequest,
 ) {
@@ -135,16 +143,24 @@ function buildVideoBody(
     resolution: autoDlResolution(workflow, request.ratio, request.resolution),
   };
   if (!base.prompt) throw new Error("AUTODL_VIDEO_PROMPT_REQUIRED");
+  if (
+    request.referenceAudios?.length &&
+    !workflow.maxReferenceAudios
+  )
+    throw new Error(`AUTODL_AUDIO_REFERENCE_UNSUPPORTED:${workflow.id}`);
   if (workflow.kind === "text-video") return base;
 
   const references = request.referenceImages ?? [];
+  const referenceUrls = await localReferencesAsDataUrls(references);
   if (workflow.kind === "first-last-video") {
-    const firstFrame = references.find(
+    const firstFrameIndex = references.findIndex(
       (reference) => reference.role === "first_frame",
-    )?.url;
-    const lastFrame = references.find(
+    );
+    const lastFrameIndex = references.findIndex(
       (reference) => reference.role === "last_frame",
-    )?.url;
+    );
+    const firstFrame = referenceUrls[firstFrameIndex];
+    const lastFrame = referenceUrls[lastFrameIndex];
     if (!firstFrame || !lastFrame)
       throw new Error("AUTODL_FIRST_LAST_FRAMES_REQUIRED");
     return { ...base, first_frame: firstFrame, last_frame: lastFrame };
@@ -153,27 +169,35 @@ function buildVideoBody(
   const body: Record<string, unknown> = { ...base };
   references
     .slice(0, workflow.maxReferenceImages ?? 0)
-    .forEach((reference, index) => {
-      body[`ref_image_${index}`] = reference.url;
+    .forEach((_reference, index) => {
+      body[`ref_image_${index}`] = referenceUrls[index];
     });
   if (workflow.kind === "reference-video" && !body.ref_image_0)
     throw new Error("AUTODL_REFERENCE_IMAGE_REQUIRED");
   if (workflow.kind === "audio-reference-video")
-    (request.referenceAudios ?? [])
+    (await localReferencesAsDataUrls(request.referenceAudios ?? []))
       .slice(0, workflow.maxReferenceAudios ?? 0)
-      .forEach((reference, index) => {
-        body[`ref_audio_${index}`] = reference.url;
+      .forEach((url, index) => {
+        body[`ref_audio_${index}`] = url;
       });
   return body;
 }
 
-function buildTtsBody(request: MediaProviderRequest) {
+async function buildTtsBody(request: MediaProviderRequest) {
   const text = request.input?.trim() || request.prompt?.trim();
   if (!text) throw new Error("AUTODL_TTS_TEXT_REQUIRED");
-  const referenceAudio =
-    request.referenceAudios?.[0]?.url ||
+  const referenceAudioSource =
+    request.referenceAudios?.[0] ||
     (isHttpUrl(request.voice) ? request.voice : undefined);
-  if (!referenceAudio) throw new Error("AUTODL_TTS_REFERENCE_AUDIO_REQUIRED");
+  if (!referenceAudioSource)
+    throw new Error("AUTODL_TTS_REFERENCE_AUDIO_REQUIRED");
+  const referenceAudio = (
+    await localReferencesAsDataUrls([
+      typeof referenceAudioSource === "string"
+        ? { url: referenceAudioSource }
+        : referenceAudioSource,
+    ])
+  )[0];
   const emotions = emotionWeights(
     request.emotionPrompt,
     request.emotionStrength,
@@ -182,7 +206,7 @@ function buildTtsBody(request: MediaProviderRequest) {
     prompt_text: text,
     prompt_simple: referenceAudio,
     emo_ref_audio: referenceAudio,
-    emo_control_method: "使用情感参考音频",
+    emo_control_method: "与音色参考音频相同",
     emo_random: false,
     ...emotions,
   };
@@ -222,14 +246,13 @@ function ratioOrientation(value?: string) {
 function emotionWeights(prompt?: string, strength?: number) {
   const value = prompt?.toLowerCase() ?? "";
   const amount = Math.min(1, Math.max(0, strength ?? 0.5));
-  const weights = {
+  const numericWeights = {
     emo_sad: 0,
     emo_calm: 0.3,
     emo_angry: 0,
     emo_happy: 0,
     emo_afraid: 0,
     emo_disgusted: 0,
-    emo_surprised: 0,
     emo_melancholic: 0,
   };
   const match = [
@@ -243,10 +266,12 @@ function emotionWeights(prompt?: string, strength?: number) {
     [/平静|克制|calm/, "emo_calm"],
   ].find(([pattern]) => (pattern as RegExp).test(value));
   if (match) {
-    weights.emo_calm = 0;
-    weights[match[1] as keyof typeof weights] = amount;
+    numericWeights.emo_calm = 0;
+    if (match[1] === "emo_surprised") numericWeights.emo_afraid = amount;
+    else
+      numericWeights[match[1] as keyof typeof numericWeights] = amount;
   }
-  return weights;
+  return { ...numericWeights, emo_surprised: "0" };
 }
 
 function resultUrls(

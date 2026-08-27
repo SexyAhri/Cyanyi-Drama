@@ -693,16 +693,33 @@ export async function createStudioVoicePreset(
     language?: string;
     gender?: string;
     description?: string;
+    sample?: File;
   },
 ) {
-  return request<{ preset: VoicePresetRecord }>(
+  const { sample, ...presetInput } = input;
+  const created = await request<{ preset: VoicePresetRecord }>(
     `/api/projects/${encodeURIComponent(projectId)}/voice-presets`,
     {
-      body: JSON.stringify(input),
+      body: JSON.stringify(presetInput),
       headers: { "Content-Type": "application/json" },
       method: "PUT",
     },
   );
+  if (!sample) return created;
+
+  const form = new FormData();
+  form.set("file", sample);
+  form.set("kind", "audio");
+  form.set("targetType", "voice_preset");
+  form.set("targetId", created.preset.id);
+  form.set("role", "voice_sample");
+  const uploaded = await request<{ asset: { id: string } }>(
+    `/api/projects/${encodeURIComponent(projectId)}/assets/upload`,
+    { body: form, method: "POST" },
+  );
+  return {
+    preset: { ...created.preset, sampleAssetId: uploaded.asset.id },
+  };
 }
 
 export async function analyzeStudioVoiceLines(
@@ -730,8 +747,9 @@ export async function updateStudioVoiceLine(
       | "content"
       | "voicePresetId"
       | "emotionPrompt"
-      | "emotionStrength"
-      | "matchedPanelId"
+       | "emotionStrength"
+       | "delivery"
+       | "matchedPanelId"
     >
   > & { lineId: string },
 ) {

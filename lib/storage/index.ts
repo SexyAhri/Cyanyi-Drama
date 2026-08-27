@@ -34,6 +34,16 @@ export async function resolveStoredMediaUrl(key: string, expiresIn = 3600) {
     : getS3ObjectUrl(key, expiresIn);
 }
 
+export async function resolveStoredMediaInput(
+  key: string,
+  mimeType?: string | null,
+) {
+  if (getStorageProvider() !== "local") return getS3ObjectUrl(key);
+  const bytes = await readLocalObject(key);
+  const contentType = mimeType?.trim() || contentTypeForKey(key);
+  return `data:${contentType};base64,${bytes.toString("base64")}`;
+}
+
 export async function deleteObject(key: string) {
   return getStorageProvider() === "local"
     ? deleteLocalObject(key)
@@ -83,4 +93,25 @@ export async function storeMediaBytes(
   });
   if (record.storageKey !== key) await deleteObject(key).catch(() => undefined);
   return record.storageKey;
+}
+
+function contentTypeForKey(key: string) {
+  const extension = key.split(".").pop()?.toLowerCase();
+  return (
+    {
+      flac: "audio/flac",
+      gif: "image/gif",
+      jpeg: "image/jpeg",
+      jpg: "image/jpeg",
+      m4a: "audio/mp4",
+      mov: "video/quicktime",
+      mp3: "audio/mpeg",
+      mp4: "video/mp4",
+      ogg: "audio/ogg",
+      png: "image/png",
+      wav: "audio/wav",
+      webm: "application/octet-stream",
+      webp: "image/webp",
+    }[extension ?? ""] ?? "application/octet-stream"
+  );
 }

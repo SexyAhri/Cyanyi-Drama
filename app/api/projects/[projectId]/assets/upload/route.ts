@@ -18,7 +18,7 @@ export async function POST(request: Request, context: Context) {
     if (!(file instanceof File))
       throw new ProjectAssetError("file 是必填项", 400);
     const kind = normalizeKind(form.get("kind"), file.type);
-    if (!kind) throw new ProjectAssetError("仅支持图片或视频文件", 400);
+    if (!kind) throw new ProjectAssetError("仅支持图片、视频或音频文件", 400);
     if (file.size <= 0 || file.size > MAX_UPLOAD_BYTES)
       throw new ProjectAssetError("文件大小必须在 1B 到 100MB 之间", 400);
     if (!file.type.toLowerCase().startsWith(`${kind}/`))
@@ -55,9 +55,11 @@ export async function POST(request: Request, context: Context) {
 }
 
 function normalizeKind(value: FormDataEntryValue | null, mimeType: string) {
-  if (value === "image" || value === "video") return value;
+  if (value === "image" || value === "video" || value === "audio")
+    return value;
   if (mimeType.toLowerCase().startsWith("image/")) return "image";
   if (mimeType.toLowerCase().startsWith("video/")) return "video";
+  if (mimeType.toLowerCase().startsWith("audio/")) return "audio";
   return null;
 }
 
@@ -72,6 +74,7 @@ function targetType(value: FormDataEntryValue | null) {
       "location_image",
       "prop",
       "storyboard_panel",
+      "voice_preset",
     ].includes(value)
     ? (value as ProjectAssetTargetType)
     : undefined;

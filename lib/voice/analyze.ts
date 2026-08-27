@@ -6,8 +6,12 @@ import {
   requestOpenAiStructured,
 } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
-import { voiceAnalysisSchema } from "@/lib/prompts/schemas";
+import {
+  screenplayConversionSchema,
+  voiceAnalysisSchema,
+} from "@/lib/prompts/schemas";
 import { validateVoiceAnalysis } from "@/lib/prompts/validators";
+import { normalizeScreenplayDialogue } from "@/lib/novel/screenplay-dialogue";
 
 export type VoiceAnalyzeInput = {
   userId: string;
@@ -43,12 +47,18 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
             orderBy: { panelIndex: "asc" },
             select: {
               id: true,
+              clipId: true,
               panelIndex: true,
               description: true,
               subtitleText: true,
+              sourceEvidenceJson: true,
             },
           },
         },
+      },
+      clips: {
+        orderBy: { clipIndex: "asc" },
+        select: { id: true, screenplay: true },
       },
     },
   });
@@ -87,9 +97,11 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
     },
   });
   const panelContext = episode.storyboard.panels.map((panel) => ({
+    clipId: panel.clipId,
     panelIndex: panel.panelIndex,
     description: panel.description ?? "",
     subtitleText: panel.subtitleText ?? "",
+    sourceEvidence: stringArray(parseStoredJson(panel.sourceEvidenceJson, [])),
   }));
   const characterContext = characters.map((character) => ({
     name: character.name,
@@ -97,12 +109,27 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
     profile: parseStoredJson(character.profileJson, {}),
     introduction: character.introduction,
   }));
+  const screenplayLines = buildScreenplayVoiceAnalysis({
+    clips: episode.clips ?? [],
+    panels: panelContext,
+  });
   let analyzedData: Awaited<ReturnType<typeof requestVoiceAnalysis>>["data"];
   let trace:
     | Awaited<ReturnType<typeof requestVoiceAnalysis>>["trace"]
     | undefined;
   let fallbackReason: string | undefined;
-  try {
+  if (screenplayLines) {
+    analyzedData = screenplayLines;
+    const issues = validateVoiceAnalysis(analyzedData, {
+      sourceText: episode.novelText,
+      characters: characters.map((character) => character.name),
+      panelIndices: panelContext.map((panel) => panel.panelIndex),
+    });
+    if (issues.length)
+      throw new VoiceAnalyzeError(
+        `剧本台词校验失败：${issues.map((item) => item.code).join(",")}`,
+      );
+  } else try {
     const analyzed = await requestVoiceAnalysis({
       baseUrl: channel.baseUrl,
       apiKeys: keys,
@@ -140,6 +167,7 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
   const lines = analyzedData.lines.map((line) => ({
     speaker: line.speaker,
     content: line.content,
+    delivery: line.delivery,
     emotionPrompt: line.emotionPrompt ?? null,
     emotionStrength: line.emotionStrength,
     matchedPanelId:
@@ -160,6 +188,7 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
           lineIndex: index,
           speaker: line.speaker,
           content: line.content,
+          delivery: line.delivery,
           emotionPrompt: line.emotionPrompt,
           emotionStrength: line.emotionStrength,
           matchedPanelId: line.matchedPanelId,
@@ -187,6 +216,7 @@ export function buildDeterministicVoiceAnalysis(input: {
     panelIndex: number;
     description: string;
     subtitleText: string;
+    sourceEvidence?: string[];
   }>;
 }) {
   const speakers = input.characters.flatMap((character) => [
@@ -208,17 +238,92 @@ export function buildDeterministicVoiceAnalysis(input: {
     const after = input.sourceText.slice(end, end + 160);
     const speaker = inferDialogueSpeaker(speakers, before, after);
     const matchedPanelIndex = input.panels.find((panel) =>
-      `${panel.description}\n${panel.subtitleText}`.includes(content),
+      `${panel.description}\n${panel.subtitleText}\n${panel.sourceEvidence?.join("\n") ?? ""}`.includes(content),
     )?.panelIndex;
     return {
       speaker: speaker ?? "旁白",
       content,
+      delivery: "dialogue" as const,
       emotionPrompt: null,
       emotionStrength: 0.5,
       matchedPanelIndex: matchedPanelIndex ?? null,
     };
   });
   return voiceAnalysisSchema.parse({ lines });
+}
+
+export function buildScreenplayVoiceAnalysis(input: {
+  clips: Array<{ id: string; screenplay: string | null }>;
+  panels: Array<{
+    clipId: string | null;
+    panelIndex: number;
+    description: string;
+    subtitleText: string;
+    sourceEvidence?: string[];
+  }>;
+}) {
+  const lines = input.clips.flatMap((clip) => {
+    const parsed = parseScreenplay(clip.screenplay);
+    if (!parsed) return [];
+    const clipPanels = input.panels.filter((panel) => panel.clipId === clip.id);
+    return normalizeScreenplayDialogue(parsed).scenes.flatMap((scene) =>
+      scene.content.flatMap((content) => {
+        if (content.type === "action") return [];
+        const spokenContent =
+          content.type === "dialogue" ? content.lines : content.text;
+        const speaker =
+          content.type === "dialogue"
+            ? content.character
+            : content.character ?? "旁白";
+        const matchedPanelIndex = findDialoguePanel(
+          spokenContent,
+          clipPanels.length ? clipPanels : input.panels,
+        );
+        return [
+          {
+            speaker,
+            content: spokenContent,
+            delivery:
+              content.type === "dialogue"
+                ? ("dialogue" as const)
+                : content.character
+                  ? ("inner_monologue" as const)
+                  : ("voiceover" as const),
+            emotionPrompt: content.type === "dialogue" ? content.parenthetical : null,
+            emotionStrength: 0.5,
+            matchedPanelIndex,
+          },
+        ];
+      }),
+    );
+  });
+  return lines.length ? voiceAnalysisSchema.parse({ lines }) : null;
+}
+
+function parseScreenplay(value: string | null) {
+  if (!value) return null;
+  try {
+    const parsed = screenplayConversionSchema.safeParse(JSON.parse(value));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function findDialoguePanel(
+  content: string,
+  panels: Array<{
+    panelIndex: number;
+    description: string;
+    subtitleText: string;
+    sourceEvidence?: string[];
+  }>,
+) {
+  return (
+    panels.find((panel) =>
+      `${panel.description}\n${panel.subtitleText}\n${panel.sourceEvidence?.join("\n") ?? ""}`.includes(content),
+    )?.panelIndex ?? panels[0]?.panelIndex ?? null
+  );
 }
 
 function inferDialogueSpeaker(

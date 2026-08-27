@@ -46,7 +46,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_SCREENPLAY_CONVERSION]: {
     pathStem: "domain/story_screenplay_conversion",
-    version: 3,
+    version: 5,
     variables: [
       "clip_id",
       "clip_text",
@@ -131,7 +131,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_VOICE_ANALYSIS]: {
     pathStem: "domain/story_voice_analysis",
-    version: 3,
+    version: 5,
     variables: ["source_text", "characters_json", "panels_json"],
     agent: defineAgent({
       id: "dialogue_editor",
