@@ -109,6 +109,18 @@ export async function registerUser(
         where: { userId: previousUser.id },
         data: { userId: user.id },
       }),
+      prisma.productionDeliverable.updateMany({
+        where: { userId: previousUser.id },
+        data: { userId: user.id },
+      }),
+      prisma.productionDeliverable.updateMany({
+        where: { approvedByUserId: previousUser.id },
+        data: { approvedByUserId: user.id },
+      }),
+      prisma.productionApprovalGate.updateMany({
+        where: { decidedByUserId: previousUser.id },
+        data: { decidedByUserId: user.id },
+      }),
       prisma.voicePreset.updateMany({
         where: { userId: previousUser.id },
         data: { userId: user.id },

@@ -8,27 +8,30 @@ datasource db {
 }
 
 model User {
-  id                  String               @id @default(uuid())
-  email               String?              @unique
-  passwordHash        String?              @map("password_hash")
-  displayName         String               @map("display_name")
-  anonymous           Boolean              @default(false)
-  createdAt           DateTime             @default(now()) @map("created_at")
-  updatedAt           DateTime             @updatedAt @map("updated_at")
-  sessions            Session[]
-  channels            Channel[]
-  projects            Project[]
-  mediaTasks          MediaTask[]
-  workflowRuns        WorkflowRun[]
-  voicePresets        VoicePreset[]
-  globalCharacters    GlobalCharacter[]
-  globalLocations     GlobalLocation[]
-  globalVoices        GlobalVoice[]
-  globalFolders       GlobalAssetFolder[]
-  userBalance         UserBalance?
-  balanceFreezes      BalanceFreeze[]
-  balanceTransactions BalanceTransaction[]
-  usageCosts          UsageCost[]
+  id                             String                   @id @default(uuid())
+  email                          String?                  @unique
+  passwordHash                   String?                  @map("password_hash")
+  displayName                    String                   @map("display_name")
+  anonymous                      Boolean                  @default(false)
+  createdAt                      DateTime                 @default(now()) @map("created_at")
+  updatedAt                      DateTime                 @updatedAt @map("updated_at")
+  sessions                       Session[]
+  channels                       Channel[]
+  projects                       Project[]
+  mediaTasks                     MediaTask[]
+  workflowRuns                   WorkflowRun[]
+  voicePresets                   VoicePreset[]
+  globalCharacters               GlobalCharacter[]
+  globalLocations                GlobalLocation[]
+  globalVoices                   GlobalVoice[]
+  globalFolders                  GlobalAssetFolder[]
+  userBalance                    UserBalance?
+  balanceFreezes                 BalanceFreeze[]
+  balanceTransactions            BalanceTransaction[]
+  usageCosts                     UsageCost[]
+  productionDeliverables         ProductionDeliverable[]  @relation("ProductionDeliverableOwner")
+  approvedProductionDeliverables ProductionDeliverable[]  @relation("ProductionDeliverableApprover")
+  productionApprovalDecisions    ProductionApprovalGate[] @relation("ProductionApprovalDecider")
 
   @@map("users")
 }
@@ -79,27 +82,28 @@ model ProviderModel {
 }
 
 model Project {
-  id              String           @id
-  userId          String           @map("user_id")
-  name            String
-  description     String?          @db.Text
-  lastAccessedAt  DateTime?        @map("last_accessed_at")
-  createdAt       DateTime         @default(now()) @map("created_at")
-  updatedAt       DateTime         @updatedAt @map("updated_at")
-  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  config          ProjectConfig?
-  episodes        Episode[]
-  mediaTasks      MediaTask[]
-  characters      NovelCharacter[]
-  locations       NovelLocation[]
-  props           NovelProp[]
-  voicePresets    VoicePreset[]
-  storyboards     Storyboard[]
-  clips           StoryClip[]
-  shots           StoryShot[]
-  assetReferences AssetReference[]
-  workflowRuns    WorkflowRun[]
-  usageCosts      UsageCost[]
+  id                     String                  @id
+  userId                 String                  @map("user_id")
+  name                   String
+  description            String?                 @db.Text
+  lastAccessedAt         DateTime?               @map("last_accessed_at")
+  createdAt              DateTime                @default(now()) @map("created_at")
+  updatedAt              DateTime                @updatedAt @map("updated_at")
+  user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  config                 ProjectConfig?
+  episodes               Episode[]
+  mediaTasks             MediaTask[]
+  characters             NovelCharacter[]
+  locations              NovelLocation[]
+  props                  NovelProp[]
+  voicePresets           VoicePreset[]
+  storyboards            Storyboard[]
+  clips                  StoryClip[]
+  shots                  StoryShot[]
+  assetReferences        AssetReference[]
+  workflowRuns           WorkflowRun[]
+  usageCosts             UsageCost[]
+  productionDeliverables ProductionDeliverable[]
 
   @@index([userId, updatedAt])
   @@map("projects")
@@ -130,24 +134,25 @@ model ProjectConfig {
 }
 
 model Episode {
-  id              String              @id
-  projectId       String              @map("project_id")
-  episodeNumber   Int                 @map("episode_number")
-  name            String
-  description     String?             @db.Text
-  novelText       String?             @map("novel_text") @db.LongText
-  createdAt       DateTime            @default(now()) @map("created_at")
-  updatedAt       DateTime            @updatedAt @map("updated_at")
-  project         Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  mediaTasks      MediaTask[]
-  storyboard      Storyboard?
-  clips           StoryClip[]
-  shots           StoryShot[]
-  voiceLines      VoiceLine[]
-  audioTracks     EpisodeAudioTrack[]
-  editorProject   EditorProject?
-  assetReferences AssetReference[]
-  workflowRuns    WorkflowRun[]
+  id                     String                  @id
+  projectId              String                  @map("project_id")
+  episodeNumber          Int                     @map("episode_number")
+  name                   String
+  description            String?                 @db.Text
+  novelText              String?                 @map("novel_text") @db.LongText
+  createdAt              DateTime                @default(now()) @map("created_at")
+  updatedAt              DateTime                @updatedAt @map("updated_at")
+  project                Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  mediaTasks             MediaTask[]
+  storyboard             Storyboard?
+  clips                  StoryClip[]
+  shots                  StoryShot[]
+  voiceLines             VoiceLine[]
+  audioTracks            EpisodeAudioTrack[]
+  editorProject          EditorProject?
+  assetReferences        AssetReference[]
+  workflowRuns           WorkflowRun[]
+  productionDeliverables ProductionDeliverable[]
 
   @@unique([projectId, episodeNumber])
   @@index([projectId, episodeNumber])
@@ -574,6 +579,77 @@ model AssetReference {
   @@index([projectId, entityType, entityId])
   @@index([episodeId, createdAt])
   @@map("asset_references")
+}
+
+model ProductionDeliverable {
+  id               String                            @id
+  userId           String                            @map("user_id")
+  projectId        String                            @map("project_id")
+  episodeId        String?                           @map("episode_id")
+  scopeType        String                            @map("scope_type") @db.VarChar(32)
+  scopeId          String                            @map("scope_id")
+  department       String                            @db.VarChar(64)
+  deliverableType  String                            @map("deliverable_type") @db.VarChar(96)
+  title            String
+  status           String                            @default("draft") @db.VarChar(32)
+  version          Int                               @default(1)
+  payload          Json
+  sourceRefs       Json?                             @map("source_refs")
+  promptTrace      Json?                             @map("prompt_trace")
+  cost             Decimal                           @default(0) @db.Decimal(18, 6)
+  dependencyHash   String                            @map("dependency_hash")
+  approvedByUserId String?                           @map("approved_by_user_id")
+  submittedAt      DateTime?                         @map("submitted_at")
+  approvedAt       DateTime?                         @map("approved_at")
+  lockedAt         DateTime?                         @map("locked_at")
+  supersededAt     DateTime?                         @map("superseded_at")
+  createdAt        DateTime                          @default(now()) @map("created_at")
+  updatedAt        DateTime                          @updatedAt @map("updated_at")
+  user             User                              @relation("ProductionDeliverableOwner", fields: [userId], references: [id], onDelete: Cascade)
+  approvedBy       User?                             @relation("ProductionDeliverableApprover", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  project          Project                           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  episode          Episode?                          @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  approvalGates    ProductionApprovalGate[]
+  dependencies     ProductionDeliverableDependency[] @relation("DeliverableDependencies")
+  dependents       ProductionDeliverableDependency[] @relation("DeliverableDependents")
+
+  @@unique([projectId, scopeType, scopeId, deliverableType, version])
+  @@index([userId, updatedAt])
+  @@index([projectId, department, status])
+  @@index([episodeId, updatedAt])
+  @@map("production_deliverables")
+}
+
+model ProductionDeliverableDependency {
+  id              String                @id
+  deliverableId   String                @map("deliverable_id")
+  dependsOnId     String                @map("depends_on_id")
+  requiredVersion Int                   @map("required_version")
+  createdAt       DateTime              @default(now()) @map("created_at")
+  deliverable     ProductionDeliverable @relation("DeliverableDependencies", fields: [deliverableId], references: [id], onDelete: Cascade)
+  dependsOn       ProductionDeliverable @relation("DeliverableDependents", fields: [dependsOnId], references: [id], onDelete: Cascade)
+
+  @@unique([deliverableId, dependsOnId])
+  @@index([dependsOnId])
+  @@map("production_deliverable_dependencies")
+}
+
+model ProductionApprovalGate {
+  id              String                @id
+  deliverableId   String                @map("deliverable_id")
+  gateKey         String                @map("gate_key") @db.VarChar(64)
+  status          String                @default("pending") @db.VarChar(32)
+  decidedByUserId String?               @map("decided_by_user_id")
+  note            String?               @db.Text
+  decidedAt       DateTime?             @map("decided_at")
+  createdAt       DateTime              @default(now()) @map("created_at")
+  updatedAt       DateTime              @updatedAt @map("updated_at")
+  deliverable     ProductionDeliverable @relation(fields: [deliverableId], references: [id], onDelete: Cascade)
+  decidedBy       User?                 @relation("ProductionApprovalDecider", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([deliverableId, gateKey])
+  @@index([status, updatedAt])
+  @@map("production_approval_gates")
 }
 
 model WorkflowRun {
