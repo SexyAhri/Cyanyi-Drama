@@ -191,7 +191,8 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
                   storageKey,
                   asset.mimeType,
                 );
-              } catch {
+              } catch (error) {
+                if (isSourceMediaDownloadFailure(error)) throw error;
                 storedKey = null;
               }
               return {
@@ -223,6 +224,16 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
     },
   });
   return true;
+}
+
+export function isSourceMediaDownloadFailure(error: unknown) {
+  return (
+    error instanceof Error &&
+    (/^MEDIA_DOWNLOAD_FAILED:\d{3}/.test(error.message) ||
+      /fetch failed|ENOTFOUND|ECONNRESET|ETIMEDOUT|socket hang up/i.test(
+        error.message,
+      ))
+  );
 }
 
 async function findMediaTemplate(
@@ -777,7 +788,7 @@ async function linkGeneratedAsset(
     .catch(() => undefined);
 }
 
-async function generateImage(
+export async function generateImage(
   baseUrl: string,
   protocol: string,
   apiKey: string,
@@ -794,28 +805,37 @@ async function generateImage(
     protocol === "volcengine-ark",
   );
   const size = resolveImageSize(request.ratio, request.resolution);
-  const response = await fetchWithProviderRetry(`${baseUrl.replace(/\/+$/, "")}/${endpoint}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      prompt: request.prompt ?? "",
-      ...(size ? { size } : {}),
-      ...(protocol === "volcengine-ark"
-        ? {
-            aspect_ratio: request.ratio,
-            watermark: false,
-            sequential_image_generation: "disabled",
-          }
-        : {}),
-      ...(referenceImages.length ? { image: referenceImages } : {}),
-      response_format: "url",
-    }),
+  let response = await requestImageGeneration({
+    baseUrl,
+    endpoint,
+    apiKey,
+    model,
+    protocol,
+    request,
+    size,
+    referenceImages,
   });
-  const payload = await readJson(response);
+  let payload = await readJson(response);
+  let referenceFallback = false;
+  if (
+    !response.ok &&
+    protocol === "openai-compatible" &&
+    referenceImages.length &&
+    isUnsupportedReferenceImageError(payload)
+  ) {
+    referenceFallback = true;
+    response = await requestImageGeneration({
+      baseUrl,
+      endpoint,
+      apiKey,
+      model,
+      protocol,
+      request,
+      size,
+      referenceImages: [],
+    });
+    payload = await readJson(response);
+  }
   if (!response.ok) throw new Error(providerMessage(payload, response.status));
   const urls = extractUrls(payload);
   if (!urls.length) throw new Error(`IMAGE_RESULT_MISSING:${protocol}`);
@@ -823,8 +843,53 @@ async function generateImage(
     id: `${model}-${Date.now()}-${index}`,
     kind: "image",
     url,
-    metadata: { model },
+    metadata: { model, referenceFallback },
   }));
+}
+
+function requestImageGeneration(input: {
+  baseUrl: string;
+  endpoint: string;
+  apiKey: string;
+  model: string;
+  protocol: string;
+  request: TaskRequest;
+  size?: string;
+  referenceImages: string[];
+}) {
+  return fetchWithProviderRetry(
+    `${input.baseUrl.replace(/\/+$/, "")}/${input.endpoint}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${input.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: input.model,
+        prompt: input.request.prompt ?? "",
+        ...(input.size ? { size: input.size } : {}),
+        ...(input.protocol === "volcengine-ark"
+          ? {
+              aspect_ratio: input.request.ratio,
+              watermark: false,
+              sequential_image_generation: "disabled",
+            }
+          : {}),
+        ...(input.referenceImages.length
+          ? { image: input.referenceImages }
+          : {}),
+        response_format: "url",
+      }),
+      cache: "no-store",
+    },
+  );
+}
+
+function isUnsupportedReferenceImageError(payload: unknown) {
+  return /submit_edit|unexpected keyword argument ['\"]source['\"]|reference images? (?:are |is )?not supported|image edit (?:is )?not supported/i.test(
+    providerMessage(payload, 400),
+  );
 }
 
 async function generateVideo(

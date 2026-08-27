@@ -15,7 +15,7 @@ import {
 export type StorageProvider = "s3" | "local";
 
 export function getStorageProvider(): StorageProvider {
-  return process.env.STORAGE_PROVIDER === "local" ? "local" : "s3";
+  return process.env.STORAGE_PROVIDER === "s3" ? "s3" : "local";
 }
 
 export async function uploadObject(

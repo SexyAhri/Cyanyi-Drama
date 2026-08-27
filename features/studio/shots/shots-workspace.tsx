@@ -448,14 +448,14 @@ export function ShotsWorkspace({
 
                 {selectedPanel ? (
                   <section className="min-w-0 p-4 sm:p-5">
-                    <header className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-start sm:justify-between">
+                    <header className="flex flex-col gap-3 border-b pb-4">
                       <div className="min-w-0">
                         <h2 className="truncate text-base font-semibold">
                           {copy.panel} {String(selectedPanel.panelIndex + 1).padStart(2, "0")}
                           {selectedPanel.shotType ? ` · ${selectedPanel.shotType}` : ""}
                         </h2>
                         {selectedPanel.description ? (
-                          <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+                          <p className="mt-1 line-clamp-3 max-w-2xl text-sm leading-6 text-muted-foreground">
                             {selectedPanel.description}
                           </p>
                         ) : null}

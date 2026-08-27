@@ -95,7 +95,11 @@ export function StoryboardWorkspace({
     async (signal?: AbortSignal) => {
       setError(null);
       try {
-        const result = await loadStudioStoryboard(projectId, episode.id, signal);
+        const result = await loadStudioStoryboard(
+          projectId,
+          episode.id,
+          signal,
+        );
         if (!signal?.aborted) setData(result);
         return result;
       } catch (requestError) {
@@ -172,16 +176,22 @@ export function StoryboardWorkspace({
     if (!model) return;
     setIsActing(true);
     try {
-      const result = await startStudioStoryboardWorkflow(projectId, episode.id, {
-        channelId: model.channelId,
-        model: model.modelId,
-        locale: locale === "en" ? "en" : "zh",
-      });
+      const result = await startStudioStoryboardWorkflow(
+        projectId,
+        episode.id,
+        {
+          channelId: model.channelId,
+          model: model.modelId,
+          locale: locale === "en" ? "en" : "zh",
+        },
+      );
       toast.success(result.reused ? copy.workflowReused : copy.workflowStarted);
       await refreshAll();
     } catch (requestError) {
       toast.error(
-        requestError instanceof Error ? requestError.message : copy.actionFailed,
+        requestError instanceof Error
+          ? requestError.message
+          : copy.actionFailed,
       );
     } finally {
       setIsActing(false);
@@ -198,7 +208,9 @@ export function StoryboardWorkspace({
       await refreshAll();
     } catch (requestError) {
       toast.error(
-        requestError instanceof Error ? requestError.message : copy.actionFailed,
+        requestError instanceof Error
+          ? requestError.message
+          : copy.actionFailed,
       );
     } finally {
       setIsActing(false);
@@ -214,15 +226,15 @@ export function StoryboardWorkspace({
         panels: replaceStoryboardPanel(data.storyboard.panels, nextPanel),
       });
       setData((current) =>
-        current
-          ? { ...current, storyboard: result.storyboard }
-          : current,
+        current ? { ...current, storyboard: result.storyboard } : current,
       );
       toast.success(copy.panelSaved);
       await onRefresh();
     } catch (requestError) {
       toast.error(
-        requestError instanceof Error ? requestError.message : copy.actionFailed,
+        requestError instanceof Error
+          ? requestError.message
+          : copy.actionFailed,
       );
       throw requestError;
     }
@@ -248,7 +260,9 @@ export function StoryboardWorkspace({
             {String(episode.episodeNumber).padStart(2, "0")} · {episode.name}
           </p>
           <div className="mt-1 flex items-center gap-2">
-            <h1 className="text-xl font-semibold">{copy.storyboardWorkspace}</h1>
+            <h1 className="text-xl font-semibold">
+              {copy.storyboardWorkspace}
+            </h1>
             {workflow ? (
               <StatusIndicator
                 locale={locale}
@@ -352,12 +366,12 @@ export function StoryboardWorkspace({
                     const readiness = getPrevisReadiness(panel, issues);
                     return (
                       <button
-                      className={cn(
+                        className={cn(
                           "flex w-full items-start gap-3 rounded-md px-2.5 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                           panel.id === selectedPanel?.id
                             ? "bg-muted"
                             : "hover:bg-muted/60",
-                      )}
+                        )}
                         key={panel.id}
                         onClick={() => setSelectedPanelId(panel.id)}
                         type="button"
@@ -484,9 +498,7 @@ function PanelDetails({
           <p
             className={cn(
               "mt-1 text-xs",
-              readiness.isReady
-                ? "text-status-success"
-                : "text-status-warning",
+              readiness.isReady ? "text-status-success" : "text-status-warning",
             )}
           >
             {readiness.isReady
@@ -554,10 +566,7 @@ function PanelDetails({
         <PanelSpec label={copy.cameraAngle} value={photography.camera} />
         <PanelSpec label={copy.cameraMove} value={panel.cameraMove} />
         <PanelSpec label={copy.lighting} value={photography.lighting} />
-        <PanelSpec
-          label={copy.depthOfField}
-          value={photography.depthOfField}
-        />
+        <PanelSpec label={copy.depthOfField} value={photography.depthOfField} />
         <PanelSpec label={copy.colorTone} value={photography.colorTone} />
         <PanelSpec
           label={copy.duration}
@@ -584,10 +593,7 @@ function PanelDetails({
                   key={character}
                 >
                   <p className="text-sm font-medium">{character}</p>
-                  <PanelSpec
-                    label={copy.emotion}
-                    value={direction?.emotion}
-                  />
+                  <PanelSpec label={copy.emotion} value={direction?.emotion} />
                   <PanelSpec label={copy.action} value={direction?.action} />
                   <PanelSpec
                     label={copy.expression}
@@ -685,7 +691,10 @@ function ContinuityOverview({
       </summary>
       <div className="mt-3 max-h-48 space-y-2 overflow-y-auto pl-6">
         {data.continuityIssues.map((issue, index) => (
-          <p className="text-xs leading-5 text-muted-foreground" key={`${issue.clipId}-${issue.code}-${index}`}>
+          <p
+            className="text-xs leading-5 text-muted-foreground"
+            key={`${issue.clipId}-${issue.code}-${index}`}
+          >
             <strong className="font-medium text-foreground">
               {issue.entityName || issue.code}
             </strong>{" "}
@@ -718,11 +727,21 @@ function WorkflowButtons({
   if (status === "running") {
     return (
       <div className="flex gap-2">
-        <Button disabled={disabled} onClick={() => onAction("pause")} size="sm" variant="outline">
+        <Button
+          disabled={disabled}
+          onClick={() => onAction("pause")}
+          size="sm"
+          variant="outline"
+        >
           <Pause className="size-4" />
           {copy.pauseWorkflow}
         </Button>
-        <Button disabled={disabled} onClick={() => onAction("cancel")} size="sm" variant="outline">
+        <Button
+          disabled={disabled}
+          onClick={() => onAction("cancel")}
+          size="sm"
+          variant="outline"
+        >
           <Ban className="size-4" />
           {copy.cancelWorkflow}
         </Button>
@@ -731,7 +750,12 @@ function WorkflowButtons({
   }
   if (status === "queued" || status === "canceling") {
     return (
-      <Button disabled={disabled || status === "canceling"} onClick={() => onAction("cancel")} size="sm" variant="outline">
+      <Button
+        disabled={disabled || status === "canceling"}
+        onClick={() => onAction("cancel")}
+        size="sm"
+        variant="outline"
+      >
         <Ban className="size-4" />
         {copy.cancelWorkflow}
       </Button>
@@ -740,11 +764,20 @@ function WorkflowButtons({
   if (status === "paused") {
     return (
       <div className="flex gap-2">
-        <Button disabled={disabled} onClick={() => onAction("resume")} size="sm">
+        <Button
+          disabled={disabled}
+          onClick={() => onAction("resume")}
+          size="sm"
+        >
           <Play className="size-4" />
           {copy.resumeWorkflow}
         </Button>
-        <Button disabled={disabled} onClick={() => onAction("cancel")} size="sm" variant="outline">
+        <Button
+          disabled={disabled}
+          onClick={() => onAction("cancel")}
+          size="sm"
+          variant="outline"
+        >
           <Ban className="size-4" />
           {copy.cancelWorkflow}
         </Button>
@@ -753,10 +786,21 @@ function WorkflowButtons({
   }
   if (status === "failed" || status === "blocked") {
     return (
-      <Button disabled={disabled} onClick={() => onAction("retry")} size="sm">
-        <RotateCcw className="size-4" />
-        {copy.retryWorkflow}
-      </Button>
+      <div className="flex gap-2">
+        <Button
+          disabled={disabled}
+          onClick={() => onAction("retry")}
+          size="sm"
+          variant="outline"
+        >
+          <RotateCcw className="size-4" />
+          {copy.retryWorkflow}
+        </Button>
+        <Button disabled={disabled || !modelReady} onClick={onStart} size="sm">
+          <Play className="size-4" />
+          {copy.rerunStoryboard}
+        </Button>
+      </div>
     );
   }
   return (

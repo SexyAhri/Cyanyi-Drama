@@ -486,6 +486,8 @@ async function runStep(
     });
     await runtime.persistArtifact("voice.lines", run.episodeId, {
       voiceLines: result.voiceLines,
+      degraded: result.degraded,
+      fallbackReason: result.fallbackReason,
     });
     for (const [index, trace] of result.promptTraces.entries())
       await runtime.persistArtifact(
@@ -495,6 +497,8 @@ async function runStep(
       );
     return {
       lineCount: result.voiceLines.length,
+      degraded: result.degraded,
+      fallbackReason: result.fallbackReason,
       promptTraces: result.promptTraces,
     };
   }

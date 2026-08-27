@@ -1010,7 +1010,7 @@ model WorkflowStepAttempt {
   modelKey     String?   @map("model_key")
   inputHash    String?   @map("input_hash")
   input        Json?
-  outputText   String?   @map("output_text") @db.Text
+  outputText   String?   @map("output_text") @db.MediumText
   usageJson    Json?     @map("usage_json")
   errorCode    String?   @map("error_code")
   errorMessage String?   @map("error_message") @db.Text

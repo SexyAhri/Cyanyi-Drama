@@ -1,12 +1,11 @@
 import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
-import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import {
-  PROMPT_IDS,
-  renderPrompt,
-  type PromptLocale,
-} from "@/lib/prompts";
+  isRetryableStructuredProviderError,
+  requestOpenAiStructured,
+} from "@/lib/llm/openai-structured";
+import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import { voiceAnalysisSchema } from "@/lib/prompts/schemas";
 import { validateVoiceAnalysis } from "@/lib/prompts/validators";
 
@@ -92,20 +91,25 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
     description: panel.description ?? "",
     subtitleText: panel.subtitleText ?? "",
   }));
-  let analyzed: Awaited<ReturnType<typeof requestVoiceAnalysis>>;
+  const characterContext = characters.map((character) => ({
+    name: character.name,
+    aliases: parseStoredJson(character.aliases, []),
+    profile: parseStoredJson(character.profileJson, {}),
+    introduction: character.introduction,
+  }));
+  let analyzedData: Awaited<ReturnType<typeof requestVoiceAnalysis>>["data"];
+  let trace:
+    | Awaited<ReturnType<typeof requestVoiceAnalysis>>["trace"]
+    | undefined;
+  let fallbackReason: string | undefined;
   try {
-    analyzed = await requestVoiceAnalysis({
+    const analyzed = await requestVoiceAnalysis({
       baseUrl: channel.baseUrl,
       apiKeys: keys,
       model: input.model,
       locale: input.locale ?? "zh",
       sourceText: episode.novelText,
-      characters: characters.map((character) => ({
-        name: character.name,
-        aliases: parseStoredJson(character.aliases, []),
-        profile: parseStoredJson(character.profileJson, {}),
-        introduction: character.introduction,
-      })),
+      characters: characterContext,
       panels: panelContext,
       structuredOutputMode: supportsStoredStructuredOutputs(
         model.capabilitiesJson,
@@ -113,16 +117,27 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
         ? "json_schema"
         : "json_object",
     });
+    analyzedData = analyzed.data;
+    trace = analyzed.trace;
   } catch (error) {
-    throw new VoiceAnalyzeError(
-      error instanceof Error ? error.message : "台词分析失败",
-      502,
-    );
+    if (isRetryableStructuredProviderError(error)) {
+      analyzedData = buildDeterministicVoiceAnalysis({
+        sourceText: episode.novelText,
+        characters: characterContext,
+        panels: panelContext,
+      });
+      fallbackReason = structuredProviderFailureCode(error);
+    } else {
+      throw new VoiceAnalyzeError(
+        error instanceof Error ? error.message : "台词分析失败",
+        502,
+      );
+    }
   }
   const panelIds = new Map(
     episode.storyboard.panels.map((panel) => [panel.panelIndex, panel.id]),
   );
-  const lines = analyzed.data.lines.map((line) => ({
+  const lines = analyzedData.lines.map((line) => ({
     speaker: line.speaker,
     content: line.content,
     emotionPrompt: line.emotionPrompt ?? null,
@@ -157,7 +172,57 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
     where: { episodeId: input.episodeId },
     orderBy: { lineIndex: "asc" },
   });
-  return { voiceLines, promptTraces: [analyzed.trace] };
+  return {
+    voiceLines,
+    promptTraces: trace ? [trace] : [],
+    degraded: Boolean(fallbackReason),
+    fallbackReason,
+  };
+}
+
+export function buildDeterministicVoiceAnalysis(input: {
+  sourceText: string;
+  characters: Array<{ name: string; aliases: unknown }>;
+  panels: Array<{
+    panelIndex: number;
+    description: string;
+    subtitleText: string;
+  }>;
+}) {
+  const speakers = input.characters.flatMap((character) => [
+    { spokenName: character.name, canonicalName: character.name },
+    ...stringArray(character.aliases).map((alias) => ({
+      spokenName: alias,
+      canonicalName: character.name,
+    })),
+  ]);
+  const lines = [...input.sourceText.matchAll(/[“\"]([^”\"\r\n]+)[”\"]/g)]
+    .slice(0, 500)
+    .map((match) => {
+      const content = match[1];
+      const before = input.sourceText.slice(
+        Math.max(0, (match.index ?? 0) - 120),
+        match.index,
+      );
+      const speaker = speakers
+        .map((candidate) => ({
+          ...candidate,
+          index: before.lastIndexOf(candidate.spokenName),
+        }))
+        .filter((candidate) => candidate.index >= 0)
+        .sort((left, right) => right.index - left.index)[0]?.canonicalName;
+      const matchedPanelIndex = input.panels.find((panel) =>
+        `${panel.description}\n${panel.subtitleText}`.includes(content),
+      )?.panelIndex;
+      return {
+        speaker: speaker ?? "旁白",
+        content,
+        emotionPrompt: null,
+        emotionStrength: 0.5,
+        matchedPanelIndex: matchedPanelIndex ?? null,
+      };
+    });
+  return voiceAnalysisSchema.parse({ lines });
 }
 
 function requestVoiceAnalysis(input: {
@@ -213,7 +278,8 @@ function parseKeys(value: string) {
     return Array.isArray(parsed)
       ? parsed
           .filter(
-            (item): item is string => typeof item === "string" && Boolean(item.trim()),
+            (item): item is string =>
+              typeof item === "string" && Boolean(item.trim()),
           )
           .map((item) => item.trim())
       : [];
@@ -229,4 +295,19 @@ function parseStoredJson(value: string | null, fallback: unknown) {
   } catch {
     return fallback;
   }
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function structuredProviderFailureCode(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  const status = message.match(/^STRUCTURED_PROVIDER_FAILED:(\d{3}):/)?.[1];
+  if (status) return `PROVIDER_HTTP_${status}`;
+  if (message.startsWith("STRUCTURED_PROVIDER_TIMEOUT:"))
+    return "PROVIDER_TIMEOUT";
+  return "PROVIDER_TEMPORARY_FAILURE";
 }

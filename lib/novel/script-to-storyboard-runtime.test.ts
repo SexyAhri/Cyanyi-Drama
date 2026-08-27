@@ -11,7 +11,13 @@ const channelFindFirst = vi.hoisted(() => vi.fn());
 const providerModelFindFirst = vi.hoisted(() => vi.fn());
 const storyClipUpdate = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/llm/openai-structured", () => ({ requestOpenAiStructured }));
+vi.mock("@/lib/llm/openai-structured", () => ({
+  requestOpenAiStructured,
+  isRetryableStructuredProviderError: (error: unknown) =>
+    error instanceof Error &&
+    (/^STRUCTURED_PROVIDER_TIMEOUT:/.test(error.message) ||
+      /^STRUCTURED_PROVIDER_FAILED:(408|425|429|5\d\d):/.test(error.message)),
+}));
 vi.mock("@/lib/production/domain-store", () => ({
   listProductionClips,
   listProductionProps,
@@ -35,6 +41,14 @@ vi.mock("@/lib/server/prisma", () => ({
 
 import { PROMPT_IDS } from "@/lib/prompts";
 import {
+  validateActingCoverage,
+  validateCinematographyCoverage,
+  validateContinuityReview,
+  validateStoryboardPlanning,
+  validateStoryboardRefinement,
+} from "@/lib/prompts/validators";
+import {
+  buildDeterministicStoryboardPhases,
   buildEpisodeStoryboard,
   StoryboardBatchError,
 } from "./script-to-storyboard-runtime";
@@ -163,6 +177,84 @@ describe("script-to-storyboard runtime", () => {
       "phase2.cine",
     ]);
   });
+
+  it.each([
+    ["STRUCTURED_PROVIDER_FAILED:524:Provider gateway timeout", "PROVIDER_HTTP_524"],
+    ["STRUCTURED_PROVIDER_TIMEOUT:120000", "PROVIDER_TIMEOUT"],
+  ])(
+    "persists a valid deterministic storyboard after %s",
+    async (message, fallbackReason) => {
+      requestOpenAiStructured.mockRejectedValue(new Error(message));
+      const hooks = artifactHooks();
+
+      const result = await buildEpisodeStoryboard(
+        "user-1",
+        runtimeInput,
+        hooks,
+      );
+
+      expect(result).toMatchObject({
+        clipCount: 1,
+        panelCount: 1,
+        degradedCount: 1,
+        results: [
+          expect.objectContaining({
+            success: true,
+            degraded: true,
+            fallbackReason,
+          }),
+        ],
+      });
+      const fallback = artifact(
+        hooks,
+        "storyboard.clip.fallback",
+        "clip-1",
+      ) as { data: ReturnType<typeof buildDeterministicStoryboardPhases> };
+      expect(fallback).toMatchObject({
+        success: true,
+        degraded: true,
+        fallbackReason,
+      });
+      expectFallbackToPassValidators(fallback.data);
+      expect(fallback.data.refinement.panels[0].description.length).toBeLessThanOrEqual(
+        243,
+      );
+      expect(storyClipUpdate).toHaveBeenLastCalledWith({
+        where: { id: "clip-1" },
+        data: { status: "storyboard_ready", shotCount: 1 },
+      });
+
+      requestOpenAiStructured.mockClear();
+      const reused = await buildEpisodeStoryboard(
+        "user-1",
+        runtimeInput,
+        hooks,
+      );
+      expect(requestOpenAiStructured).not.toHaveBeenCalled();
+      expect(reused.results[0]).toMatchObject({
+        degraded: true,
+        fallbackReason,
+        reusedPhases: ["fallback"],
+      });
+    },
+  );
+
+  it("keeps non-retryable provider errors as workflow failures", async () => {
+    requestOpenAiStructured.mockRejectedValue(
+      new Error("STRUCTURED_PROVIDER_FAILED:400:invalid request"),
+    );
+    const hooks = artifactHooks();
+
+    await expect(
+      buildEpisodeStoryboard("user-1", runtimeInput, hooks),
+    ).rejects.toBeInstanceOf(StoryboardBatchError);
+
+    expect(artifact(hooks, "storyboard.clip.fallback", "clip-1")).toBeUndefined();
+    expect(storyClipUpdate).toHaveBeenLastCalledWith({
+      where: { id: "clip-1" },
+      data: { status: "storyboard_failed" },
+    });
+  });
 });
 
 type PhaseRequest = { prompt: { id: string } };
@@ -256,6 +348,33 @@ function planning() {
       },
     ],
   };
+}
+
+function expectFallbackToPassValidators(
+  data: ReturnType<typeof buildDeterministicStoryboardPhases>,
+) {
+  const sourceText = JSON.stringify(JSON.parse(clip().screenplay), null, 2);
+  const canonical = {
+    characters: ["甲"],
+    locations: ["书房"],
+    props: [] as string[],
+  };
+  expect(
+    validateStoryboardPlanning(data.planning, { sourceText, canonical }),
+  ).toEqual([]);
+  expect(
+    validateCinematographyCoverage(data.cinematography, [0]),
+  ).toEqual([]);
+  expect(validateActingCoverage(data.acting, data.planning.panels)).toEqual([]);
+  expect(
+    validateStoryboardRefinement(data.refinement, data.planning.panels),
+  ).toEqual([]);
+  expect(
+    validateContinuityReview(data.continuity, {
+      panelIndices: [0],
+      canonical,
+    }),
+  ).toEqual([]);
 }
 
 function clip() {

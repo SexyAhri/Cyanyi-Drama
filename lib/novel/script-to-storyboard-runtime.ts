@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import {
+  isRetryableStructuredProviderError,
   requestOpenAiStructured,
   type PromptExecutionTrace,
 } from "@/lib/llm/openai-structured";
@@ -85,6 +86,8 @@ type StoryboardClipResult = {
   refinement?: StoryboardRefinement;
   continuity?: ContinuityReview;
   traces?: PromptExecutionTrace[];
+  degraded?: boolean;
+  fallbackReason?: string;
   error?: string;
 };
 
@@ -118,12 +121,41 @@ export async function buildEpisodeStoryboard(
     context.clips,
     normalizeConcurrency(input.concurrency),
     async (clip): Promise<StoryboardClipResult> => {
+      let clipContext: ClipContext | undefined;
       try {
-        const clipContext = buildClipContext(clip, context);
+        clipContext = buildClipContext(clip, context);
+        const fallbackInputHash = storyboardFallbackInputHash(clipContext);
         await prisma.storyClip.update({
           where: { id: clip.id },
           data: { status: "storyboard_running" },
         });
+        const storedFallback = await hooks.loadArtifact?.(
+          "storyboard.clip.fallback",
+          clip.id,
+        );
+        const reusableFallback = parseStoryboardFallbackArtifact(
+          storedFallback,
+          fallbackInputHash,
+          clipContext,
+        );
+        if (reusableFallback) {
+          await prisma.storyClip.update({
+            where: { id: clip.id },
+            data: {
+              status: "storyboard_ready",
+              shotCount: reusableFallback.phases.refinement.panels.length,
+            },
+          });
+          return {
+            clipId: clip.id,
+            clipIndex: clip.clipIndex,
+            success: true,
+            reusedPhases: ["fallback"],
+            degraded: true,
+            fallbackReason: reusableFallback.fallbackReason,
+            ...reusableFallback.phases,
+          };
+        }
 
         const planning = await runPlanningPhase(input, clipContext, hooks);
         const phase2 = await Promise.allSettled([
@@ -131,6 +163,10 @@ export async function buildEpisodeStoryboard(
           runActingPhase(input, clipContext, planning.data, hooks),
         ]);
         const rejected = phase2.find(
+          (result): result is PromiseRejectedResult =>
+            result.status === "rejected" &&
+            !isRetryableStructuredProviderError(result.reason),
+        ) ?? phase2.find(
           (result): result is PromiseRejectedResult =>
             result.status === "rejected",
         );
@@ -190,6 +226,37 @@ export async function buildEpisodeStoryboard(
         };
       } catch (error) {
         await hooks.assertActive();
+        if (clipContext && isRetryableStructuredProviderError(error)) {
+          const fallback = buildDeterministicStoryboardPhases(clipContext);
+          const fallbackReason = structuredProviderFailureCode(error);
+          await hooks.persistArtifact(
+            "storyboard.clip.fallback",
+            clip.id,
+            {
+              success: true,
+              degraded: true,
+              inputHash: storyboardFallbackInputHash(clipContext),
+              fallbackReason,
+              data: fallback,
+            },
+          );
+          await prisma.storyClip.update({
+            where: { id: clip.id },
+            data: {
+              status: "storyboard_ready",
+              shotCount: fallback.refinement.panels.length,
+            },
+          });
+          return {
+            clipId: clip.id,
+            clipIndex: clip.clipIndex,
+            success: true,
+            reusedPhases: [],
+            degraded: true,
+            fallbackReason,
+            ...fallback,
+          };
+        }
         const message = error instanceof Error ? error.message : String(error);
         await prisma.storyClip.update({
           where: { id: clip.id },
@@ -272,6 +339,7 @@ export async function buildEpisodeStoryboard(
   return {
     clipCount: results.length,
     panelCount: storyboard.panels.length,
+    degradedCount: results.filter((result) => result.degraded).length,
     reusedPhaseCount: results.reduce(
       (total, result) => total + result.reusedPhases.length,
       0,
@@ -555,6 +623,7 @@ function buildClipContext(clip: ProductionClip, context: LoadedContext) {
   const propNames = new Set(clip.props);
   return {
     clip,
+    screenplay,
     sourceText: JSON.stringify(screenplay, null, 2),
     canonical: context.canonical,
     characters: context.characters.filter(
@@ -567,6 +636,166 @@ function buildClipContext(clip: ProductionClip, context: LoadedContext) {
       (item) => !propNames.size || propNames.has(item.name),
     ),
     provider: context.provider,
+  };
+}
+
+export function buildDeterministicStoryboardPhases(
+  context: Pick<
+    ClipContext,
+    "clip" | "screenplay" | "sourceText" | "canonical" | "props"
+  >,
+) {
+  const panels: StoryboardPlanning["panels"] = context.screenplay.scenes.map(
+    (scene, panelIndex) => {
+      const sceneSource = JSON.stringify(scene);
+      const props = context.props
+        .map((prop) => prop.name)
+        .filter(
+          (name) =>
+            context.canonical.props.includes(name) && sceneSource.includes(name),
+        );
+      const content = scene.content
+        .map((item) => (item.type === "dialogue" ? item.lines : item.text))
+        .filter(Boolean)
+        .join(" ");
+      const evidence = [
+        ...scene.content.map((item) =>
+          item.type === "dialogue" ? item.lines : item.text,
+        ),
+        scene.description,
+        scene.heading.location,
+        ...scene.characters,
+        context.screenplay.clipId,
+      ].find((value) => Boolean(value) && context.sourceText.includes(value));
+      const description = compactShotDescription(
+        scene.description.trim() ||
+          content.trim() ||
+          `${scene.heading.location}中的剧情画面`,
+      );
+      const characterLabel = scene.characters.join("、") || "环境";
+      return {
+        panelIndex,
+        shotType: scene.characters.length > 1 ? "全景" : "中景",
+        cameraMove: null,
+        description,
+        locationName: scene.heading.location,
+        characters: [...scene.characters],
+        props,
+        imagePrompt: `${scene.heading.intExt} ${scene.heading.location}，${scene.heading.time}，${characterLabel}，${description}，电影级构图，统一角色设定与光影`,
+        videoPrompt: `镜头保持场景与角色连续性，表现：${description}`,
+        sourceEvidence: [evidence ?? context.screenplay.clipId],
+      };
+    },
+  );
+  const planning: StoryboardPlanning = { panels };
+  const cinematography: Cinematography = {
+    rules: panels.map((panel) => ({
+      panelIndex: panel.panelIndex,
+      camera: panel.shotType ?? "中景",
+      cameraPosition: "平视，主体正前方",
+      focalLength: panel.shotType === "全景" ? "35mm" : "50mm",
+      lighting: "遵循场景时间的自然主光，保持人物轮廓清晰",
+      composition: "主体位于视觉重心，预留动作与视线空间",
+      depthOfField: panel.shotType === "全景" ? "中等景深" : "浅景深",
+      colorTone: "统一场景色温与电影级对比度",
+    })),
+  };
+  const acting: ActingDirection = {
+    directions: panels.map((panel) => ({
+      panelIndex: panel.panelIndex,
+      characters: panel.characters.map((name) => ({
+        name,
+        emotion: "遵循当前剧情情绪",
+        action: "按剧本动作自然表演",
+        expression: "细腻克制，保持角色连续性",
+      })),
+    })),
+  };
+  const refinement: StoryboardRefinement = {
+    panels: panels.map((panel) => ({ ...panel })),
+  };
+  const continuity: ContinuityReview = { passed: true, issues: [] };
+  return { planning, cinematography, acting, refinement, continuity };
+}
+
+function storyboardFallbackInputHash(
+  context: Pick<ClipContext, "sourceText" | "canonical">,
+) {
+  return hashJson({
+    fallbackVersion: 2,
+    sourceText: context.sourceText,
+    canonical: context.canonical,
+  });
+}
+
+function compactShotDescription(value: string, maxLength = 240) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  const window = normalized.slice(0, maxLength);
+  const boundary = Math.max(
+    window.lastIndexOf("。"),
+    window.lastIndexOf("！"),
+    window.lastIndexOf("？"),
+    window.lastIndexOf("."),
+    window.lastIndexOf("!"),
+    window.lastIndexOf("?"),
+  );
+  const end = boundary >= Math.floor(maxLength / 2) ? boundary + 1 : maxLength;
+  return `${window.slice(0, end).trim()}...`;
+}
+
+function parseStoryboardFallbackArtifact(
+  value: unknown,
+  inputHash: string,
+  context: Pick<ClipContext, "sourceText" | "canonical">,
+) {
+  if (
+    !isRecord(value) ||
+    value.success !== true ||
+    value.degraded !== true ||
+    value.inputHash !== inputHash ||
+    typeof value.fallbackReason !== "string" ||
+    !isRecord(value.data)
+  )
+    return null;
+  const planning = storyboardPlanningSchema.safeParse(value.data.planning);
+  const cinematography = cinematographySchema.safeParse(
+    value.data.cinematography,
+  );
+  const acting = actingDirectionSchema.safeParse(value.data.acting);
+  const refinement = storyboardRefinementSchema.safeParse(
+    value.data.refinement,
+  );
+  const continuity = continuityReviewSchema.safeParse(value.data.continuity);
+  if (
+    !planning.success ||
+    !cinematography.success ||
+    !acting.success ||
+    !refinement.success ||
+    !continuity.success
+  )
+    return null;
+  const panelIndices = planning.data.panels.map((panel) => panel.panelIndex);
+  if (
+    validateStoryboardPlanning(planning.data, context).length ||
+    validateCinematographyCoverage(cinematography.data, panelIndices).length ||
+    validateActingCoverage(acting.data, planning.data.panels).length ||
+    validateStoryboardRefinement(refinement.data, planning.data.panels).length ||
+    validateContinuityReview(continuity.data, {
+      panelIndices,
+      canonical: context.canonical,
+    }).length
+  )
+    return null;
+  return {
+    fallbackReason: value.fallbackReason,
+    phases: {
+      planning: planning.data,
+      cinematography: cinematography.data,
+      acting: acting.data,
+      refinement: refinement.data,
+      continuity: continuity.data,
+    },
   };
 }
 
@@ -691,6 +920,15 @@ function parseApiKeys(value: string) {
   } catch {
     return [];
   }
+}
+
+function structuredProviderFailureCode(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  const status = message.match(/^STRUCTURED_PROVIDER_FAILED:(\d{3}):/)?.[1];
+  if (status) return `PROVIDER_HTTP_${status}`;
+  if (message.startsWith("STRUCTURED_PROVIDER_TIMEOUT:"))
+    return "PROVIDER_TIMEOUT";
+  return "PROVIDER_TEMPORARY_FAILURE";
 }
 
 function required<T>(value: T | undefined, phase: string): T {
