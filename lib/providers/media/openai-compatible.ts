@@ -6,6 +6,7 @@ import { executeOpenAiCompatibleMediaTemplate } from "@/lib/providers/openai-com
 import {
   providerErrorMessage,
   readProviderJson,
+  referencesAsDataUrls,
   resolveImageSize,
   waitForProviderPoll,
 } from "./shared";
@@ -42,24 +43,12 @@ async function generateImage(
 ): Promise<MediaAsset[]> {
   const endpoint =
     process.env.OPENAI_COMPATIBLE_IMAGE_GENERATION_PATH || "images/generations";
-  const references = (input.request.referenceImages ?? []).map(
-    (reference) => reference.url,
+  const references = await referencesAsDataUrls(
+    input.request.referenceImages ?? [],
   );
   const size = resolveImageSize(input.request.ratio, input.request.resolution);
-  let response = await requestImage(input, endpoint, references, size);
-  let payload = await readProviderJson(response);
-  let referenceFallback = false;
-  if (
-    !response.ok &&
-    references.length &&
-    /submit_edit|unexpected keyword argument ['"]source['"]|reference images? (?:are |is )?not supported|image edit (?:is )?not supported/i.test(
-      providerErrorMessage(payload, response.status),
-    )
-  ) {
-    referenceFallback = true;
-    response = await requestImage(input, endpoint, [], size);
-    payload = await readProviderJson(response);
-  }
+  const response = await requestImage(input, endpoint, references, size);
+  const payload = await readProviderJson(response);
   if (!response.ok)
     throw new Error(providerErrorMessage(payload, response.status));
   const urls = extractImageUrls(payload);
@@ -68,7 +57,7 @@ async function generateImage(
     id: `${input.model}-${Date.now()}-${index}`,
     kind: "image",
     url,
-    metadata: { model: input.model, referenceFallback },
+    metadata: { model: input.model },
   }));
 }
 
