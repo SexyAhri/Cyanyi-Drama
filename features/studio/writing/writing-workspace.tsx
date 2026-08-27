@@ -29,6 +29,7 @@ import { ModelSelect } from "../components/model-select";
 import { formatStudioDate, getStudioCopy } from "../i18n";
 import {
   getWorkflowForStage,
+  getWorkflowContentRevision,
   runtimeStatusToStageStatus,
 } from "../stage-state";
 import type {
@@ -72,6 +73,7 @@ export function WritingWorkspace({
     (workflow) => workflow.episodeId === episode.id,
   );
   const workflow = getWorkflowForStage(workflows, "writing");
+  const workflowRevision = getWorkflowContentRevision(workflow);
   const isDirty = novelText !== savedText;
 
   useEffect(() => {
@@ -112,7 +114,7 @@ export function WritingWorkspace({
         if (!controller.signal.aborted) setIsLoadingClips(false);
       });
     return () => controller.abort();
-  }, [copy.loadFailed, episode.id, snapshot.project.id, workflow?.updatedAt]);
+  }, [copy.loadFailed, episode.id, snapshot.project.id, workflowRevision]);
 
   const selectedClip =
     clips.find((clip) => clip.id === selectedClipId) ?? clips[0];

@@ -29,6 +29,7 @@ import { StatusIndicator } from "../components/status-indicator";
 import { getStudioCopy } from "../i18n";
 import {
   getWorkflowForStage,
+  getWorkflowContentRevision,
   runtimeStatusToStageStatus,
 } from "../stage-state";
 import type {
@@ -72,6 +73,7 @@ export function StoryboardWorkspace({
     (workflow) => workflow.episodeId === episode.id,
   );
   const workflow = getWorkflowForStage(workflows, "storyboard");
+  const workflowRevision = getWorkflowContentRevision(workflow);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -101,7 +103,7 @@ export function StoryboardWorkspace({
     setIsLoading(true);
     void load(controller.signal);
     return () => controller.abort();
-  }, [load, workflow?.updatedAt]);
+  }, [load, workflowRevision]);
 
   useEffect(() => {
     if (models.some((model) => model.id === modelId)) return;

@@ -20,6 +20,35 @@ const include = {
   stepAttempts: { orderBy: { createdAt: "asc" as const }, take: 200 },
 } as const;
 
+const summarySelect = {
+  id: true,
+  traceId: true,
+  spanId: true,
+  projectId: true,
+  episodeId: true,
+  workflowType: true,
+  status: true,
+  error: true,
+  createdAt: true,
+  updatedAt: true,
+  completedAt: true,
+  steps: {
+    orderBy: { stepIndex: "asc" as const },
+    select: {
+      id: true,
+      stepKey: true,
+      stepType: true,
+      stepIndex: true,
+      status: true,
+      attempt: true,
+      maxAttempts: true,
+      error: true,
+      startedAt: true,
+      completedAt: true,
+    },
+  },
+} as const;
+
 const ACTIVE_WORKFLOW_STATUSES: WorkflowRunStatus[] = [
   "queued",
   "running",
@@ -197,6 +226,20 @@ export async function listWorkflowRuns(
     include,
   });
   return rows.map(toRun);
+}
+
+export async function listWorkflowRunSummaries(
+  userId: string,
+  projectId: string,
+  limit = 50,
+) {
+  const rows = await prisma.workflowRun.findMany({
+    where: { userId, projectId },
+    orderBy: { createdAt: "desc" },
+    take: Math.min(Math.max(limit, 1), 100),
+    select: summarySelect,
+  });
+  return rows.map(toRunSummary);
 }
 
 export async function updateWorkflowRunStatus(
@@ -584,6 +627,36 @@ function resolveDownstreamStepKeys(
 }
 
 type Row = Prisma.WorkflowRunGetPayload<{ include: typeof include }>;
+type SummaryRow = Prisma.WorkflowRunGetPayload<{ select: typeof summarySelect }>;
+
+function toRunSummary(row: SummaryRow) {
+  return {
+    id: row.id,
+    traceId: row.traceId,
+    spanId: row.spanId,
+    projectId: row.projectId,
+    episodeId: row.episodeId ?? undefined,
+    workflowType: row.workflowType,
+    status: row.status,
+    error: row.error as Record<string, unknown> | undefined,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    completedAt: row.completedAt?.toISOString(),
+    steps: row.steps.map((step) => ({
+      id: step.id,
+      key: step.stepKey,
+      type: step.stepType,
+      index: step.stepIndex,
+      status: step.status,
+      attempt: step.attempt,
+      maxAttempts: step.maxAttempts,
+      error: step.error as Record<string, unknown> | undefined,
+      startedAt: step.startedAt?.toISOString(),
+      completedAt: step.completedAt?.toISOString(),
+    })),
+  };
+}
+
 function toRun(row: Row) {
   return {
     id: row.id,

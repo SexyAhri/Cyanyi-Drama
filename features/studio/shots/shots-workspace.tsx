@@ -30,7 +30,10 @@ import {
 } from "../api";
 import { StatusIndicator } from "../components/status-indicator";
 import { getStudioCopy } from "../i18n";
-import { runtimeStatusToStageStatus } from "../stage-state";
+import {
+  getTaskOutputRevision,
+  runtimeStatusToStageStatus,
+} from "../stage-state";
 import type {
   ProjectMediaAsset,
   StudioLocale,
@@ -81,9 +84,7 @@ export function ShotsWorkspace({
   const [batchAction, setBatchAction] = useState<"cancel" | "retry" | "">("");
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const projectId = snapshot.project.id;
-  const revision = snapshot.tasks
-    .map((task) => `${task.id}:${task.status}:${task.updatedAt}`)
-    .join("|");
+  const revision = getTaskOutputRevision(snapshot.tasks);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {

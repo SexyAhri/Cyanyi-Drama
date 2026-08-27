@@ -54,16 +54,21 @@ export async function listProjects(
   return { projects: rows.map(toProject), total };
 }
 
-export async function getProject(userId: string, projectId: string) {
+export async function getProject(
+  userId: string,
+  projectId: string,
+  options?: { touch?: boolean },
+) {
   const project = await prisma.project.findFirst({
     where: { id: projectId, userId },
     include: projectInclude,
   });
   if (!project) return null;
-  await prisma.project.update({
-    where: { id: projectId },
-    data: { lastAccessedAt: new Date() },
-  });
+  if (options?.touch !== false)
+    await prisma.project.update({
+      where: { id: projectId },
+      data: { lastAccessedAt: new Date() },
+    });
   return toProject(project);
 }
 

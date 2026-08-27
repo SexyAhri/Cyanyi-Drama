@@ -2,7 +2,7 @@ import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import {
   createOrReuseWorkflowRun,
-  listWorkflowRuns,
+  listWorkflowRunSummaries,
 } from "@/lib/workflow/store";
 import { getWorkflowTemplate } from "@/lib/workflow/registry";
 
@@ -11,7 +11,7 @@ type Context = { params: Promise<{ projectId: string }> };
 export async function GET(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { projectId } = await context.params;
-  const runs = await listWorkflowRuns(
+  const runs = await listWorkflowRunSummaries(
     user.id,
     projectId,
     Number(new URL(request.url).searchParams.get("limit") ?? 50),

@@ -31,6 +31,7 @@ import {
   uploadStudioAsset,
 } from "../api";
 import { getStudioCopy } from "../i18n";
+import { getTaskOutputRevision } from "../stage-state";
 import type {
   ProjectAssetCatalog,
   ProjectMediaAsset,
@@ -85,9 +86,7 @@ export function AssetsWorkspace({
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const sourceInputRef = useRef<HTMLInputElement>(null);
   const projectId = snapshot.project.id;
-  const revision = snapshot.tasks
-    .map((task) => `${task.id}:${task.status}:${task.updatedAt}`)
-    .join("|");
+  const revision = getTaskOutputRevision(snapshot.tasks);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {

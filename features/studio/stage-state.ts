@@ -1,4 +1,5 @@
 import type { EpisodeRecord } from "@/lib/projects/types";
+import type { MediaTask } from "@/lib/media/task-contract";
 
 import type {
   StudioStageId,
@@ -19,6 +20,27 @@ export const STUDIO_STAGE_IDS: StudioStageId[] = [
 
 const ACTIVE_STATUSES = new Set(["queued", "running", "canceling"]);
 const FAILED_STATUSES = new Set(["failed", "blocked"]);
+
+export function getWorkflowContentRevision(workflow?: WorkflowRunSummary) {
+  if (!workflow) return "none";
+  return [
+    workflow.id,
+    workflow.status,
+    ...workflow.steps.map(
+      (step) =>
+        `${step.id}:${step.status}:${step.attempt}:${step.completedAt ?? ""}`,
+    ),
+  ].join("|");
+}
+
+export function getTaskOutputRevision(tasks: MediaTask[]) {
+  return tasks
+    .map(
+      (task) =>
+        `${task.id}:${task.status}:${task.retryCount}:${task.completedAt ?? ""}`,
+    )
+    .join("|");
+}
 
 export function getStudioStageStates(
   snapshot: WorkspaceSnapshot,

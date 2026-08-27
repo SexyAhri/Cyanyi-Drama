@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { createStudioEpisode, loadWorkspaceSnapshot } from "../api";
 import type { WorkspaceSnapshot } from "../types";
@@ -10,29 +10,46 @@ export function useWorkspace(projectId: string) {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const inFlightRef = useRef<{
+    projectId: string;
+    promise: Promise<WorkspaceSnapshot | null>;
+  } | null>(null);
 
   const load = useCallback(
-    async (options?: { background?: boolean; signal?: AbortSignal }) => {
-      if (options?.background) setIsRefreshing(true);
-      else setIsLoading(true);
-      setError(null);
-      try {
-        const result = await loadWorkspaceSnapshot(projectId, options?.signal);
-        setSnapshot(result);
-        return result;
-      } catch (requestError) {
-        if (!options?.signal?.aborted) {
-          setError(
-            requestError instanceof Error ? requestError.message : "请求失败",
-          );
+    (options?: { background?: boolean; signal?: AbortSignal }) => {
+      if (inFlightRef.current?.projectId === projectId)
+        return inFlightRef.current.promise;
+
+      const promise = (async () => {
+        if (options?.background) setIsRefreshing(true);
+        else setIsLoading(true);
+        setError(null);
+        try {
+          const result = await loadWorkspaceSnapshot(projectId, {
+            signal: options?.signal,
+            touch: !options?.background,
+          });
+          if (!options?.signal?.aborted) setSnapshot(result);
+          return result;
+        } catch (requestError) {
+          if (!options?.signal?.aborted) {
+            setError(
+              requestError instanceof Error ? requestError.message : "请求失败",
+            );
+          }
+          return null;
+        } finally {
+          if (!options?.signal?.aborted) {
+            setIsLoading(false);
+            setIsRefreshing(false);
+          }
         }
-        return null;
-      } finally {
-        if (!options?.signal?.aborted) {
-          setIsLoading(false);
-          setIsRefreshing(false);
-        }
-      }
+      })();
+      inFlightRef.current = { projectId, promise };
+      void promise.finally(() => {
+        if (inFlightRef.current?.promise === promise) inFlightRef.current = null;
+      });
+      return promise;
     },
     [projectId],
   );
@@ -43,13 +60,31 @@ export function useWorkspace(projectId: string) {
     return () => controller.abort();
   }, [load]);
 
+  const runtimeActive = snapshot ? hasActiveRuntime(snapshot) : false;
   useEffect(() => {
-    if (!snapshot || !hasActiveRuntime(snapshot)) return;
-    const timer = window.setInterval(() => {
-      void load({ background: true });
-    }, 3_000);
-    return () => window.clearInterval(timer);
-  }, [load, snapshot]);
+    if (!runtimeActive) return;
+    let disposed = false;
+    let timer = 0;
+    const schedule = () => {
+      timer = window.setTimeout(async () => {
+        if (disposed) return;
+        if (document.visibilityState === "visible")
+          await load({ background: true });
+        if (!disposed) schedule();
+      }, 5_000);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible")
+        void load({ background: true });
+    };
+    schedule();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [load, runtimeActive]);
 
   const createEpisode = useCallback(
     async (input: { name: string; novelText?: string }) => {

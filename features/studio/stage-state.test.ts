@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { MediaTask } from "@/lib/media/task-contract";
 
-import { getStudioStageStates, getTasksForStage } from "./stage-state";
+import {
+  getStudioStageStates,
+  getTaskOutputRevision,
+  getTasksForStage,
+  getWorkflowContentRevision,
+} from "./stage-state";
 import type { WorkspaceSnapshot } from "./types";
 
 describe("studio stage state", () => {
@@ -103,6 +108,42 @@ describe("studio stage state", () => {
       failedTasks: 1,
       totalTasks: 2,
     });
+  });
+});
+
+describe("studio runtime revisions", () => {
+  it("ignores heartbeat timestamps but changes for workflow progress", () => {
+    const current = workflow("story-to-script", "running", "2026-08-26T01:00:00Z");
+    const heartbeat = { ...current, updatedAt: "2026-08-26T01:00:05Z" };
+    const completed = { ...heartbeat, status: "succeeded" };
+
+    expect(getWorkflowContentRevision(heartbeat)).toBe(
+      getWorkflowContentRevision(current),
+    );
+    expect(getWorkflowContentRevision(completed)).not.toBe(
+      getWorkflowContentRevision(current),
+    );
+  });
+
+  it("ignores media heartbeats but changes when output becomes ready", () => {
+    const current = mediaTask("running");
+    const heartbeat = {
+      ...current,
+      progress: 50,
+      updatedAt: "2026-08-26T01:00:05Z",
+    };
+    const completed = {
+      ...heartbeat,
+      status: "succeeded" as const,
+      completedAt: "2026-08-26T01:00:06Z",
+    };
+
+    expect(getTaskOutputRevision([heartbeat])).toBe(
+      getTaskOutputRevision([current]),
+    );
+    expect(getTaskOutputRevision([completed])).not.toBe(
+      getTaskOutputRevision([current]),
+    );
   });
 });
 

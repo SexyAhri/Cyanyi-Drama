@@ -9,7 +9,6 @@ import type {
   ProjectAssetCatalog,
   ProjectMediaAsset,
   ProjectListResponse,
-  ProjectWithEpisodes,
   StudioModelOption,
   StudioStoryboardData,
   StudioBalance,
@@ -55,29 +54,14 @@ export async function createStudioProject(input: {
 
 export async function loadWorkspaceSnapshot(
   projectId: string,
-  signal?: AbortSignal,
+  options?: { signal?: AbortSignal; touch?: boolean },
 ): Promise<WorkspaceSnapshot> {
   const encodedProjectId = encodeURIComponent(projectId);
-  const [projectResult, workflowResult, taskResult] = await Promise.all([
-    request<{ project: ProjectWithEpisodes }>(
-      `/api/projects/${encodedProjectId}/data`,
-      { signal },
-    ),
-    request<{ workflows: WorkflowRunSummary[] }>(
-      `/api/projects/${encodedProjectId}/workflows?limit=100`,
-      { signal },
-    ),
-    request<{ tasks: MediaTask[] }>(
-      `/api/media/tasks?projectId=${encodedProjectId}&limit=100`,
-      { signal },
-    ),
-  ]);
-
-  return {
-    project: projectResult.project,
-    tasks: taskResult.tasks,
-    workflows: workflowResult.workflows,
-  };
+  const touch = options?.touch ? "1" : "0";
+  return request<WorkspaceSnapshot>(
+    `/api/projects/${encodedProjectId}/data?touch=${touch}`,
+    { signal: options?.signal },
+  );
 }
 
 export async function createStudioEpisode(
