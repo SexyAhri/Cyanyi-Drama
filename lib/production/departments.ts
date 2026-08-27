@@ -73,19 +73,33 @@ export const PRODUCTION_DEPARTMENTS = [
   {
     id: "sound",
     agents: [
+      "editor",
       "sound_supervisor",
       "dialogue_editor",
       "foley_artist",
       "music_supervisor",
       "re_recording_mixer",
     ],
-    deliverableTypes: ["dialogue_adr", "cue_sheet", "sound_mix"],
+    deliverableTypes: [
+      "dialogue_adr",
+      "cue_sheet",
+      "sfx_foley",
+      "music_cue_sheet",
+      "sound_mix",
+      "sound_post_package",
+    ],
     requiredGates: ["creative", "sound", "legal"],
   },
   {
     id: "post",
-    agents: ["editor", "colorist", "online_editor"],
-    deliverableTypes: ["edit_decision_list", "picture_lock", "color_master"],
+    agents: ["colorist", "online_editor", "qc_supervisor"],
+    deliverableTypes: [
+      "edit_decision_list",
+      "picture_lock",
+      "color_master",
+      "online_master",
+      "post_master_package",
+    ],
     requiredGates: ["creative", "technical"],
   },
   {

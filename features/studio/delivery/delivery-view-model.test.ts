@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { EditorTimeline } from "../types";
 import {
   alignTimelineSubtitles,
+  buildPostMasterPackage,
   findTimelineAsset,
   moveTimelineTrack,
   updateTimelineDuration,
@@ -45,6 +46,28 @@ describe("delivery view model", () => {
       moved,
     );
     expect(subtitles[0]).toMatchObject({ start: 3, end: 5 });
+  });
+
+  it("converts the timeline to a millisecond EDL and QC report", () => {
+    const result = buildPostMasterPackage({
+      aspectRatio: "16:9",
+      episodeId: "episode-1",
+      frameRate: 24,
+      language: "en",
+      resolution: "1920x1080",
+      subtitles: [],
+      timeline: timeline(),
+      title: "Episode 1",
+    });
+    expect(result.edl).toMatchObject({ durationMs: 5_000, frameRate: 24 });
+    expect(result.edl.tracks[1]).toMatchObject({
+      reel: "SHOT-002",
+      inMs: 2_000,
+      outMs: 5_000,
+      sourceAssetId: "image-2",
+    });
+    expect(result.qc.frame_rate.status).toBe("pass");
+    expect(result.qc.color_space.status).toBe("pending");
   });
 });
 

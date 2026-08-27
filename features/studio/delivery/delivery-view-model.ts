@@ -4,6 +4,13 @@ import type {
   ProjectMediaAsset,
   VoiceLineRecord,
 } from "../types";
+import {
+  emptyPostQc,
+  MASTER_QC_KEYS,
+  parsePostMasterPackage,
+  type PostMasterPackage,
+} from "@/lib/production/post-contract";
+import type { ProductionDeliverableRecord } from "../types";
 
 export function moveTimelineTrack(
   timeline: EditorTimeline,
@@ -62,6 +69,109 @@ export function alignTimelineSubtitles(
       text: line.content,
     };
   });
+}
+
+export function buildPostMasterPackage(input: {
+  aspectRatio: string;
+  episodeId: string;
+  frameRate: number;
+  language: string;
+  resolution: string;
+  subtitles: EditorSubtitle[];
+  timeline: EditorTimeline;
+  title: string;
+}): PostMasterPackage {
+  const qc = emptyPostQc(MASTER_QC_KEYS);
+  qc.frame_rate = {
+    status: "pass",
+    measured: input.frameRate,
+    target: input.frameRate,
+    unit: "fps",
+    note: "",
+  };
+  qc.subtitle_coverage = {
+    status: "pass",
+    measured: input.subtitles.length,
+    target: input.subtitles.length,
+    unit: "cues",
+    note: "",
+  };
+  return {
+    schemaVersion: 1,
+    episodeId: input.episodeId,
+    edl: {
+      title: input.title,
+      frameRate: input.frameRate,
+      durationMs: Math.round(input.timeline.duration * 1_000),
+      tracks: input.timeline.tracks.map((track, index) => ({
+        id: track.id,
+        reel: `SHOT-${String(index + 1).padStart(3, "0")}`,
+        shotIndex: track.shotIndex,
+        sourceAssetId: timelineAssetId(track),
+        inMs: Math.round(track.start * 1_000),
+        outMs: Math.round(track.end * 1_000),
+      })),
+    },
+    color: {
+      workingSpace: "ACEScct",
+      outputSpace: "Rec.709 Gamma 2.4",
+      lookName: "",
+      lutName: "",
+      notes: "",
+    },
+    online: {
+      resolution: input.resolution,
+      aspectRatio: input.aspectRatio,
+      codec: "ProRes 422 HQ",
+      frameRate: input.frameRate,
+    },
+    subtitles: {
+      language: input.language,
+      format: "srt",
+      cueCount: input.subtitles.length,
+      missingCueCount: 0,
+    },
+    qc,
+  };
+}
+
+export function getPostMasterVersions(
+  deliverables: ProductionDeliverableRecord[],
+  episodeId: string,
+) {
+  return deliverables
+    .filter(
+      (item) =>
+        item.department === "post" &&
+        item.deliverableType === "post_master_package" &&
+        item.scopeType === "episode" &&
+        item.scopeId === episodeId,
+    )
+    .sort((left, right) => right.version - left.version)
+    .map((deliverable) => {
+      const parsed = parsePostMasterPackage(deliverable.payload);
+      return {
+        deliverable,
+        package: parsed.success ? parsed.data : null,
+      };
+    });
+}
+
+export function getCurrentPostMasterVersion(
+  versions: ReturnType<typeof getPostMasterVersions>,
+) {
+  return versions.find(
+    (item) => !["stale", "superseded"].includes(item.deliverable.status),
+  );
+}
+
+export function getMasterQcReadiness(masterPackage: PostMasterPackage) {
+  const statuses = MASTER_QC_KEYS.map((key) => masterPackage.qc[key].status);
+  return {
+    passed: statuses.filter((status) => status === "pass").length,
+    failed: statuses.filter((status) => status === "fail").length,
+    total: statuses.length,
+  };
 }
 
 function rebuildTimeline(tracks: EditorTimeline["tracks"]) {

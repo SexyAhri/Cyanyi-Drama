@@ -38,6 +38,7 @@ import {
   generateStudioLipSync,
   generateStudioVoiceLine,
   generateStudioVoiceLineBatch,
+  loadStudioDeliverables,
   loadStudioProductionData,
   loadStudioProjectAssets,
   loadStudioStoryboard,
@@ -50,6 +51,7 @@ import { StatusIndicator } from "../components/status-indicator";
 import { runtimeStatusToStageStatus } from "../stage-state";
 import type {
   ProductionData,
+  ProductionDeliverableCatalog,
   ProjectMediaAsset,
   StudioLocale,
   StudioModelOption,
@@ -64,6 +66,7 @@ import {
   latestVoiceTask,
   voiceLineAsset,
 } from "./audio-view-model";
+import { SoundPostPanel } from "./sound-post-panel";
 import { VoicePresetDialog } from "./voice-preset-dialog";
 
 const copy = {
@@ -153,6 +156,7 @@ const copy = {
 } as const;
 
 type AudioData = {
+  deliverables: ProductionDeliverableCatalog;
   production: ProductionData;
   presets: VoicePresetRecord[];
   storyboard: StudioStoryboardData;
@@ -195,14 +199,16 @@ export function AudioWorkspace({
     async (signal?: AbortSignal) => {
       setError(null);
       try {
-        const [production, presetResult, storyboard, assets] =
+        const [production, presetResult, storyboard, assets, deliverables] =
           await Promise.all([
             loadStudioProductionData(projectId, episode.id, signal),
             loadStudioVoicePresets(projectId, signal),
             loadStudioStoryboard(projectId, episode.id, signal),
             loadStudioProjectAssets(projectId, signal),
+            loadStudioDeliverables(projectId, signal),
           ]);
         const next = {
+          deliverables,
           production,
           presets: presetResult.presets,
           storyboard,
@@ -597,6 +603,17 @@ export function AudioWorkspace({
           ) : null}
         </div>
       )}
+
+      {data ? (
+        <SoundPostPanel
+          catalog={data.deliverables}
+          episodeId={episode.id}
+          lines={lines}
+          locale={locale}
+          onCompleted={refreshAll}
+          projectId={projectId}
+        />
+      ) : null}
 
       {data ? (
         <MergedAudio

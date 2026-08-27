@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import {
   buildStudioTimeline,
   controlStudioMediaTask,
+  loadStudioDeliverables,
   loadStudioProductionData,
   loadStudioProjectAssets,
   loadStudioStoryboard,
@@ -39,6 +40,7 @@ import { runtimeStatusToStageStatus } from "../stage-state";
 import type {
   EditorTimeline,
   ProductionData,
+  ProductionDeliverableCatalog,
   ProjectMediaAsset,
   StudioLocale,
   StudioModelOption,
@@ -52,6 +54,7 @@ import {
   moveTimelineTrack,
   updateTimelineDuration,
 } from "./delivery-view-model";
+import { PostMasterPanel } from "./post-master-panel";
 import { RenderDialog } from "./render-dialog";
 
 const copy = {
@@ -113,6 +116,7 @@ const copy = {
 } as const;
 
 type DeliveryData = {
+  deliverables: ProductionDeliverableCatalog;
   production: ProductionData;
   storyboard: StudioStoryboardData;
   assets: ProjectMediaAsset[];
@@ -148,12 +152,13 @@ export function DeliveryWorkspace({
     async (signal?: AbortSignal) => {
       setError(null);
       try {
-        const [production, storyboard, assets] = await Promise.all([
+        const [production, storyboard, assets, deliverables] = await Promise.all([
           loadStudioProductionData(projectId, episode.id, signal),
           loadStudioStoryboard(projectId, episode.id, signal),
           loadStudioProjectAssets(projectId, signal),
+          loadStudioDeliverables(projectId, signal),
         ]);
-        const next = { production, storyboard, assets };
+        const next = { production, storyboard, assets, deliverables };
         if (!signal?.aborted) {
           setData(next);
           const stored = production.editorProject?.timeline ?? null;
@@ -214,10 +219,13 @@ export function DeliveryWorkspace({
     .filter((task) => task.targetType === "editor_render")
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
   const dirty = Boolean(timeline) && JSON.stringify(timeline) !== savedTimeline;
-  const subtitles =
-    timeline && data
-      ? alignTimelineSubtitles(data.production.voiceLines, timeline)
-      : [];
+  const subtitles = useMemo(
+    () =>
+      timeline && data
+        ? alignTimelineSubtitles(data.production.voiceLines, timeline)
+        : [],
+    [data, timeline],
+  );
 
   async function refreshAll() {
     await Promise.all([load(), onRefresh()]);
@@ -516,6 +524,23 @@ export function DeliveryWorkspace({
           </section>
         </div>
       )}
+
+      {data && timeline ? (
+        <PostMasterPanel
+          aspectRatio={snapshot.project.config.videoRatio}
+          catalog={data.deliverables}
+          episodeId={episode.id}
+          episodeName={episode.name}
+          frameRate={24}
+          language={locale === "en" ? "en" : "zh-CN"}
+          locale={locale}
+          onCompleted={refreshAll}
+          projectId={projectId}
+          resolution={snapshot.project.config.videoResolution}
+          subtitles={subtitles}
+          timeline={timeline}
+        />
+      ) : null}
 
       {data ? (
         <OutputPreview

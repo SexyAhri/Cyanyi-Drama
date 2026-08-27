@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { MediaTask } from "@/lib/media/task-contract";
 import type { VoiceLineRecord } from "../types";
 import {
+  buildSoundPostPackage,
+  getCurrentSoundPostVersion,
+  getSoundPostVersions,
   latestFailedVoiceTasks,
   latestVoiceTask,
   voiceLineAsset,
@@ -46,7 +49,46 @@ describe("audio view model", () => {
       voiceLineAsset(line, [task("new", "succeeded", "03")], [asset]),
     ).toBe(asset);
   });
+
+  it("builds ADR rows and a machine-readable sync check", () => {
+    const result = buildSoundPostPackage("episode-1", [voiceLine()]);
+    expect(result.dialogue[0]).toMatchObject({
+      lineId: "line-1",
+      adrStatus: "not_required",
+      syncOffsetMs: 0,
+    });
+    expect(result.qc.dialogue_sync).toMatchObject({
+      status: "pass",
+      measured: 0,
+      target: 80,
+      unit: "ms",
+    });
+  });
+
+  it("parses versioned sound packages and ignores superseded current rows", () => {
+    const payload = buildSoundPostPackage("episode-1", []);
+    const versions = getSoundPostVersions(
+      [
+        deliverable({ id: "v1", version: 1, status: "superseded", payload }),
+        deliverable({ id: "v2", version: 2, status: "draft", payload }),
+      ],
+      "episode-1",
+    );
+    expect(versions.map((item) => item.deliverable.id)).toEqual(["v2", "v1"]);
+    expect(getCurrentSoundPostVersion(versions)?.deliverable.id).toBe("v2");
+  });
 });
+
+function deliverable(overrides: Record<string, unknown>) {
+  return {
+    department: "sound",
+    deliverableType: "sound_post_package",
+    scopeType: "episode",
+    scopeId: "episode-1",
+    payload: {},
+    ...overrides,
+  } as never;
+}
 
 function task(
   id: string,

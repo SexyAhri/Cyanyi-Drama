@@ -13,12 +13,14 @@ export function useWorkspace(projectId: string) {
   const inFlightRef = useRef<{
     projectId: string;
     promise: Promise<WorkspaceSnapshot | null>;
+    signal?: AbortSignal;
   } | null>(null);
 
   const load = useCallback(
     (options?: { background?: boolean; signal?: AbortSignal }) => {
-      if (inFlightRef.current?.projectId === projectId)
-        return inFlightRef.current.promise;
+      const currentRequest = inFlightRef.current;
+      if (currentRequest && canReuseWorkspaceRequest(currentRequest, projectId))
+        return currentRequest.promise;
 
       const promise = (async () => {
         if (options?.background) setIsRefreshing(true);
@@ -45,7 +47,7 @@ export function useWorkspace(projectId: string) {
           }
         }
       })();
-      inFlightRef.current = { projectId, promise };
+      inFlightRef.current = { projectId, promise, signal: options?.signal };
       void promise.finally(() => {
         if (inFlightRef.current?.promise === promise) inFlightRef.current = null;
       });
@@ -103,6 +105,13 @@ export function useWorkspace(projectId: string) {
     refresh: () => load({ background: true }),
     snapshot,
   };
+}
+
+export function canReuseWorkspaceRequest(
+  current: { projectId: string; signal?: AbortSignal } | null,
+  projectId: string,
+) {
+  return current?.projectId === projectId && !current.signal?.aborted;
 }
 
 function hasActiveRuntime(snapshot: WorkspaceSnapshot) {
