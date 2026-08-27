@@ -42,4 +42,101 @@ describe("screenplay dialogue normalization", () => {
       ]),
     );
   });
+
+  it("keeps calling someone into a room as action and expands a grounded retrieval", () => {
+    const source = "韩子枫把韩宇叫进卧房，从暗格中取出一个精致铁盒。";
+    const screenplay = normalizeScreenplayDialogue({
+      clipId: "clip-1",
+      originalText: source,
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "卧房", time: "夜" },
+          description: "",
+          characters: ["韩宇", "韩子枫"],
+          content: [{ type: "action" as const, text: source }],
+        },
+      ],
+    });
+
+    expect(screenplay.scenes[0].content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "action", text: source }),
+        expect.objectContaining({
+          type: "action",
+          origin: "bridge",
+          text: "韩子枫走到暗格前，伸手靠近暗格。",
+          evidence: [source],
+        }),
+      ]),
+    );
+    expect(screenplay.scenes[0].content).not.toContainEqual(
+      expect.objectContaining({ type: "dialogue", lines: expect.stringContaining("取出") }),
+    );
+  });
+
+  it("keeps the previous actor for a separately emitted inner thought", () => {
+    const source =
+      "韩子枫望着儿子冻红的双手，既欣慰又愧疚。若自己没有重伤，韩宇本可借助灵药早早突破。";
+    const screenplay = normalizeScreenplayDialogue({
+      clipId: "clip-1",
+      originalText: source,
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "卧房", time: "夜" },
+          description: "",
+          characters: ["韩宇", "韩子枫"],
+          content: [
+            { type: "action" as const, text: "韩子枫望着儿子冻红的双手，既欣慰又愧疚。" },
+            {
+              type: "action" as const,
+              text: "若自己没有重伤，韩宇本可借助灵药早早突破。",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(screenplay.scenes[0].content).toContainEqual({
+      type: "voiceover",
+      character: "韩子枫",
+      text: "若自己没有重伤，韩宇本可借助灵药早早突破。",
+    });
+  });
+
+  it("demotes a non-spoken retrieval line and preserves its actor", () => {
+    const source = "韩子枫把韩宇叫进卧房，从暗格中取出一个精致铁盒。";
+    const screenplay = normalizeScreenplayDialogue({
+      clipId: "clip-1",
+      originalText: source,
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "卧房", time: "夜" },
+          description: "",
+          characters: ["韩宇", "韩子枫"],
+          content: [
+            {
+              type: "dialogue" as const,
+              character: "韩子枫",
+              parenthetical: null,
+              lines: "从暗格中取出一个精致铁盒。",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(screenplay.scenes[0].content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "action", text: "从暗格中取出一个精致铁盒。" }),
+        expect.objectContaining({
+          type: "action",
+          origin: "bridge",
+          text: "韩子枫走到暗格前，伸手靠近暗格。",
+        }),
+      ]),
+    );
+  });
 });

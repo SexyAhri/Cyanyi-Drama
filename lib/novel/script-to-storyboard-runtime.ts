@@ -651,8 +651,10 @@ export function buildDeterministicStoryboardPhases(
       const value = item.type === "dialogue" ? item.lines : item.text;
       return splitFallbackShotText(value).map((text) => ({
         characters:
-          item.type === "dialogue"
-            ? [item.character]
+          item.type === "dialogue" || item.type === "voiceover"
+            ? item.character
+              ? [item.character]
+              : []
             : scene.characters.filter((name) => text.includes(name)),
         kind: item.type,
         text,
@@ -685,7 +687,8 @@ export function buildDeterministicStoryboardPhases(
         .map((prop) => prop.name)
         .filter(
           (name) =>
-            context.canonical.props.includes(name) && segment.text.includes(name),
+            context.canonical.props.includes(name) &&
+            isVisualPropMentioned(segment.text, name),
         );
       const evidence = [
         segment.text,
@@ -823,10 +826,16 @@ function storyboardFallbackInputHash(
   context: Pick<ClipContext, "sourceText" | "canonical">,
 ) {
   return hashJson({
-    fallbackVersion: 3,
+      fallbackVersion: 4,
     sourceText: context.sourceText,
     canonical: context.canonical,
   });
+}
+
+function isVisualPropMentioned(text: string, canonicalName: string) {
+  if (text.includes(canonicalName)) return true;
+  const suffix = canonicalName.trim().slice(-2);
+  return suffix.length === 2 && text.includes(suffix);
 }
 
 function compactShotDescription(value: string, maxLength = 240) {

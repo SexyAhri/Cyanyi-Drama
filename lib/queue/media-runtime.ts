@@ -613,12 +613,13 @@ async function linkGeneratedAsset(
     ]);
     return;
   }
-  if (!task.projectId) return;
+  const projectId = task.projectId;
+  if (!projectId) return;
   if (task.targetType === "character_appearance") {
     const appearance = await prisma.characterAppearance.findFirst({
       where: {
         id: task.targetId,
-        character: { projectId: task.projectId, project: { userId } },
+        character: { projectId, project: { userId } },
       },
       select: { id: true, characterId: true },
     });
@@ -637,7 +638,7 @@ async function linkGeneratedAsset(
     const image = await prisma.locationImage.findFirst({
       where: {
         id: task.targetId,
-        location: { projectId: task.projectId, project: { userId } },
+        location: { projectId, project: { userId } },
       },
       select: { id: true, locationId: true },
     });
@@ -660,38 +661,70 @@ async function linkGeneratedAsset(
     const prop = await prisma.novelProp.findFirst({
       where: {
         id: task.targetId,
-        projectId: task.projectId,
+        projectId,
         project: { userId },
       },
       select: { id: true },
     });
     if (!prop) return;
-    await prisma.assetReference.upsert({
-      where: {
-        mediaAssetId_entityType_entityId_role: {
+    await prisma.$transaction(async (tx) => {
+      await tx.assetReference.upsert({
+        where: {
+          mediaAssetId_entityType_entityId_role: {
+            mediaAssetId: asset.id,
+            entityType: "prop",
+            entityId: prop.id,
+            role: "generated_candidate",
+          },
+        },
+        create: {
+          id: `${asset.id}_prop_candidate`,
+          projectId,
+          episodeId: task.episodeId,
           mediaAssetId: asset.id,
           entityType: "prop",
           entityId: prop.id,
           role: "generated_candidate",
         },
-      },
-      create: {
-        id: `${asset.id}_prop_candidate`,
-        projectId: task.projectId,
-        episodeId: task.episodeId,
-        mediaAssetId: asset.id,
-        entityType: "prop",
-        entityId: prop.id,
-        role: "generated_candidate",
-      },
-      update: {},
+        update: {},
+      });
+      const selected = await tx.assetReference.findFirst({
+        where: {
+          projectId,
+          entityType: "prop",
+          entityId: prop.id,
+          role: "selected",
+        },
+        select: { id: true },
+      });
+      if (!selected)
+        await tx.assetReference.upsert({
+          where: {
+            mediaAssetId_entityType_entityId_role: {
+              mediaAssetId: asset.id,
+              entityType: "prop",
+              entityId: prop.id,
+              role: "selected",
+            },
+          },
+          create: {
+            id: `${asset.id}_prop_selected`,
+            projectId,
+            episodeId: task.episodeId,
+            mediaAssetId: asset.id,
+            entityType: "prop",
+            entityId: prop.id,
+            role: "selected",
+          },
+          update: {},
+        });
     });
   } else if (task.targetType === "storyboard_panel") {
     await prisma.storyboardPanel.updateMany({
       where: {
         id: task.targetId,
         storyboard: {
-          projectId: task.projectId,
+          projectId,
           episodeId: task.episodeId ?? undefined,
           project: { userId },
         },
@@ -705,7 +738,7 @@ async function linkGeneratedAsset(
     await prisma.voiceLine.updateMany({
       where: {
         id: task.targetId,
-        episode: { projectId: task.projectId, project: { userId } },
+        episode: { projectId, project: { userId } },
       },
       data: {
         audioAssetId: asset.id,
@@ -721,7 +754,7 @@ async function linkGeneratedAsset(
       where: {
         id: task.targetId,
         storyboard: {
-          projectId: task.projectId,
+          projectId,
           episodeId: task.episodeId ?? undefined,
           project: { userId },
         },
@@ -732,7 +765,7 @@ async function linkGeneratedAsset(
     await prisma.editorProject.updateMany({
       where: {
         episodeId: task.episodeId ?? "",
-        episode: { projectId: task.projectId, project: { userId } },
+        episode: { projectId, project: { userId } },
       },
       data: {
         outputAssetId: asset.id,
@@ -764,7 +797,7 @@ async function linkGeneratedAsset(
     .create({
       data: {
         id: `${task.id}_reference`,
-        projectId: task.projectId,
+        projectId,
         episodeId: task.episodeId,
         mediaAssetId: asset.id,
         entityType: task.targetType,

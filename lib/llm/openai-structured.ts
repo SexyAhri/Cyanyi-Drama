@@ -119,6 +119,7 @@ async function requestText(input: {
 }) {
   const timeoutMs = input.timeoutMs ?? 120_000;
   let response: Response;
+  let responseText: string;
   try {
     response = await fetchWithProviderRetry(
       `${input.baseUrl.replace(/\/+$/, "")}/chat/completions`,
@@ -140,12 +141,12 @@ async function requestText(input: {
         cache: "no-store",
       },
     );
+    responseText = await response.text();
   } catch (error) {
     if (isTimeoutError(error))
       throw new Error(`STRUCTURED_PROVIDER_TIMEOUT:${timeoutMs}`);
     throw error;
   }
-  const responseText = await response.text();
   const payload = parseJsonText(responseText);
   if (!response.ok)
     throw new Error(
@@ -172,6 +173,7 @@ export function isRetryableStructuredProviderError(error: unknown) {
   return (
     /^STRUCTURED_PROVIDER_TIMEOUT:/.test(error.message) ||
     /^STRUCTURED_PROVIDER_FAILED:(408|425|429|5\d\d):/.test(error.message) ||
+    isTimeoutError(error) ||
     /fetch failed|ECONNRESET|ETIMEDOUT|socket hang up/i.test(error.message)
   );
 }

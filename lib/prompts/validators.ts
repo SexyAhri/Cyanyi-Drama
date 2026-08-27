@@ -195,7 +195,8 @@ export function validateScreenplayConversion(
         content.type === "action"
           ? content.origin === "bridge"
             ? isGroundedBridgeAction(content, input.clipText)
-            : isOrderedActionExcerpt(value, input.clipText)
+            : isOrderedActionExcerpt(value, input.clipText) ||
+              isImplicitVisualBridgeAction(value, input.clipText)
           : !value || input.clipText.includes(value);
       if (!isGrounded)
         issues.push(
@@ -568,10 +569,34 @@ export function isDirectSpeechExcerpt(
   const escapedSpeaker = escapeRegex(speaker.trim());
   if (!escapedSpeaker) return false;
   const speechVerb =
-    "说(?:道)?|问(?:道)?|答(?:道)?|回答|回应|喊(?:道)?|叫(?:道)?|喝(?:道)?|叹(?:道)?|笑(?:道)?|开口|低声(?:说)?|轻声(?:说)?|安慰|劝(?:说|慰)?|安抚|鼓励";
+    "说(?:道)?|问(?:道)?|答(?:道)?|回答|回应|喊(?:道)?|叫(?!(?:进|到|来|住|醒))(?:道)?|喝(?:道)?|叹(?:道)?|笑(?:道)?|开口|低声(?:说)?|轻声(?:说)?|安慰|劝(?:说|慰)?|安抚|鼓励";
   return new RegExp(
     `${escapedSpeaker}[^。！？!?“”\\"]{0,32}(?:${speechVerb})[^。！？!?“”\\"]{0,24}[：:，,]\\s*${escapedContent}`,
   ).test(sourceText);
+}
+
+export function isImplicitVisualBridgeAction(
+  value: string,
+  sourceText: string,
+) {
+  if (!value || isOrderedActionExcerpt(value, sourceText)) return false;
+  if (
+    /[“”"][^“”"]+[“”"]/.test(value) ||
+    /(?:说|问|答|回应|喊|叫|开口|低声|轻声)[：:]/.test(value)
+  )
+    return false;
+  if (!/(?:走到|走向|靠近|伸手|转身|抬手|递向|托在|拿稳|进入|跨进|停在|俯身|起身)/.test(value))
+    return false;
+  const sourceBigrams = new Set(chineseBigrams(sourceText));
+  const shared = new Set(
+    chineseBigrams(value).filter((bigram) => sourceBigrams.has(bigram)),
+  );
+  return shared.size >= 3;
+}
+
+function chineseBigrams(value: string) {
+  const characters = Array.from(value.replace(/[^\u4e00-\u9fff]/g, ""));
+  return characters.slice(1).map((character, index) => `${characters[index]}${character}`);
 }
 
 export function validateContinuityReview(

@@ -362,6 +362,32 @@ describe("OpenAI structured requests", () => {
     ).rejects.toThrow("STRUCTURED_PROVIDER_TIMEOUT:600000");
   });
 
+  it("reports a stream read timeout with the configured duration", async () => {
+    const response = new Response('data: {"choices":[]}\n\n');
+    vi.spyOn(response, "text").mockRejectedValue(
+      new DOMException(
+        "The operation was aborted due to timeout",
+        "TimeoutError",
+      ),
+    );
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(response));
+    const prompt = renderPrompt({
+      id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+      variables: { source_text: "source", character_library: "[]" },
+    });
+
+    await expect(
+      requestOpenAiStructured({
+        baseUrl: "https://provider.test/v1",
+        apiKeys: ["test-key"],
+        model: "test-model",
+        prompt,
+        schema,
+        timeoutMs: 600_000,
+      }),
+    ).rejects.toThrow("STRUCTURED_PROVIDER_TIMEOUT:600000");
+  });
+
   it("stores a concise message for an HTML gateway timeout", async () => {
     vi.stubGlobal(
       "fetch",

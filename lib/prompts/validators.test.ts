@@ -6,6 +6,8 @@ import {
   validateCinematographyCoverage,
   validateClipSegmentation,
   validateContinuityReview,
+  isDirectSpeechExcerpt,
+  isImplicitVisualBridgeAction,
   validateLocationPropAnalysis,
   validateScreenplayConversion,
   validateStoryboardPlanning,
@@ -362,6 +364,29 @@ describe("domain semantic validators", () => {
     expect(
       issues.filter((item) => item.path.endsWith(".lines")).map((item) => item.code),
     ).toEqual(["DIALOGUE_NOT_DIRECT_SPEECH"]);
+  });
+
+  it("does not treat calling someone into a room as spoken dialogue", () => {
+    expect(
+      isDirectSpeechExcerpt(
+        "从暗格中取出一个精致铁盒。",
+        "韩子枫",
+        "韩子枫神色郑重地把韩宇叫进卧房，从暗格中取出一个精致铁盒。",
+      ),
+    ).toBe(false);
+  });
+
+  it("recognizes only anchored, non-spoken visual bridge actions", () => {
+    const source = "韩子枫从暗格中取出一个精致铁盒。";
+    expect(
+      isImplicitVisualBridgeAction(
+        "韩子枫走到暗格前，伸手靠近暗格。",
+        source,
+      ),
+    ).toBe(true);
+    expect(
+      isImplicitVisualBridgeAction("韩子枫走到密室前，拔出宝剑。", source),
+    ).toBe(false);
   });
 
   it("detects missing photography and acting outputs per panel", () => {

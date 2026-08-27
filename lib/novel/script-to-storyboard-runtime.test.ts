@@ -303,6 +303,44 @@ describe("script-to-storyboard runtime", () => {
       }),
     ).toEqual([]);
   });
+
+  it("keeps a voice-over speaker and abbreviated key prop on fallback panels", () => {
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: "韩子枫望着古籍，若自己没有重伤，韩宇本可早早突破。",
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "书房", time: "夜" },
+          description: "",
+          characters: ["韩子枫", "韩宇"],
+          content: [
+            {
+              type: "voiceover" as const,
+              character: "韩子枫",
+              text: "若自己没有重伤，韩宇本可早早突破。",
+            },
+            { type: "action" as const, text: "韩子枫望着古籍。" },
+          ],
+        },
+      ],
+    };
+    const sourceText = JSON.stringify(screenplay, null, 2);
+    const result = buildDeterministicStoryboardPhases({
+      canonical: {
+        characters: ["韩子枫", "韩宇"],
+        locations: ["书房"],
+        props: ["无字古籍"],
+      },
+      clip: { ...clip(), content: screenplay.originalText },
+      props: [{ name: "无字古籍", summary: null, metadata: {} }],
+      screenplay,
+      sourceText,
+    });
+
+    expect(result.refinement.panels[0].characters).toEqual(["韩子枫"]);
+    expect(result.refinement.panels[1].props).toEqual(["无字古籍"]);
+  });
 });
 
 type PhaseRequest = { prompt: { id: string } };
