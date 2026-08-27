@@ -2,6 +2,10 @@ import {
   getPrimaryModelCapability,
   inferModelCapabilities,
 } from "@/lib/agent/provider-types";
+import {
+  AUTODL_COMFYUI_WORKFLOWS,
+  autoDlModelCapabilities,
+} from "@/lib/providers/media/autodl-comfyui-workflows";
 
 type ModelsRequestBody = {
   apiKey?: string;
@@ -10,7 +14,8 @@ type ModelsRequestBody = {
     | "openai-compatible"
     | "anthropic"
     | "google-gemini"
-    | "volcengine-ark";
+    | "volcengine-ark"
+    | "autodl-comfyui";
 };
 
 type OpenAIModel = {
@@ -35,12 +40,25 @@ export async function POST(request: Request) {
     );
   }
 
+  if (protocol === "autodl-comfyui") {
+    return Response.json({
+      models: AUTODL_COMFYUI_WORKFLOWS.map((workflow) => ({
+        id: workflow.id,
+        modelId: workflow.id,
+        name: workflow.name,
+        type: workflow.type,
+        capabilities: autoDlModelCapabilities(workflow.id),
+        protocol,
+      })),
+    });
+  }
+
   try {
     const response = await fetch(
       createApiUrl(baseUrl, getModelsPath(protocol, baseUrl)),
       {
-      headers: getModelRequestHeaders(protocol, apiKey),
-      cache: "no-store",
+        headers: getModelRequestHeaders(protocol, apiKey),
+        cache: "no-store",
       },
     );
 
@@ -51,7 +69,10 @@ export async function POST(request: Request) {
       );
     }
 
-    const payload = (await response.json()) as OpenAIModelsResponse | AnthropicModelsResponse | GoogleModelsResponse;
+    const payload = (await response.json()) as
+      | OpenAIModelsResponse
+      | AnthropicModelsResponse
+      | GoogleModelsResponse;
     const models = getModelIds(protocol, payload)
       .filter((id): id is string => Boolean(id))
       .sort((a, b) => a.localeCompare(b))
@@ -83,13 +104,17 @@ type AnthropicModelsResponse = {
 };
 
 type GoogleModelsResponse = {
-  models?: Array<{ name?: string; displayName?: string; supportedGenerationMethods?: string[] }>;
+  models?: Array<{
+    name?: string;
+    displayName?: string;
+    supportedGenerationMethods?: string[];
+  }>;
 };
 
 function getModelRequestHeaders(
   protocol: ModelsRequestBody["protocol"],
   apiKey: string,
-) : Record<string, string> {
+): Record<string, string> {
   if (protocol === "anthropic") {
     return {
       "x-api-key": apiKey,
@@ -97,6 +122,7 @@ function getModelRequestHeaders(
       Accept: "application/json",
     };
   }
+
   if (protocol === "google-gemini") {
     return {
       "x-goog-api-key": apiKey,
@@ -122,19 +148,27 @@ function getModelsPath(
 
 function getModelIds(
   protocol: ModelsRequestBody["protocol"],
-  payload: OpenAIModelsResponse | AnthropicModelsResponse | GoogleModelsResponse,
+  payload:
+    | OpenAIModelsResponse
+    | AnthropicModelsResponse
+    | GoogleModelsResponse,
 ) {
   if (protocol === "anthropic") {
-    return ((payload as AnthropicModelsResponse).data ?? []).map((model) => model.id);
+    return ((payload as AnthropicModelsResponse).data ?? []).map(
+      (model) => model.id,
+    );
   }
   if (protocol === "google-gemini") {
     return ((payload as GoogleModelsResponse).models ?? [])
-      .filter((model) =>
-        model.supportedGenerationMethods?.includes("generateContent") ?? true,
+      .filter(
+        (model) =>
+          model.supportedGenerationMethods?.includes("generateContent") ?? true,
       )
       .map((model) => model.name?.replace(/^models\//, ""));
   }
-  return ((payload as OpenAIModelsResponse).data ?? []).map((model) => model.id);
+  return ((payload as OpenAIModelsResponse).data ?? []).map(
+    (model) => model.id,
+  );
 }
 
 function createApiUrl(baseUrl: string, path: string) {

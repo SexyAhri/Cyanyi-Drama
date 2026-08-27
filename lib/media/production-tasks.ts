@@ -5,6 +5,7 @@ import { createMediaTask } from "./task-contract";
 import { createDatabaseMediaTaskStore } from "./task-store";
 import { enqueuePersistedMediaTask } from "./task-submit";
 import { BillingError } from "@/lib/billing/service";
+import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
 
 export class ProductionTaskError extends Error {
   constructor(
@@ -37,10 +38,10 @@ export async function createProductionTask(input: {
   });
   if (
     !channel ||
-    !["openai-compatible", "volcengine-ark"].includes(channel.protocol)
+    !isMediaChannelProtocol(channel.protocol)
   ) {
     throw new ProductionTaskError(
-      "媒体任务需要有效的 OpenAI 兼容或火山方舟渠道",
+      "媒体任务需要有效且受支持的媒体渠道",
       400,
     );
   }
@@ -83,7 +84,7 @@ export async function createProductionTask(input: {
     targetId: input.targetId,
     kind: input.kind,
     provider: channel.providerKey,
-    protocol: channel.protocol as "openai-compatible" | "volcengine-ark",
+    protocol: channel.protocol,
     model: input.model,
     request: input.request,
   });

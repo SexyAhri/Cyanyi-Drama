@@ -4,6 +4,7 @@ import { createMediaTask, type MediaTaskKind } from "@/lib/media/task-contract";
 import { enqueuePersistedMediaTask } from "@/lib/media/task-submit";
 import { BillingError } from "@/lib/billing/service";
 import { prisma } from "@/lib/server/prisma";
+import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
 
 const taskKinds = new Set<MediaTaskKind>([
   "image",
@@ -42,7 +43,7 @@ export async function POST(request: Request) {
   });
   if (
     !channel ||
-    !["openai-compatible", "volcengine-ark"].includes(channel.protocol)
+    !isMediaChannelProtocol(channel.protocol)
   )
     return attachSessionCookie(
       Response.json({ message: "媒体渠道不存在或协议不受支持" }, { status: 400 }),
@@ -115,7 +116,7 @@ export async function POST(request: Request) {
     idempotencyKey,
     kind,
     provider: channel.providerKey,
-    protocol: channel.protocol as "openai-compatible" | "volcengine-ark",
+    protocol: channel.protocol,
     model,
     projectId,
     episodeId,

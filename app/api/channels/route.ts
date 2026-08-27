@@ -66,7 +66,8 @@ export async function PUT(request: Request) {
   const name = body.name?.trim();
   const baseUrl = body.baseUrl?.trim();
   const protocol = body.protocol?.trim();
-  const providerKey = body.providerKey?.trim() || providerKeyForProtocol(protocol);
+  const providerKey =
+    body.providerKey?.trim() || providerKeyForProtocol(protocol);
   const apiKeys = [
     ...new Set((body.apiKeys ?? []).map((key) => key.trim()).filter(Boolean)),
   ];
@@ -222,9 +223,10 @@ function normalizeModelMetadata(
   const declaredRecord = isRecord(declaredCapabilities)
     ? declaredCapabilities
     : undefined;
-  const mediaTemplate = declaredRecord?.mediaTemplate === undefined
-    ? undefined
-    : parseOpenAiCompatibleMediaTemplate(declaredRecord.mediaTemplate);
+  const mediaTemplate =
+    declaredRecord?.mediaTemplate === undefined
+      ? undefined
+      : parseOpenAiCompatibleMediaTemplate(declaredRecord.mediaTemplate);
   const declaredTypeCapability = toModelCapability(declaredType);
   const declaredModalities = declared?.modalities ?? [];
   const modalities = [
@@ -264,7 +266,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function toModelCapability(value: string | undefined): ModelCapability | undefined {
+function toModelCapability(
+  value: string | undefined,
+): ModelCapability | undefined {
   if (
     value === "text" ||
     value === "llm" ||
@@ -304,7 +308,8 @@ function normalizeProtocol(value: string): ChannelProtocol {
   if (
     value === "anthropic" ||
     value === "google-gemini" ||
-    value === "volcengine-ark"
+    value === "volcengine-ark" ||
+    value === "autodl-comfyui"
   ) {
     return value;
   }
@@ -312,7 +317,9 @@ function normalizeProtocol(value: string): ChannelProtocol {
 }
 
 function providerKeyForProtocol(protocol?: string) {
-  return protocol === "volcengine-ark" ? "volcengine-ark" : "custom";
+  if (protocol === "volcengine-ark") return "volcengine-ark";
+  if (protocol === "autodl-comfyui") return "autodl";
+  return "custom";
 }
 
 export async function DELETE(request: Request) {

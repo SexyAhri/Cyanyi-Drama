@@ -6,6 +6,7 @@ import { prisma } from "@/lib/server/prisma";
 import { createMediaTask } from "./task-contract";
 import { createDatabaseMediaTaskStore } from "./task-store";
 import { enqueuePersistedMediaTask } from "./task-submit";
+import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
 
 export class GlobalAssetTaskError extends Error {
   constructor(
@@ -32,7 +33,7 @@ export async function createGlobalAssetImageTask(input: {
   });
   if (
     !channel ||
-    !["openai-compatible", "volcengine-ark"].includes(channel.protocol)
+    !isMediaChannelProtocol(channel.protocol)
   )
     throw new GlobalAssetTaskError("图片渠道不存在或协议不受支持", 400);
   const configured = await prisma.providerModel.count({
@@ -62,7 +63,7 @@ export async function createGlobalAssetImageTask(input: {
     targetId: target.id,
     kind: "image",
     provider: channel.providerKey,
-    protocol: channel.protocol as "openai-compatible" | "volcengine-ark",
+    protocol: channel.protocol,
     model: input.model,
     request: {
       prompt,

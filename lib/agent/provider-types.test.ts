@@ -24,6 +24,20 @@ describe("model capability inference", () => {
     expect(video.supportsReferenceAudio).toBe(true);
   });
 
+  it("uses the declared AutoDL workflow capabilities", () => {
+    const video = inferModelCapabilities(
+      "minimax_h3_image_audio_to_video_v2_15s",
+      "autodl-comfyui",
+    );
+    const voice = inferModelCapabilities("indextts2-v1", "autodl-comfyui");
+
+    expect(video.modalities).toEqual(["video"]);
+    expect(video.supportsReferenceImages).toBe(true);
+    expect(video.supportsReferenceAudio).toBe(true);
+    expect(voice.modalities).toEqual(["audio"]);
+    expect(voice.supportsReferenceAudio).toBe(true);
+  });
+
   it("defaults unknown provider models to text without enabling media", () => {
     const capabilities = inferModelCapabilities("custom-model");
 

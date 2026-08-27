@@ -1,10 +1,12 @@
 import type { OpenAiCompatibleMediaTemplate } from "@/lib/providers/openai-compatible-media-template";
+import { autoDlModelCapabilities } from "@/lib/providers/media/autodl-comfyui-workflows";
 
 export type ChannelProtocol =
   | "openai-compatible"
   | "anthropic"
   | "google-gemini"
-  | "volcengine-ark";
+  | "volcengine-ark"
+  | "autodl-comfyui";
 
 export type ModelCapability =
   | "text"
@@ -47,6 +49,11 @@ export function inferModelCapabilities(
   ).filter((capability) =>
     MODEL_CAPABILITY_KEYWORDS[capability].test(normalized),
   );
+
+  if (protocol === "autodl-comfyui") {
+    const configured = autoDlModelCapabilities(normalized);
+    if (configured) return configured;
+  }
 
   if (protocol === "volcengine-ark") {
     if (/seedream/i.test(normalized)) {

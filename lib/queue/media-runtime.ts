@@ -1,6 +1,5 @@
 import { decryptSecret } from "@/lib/server/crypto";
 import { Prisma } from "@prisma/client";
-import { fetchWithProviderRetry } from "@/lib/providers/http";
 import { prisma } from "@/lib/server/prisma";
 import type { MediaAsset, MediaTaskKind } from "@/lib/media/task-contract";
 import { downloadAndStoreMedia, resolveStoredMediaUrl } from "@/lib/storage";
@@ -9,41 +8,16 @@ import { renderTimelineVideo } from "@/lib/providers/local/ffmpeg-render";
 import { normalizeRenderSpecification } from "@/lib/providers/local/render-spec";
 import { parseTimelineSequence } from "@/lib/production/timeline";
 import { assertMediaTaskOutputBehavior } from "@/lib/quality/behavior-guards";
-import { buildVideoProviderContract } from "@/lib/providers/video-contract";
 import {
-  generateSpecializedLipSync,
-  supportsSpecializedLipSync,
-} from "@/lib/providers/lipsync";
-import {
-  executeOpenAiCompatibleMediaTemplate,
   parseOpenAiCompatibleMediaTemplate,
   type OpenAiCompatibleMediaTemplate,
 } from "@/lib/providers/openai-compatible-media-template";
-
-type TaskRequest = {
-  prompt?: string;
-  ratio?: string;
-  resolution?: string;
-  format?: string;
-  style?: string;
-  duration?: string;
-  fps?: number;
-  width?: number;
-  height?: number;
-  aspectRatio?: string;
-  imageDurationSeconds?: number;
-  videoMode?: string;
-  referenceImages?: Array<{
-    url: string;
-    mimeType?: string;
-    role?: "reference_image" | "first_frame" | "last_frame";
-  }>;
-  voice?: string;
-  input?: string;
-  responseFormat?: string;
-};
-
-type ProviderState = { status?: string; url?: string; thumbnailUrl?: string };
+import {
+  generateProviderLipSync,
+  generateProviderMedia,
+  isMediaChannelProtocol,
+} from "@/lib/providers/media/registry";
+import type { MediaProviderRequest as TaskRequest } from "@/lib/providers/media/types";
 
 export async function processQueuedMediaTask(taskId: string, userId: string) {
   const task = await prisma.mediaTask.findFirst({
@@ -97,58 +71,32 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
     : (JSON.parse(decryptSecret(channel.encryptedApiKeys)) as string[]);
   const apiKeys = [...new Set(keys.map((key) => key?.trim()).filter(Boolean))];
   if (!apiKeys.length && !output) throw new Error("MEDIA_TASK_API_KEY_MISSING");
+  const mediaProtocol = isMediaChannelProtocol(channel.protocol)
+    ? channel.protocol
+    : null;
+  if (!output && !mediaProtocol)
+    throw new Error(`MEDIA_PROTOCOL_NOT_SUPPORTED:${channel.protocol}`);
   let lastError: unknown;
   for (const apiKey of apiKeys) {
     try {
       output =
         output ??
-        (task.kind === "image"
-          ? mediaTemplate
-            ? await executeOpenAiCompatibleMediaTemplate({
-                baseUrl: channel.baseUrl,
-                apiKey,
-                model: task.model,
-                kind: "image",
-                request: request as Record<string, unknown>,
-                template: mediaTemplate,
-              })
-            : await generateImage(
-                channel.baseUrl,
-                channel.protocol,
-                apiKey,
-                task.model,
-                request,
-              )
-          : task.kind === "video"
-            ? mediaTemplate
-              ? await executeOpenAiCompatibleMediaTemplate({
-                  baseUrl: channel.baseUrl,
-                  apiKey,
-                  model: task.model,
-                  kind: "video",
-                  request: request as Record<string, unknown>,
-                  template: mediaTemplate,
-                })
-              : await generateVideo(
-                  channel.baseUrl,
-                  channel.protocol,
-                  apiKey,
-                  task.model,
-                  request,
-                )
-            : task.kind === "audio"
-              ? await generateAudio(
-                  channel.baseUrl,
-                  channel.protocol,
-                  apiKey,
-                  task.model,
-                  request,
-                )
-              : (() => {
-                  throw new Error(
-                    `MEDIA_WORKER_HANDLER_NOT_IMPLEMENTED:${task.kind}`,
-                  );
-                })());
+        (task.kind === "image" || task.kind === "video" || task.kind === "audio"
+          ? await generateProviderMedia({
+              protocol: mediaProtocol!,
+              providerKey: channel.providerKey,
+              baseUrl: channel.baseUrl,
+              apiKey,
+              model: task.model,
+              kind: task.kind,
+              request,
+              mediaTemplate,
+            })
+          : (() => {
+              throw new Error(
+                `MEDIA_WORKER_HANDLER_NOT_IMPLEMENTED:${task.kind}`,
+              );
+            })());
       break;
     } catch (error) {
       lastError = error;
@@ -248,7 +196,11 @@ async function findMediaTemplate(
   if (!configured) return undefined;
   try {
     const capabilities: unknown = JSON.parse(configured.capabilitiesJson);
-    if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities))
+    if (
+      !capabilities ||
+      typeof capabilities !== "object" ||
+      Array.isArray(capabilities)
+    )
       return undefined;
     const template = (capabilities as Record<string, unknown>).mediaTemplate;
     return template === undefined
@@ -336,6 +288,7 @@ async function performLipSync(
     },
     select: {
       id: true,
+      imageAsset: { select: { url: true, storageKey: true } },
       videoAsset: { select: { url: true, storageKey: true } },
       lipSyncAsset: { select: { url: true, storageKey: true } },
     },
@@ -345,7 +298,7 @@ async function performLipSync(
   const videoUrl =
     (await resolveAssetUrl(panel.videoAsset)) ??
     (await resolveAssetUrl(panel.lipSyncAsset));
-  if (!videoUrl) throw new Error("LIP_SYNC_VIDEO_MISSING");
+  const imageUrl = await resolveAssetUrl(panel.imageAsset);
 
   const audioAssetId =
     typeof (request as Record<string, unknown>).audioAssetId === "string"
@@ -353,6 +306,7 @@ async function performLipSync(
       : undefined;
 
   let audioUrl: string | null = null;
+  let durationSeconds: number | undefined;
   if (audioAssetId) {
     const asset = await prisma.mediaAsset.findFirst({
       where: { id: audioAssetId },
@@ -362,114 +316,32 @@ async function performLipSync(
   } else if (episodeId) {
     const voiceLine = await prisma.voiceLine.findFirst({
       where: { matchedPanelId: resolvedPanelId, episodeId },
-      select: { audioAsset: { select: { url: true, storageKey: true } } },
+      select: {
+        durationSeconds: true,
+        audioAsset: { select: { url: true, storageKey: true } },
+      },
     });
     audioUrl = await resolveAssetUrl(voiceLine?.audioAsset);
+    durationSeconds = voiceLine?.durationSeconds ?? undefined;
   }
   if (!audioUrl) throw new Error("LIP_SYNC_AUDIO_MISSING");
 
   const keys = JSON.parse(decryptSecret(channel.encryptedApiKeys)) as string[];
   const apiKey = keys.find((key) => key?.trim())?.trim();
   if (!apiKey) throw new Error("MEDIA_TASK_API_KEY_MISSING");
-
-  if (supportsSpecializedLipSync(channel.providerKey)) {
-    const result = await generateSpecializedLipSync({
-      providerKey: channel.providerKey,
-      baseUrl: channel.baseUrl,
-      apiKey,
-      model,
-      videoUrl,
-      audioUrl,
-    });
-    return [
-      {
-        id: `lipsync-${model}-${Date.now()}`,
-        kind: "video",
-        url: result.url,
-        metadata: {
-          model,
-          provider: channel.providerKey,
-          operation: "lip_sync",
-          providerTaskId: result.providerTaskId,
-        },
-      },
-    ];
-  }
-
-  const baseUrl = channel.baseUrl.replace(/\/+$/, "");
-  const isArk = channel.protocol === "volcengine-ark";
-  const submitPath = isArk ? "contents/generations/tasks" : "videos/lip-sync";
-  const statusPath = isArk
-    ? (taskId: string) =>
-        `contents/generations/tasks/${encodeURIComponent(taskId)}`
-    : (taskId: string) => `videos/${encodeURIComponent(taskId)}`;
-
-  const body = isArk
-    ? {
-        model,
-        input: { video_url: videoUrl, audio_url: audioUrl },
-        parameters: { action: "lip-sync" },
-      }
-    : { model, video_url: videoUrl, audio_url: audioUrl };
-
-  const response = await fetchWithProviderRetry(`${baseUrl}/${submitPath}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      ...(isArk ? { "X-DashScope-Async": "enable" } : {}),
-    },
-    body: JSON.stringify(body),
+  if (!isMediaChannelProtocol(channel.protocol))
+    throw new Error(`LIP_SYNC_PROTOCOL_NOT_SUPPORTED:${channel.protocol}`);
+  return generateProviderLipSync({
+    protocol: channel.protocol,
+    providerKey: channel.providerKey,
+    baseUrl: channel.baseUrl,
+    apiKey,
+    model,
+    videoUrl: videoUrl ?? undefined,
+    imageUrl: imageUrl ?? undefined,
+    audioUrl,
+    durationSeconds,
   });
-  const payload = await readJson(response);
-  if (!response.ok) throw new Error(providerMessage(payload, response.status));
-
-  const initial = extractVideoState(payload);
-  if (initial.url) {
-    return [
-      {
-        id: `lipsync-${model}-${Date.now()}`,
-        kind: "video" as const,
-        url: initial.url,
-        thumbnailUrl: initial.thumbnailUrl,
-        metadata: { model, operation: "lip_sync" },
-      },
-    ];
-  }
-  if (!initial.taskId) throw new Error("LIP_SYNC_TASK_ID_MISSING");
-
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    const statusResponse = await fetchWithProviderRetry(
-      `${baseUrl}/${statusPath(initial.taskId)}`,
-      {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      },
-    );
-    const statusPayload = await readJson(statusResponse);
-    if (!statusResponse.ok) {
-      throw new Error(providerMessage(statusPayload, statusResponse.status));
-    }
-    const state = extractVideoState(statusPayload);
-    if (state.url) {
-      return [
-        {
-          id: `lipsync-${model}-${Date.now()}`,
-          kind: "video" as const,
-          url: state.url,
-          thumbnailUrl: state.thumbnailUrl,
-          metadata: {
-            model,
-            operation: "lip_sync",
-            providerTaskId: initial.taskId,
-          },
-        },
-      ];
-    }
-    if (/failed|error|canceled/i.test(state.status ?? ""))
-      throw new Error(`LIP_SYNC_PROVIDER_FAILED:${state.status}`);
-  }
-  throw new Error("LIP_SYNC_POLL_TIMEOUT");
 }
 
 async function renderEpisodeTimeline(
@@ -514,8 +386,7 @@ async function renderEpisodeTimeline(
     const panel = panels.get(track.id);
     return panel ? [{ ...track, panel }] : [];
   });
-  if (!renderTracks.length)
-    throw new Error("TIMELINE_RENDER_TRACKS_INVALID");
+  if (!renderTracks.length) throw new Error("TIMELINE_RENDER_TRACKS_INVALID");
 
   const segments: Array<{
     url: string;
@@ -526,9 +397,13 @@ async function renderEpisodeTimeline(
   for (const track of renderTracks) {
     const { panel } = track;
     const lipSyncUrl = await resolveAssetUrl(panel.lipSyncAsset);
-    const videoUrl = lipSyncUrl ? undefined : await resolveAssetUrl(panel.videoAsset);
+    const videoUrl = lipSyncUrl
+      ? undefined
+      : await resolveAssetUrl(panel.videoAsset);
     const imageUrl =
-      lipSyncUrl || videoUrl ? undefined : await resolveAssetUrl(panel.imageAsset);
+      lipSyncUrl || videoUrl
+        ? undefined
+        : await resolveAssetUrl(panel.imageAsset);
     const url = lipSyncUrl ?? videoUrl ?? imageUrl;
     if (url)
       segments.push({
@@ -563,7 +438,8 @@ async function renderEpisodeTimeline(
       metadata: {
         operation: "render_timeline",
         panelCount: segments.length,
-        imagePanelCount: segments.filter((segment) => segment.kind === "image").length,
+        imagePanelCount: segments.filter((segment) => segment.kind === "image")
+          .length,
         hasAudio: !!audioUrl,
         specification: rendered.specification,
       },
@@ -795,388 +671,20 @@ export async function generateImage(
   model: string,
   request: TaskRequest,
 ): Promise<MediaAsset[]> {
-  const endpoint =
-    protocol === "openai-compatible"
-      ? process.env.OPENAI_COMPATIBLE_IMAGE_GENERATION_PATH ||
-        "images/generations"
-      : "images/generations";
-  const referenceImages = await resolveReferenceImages(
-    request.referenceImages,
-    protocol === "volcengine-ark",
-  );
-  const size = resolveImageSize(request.ratio, request.resolution);
-  let response = await requestImageGeneration({
+  if (!isMediaChannelProtocol(protocol))
+    throw new Error(`MEDIA_PROTOCOL_NOT_SUPPORTED:${protocol}`);
+  return generateProviderMedia({
+    protocol,
+    providerKey:
+      protocol === "volcengine-ark"
+        ? "volcengine-ark"
+        : protocol === "autodl-comfyui"
+          ? "autodl"
+          : "custom",
     baseUrl,
-    endpoint,
     apiKey,
     model,
-    protocol,
-    request,
-    size,
-    referenceImages,
-  });
-  let payload = await readJson(response);
-  let referenceFallback = false;
-  if (
-    !response.ok &&
-    protocol === "openai-compatible" &&
-    referenceImages.length &&
-    isUnsupportedReferenceImageError(payload)
-  ) {
-    referenceFallback = true;
-    response = await requestImageGeneration({
-      baseUrl,
-      endpoint,
-      apiKey,
-      model,
-      protocol,
-      request,
-      size,
-      referenceImages: [],
-    });
-    payload = await readJson(response);
-  }
-  if (!response.ok) throw new Error(providerMessage(payload, response.status));
-  const urls = extractUrls(payload);
-  if (!urls.length) throw new Error(`IMAGE_RESULT_MISSING:${protocol}`);
-  return urls.map((url, index) => ({
-    id: `${model}-${Date.now()}-${index}`,
     kind: "image",
-    url,
-    metadata: { model, referenceFallback },
-  }));
-}
-
-function requestImageGeneration(input: {
-  baseUrl: string;
-  endpoint: string;
-  apiKey: string;
-  model: string;
-  protocol: string;
-  request: TaskRequest;
-  size?: string;
-  referenceImages: string[];
-}) {
-  return fetchWithProviderRetry(
-    `${input.baseUrl.replace(/\/+$/, "")}/${input.endpoint}`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${input.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: input.model,
-        prompt: input.request.prompt ?? "",
-        ...(input.size ? { size: input.size } : {}),
-        ...(input.protocol === "volcengine-ark"
-          ? {
-              aspect_ratio: input.request.ratio,
-              watermark: false,
-              sequential_image_generation: "disabled",
-            }
-          : {}),
-        ...(input.referenceImages.length
-          ? { image: input.referenceImages }
-          : {}),
-        response_format: "url",
-      }),
-      cache: "no-store",
-    },
-  );
-}
-
-function isUnsupportedReferenceImageError(payload: unknown) {
-  return /submit_edit|unexpected keyword argument ['\"]source['\"]|reference images? (?:are |is )?not supported|image edit (?:is )?not supported/i.test(
-    providerMessage(payload, 400),
-  );
-}
-
-async function generateVideo(
-  baseUrl: string,
-  protocol: string,
-  apiKey: string,
-  model: string,
-  request: TaskRequest,
-): Promise<MediaAsset[]> {
-  const isArk = protocol === "volcengine-ark";
-  const referenceImages = await resolveVideoReferenceImages(
-    request.referenceImages,
-    isArk,
-  );
-  const { createPath, statusPath, body } = buildVideoProviderContract({
-    protocol,
-    model,
     request,
-    references: referenceImages,
-    createPath:
-      protocol === "openai-compatible"
-        ? process.env.OPENAI_COMPATIBLE_VIDEO_CREATE_PATH
-        : undefined,
-    statusPath:
-      protocol === "openai-compatible"
-        ? process.env.OPENAI_COMPATIBLE_VIDEO_STATUS_PATH
-        : undefined,
   });
-  const response = await fetchWithProviderRetry(`${baseUrl.replace(/\/+$/, "")}/${createPath}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  const payload = await readJson(response);
-  if (!response.ok) throw new Error(providerMessage(payload, response.status));
-  const initial = extractVideoState(payload);
-  if (initial.url)
-    return [
-      {
-        id: `${model}-${Date.now()}`,
-        kind: "video",
-        url: initial.url,
-        thumbnailUrl: initial.thumbnailUrl,
-        metadata: { model, protocol },
-      },
-    ];
-  if (!initial.taskId) throw new Error("VIDEO_TASK_ID_MISSING");
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    const statusResponse = await fetchWithProviderRetry(
-      `${baseUrl.replace(/\/+$/, "")}/${statusPath(initial.taskId)}`,
-      {
-        method:
-          protocol === "openai-compatible"
-            ? process.env.OPENAI_COMPATIBLE_VIDEO_STATUS_METHOD || "GET"
-            : "GET",
-        headers: { Authorization: `Bearer ${apiKey}` },
-      },
-    );
-    const statusPayload = await readJson(statusResponse);
-    if (!statusResponse.ok) {
-      throw new Error(providerMessage(statusPayload, statusResponse.status));
-    }
-    const state = extractVideoState(statusPayload);
-    if (state.url)
-      return [
-        {
-          id: `${model}-${Date.now()}`,
-          kind: "video",
-          url: state.url,
-          thumbnailUrl: state.thumbnailUrl,
-          metadata: { model, protocol, providerTaskId: initial.taskId },
-        },
-      ];
-    if (/failed|error|canceled/i.test(state.status ?? ""))
-      throw new Error(`VIDEO_PROVIDER_FAILED:${state.status}`);
-  }
-  throw new Error("VIDEO_POLL_TIMEOUT");
-}
-
-async function generateAudio(
-  baseUrl: string,
-  protocol: string,
-  apiKey: string,
-  model: string,
-  request: TaskRequest,
-): Promise<MediaAsset[]> {
-  if (protocol !== "openai-compatible" && protocol !== "volcengine-ark") {
-    throw new Error(`AUDIO_PROTOCOL_NOT_SUPPORTED:${protocol}`);
-  }
-  const response = await fetchWithProviderRetry(`${baseUrl.replace(/\/+$/, "")}/audio/speech`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      input: request.input ?? request.prompt ?? "",
-      voice: request.voice ?? "alloy",
-      response_format: request.responseFormat ?? "mp3",
-    }),
-  });
-  const contentType = response.headers.get("content-type") ?? "audio/mpeg";
-  if (!response.ok) {
-    const payload = await readJson(response);
-    throw new Error(providerMessage(payload, response.status));
-  }
-  if (contentType.includes("json")) {
-    const payload = await readJson(response);
-    const url = extractAudioUrl(payload);
-    if (!url) throw new Error("AUDIO_RESULT_MISSING");
-    return [
-      {
-        id: `${model}-${Date.now()}`,
-        kind: "audio",
-        url,
-        mimeType: "audio/mpeg",
-        metadata: { model, protocol },
-      },
-    ];
-  }
-  const bytes = Buffer.from(await response.arrayBuffer());
-  const dataUrl = `data:${contentType};base64,${bytes.toString("base64")}`;
-  return [
-    {
-      id: `${model}-${Date.now()}`,
-      kind: "audio",
-      url: dataUrl,
-      mimeType: contentType,
-      metadata: { model, protocol },
-    },
-  ];
-}
-
-async function readJson(response: Response) {
-  const text = await response.text();
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return { error: text };
-  }
-}
-
-function providerMessage(payload: unknown, status: number) {
-  if (payload && typeof payload === "object") {
-    const value = payload as Record<string, unknown>;
-    const error = value.error;
-    if (typeof error === "string") return error;
-    if (
-      error &&
-      typeof error === "object" &&
-      typeof (error as Record<string, unknown>).message === "string"
-    )
-      return (error as Record<string, unknown>).message as string;
-    if (typeof value.message === "string") return value.message;
-  }
-  return `Provider request failed (${status}).`;
-}
-
-function extractUrls(payload: unknown) {
-  const urls: string[] = [];
-  const data =
-    payload && typeof payload === "object"
-      ? (payload as Record<string, unknown>).data
-      : undefined;
-  if (Array.isArray(data))
-    for (const item of data)
-      if (item && typeof item === "object") {
-        const value = item as Record<string, unknown>;
-        if (typeof value.url === "string") urls.push(value.url);
-      }
-  return urls;
-}
-
-function extractVideoState(
-  payload: unknown,
-): ProviderState & { taskId?: string } {
-  const value =
-    payload && typeof payload === "object"
-      ? (payload as Record<string, unknown>)
-      : {};
-  const data =
-    value.data && typeof value.data === "object"
-      ? (value.data as Record<string, unknown>)
-      : value;
-  const content =
-    data.content && typeof data.content === "object"
-      ? (data.content as Record<string, unknown>)
-      : undefined;
-  return {
-    taskId:
-      typeof data.id === "string"
-        ? data.id
-        : typeof data.task_id === "string"
-          ? data.task_id
-          : undefined,
-    status: typeof data.status === "string" ? data.status : undefined,
-    url:
-      typeof data.url === "string"
-        ? data.url
-        : typeof data.video_url === "string"
-          ? data.video_url
-          : typeof content?.video_url === "string"
-            ? content.video_url
-            : typeof content?.url === "string"
-              ? content.url
-              : undefined,
-    thumbnailUrl:
-      typeof data.thumbnail_url === "string"
-        ? data.thumbnail_url
-        : typeof content?.cover_url === "string"
-          ? content.cover_url
-          : undefined,
-  };
-}
-
-function extractAudioUrl(payload: unknown) {
-  if (!payload || typeof payload !== "object") return undefined;
-  const value = payload as Record<string, unknown>;
-  for (const key of ["url", "audio_url", "audioUrl"]) {
-    if (typeof value[key] === "string") return value[key];
-  }
-  return undefined;
-}
-
-async function resolveReferenceImages(
-  references: TaskRequest["referenceImages"],
-  asDataUrls: boolean,
-) {
-  if (!references?.length) return [] as string[];
-  if (!asDataUrls) return references.map((reference) => reference.url);
-  return Promise.all(
-    references.slice(0, 9).map(async (reference) => {
-      if (reference.url.startsWith("data:")) return reference.url;
-      const response = await fetch(reference.url, { cache: "no-store" });
-      if (!response.ok)
-        throw new Error(`REFERENCE_IMAGE_FETCH_FAILED:${response.status}`);
-      const contentType =
-        response.headers.get("content-type") ||
-        reference.mimeType ||
-        "image/png";
-      const bytes = Buffer.from(await response.arrayBuffer());
-      return `data:${contentType};base64,${bytes.toString("base64")}`;
-    }),
-  );
-}
-
-async function resolveVideoReferenceImages(
-  references: TaskRequest["referenceImages"],
-  asDataUrls: boolean,
-) {
-  if (!references?.length)
-    return [] as Array<{
-      url: string;
-      mimeType?: string;
-      role?: "reference_image" | "first_frame" | "last_frame";
-    }>;
-  return Promise.all(
-    references.slice(0, 9).map(async (reference) => ({
-      ...reference,
-      url: asDataUrls
-        ? (await resolveReferenceImages([reference], true))[0]
-        : reference.url,
-    })),
-  );
-}
-
-function resolveImageSize(ratio?: string, resolution?: string) {
-  if (ratio && /^\d+x\d+$/i.test(ratio)) return ratio;
-  const normalizedRatio = ratio?.trim() || "1:1";
-  const [widthRatio, heightRatio] = normalizedRatio.split(":").map(Number);
-  if (
-    !Number.isFinite(widthRatio) ||
-    !Number.isFinite(heightRatio) ||
-    widthRatio <= 0 ||
-    heightRatio <= 0
-  )
-    return undefined;
-  const maxDimension = /4k/i.test(resolution ?? "")
-    ? 4096
-    : /2k/i.test(resolution ?? "")
-      ? 2048
-      : 1024;
-  const scale = maxDimension / Math.max(widthRatio, heightRatio);
-  return `${Math.max(1, Math.round(widthRatio * scale))}x${Math.max(1, Math.round(heightRatio * scale))}`;
 }

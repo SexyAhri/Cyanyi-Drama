@@ -10,6 +10,7 @@ import {
   linkSourceAssets,
   listOwnedProjectMediaAssets,
 } from "@/lib/assets/project-store";
+import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
 
 export type ProjectAssetTarget = "character" | "location" | "prop";
 
@@ -38,11 +39,10 @@ export async function createProjectImageTask(
   });
   if (
     !channel ||
-    (channel.protocol !== "openai-compatible" &&
-      channel.protocol !== "volcengine-ark")
+    !isMediaChannelProtocol(channel.protocol)
   ) {
     throw new ProjectAssetTaskError(
-      "图片生成需要有效的 OpenAI 兼容或火山方舟渠道",
+      "图片生成需要有效且受支持的媒体渠道",
       400,
     );
   }
@@ -94,7 +94,7 @@ export async function createProjectImageTask(
     targetId: entity.id,
     kind: "image",
     provider: channel.providerKey,
-    protocol: channel.protocol as "openai-compatible" | "volcengine-ark",
+    protocol: channel.protocol,
     model: input.model,
     request: {
       prompt: input.prompt,
@@ -137,11 +137,10 @@ export async function createStoryboardPanelImageTask(input: {
   });
   if (
     !channel ||
-    (channel.protocol !== "openai-compatible" &&
-      channel.protocol !== "volcengine-ark")
+    !isMediaChannelProtocol(channel.protocol)
   ) {
     throw new ProjectAssetTaskError(
-      "图片生成需要有效的 OpenAI 兼容或火山方舟渠道",
+      "图片生成需要有效且受支持的媒体渠道",
       400,
     );
   }
@@ -197,7 +196,7 @@ export async function createStoryboardPanelImageTask(input: {
     targetId: panel.id,
     kind: "image",
     provider: channel.providerKey,
-    protocol: channel.protocol as "openai-compatible" | "volcengine-ark",
+    protocol: channel.protocol,
     model: input.model,
     request: {
       prompt,
@@ -237,11 +236,10 @@ export async function createStoryboardPanelVideoTask(input: {
   });
   if (
     !channel ||
-    (channel.protocol !== "openai-compatible" &&
-      channel.protocol !== "volcengine-ark")
+    !isMediaChannelProtocol(channel.protocol)
   ) {
     throw new ProjectAssetTaskError(
-      "视频生成需要有效的 OpenAI 兼容或火山方舟渠道",
+      "视频生成需要有效且受支持的媒体渠道",
       400,
     );
   }
@@ -344,6 +342,11 @@ export async function createStoryboardPanelVideoTask(input: {
       role: "reference_image" as const,
     })),
   );
+  const referenceAudios = await findStoryboardReferenceAudios({
+    projectId: input.projectId,
+    episodeId: input.episodeId,
+    panelId: panel.id,
+  });
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
@@ -354,7 +357,7 @@ export async function createStoryboardPanelVideoTask(input: {
     targetId: panel.id,
     kind: "video",
     provider: channel.providerKey,
-    protocol: channel.protocol as "openai-compatible" | "volcengine-ark",
+    protocol: channel.protocol,
     model: input.model,
     request: {
       prompt,
@@ -364,6 +367,7 @@ export async function createStoryboardPanelVideoTask(input: {
       format: "mp4",
       videoMode: input.mode ?? "reference",
       ...(referenceImages.length ? { referenceImages: referenceImages.slice(0, 9) } : {}),
+      ...(referenceAudios.length ? { referenceAudios } : {}),
     },
   });
   const store = createDatabaseMediaTaskStore(input.userId);
@@ -371,8 +375,44 @@ export async function createStoryboardPanelVideoTask(input: {
   const queued = await enqueueProjectTask(input.userId, task);
   return {
     task: queued,
-    panel: { id: panel.id, referenceCount: referenceImages.length },
+    panel: {
+      id: panel.id,
+      referenceCount: referenceImages.length,
+      referenceAudioCount: referenceAudios.length,
+    },
   };
+}
+
+async function findStoryboardReferenceAudios(input: {
+  projectId: string;
+  episodeId: string;
+  panelId: string;
+}) {
+  const lines = await prisma.voiceLine.findMany({
+    where: {
+      episodeId: input.episodeId,
+      matchedPanelId: input.panelId,
+      episode: { projectId: input.projectId },
+      audioAsset: { isNot: null },
+    },
+    orderBy: { lineIndex: "asc" },
+    take: 3,
+    select: {
+      audioAsset: {
+        select: { url: true, storageKey: true, mimeType: true },
+      },
+    },
+  });
+  const references: Array<{ url: string; mimeType?: string }> = [];
+  for (const line of lines) {
+    const url = await mediaAssetUrl(line.audioAsset);
+    if (url)
+      references.push({
+        url,
+        mimeType: line.audioAsset?.mimeType ?? undefined,
+      });
+  }
+  return references;
 }
 
 async function findLastFramePanel(input: {

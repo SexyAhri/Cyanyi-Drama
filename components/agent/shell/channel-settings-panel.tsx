@@ -43,6 +43,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AUTODL_COMFYUI_BASE_URL } from "@/lib/providers/media/autodl-comfyui-workflows";
 
 import type { ShellCopy } from "./chat-shell-i18n";
 import type {
@@ -110,17 +111,22 @@ export function ChannelSettingsPanel({
   );
   const [draft, setDraft] = useState<ChannelDraft | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const notifyRuntimeChannel = useCallback((channel: ChannelConfig) => {
-    onModelsChange?.({
-      channelId: channel.id,
-      channelName: channel.name,
-      protocol: normalizeProtocol(channel.protocol),
-      baseUrl: channel.baseUrl,
-      apiKey: getPrimaryApiKey(channel),
-      apiKeys: channel.apiKeys,
-      models: channel.modelOptions.filter((model) => channel.modelIds.includes(model.id)),
-    });
-  }, [onModelsChange]);
+  const notifyRuntimeChannel = useCallback(
+    (channel: ChannelConfig) => {
+      onModelsChange?.({
+        channelId: channel.id,
+        channelName: channel.name,
+        protocol: normalizeProtocol(channel.protocol),
+        baseUrl: channel.baseUrl,
+        apiKey: getPrimaryApiKey(channel),
+        apiKeys: channel.apiKeys,
+        models: channel.modelOptions.filter((model) =>
+          channel.modelIds.includes(model.id),
+        ),
+      });
+    },
+    [onModelsChange],
+  );
 
   useEffect(() => {
     setChannels((current) =>
@@ -135,8 +141,8 @@ export function ChannelSettingsPanel({
                 runtimeConnection.apiKey || channel.apiKey,
               ),
               modelIds:
-                models.filter((model) => model.channelId === channel.id).length > 0 &&
-                channel.modelIds.length === 0
+                models.filter((model) => model.channelId === channel.id)
+                  .length > 0 && channel.modelIds.length === 0
                   ? models
                       .filter((model) => model.channelId === channel.id)
                       .map((model) => model.id)
@@ -159,8 +165,15 @@ export function ChannelSettingsPanel({
         return (await response.json()) as { channels?: ApiChannel[] };
       })
       .then((payload) => {
-        if (cancelled || !Array.isArray(payload.channels) || payload.channels.length === 0) return;
-        const next = payload.channels.map((channel) => toChannelConfig(channel));
+        if (
+          cancelled ||
+          !Array.isArray(payload.channels) ||
+          payload.channels.length === 0
+        )
+          return;
+        const next = payload.channels.map((channel) =>
+          toChannelConfig(channel),
+        );
         setChannels(next);
         for (const channel of next) {
           notifyRuntimeChannel(channel);
@@ -203,7 +216,9 @@ export function ChannelSettingsPanel({
   const modelMap = useMemo(
     () =>
       new Map(
-        models.concat(draft?.modelOptions ?? []).map((model) => [model.id, model]),
+        models
+          .concat(draft?.modelOptions ?? [])
+          .map((model) => [model.id, model]),
       ),
     [draft?.modelOptions, models],
   );
@@ -270,7 +285,9 @@ export function ChannelSettingsPanel({
     };
 
     setChannels((current) => {
-      const exists = current.some((channel) => channel.id === normalizedDraft.id);
+      const exists = current.some(
+        (channel) => channel.id === normalizedDraft.id,
+      );
 
       return exists
         ? current.map((channel) =>
@@ -316,7 +333,9 @@ export function ChannelSettingsPanel({
 
   async function deleteChannel(channel: ChannelConfig) {
     setChannels((current) => current.filter((item) => item.id !== channel.id));
-    await fetch(`/api/channels?id=${encodeURIComponent(channel.id)}`, { method: "DELETE" }).catch(() => undefined);
+    await fetch(`/api/channels?id=${encodeURIComponent(channel.id)}`, {
+      method: "DELETE",
+    }).catch(() => undefined);
     onModelsChange?.({
       channelId: channel.id,
       channelName: channel.name,
@@ -368,7 +387,8 @@ export function ChannelSettingsPanel({
 
     if (successfulModels.length === 0) {
       const firstError = results.find(
-        (result): result is PromiseRejectedResult => result.status === "rejected",
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected",
       )?.reason;
       throw firstError instanceof Error
         ? firstError
@@ -407,11 +427,11 @@ export function ChannelSettingsPanel({
               key={channel.id}
             >
               <div className="min-w-0">
-                <p className="truncate font-semibold">
-                  {channel.name}
-                </p>
+                <p className="truncate font-semibold">{channel.name}</p>
                 <p className="mt-1 truncate text-sm text-muted-foreground">
-                  {getProtocolLabel(channel.protocol)} · {copy.settingsChannelModelCount(modelCount)} · {channel.baseUrl || "-"}
+                  {getProtocolLabel(channel.protocol)} ·{" "}
+                  {copy.settingsChannelModelCount(modelCount)} ·{" "}
+                  {channel.baseUrl || "-"}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -467,7 +487,7 @@ export function ChannelSettingsPanel({
         open={sheetOpen}
       >
         <SheetContent
-          className="w-full overflow-y-auto data-[side=right]:sm:max-w-[42rem]"
+          className="w-full overflow-y-auto data-[side=right]:sm:max-w-2xl"
           showCloseButton={false}
           side="right"
         >
@@ -516,7 +536,14 @@ export function ChannelSettingsPanel({
                         if (isChannelProtocol(value ?? "")) {
                           setDraft((current) =>
                             current
-                              ? { ...current, protocol: value as ChannelProtocol }
+                              ? {
+                                  ...current,
+                                  protocol: value as ChannelProtocol,
+                                  baseUrl: defaultBaseUrlForProtocol(
+                                    value as ChannelProtocol,
+                                    current.baseUrl,
+                                  ),
+                                }
                               : current,
                           );
                         }
@@ -527,10 +554,21 @@ export function ChannelSettingsPanel({
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="openai-compatible">OpenAI 兼容</SelectItem>
-                        <SelectItem value="anthropic">Anthropic 官方</SelectItem>
-                        <SelectItem value="google-gemini">Google Gemini 官方</SelectItem>
-                        <SelectItem value="volcengine-ark">火山方舟官方</SelectItem>
+                        <SelectItem value="openai-compatible">
+                          OpenAI 兼容
+                        </SelectItem>
+                        <SelectItem value="anthropic">
+                          Anthropic 官方
+                        </SelectItem>
+                        <SelectItem value="google-gemini">
+                          Google Gemini 官方
+                        </SelectItem>
+                        <SelectItem value="volcengine-ark">
+                          火山方舟官方
+                        </SelectItem>
+                        <SelectItem value="autodl-comfyui">
+                          AutoDL ComfyUI
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -549,7 +587,11 @@ export function ChannelSettingsPanel({
                           : current,
                       )
                     }
-                    placeholder="https://api.openai.com/v1"
+                    placeholder={
+                      draft.protocol === "autodl-comfyui"
+                        ? AUTODL_COMFYUI_BASE_URL
+                        : "https://api.openai.com/v1"
+                    }
                     value={draft.baseUrl}
                   />
                 </div>
@@ -562,7 +604,9 @@ export function ChannelSettingsPanel({
                         onValueChange={(value) => {
                           if (value === "single" || value === "batch") {
                             setDraft((current) =>
-                              current ? { ...current, apiKeyMode: value } : current,
+                              current
+                                ? { ...current, apiKeyMode: value }
+                                : current,
                             );
                           }
                         }}
@@ -633,7 +677,9 @@ export function ChannelSettingsPanel({
                       channelId={draft.id}
                       copy={copy}
                       models={dedupeModels([
-                        ...models.filter((model) => model.channelId === draft.id),
+                        ...models.filter(
+                          (model) => model.channelId === draft.id,
+                        ),
                         ...draft.modelOptions,
                       ])}
                       onFetchModels={fetchChannelModels}
@@ -824,7 +870,8 @@ function ModelPicker({
           <DialogHeader>
             <DialogTitle>{copy.settingsSelectChannelModelsTitle}</DialogTitle>
             <DialogDescription>
-              {copy.settingsSelectedCurrentModels}: {pendingIds.length} / {availableModels.length}
+              {copy.settingsSelectedCurrentModels}: {pendingIds.length} /{" "}
+              {availableModels.length}
             </DialogDescription>
           </DialogHeader>
 
@@ -849,11 +896,11 @@ function ModelPicker({
             </Button>
           </div>
 
-          <Tabs
-            onValueChange={setActiveTab}
-            value={activeTab}
-          >
-            <TabsList className="w-full justify-start gap-5 border-b px-0 pb-0" variant="line">
+          <Tabs onValueChange={setActiveTab} value={activeTab}>
+            <TabsList
+              className="w-full justify-start gap-5 border-b px-0 pb-0"
+              variant="line"
+            >
               <TabsTrigger className="flex-none px-0 pb-3" value="fetched">
                 {copy.settingsFetchedModels} ({fetchedModels.length})
               </TabsTrigger>
@@ -886,11 +933,14 @@ function ModelPicker({
             <TabsContent className="mt-4 grid gap-3" value="existing">
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
                 <span>
-                  {copy.settingsSelectedCurrentModels}: {pendingIds.length} / {filteredModels.length}
+                  {copy.settingsSelectedCurrentModels}: {pendingIds.length} /{" "}
+                  {filteredModels.length}
                 </span>
                 <div className="flex gap-2">
                   <Button
-                    onClick={() => setPendingIds(filteredModels.map((model) => model.id))}
+                    onClick={() =>
+                      setPendingIds(filteredModels.map((model) => model.id))
+                    }
                     size="sm"
                     type="button"
                     variant="outline"
@@ -901,7 +951,8 @@ function ModelPicker({
                     onClick={() =>
                       setPendingIds((current) =>
                         current.filter(
-                          (id) => !filteredModels.some((model) => model.id === id),
+                          (id) =>
+                            !filteredModels.some((model) => model.id === id),
                         ),
                       )
                     }
@@ -1014,9 +1065,7 @@ function normalizeCapabilities(
   );
 }
 
-function cloneCapabilities(
-  capabilities: Record<string, ChannelCapability[]>,
-) {
+function cloneCapabilities(capabilities: Record<string, ChannelCapability[]>) {
   return Object.fromEntries(
     Object.entries(capabilities).map(([modelId, values]) => [
       modelId,
@@ -1029,7 +1078,10 @@ function dedupeModels(models: ModelOption[]) {
   return [...new Map(models.map((model) => [model.id, model])).values()];
 }
 
-function normalizeApiKeys(apiKeys: string[] | undefined, fallbackApiKey: string) {
+function normalizeApiKeys(
+  apiKeys: string[] | undefined,
+  fallbackApiKey: string,
+) {
   const values = [fallbackApiKey, ...(apiKeys?.slice(1) ?? [])]
     .map((apiKey) => apiKey.trim())
     .filter(Boolean);
@@ -1058,6 +1110,9 @@ function normalizeProtocol(protocol: unknown): ChannelProtocol {
   ) {
     return "volcengine-ark";
   }
+  if (protocol === "autodl-comfyui" || protocol === "AutoDL ComfyUI") {
+    return "autodl-comfyui";
+  }
   return "openai-compatible";
 }
 
@@ -1066,7 +1121,8 @@ function isChannelProtocol(value: string): value is ChannelProtocol {
     value === "openai-compatible" ||
     value === "anthropic" ||
     value === "google-gemini" ||
-    value === "volcengine-ark"
+    value === "volcengine-ark" ||
+    value === "autodl-comfyui"
   );
 }
 
@@ -1078,9 +1134,19 @@ function getProtocolLabel(protocol: ChannelProtocol) {
       return "Google Gemini 官方";
     case "volcengine-ark":
       return "火山方舟官方";
+    case "autodl-comfyui":
+      return "AutoDL ComfyUI";
     default:
       return "OpenAI 兼容";
   }
+}
+
+function defaultBaseUrlForProtocol(
+  protocol: ChannelProtocol,
+  currentBaseUrl: string,
+) {
+  if (protocol !== "autodl-comfyui") return currentBaseUrl;
+  return currentBaseUrl.trim() || AUTODL_COMFYUI_BASE_URL;
 }
 
 function composeChannelModelId(channelId: string, modelId: string) {
@@ -1153,7 +1219,9 @@ function toChannelConfig(channel: ApiChannel): ChannelConfig {
       channelId: channel.id,
       channelName: channel.name,
       protocol: model.protocol ?? channel.protocol,
-      id: model.id || composeChannelModelId(channel.id, model.modelId || model.name),
+      id:
+        model.id ||
+        composeChannelModelId(channel.id, model.modelId || model.name),
     })),
   );
   return {
@@ -1164,7 +1232,11 @@ function toChannelConfig(channel: ApiChannel): ChannelConfig {
     apiKey: channel.apiKeys[0] ?? "",
     apiKeys: normalizeApiKeys(channel.apiKeys, channel.apiKeys[0] ?? ""),
     apiKeyMode: channel.apiKeys.length > 1 ? "batch" : "single",
-    modelIds: modelOptions.filter((model) => (model as ModelOption & { selected?: boolean }).selected).map((model) => model.id),
+    modelIds: modelOptions
+      .filter(
+        (model) => (model as ModelOption & { selected?: boolean }).selected,
+      )
+      .map((model) => model.id),
     modelOptions,
     modelCapabilities: Object.fromEntries(
       modelOptions.map((model) => [model.id, defaultCapabilities]),

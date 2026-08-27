@@ -5,6 +5,8 @@ import { createMediaTask } from "./task-contract";
 import { createDatabaseMediaTaskStore } from "./task-store";
 import { enqueuePersistedMediaTask } from "./task-submit";
 import { BillingError } from "@/lib/billing/service";
+import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
+import { resolveStoredMediaUrl } from "@/lib/storage";
 
 export class VoiceTaskError extends Error {
   constructor(
@@ -30,10 +32,10 @@ export async function createVoiceLineAudioTask(input: {
   });
   if (
     !channel ||
-    !["openai-compatible", "volcengine-ark"].includes(channel.protocol)
+    !isMediaChannelProtocol(channel.protocol)
   ) {
     throw new VoiceTaskError(
-      "语音生成需要有效的 OpenAI 兼容或火山方舟渠道",
+      "语音生成需要有效且受支持的媒体渠道",
       400,
     );
   }
@@ -63,11 +65,16 @@ export async function createVoiceLineAudioTask(input: {
       id: true,
       content: true,
       speaker: true,
+      emotionPrompt: true,
+      emotionStrength: true,
       voicePreset: {
         select: {
           userId: true,
           projectId: true,
           providerVoiceId: true,
+          sampleAsset: {
+            select: { url: true, storageKey: true, mimeType: true },
+          },
         },
       },
     },
@@ -81,6 +88,15 @@ export async function createVoiceLineAudioTask(input: {
     projectId: input.projectId,
     userId: input.userId,
   });
+  const sampleAsset =
+    line.voicePreset?.userId === input.userId &&
+    (line.voicePreset.projectId === null ||
+      line.voicePreset.projectId === input.projectId)
+      ? line.voicePreset.sampleAsset
+      : null;
+  const sampleUrl = sampleAsset?.storageKey
+    ? await resolveStoredMediaUrl(sampleAsset.storageKey)
+    : sampleAsset?.url;
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
@@ -90,13 +106,22 @@ export async function createVoiceLineAudioTask(input: {
     targetId: line.id,
     kind: "audio",
     provider: channel.providerKey,
-    protocol: channel.protocol as "openai-compatible" | "volcengine-ark",
+    protocol: channel.protocol,
     model: input.model,
     request: {
       input: line.content,
       prompt: line.content,
       voice,
       responseFormat: "mp3",
+      emotionPrompt: line.emotionPrompt ?? undefined,
+      emotionStrength: line.emotionStrength ?? undefined,
+      ...(sampleUrl
+        ? {
+            referenceAudios: [
+              { url: sampleUrl, mimeType: sampleAsset?.mimeType ?? undefined },
+            ],
+          }
+        : {}),
     },
   });
   const store = createDatabaseMediaTaskStore(input.userId);
