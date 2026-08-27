@@ -415,19 +415,18 @@ export function AudioWorkspace({
           </p>
           <h1 className="mt-1 text-xl font-semibold">{text.title}</h1>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
           {!lines.length ? (
-            <div className="flex min-w-56 items-end gap-2">
-              <label className="grid min-w-0 flex-1 gap-1 text-xs font-medium">
-                {text.analysisModel}
-                <ModelSelect
-                  disabled={busy}
-                  models={analysisModels}
-                  onChange={setAnalysisModelId}
-                  placeholder={text.analysisModel}
-                  value={analysisModelId}
-                />
-              </label>
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+              <ModelSelect
+                ariaLabel={text.analysisModel}
+                className="h-8 sm:w-64"
+                disabled={busy}
+                models={analysisModels}
+                onChange={setAnalysisModelId}
+                placeholder={text.analysisModel}
+                value={analysisModelId}
+              />
               <Button
                 disabled={busy || !analysisModelId}
                 onClick={analyze}

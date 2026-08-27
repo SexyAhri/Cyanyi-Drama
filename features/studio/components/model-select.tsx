@@ -7,16 +7,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 
 import type { StudioModelOption } from "../types";
 
 export function ModelSelect({
+  ariaLabel,
+  className,
   disabled,
   models,
   onChange,
   placeholder,
   value,
 }: {
+  ariaLabel?: string;
+  className?: string;
   disabled?: boolean;
   models: StudioModelOption[];
   onChange: (value: string) => void;
@@ -30,16 +35,23 @@ export function ModelSelect({
       onValueChange={(next) => next && onChange(next)}
       value={value || null}
     >
-      <SelectTrigger className="h-9 w-full">
+      <SelectTrigger
+        aria-label={ariaLabel ?? placeholder}
+        className={cn("h-9 min-w-0 w-full", className)}
+      >
         <SelectValue>
-          {selected ? `${selected.name} · ${selected.channelName}` : placeholder}
+          <span className="min-w-0 flex-1 truncate">
+            {selected ? getStudioModelName(selected) : placeholder}
+          </span>
         </SelectValue>
       </SelectTrigger>
       <SelectContent align="start">
         {models.map((model) => (
           <SelectItem key={model.id} value={model.id}>
-            <span className="truncate">{model.name}</span>
-            <span className="text-xs text-muted-foreground">
+            <span className="min-w-0 flex-1 truncate">
+              {getStudioModelName(model)}
+            </span>
+            <span className="max-w-32 shrink-0 truncate text-xs text-muted-foreground">
               {model.channelName}
             </span>
           </SelectItem>
@@ -47,4 +59,15 @@ export function ModelSelect({
       </SelectContent>
     </Select>
   );
+}
+
+export function getStudioModelName(model: StudioModelOption) {
+  const name = model.name.trim();
+  const channelName = model.channelName.trim();
+  const suffix = channelName ? ` · ${channelName}` : "";
+  const deduplicated =
+    suffix && name.endsWith(suffix)
+      ? name.slice(0, -suffix.length).trim()
+      : name;
+  return deduplicated || model.modelId;
 }

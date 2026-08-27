@@ -312,16 +312,15 @@ export function WritingWorkspace({
             )}
 
             <div className="mt-5 space-y-2">
-              <label className="grid gap-1.5 text-xs font-medium">
-                {copy.analysisModel}
-                <ModelSelect
-                  disabled={isActing || workflowActive}
-                  models={models}
-                  onChange={setModelId}
-                  placeholder={copy.analysisModel}
-                  value={modelId}
-                />
-              </label>
+              <ModelSelect
+                ariaLabel={copy.analysisModel}
+                className="h-8"
+                disabled={isActing || workflowActive}
+                models={models}
+                onChange={setModelId}
+                placeholder={copy.analysisModel}
+                value={modelId}
+              />
               {!models.length ? (
                 <p className="text-xs leading-5 text-destructive">
                   {copy.noAnalysisModels}

@@ -238,17 +238,16 @@ export function StoryboardWorkspace({
             ) : null}
           </div>
         </div>
-        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end">
-          <label className="grid min-w-0 gap-1 text-xs font-medium sm:w-64">
-            {copy.storyboardModel}
-            <ModelSelect
-              disabled={isActing || workflowActive}
-              models={models}
-              onChange={setModelId}
-              placeholder={copy.storyboardModel}
-              value={modelId}
-            />
-          </label>
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+          <ModelSelect
+            ariaLabel={copy.storyboardModel}
+            className="h-8 sm:w-64"
+            disabled={isActing || workflowActive}
+            models={models}
+            onChange={setModelId}
+            placeholder={copy.storyboardModel}
+            value={modelId}
+          />
           <WorkflowButtons
             disabled={isActing}
             hasWorkflow={Boolean(workflow)}
@@ -290,7 +289,7 @@ export function StoryboardWorkspace({
           <p className="max-w-md text-sm leading-6">{copy.noStoryboard}</p>
         </div>
       ) : (
-        <div className="grid min-h-[38rem] border-b lg:grid-cols-[18rem_minmax(0,1fr)]">
+        <div className="grid min-h-152 border-b lg:grid-cols-[18rem_minmax(0,1fr)]">
           <aside className="border-b lg:border-r lg:border-b-0">
             <div className="flex h-11 items-center justify-between border-b px-3">
               <h2 className="text-xs font-semibold">{copy.storyboardPanels}</h2>
@@ -449,7 +448,7 @@ function PanelSpec({
   return (
     <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-1 break-words text-sm">{value || "-"}</dd>
+      <dd className="mt-1 wrap-break-word text-sm">{value || "-"}</dd>
     </div>
   );
 }
