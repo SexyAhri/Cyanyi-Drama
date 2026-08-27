@@ -16,6 +16,34 @@ import type { AgentMessage } from "@/lib/agent/types";
 import type { AgentComposerReferenceImage } from "../composer";
 import { ThinkingIndicator } from "../chat/thinking-indicator";
 import { ToolCard } from "../tool/tool-card";
+import type { ToolRegistry } from "../tool/tool-registry";
+
+const copy = {
+  "zh-CN": {
+    copied: "已复制消息",
+    copy: "复制",
+    copyFailed: "复制失败",
+    delete: "删除",
+    download: "下载",
+    downloadStarted: "已开始下载",
+    edit: "编辑",
+    favorite: "收藏",
+    noDownload: "暂无可下载内容",
+    regenerate: "重新生成",
+  },
+  en: {
+    copied: "Message copied",
+    copy: "Copy",
+    copyFailed: "Unable to copy",
+    delete: "Delete",
+    download: "Download",
+    downloadStarted: "Download started",
+    edit: "Edit",
+    favorite: "Favorite",
+    noDownload: "No downloadable content",
+    regenerate: "Regenerate",
+  },
+} as const;
 
 type MessageBubbleProps = {
   message: AgentMessage;
@@ -23,14 +51,14 @@ type MessageBubbleProps = {
   pendingApprovalIds?: string[];
   onApprove?: (approvalId: string) => Promise<void> | void;
   onDeny?: (approvalId: string) => Promise<void> | void;
-  onUseAsReferenceImage?: (
-    referenceImage: AgentComposerReferenceImage,
-  ) => void;
+  onUseAsReferenceImage?: (referenceImage: AgentComposerReferenceImage) => void;
   onEditMessage?: (message: AgentMessage) => void;
   onDeleteMessage?: (messageId: string) => void;
   onRegenerateMessage?: (messageId: string) => void;
   showThinking?: boolean;
   thinkingMessages?: AgentMessage[];
+  locale?: "en" | "zh-CN";
+  registry?: ToolRegistry;
 };
 
 export function MessageBubble({
@@ -45,6 +73,8 @@ export function MessageBubble({
   onRegenerateMessage,
   showThinking = false,
   thinkingMessages = [],
+  locale = "en",
+  registry,
 }: MessageBubbleProps) {
   const messageAttachments = getMessageAttachments(message);
   const supplementalContent =
@@ -60,9 +90,11 @@ export function MessageBubble({
                 : false
             }
             key={toolMessage.id}
+            locale={locale}
             onApprove={onApprove}
             onDeny={onDeny}
             onUseAsReferenceImage={onUseAsReferenceImage}
+            registry={registry}
             toolCall={toolMessage.toolCall!}
           />
         ))}
@@ -75,13 +107,17 @@ export function MessageBubble({
       canDownload={Boolean(downloadableAsset)}
       isAssistant={message.role === "assistant"}
       isUser={message.role === "user"}
-      onCopy={() => void copyMessageContent(message.content)}
-      onDelete={
-        onDeleteMessage ? () => onDeleteMessage(message.id) : undefined
-      }
+      locale={locale}
+      onCopy={() => void copyMessageContent(message.content, locale)}
+      onDelete={onDeleteMessage ? () => onDeleteMessage(message.id) : undefined}
       onDownload={
         downloadableAsset
-          ? () => downloadAsset(downloadableAsset.url, downloadableAsset.fileName)
+          ? () =>
+              downloadAsset(
+                downloadableAsset.url,
+                downloadableAsset.fileName,
+                locale,
+              )
           : undefined
       }
       onEdit={onEditMessage ? () => onEditMessage(message) : undefined}
@@ -102,7 +138,9 @@ export function MessageBubble({
       role={message.role === "user" ? "user" : "assistant"}
       showTimeStamp={Boolean(message.createdAt)}
       emptyState={
-        showThinking ? <ThinkingIndicator messages={thinkingMessages} /> : undefined
+        showThinking ? (
+          <ThinkingIndicator messages={thinkingMessages} />
+        ) : undefined
       }
       supplementalContent={supplementalContent}
     />
@@ -173,6 +211,7 @@ function MessageBubbleActions({
   canDownload,
   isAssistant,
   isUser,
+  locale,
   onCopy,
   onDelete,
   onDownload,
@@ -182,21 +221,23 @@ function MessageBubbleActions({
   canDownload: boolean;
   isAssistant: boolean;
   isUser: boolean;
+  locale: "en" | "zh-CN";
   onCopy: () => void;
   onDelete?: () => void;
   onDownload?: () => void;
   onEdit?: () => void;
   onRegenerate?: () => void;
 }) {
+  const text = copy[locale];
   return (
     <TooltipProvider>
       <div className="flex items-center gap-1 rounded-xl border border-border/60 bg-background/95 px-1.5 py-1 shadow-xs backdrop-blur">
-        <ActionButton icon={Copy} label="复制" onClick={onCopy} />
+        <ActionButton icon={Copy} label={text.copy} onClick={onCopy} />
         {isUser ? (
           <ActionButton
             disabled={!onEdit}
             icon={Pencil}
-            label="编辑"
+            label={text.edit}
             onClick={onEdit}
           />
         ) : null}
@@ -204,25 +245,25 @@ function MessageBubbleActions({
           <ActionButton
             disabled={!onRegenerate}
             icon={RotateCcw}
-            label="重新生成"
+            label={text.regenerate}
             onClick={onRegenerate}
           />
         ) : null}
         {isAssistant ? (
-          <ActionButton disabled icon={Star} label="收藏" />
+          <ActionButton disabled icon={Star} label={text.favorite} />
         ) : null}
         {isAssistant ? (
           <ActionButton
             disabled={!canDownload}
             icon={Download}
-            label={canDownload ? "下载" : "暂无可下载内容"}
+            label={canDownload ? text.download : text.noDownload}
             onClick={onDownload}
           />
         ) : null}
         <ActionButton
           disabled={!onDelete}
           icon={Trash2}
-          label="删除"
+          label={text.delete}
           onClick={onDelete}
         />
       </div>
@@ -263,12 +304,15 @@ function ActionButton({
   );
 }
 
-async function copyMessageContent(content: string) {
+async function copyMessageContent(
+  content: string,
+  locale: "en" | "zh-CN",
+) {
   try {
     await navigator.clipboard.writeText(content);
-    toast.success("已复制消息");
+    toast.success(copy[locale].copied);
   } catch {
-    toast.error("复制失败");
+    toast.error(copy[locale].copyFailed);
   }
 }
 
@@ -281,7 +325,8 @@ function getDownloadableAsset(toolMessages: AgentMessage[]) {
     }
 
     const images = Array.isArray((result as { images?: unknown[] }).images)
-      ? (result as { images: Array<{ url?: unknown; format?: unknown }> }).images
+      ? (result as { images: Array<{ url?: unknown; format?: unknown }> })
+          .images
       : [];
 
     for (const image of images) {
@@ -314,7 +359,11 @@ function normalizeAssetExtension(format: unknown) {
   return normalized || null;
 }
 
-function downloadAsset(url: string, fileName: string) {
+function downloadAsset(
+  url: string,
+  fileName: string,
+  locale: "en" | "zh-CN",
+) {
   const link = document.createElement("a");
 
   link.href = url;
@@ -324,5 +373,5 @@ function downloadAsset(url: string, fileName: string) {
   document.body.append(link);
   link.click();
   link.remove();
-  toast.success("已开始下载");
+  toast.success(copy[locale].downloadStarted);
 }

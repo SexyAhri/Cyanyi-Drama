@@ -36,6 +36,7 @@ import type {
   ProjectMediaAsset,
   StudioLocale,
   StudioModelOption,
+  StudioSelectionContext,
   WorkspaceSnapshot,
 } from "../types";
 import { StatusIndicator } from "../components/status-indicator";
@@ -60,12 +61,14 @@ export function AssetsWorkspace({
   analysisModels,
   imageModels,
   locale,
+  onContextChange,
   onRefresh,
   snapshot,
 }: {
   analysisModels: StudioModelOption[];
   imageModels: StudioModelOption[];
   locale: StudioLocale;
+  onContextChange: (selection?: StudioSelectionContext) => void;
   onRefresh: () => Promise<unknown> | void;
   snapshot: WorkspaceSnapshot;
 }) {
@@ -117,13 +120,24 @@ export function AssetsWorkspace({
 
   const entities = useMemo(
     () =>
-      catalog && tab !== "source"
-        ? buildStudioAssetEntities(catalog, tab)
-        : [],
+      catalog && tab !== "source" ? buildStudioAssetEntities(catalog, tab) : [],
     [catalog, tab],
   );
   const selectedEntity =
     entities.find((entity) => entity.id === selectedEntityId) ?? entities[0];
+
+  useEffect(() => {
+    onContextChange(
+      selectedEntity
+        ? {
+            id: selectedEntity.id,
+            kind: selectedEntity.kind,
+            label: selectedEntity.name,
+            metadata: { candidates: selectedEntity.candidates.length },
+          }
+        : undefined,
+    );
+  }, [onContextChange, selectedEntity]);
 
   useEffect(() => {
     if (!entities.length) {
@@ -162,7 +176,9 @@ export function AssetsWorkspace({
       await refreshAll();
     } catch (requestError) {
       toast.error(
-        requestError instanceof Error ? requestError.message : copy.actionFailed,
+        requestError instanceof Error
+          ? requestError.message
+          : copy.actionFailed,
       );
     } finally {
       setIsUploading(false);
@@ -179,14 +195,15 @@ export function AssetsWorkspace({
         targetType: selectedEntity.kind,
         targetId:
           selectedEntity.kind === "prop" ? selectedEntity.id : candidate.id,
-        assetId:
-          selectedEntity.kind === "prop" ? candidate.assetId : undefined,
+        assetId: selectedEntity.kind === "prop" ? candidate.assetId : undefined,
       });
       toast.success(copy.assetSelected);
       await refreshAll();
     } catch (requestError) {
       toast.error(
-        requestError instanceof Error ? requestError.message : copy.actionFailed,
+        requestError instanceof Error
+          ? requestError.message
+          : copy.actionFailed,
       );
     } finally {
       setIsSelecting(false);
@@ -289,10 +306,7 @@ export function AssetsWorkspace({
                 }}
                 projectId={projectId}
                 trigger={
-                  <Button
-                    disabled={!selectedSourceIds.length}
-                    size="sm"
-                  >
+                  <Button disabled={!selectedSourceIds.length} size="sm">
                     <CheckSquare2 className="size-4" />
                     {copy.extractAssets} · {selectedSourceIds.length}
                   </Button>
@@ -309,10 +323,26 @@ export function AssetsWorkspace({
         value={tab}
       >
         <TabsList className="max-w-full overflow-x-auto" variant="line">
-          <AssetTabTrigger count={catalog.characters.length} label={copy.characterAssets} value="character" />
-          <AssetTabTrigger count={catalog.locations.length} label={copy.locationAssets} value="location" />
-          <AssetTabTrigger count={catalog.props.length} label={copy.propAssets} value="prop" />
-          <AssetTabTrigger count={sourceAssets.length} label={copy.sourceAssets} value="source" />
+          <AssetTabTrigger
+            count={catalog.characters.length}
+            label={copy.characterAssets}
+            value="character"
+          />
+          <AssetTabTrigger
+            count={catalog.locations.length}
+            label={copy.locationAssets}
+            value="location"
+          />
+          <AssetTabTrigger
+            count={catalog.props.length}
+            label={copy.propAssets}
+            value="prop"
+          />
+          <AssetTabTrigger
+            count={sourceAssets.length}
+            label={copy.sourceAssets}
+            value="source"
+          />
         </TabsList>
 
         {(["character", "location", "prop"] as const).map((kind) => (
@@ -328,7 +358,9 @@ export function AssetsWorkspace({
               onRefresh={refreshAll}
               onSelectCandidate={selectCandidate}
               onSelectEntity={setSelectedEntityId}
-              onUpload={(file) => selectedEntity && upload(file, selectedEntity)}
+              onUpload={(file) =>
+                selectedEntity && upload(file, selectedEntity)
+              }
               projectId={projectId}
               selectedEntity={selectedEntity}
               selectedEntityId={selectedEntity?.id}
@@ -422,7 +454,9 @@ function DomainAssetView({
             aria-label={copy.selectedCount}
             checked={allChecked}
             onCheckedChange={(checked) =>
-              onCheckedChange(checked ? entities.map((entity) => entity.id) : [])
+              onCheckedChange(
+                checked ? entities.map((entity) => entity.id) : [],
+              )
             }
           />
           {copy.selectedCount} · {checkedEntityIds.length}
@@ -530,7 +564,9 @@ function DomainAssetView({
           <div className="pt-5">
             <div className="mb-3 flex items-center gap-2">
               <h3 className="text-sm font-semibold">{copy.candidates}</h3>
-              <Badge variant="outline">{selectedEntity.candidates.length}</Badge>
+              <Badge variant="outline">
+                {selectedEntity.candidates.length}
+              </Badge>
             </div>
             <AssetCandidateGrid
               entity={selectedEntity}

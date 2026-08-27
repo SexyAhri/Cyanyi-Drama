@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 import {
   controlStudioWorkflow,
@@ -34,6 +35,7 @@ import type {
   ProductionClipRecord,
   StudioLocale,
   StudioModelOption,
+  StudioSelectionContext,
   WorkspaceSnapshot,
 } from "../types";
 import { StatusIndicator } from "../components/status-indicator";
@@ -42,12 +44,14 @@ export function WritingWorkspace({
   episode,
   locale,
   models,
+  onContextChange,
   onRefresh,
   snapshot,
 }: {
   episode: WorkspaceSnapshot["project"]["episodes"][number];
   locale: StudioLocale;
   models: StudioModelOption[];
+  onContextChange: (selection?: StudioSelectionContext) => void;
   onRefresh: () => Promise<unknown> | void;
   snapshot: WorkspaceSnapshot;
 }) {
@@ -59,6 +63,7 @@ export function WritingWorkspace({
     text: episode.novelText ?? "",
   });
   const [clips, setClips] = useState<ProductionClipRecord[]>([]);
+  const [selectedClipId, setSelectedClipId] = useState("");
   const [isLoadingClips, setIsLoadingClips] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isActing, setIsActing] = useState(false);
@@ -109,12 +114,46 @@ export function WritingWorkspace({
     return () => controller.abort();
   }, [copy.loadFailed, episode.id, snapshot.project.id, workflow?.updatedAt]);
 
+  const selectedClip =
+    clips.find((clip) => clip.id === selectedClipId) ?? clips[0];
+
+  useEffect(() => {
+    if (!clips.length) {
+      setSelectedClipId("");
+      onContextChange(undefined);
+      return;
+    }
+    if (!clips.some((clip) => clip.id === selectedClipId)) {
+      setSelectedClipId(clips[0].id);
+    }
+  }, [clips, onContextChange, selectedClipId]);
+
+  useEffect(() => {
+    onContextChange(
+      selectedClip
+        ? {
+            id: selectedClip.id,
+            kind: "clip",
+            label: selectedClip.summary,
+            metadata: {
+              clipIndex: selectedClip.clipIndex,
+              shotCount: selectedClip.shotCount ?? 0,
+            },
+          }
+        : undefined,
+    );
+  }, [onContextChange, selectedClip]);
+
   async function saveSource() {
     setIsSaving(true);
     try {
-      const result = await updateStudioEpisode(snapshot.project.id, episode.id, {
-        novelText,
-      });
+      const result = await updateStudioEpisode(
+        snapshot.project.id,
+        episode.id,
+        {
+          novelText,
+        },
+      );
       const persisted = result.episode.novelText ?? "";
       setNovelText(persisted);
       setSavedText(persisted);
@@ -150,7 +189,9 @@ export function WritingWorkspace({
     }
   }
 
-  async function controlWorkflow(action: "cancel" | "retry" | "pause" | "resume") {
+  async function controlWorkflow(
+    action: "cancel" | "retry" | "pause" | "resume",
+  ) {
     if (!workflow) return;
     setIsActing(true);
     try {
@@ -229,6 +270,8 @@ export function WritingWorkspace({
               emptyLabel={copy.noClips}
               isLoading={isLoadingClips}
               locale={locale}
+              onSelect={setSelectedClipId}
+              selectedClipId={selectedClip?.id}
             />
           </TabsContent>
         </Tabs>
@@ -397,11 +440,15 @@ function ScreenplayList({
   emptyLabel,
   isLoading,
   locale,
+  onSelect,
+  selectedClipId,
 }: {
   clips: ProductionClipRecord[];
   emptyLabel: string;
   isLoading: boolean;
   locale: StudioLocale;
+  onSelect: (clipId: string) => void;
+  selectedClipId?: string;
 }) {
   if (isLoading) {
     return (
@@ -420,8 +467,18 @@ function ScreenplayList({
   return (
     <div className="divide-y border-y">
       {clips.map((clip) => (
-        <article className="py-5" key={clip.id}>
-          <div className="flex min-w-0 items-start gap-3">
+        <article
+          className={cn(
+            "px-3 py-5",
+            clip.id === selectedClipId && "bg-muted/50",
+          )}
+          key={clip.id}
+        >
+          <button
+            className="flex w-full min-w-0 items-start gap-3 text-left"
+            onClick={() => onSelect(clip.id)}
+            type="button"
+          >
             <span className="mt-0.5 w-8 shrink-0 font-mono text-xs text-muted-foreground">
               {String(clip.clipIndex + 1).padStart(2, "0")}
             </span>
@@ -441,14 +498,20 @@ function ScreenplayList({
                 {formatStudioDate(locale, clip.updatedAt)}
               </p>
             </div>
-          </div>
+          </button>
         </article>
       ))}
     </div>
   );
 }
 
-function Screenplay({ screenplay, source }: { screenplay: string | null; source: string }) {
+function Screenplay({
+  screenplay,
+  source,
+}: {
+  screenplay: string | null;
+  source: string;
+}) {
   const scenes = useMemo(() => parseScreenplay(screenplay), [screenplay]);
   if (!scenes.length) {
     return (
@@ -492,37 +555,52 @@ function parseScreenplay(value: string | null) {
   if (!value) return [];
   try {
     const parsed: unknown = JSON.parse(value);
-    if (!parsed || typeof parsed !== "object" || !Array.isArray((parsed as { scenes?: unknown }).scenes)) {
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      !Array.isArray((parsed as { scenes?: unknown }).scenes)
+    ) {
       return [];
     }
     return (parsed as { scenes: unknown[] }).scenes.flatMap((scene) => {
       if (!scene || typeof scene !== "object") return [];
       const record = scene as Record<string, unknown>;
-      const heading = record.heading && typeof record.heading === "object"
-        ? record.heading as Record<string, unknown>
-        : {};
+      const heading =
+        record.heading && typeof record.heading === "object"
+          ? (record.heading as Record<string, unknown>)
+          : {};
       const content = Array.isArray(record.content) ? record.content : [];
-      return [{
-        heading: [heading.intExt, heading.location, heading.time]
-          .filter((item): item is string => typeof item === "string" && Boolean(item))
-          .join(". "),
-        description: typeof record.description === "string" ? record.description : "",
-        lines: content.flatMap((item) => {
-          if (!item || typeof item !== "object") return [];
-          const line = item as Record<string, unknown>;
-          const text = typeof line.lines === "string"
-            ? line.lines
-            : typeof line.text === "string"
-              ? line.text
-              : "";
-          return text
-            ? [{
-                speaker: typeof line.character === "string" ? line.character : "",
-                text,
-              }]
-            : [];
-        }),
-      }];
+      return [
+        {
+          heading: [heading.intExt, heading.location, heading.time]
+            .filter(
+              (item): item is string =>
+                typeof item === "string" && Boolean(item),
+            )
+            .join(". "),
+          description:
+            typeof record.description === "string" ? record.description : "",
+          lines: content.flatMap((item) => {
+            if (!item || typeof item !== "object") return [];
+            const line = item as Record<string, unknown>;
+            const text =
+              typeof line.lines === "string"
+                ? line.lines
+                : typeof line.text === "string"
+                  ? line.text
+                  : "";
+            return text
+              ? [
+                  {
+                    speaker:
+                      typeof line.character === "string" ? line.character : "",
+                    text,
+                  },
+                ]
+              : [];
+          }),
+        },
+      ];
     });
   } catch {
     return [];

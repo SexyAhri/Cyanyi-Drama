@@ -4,6 +4,7 @@ import type { AgentComposerReferenceImage } from "../composer";
 import { groupMessagesWithToolCards } from "./message-groups";
 import { MessageBubble } from "./message-bubble";
 import { ToolCard } from "../tool/tool-card";
+import type { ToolRegistry } from "../tool/tool-registry";
 
 type MessageListProps = {
   messages: AgentMessage[];
@@ -13,10 +14,10 @@ type MessageListProps = {
   onDeleteMessage?: (messageId: string) => void;
   onEditMessage?: (message: AgentMessage) => void;
   onRegenerateMessage?: (messageId: string) => void;
-  onUseAsReferenceImage?: (
-    referenceImage: AgentComposerReferenceImage,
-  ) => void;
+  onUseAsReferenceImage?: (referenceImage: AgentComposerReferenceImage) => void;
   isThinking?: boolean;
+  locale?: "en" | "zh-CN";
+  registry?: ToolRegistry;
 };
 
 export function MessageList({
@@ -29,9 +30,14 @@ export function MessageList({
   onRegenerateMessage,
   onUseAsReferenceImage,
   isThinking = false,
+  locale = "en",
+  registry,
 }: MessageListProps) {
   const groupedMessages = groupMessagesWithToolCards(messages);
-  const latestUserIndex = findLastIndex(messages, (message) => message.role === "user");
+  const latestUserIndex = findLastIndex(
+    messages,
+    (message) => message.role === "user",
+  );
   const thinkingAssistantId = isThinking
     ? messages
         .map((message, index) => ({ message, index }))
@@ -51,12 +57,14 @@ export function MessageList({
           {group.message ? (
             <MessageBubble
               message={group.message}
+              locale={locale}
               onApprove={onApprove}
               onDeleteMessage={onDeleteMessage}
               onDeny={onDeny}
               onEditMessage={onEditMessage}
               onRegenerateMessage={onRegenerateMessage}
               pendingApprovalIds={pendingApprovalIds}
+              registry={registry}
               toolMessages={group.toolMessages}
               showThinking={group.message.id === thinkingAssistantId}
               thinkingMessages={messages}
@@ -64,18 +72,22 @@ export function MessageList({
             />
           ) : null}
           {!group.message
-              ? group.toolMessages.map((toolMessage) => (
+            ? group.toolMessages.map((toolMessage) => (
                 <ToolCard
                   createdAt={toolMessage.createdAt}
                   isApprovalSubmitting={
                     toolMessage.toolCall?.approvalId
-                      ? pendingApprovalIds.includes(toolMessage.toolCall.approvalId)
+                      ? pendingApprovalIds.includes(
+                          toolMessage.toolCall.approvalId,
+                        )
                       : false
                   }
                   key={toolMessage.id}
+                  locale={locale}
                   onApprove={onApprove}
                   onDeny={onDeny}
                   onUseAsReferenceImage={onUseAsReferenceImage}
+                  registry={registry}
                   toolCall={toolMessage.toolCall!}
                 />
               ))

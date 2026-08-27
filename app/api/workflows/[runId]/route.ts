@@ -1,11 +1,10 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
-import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
+import { getWorkflowRun } from "@/lib/workflow/store";
 import {
-  getWorkflowRun,
-  requestWorkflowCancel,
-  retryWorkflowRun,
-  updateWorkflowRunStatus,
-} from "@/lib/workflow/store";
+  controlWorkflowRun,
+  WorkflowActionError,
+  type WorkflowAction,
+} from "@/lib/workflow/actions";
 
 type Context = { params: Promise<{ runId: string }> };
 
@@ -25,59 +24,28 @@ export async function POST(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { runId } = await context.params;
   const body = await readObject(request);
-  const action = body.action;
-  const current = await getWorkflowRun(user.id, runId);
-  if (!current)
-    return attachSessionCookie(
-      Response.json({ message: "工作流不存在" }, { status: 404 }),
-      sessionId,
-    );
-  let workflow;
-  if (action === "cancel")
-    workflow = await requestWorkflowCancel(user.id, runId);
-  else if (action === "retry")
-    workflow = await retryWorkflowRun(user.id, runId);
-  else if (action === "pause" || action === "resume") {
-    try {
-      workflow = await updateWorkflowRunStatus(
-        user.id,
-        runId,
-        action === "pause" ? "paused" : "queued",
-        `${action}_requested`,
-      );
-    } catch (error) {
-      return attachSessionCookie(
-        Response.json(
-          {
-            message:
-              error instanceof Error ? error.message : "当前状态不支持操作",
-          },
-          { status: 409 },
-        ),
-        sessionId,
-      );
-    }
-  } else
+  const action = body.action as WorkflowAction | undefined;
+  if (!action || !["cancel", "retry", "pause", "resume"].includes(action))
     return attachSessionCookie(
       Response.json({ message: "不支持的工作流操作" }, { status: 400 }),
       sessionId,
     );
-  if (!workflow)
+  try {
+    const workflow = await controlWorkflowRun({
+      action,
+      runId,
+      userId: user.id,
+    });
+    return attachSessionCookie(Response.json({ workflow }), sessionId);
+  } catch (error) {
     return attachSessionCookie(
       Response.json(
-        { message: `当前状态不支持操作: ${current.status}` },
-        { status: 409 },
+        { message: error instanceof Error ? error.message : "工作流操作失败" },
+        { status: error instanceof WorkflowActionError ? error.status : 500 },
       ),
       sessionId,
     );
-  if (action === "resume" || action === "retry")
-    await enqueueWorkflowJob({
-      runId,
-      userId: user.id,
-      projectId: current.projectId,
-      maxAttempts: 1,
-    });
-  return attachSessionCookie(Response.json({ workflow }), sessionId);
+  }
 }
 
 async function readObject(request: Request) {

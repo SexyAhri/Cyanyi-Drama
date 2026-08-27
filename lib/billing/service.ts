@@ -13,11 +13,22 @@ export class BillingError extends Error {
 }
 
 export async function getUserBalance(userId: string) {
-  const balance = await prisma.userBalance.upsert({
-    where: { userId },
-    create: { userId },
-    update: {},
-  });
+  let balance;
+  try {
+    balance = await prisma.userBalance.upsert({
+      where: { userId },
+      create: { userId },
+      update: {},
+    });
+  } catch (error) {
+    if (
+      !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+      error.code !== "P2002"
+    )
+      throw error;
+    balance = await prisma.userBalance.findUnique({ where: { userId } });
+    if (!balance) throw error;
+  }
   return toBalance(balance);
 }
 

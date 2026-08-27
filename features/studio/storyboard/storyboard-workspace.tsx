@@ -34,6 +34,7 @@ import {
 import type {
   StudioLocale,
   StudioModelOption,
+  StudioSelectionContext,
   StudioStoryboardData,
   StudioStoryboardPanel,
   WorkspaceSnapshot,
@@ -48,12 +49,14 @@ export function StoryboardWorkspace({
   episode,
   locale,
   models,
+  onContextChange,
   onRefresh,
   snapshot,
 }: {
   episode: WorkspaceSnapshot["project"]["episodes"][number];
   locale: StudioLocale;
   models: StudioModelOption[];
+  onContextChange: (selection?: StudioSelectionContext) => void;
   onRefresh: () => Promise<unknown> | void;
   snapshot: WorkspaceSnapshot;
 }) {
@@ -114,6 +117,22 @@ export function StoryboardWorkspace({
   );
   const selectedPanel =
     panels.find((panel) => panel.id === selectedPanelId) ?? panels[0];
+
+  useEffect(() => {
+    onContextChange(
+      selectedPanel
+        ? {
+            id: selectedPanel.id,
+            kind: "panel",
+            label: `${copy.panel} ${String(selectedPanel.panelIndex + 1).padStart(2, "0")}`,
+            metadata: {
+              duration: selectedPanel.durationSeconds ?? 0,
+              shotType: selectedPanel.shotType ?? "",
+            },
+          }
+        : undefined,
+    );
+  }, [copy.panel, onContextChange, selectedPanel]);
 
   useEffect(() => {
     if (!panels.length) {

@@ -6,16 +6,17 @@ const mocks = vi.hoisted(() => ({
   balanceFreeze: { findFirst: vi.fn(), updateMany: vi.fn() },
   balanceTransaction: { findFirst: vi.fn(), create: vi.fn() },
   mediaTask: { findFirst: vi.fn() },
-  userBalance: { update: vi.fn() },
+  userBalance: { findUnique: vi.fn(), update: vi.fn(), upsert: vi.fn() },
   usageCost: { upsert: vi.fn() },
 }));
 
 vi.mock("@/lib/server/prisma", () => ({
-  prisma: { $transaction: mocks.transaction },
+  prisma: { $transaction: mocks.transaction, userBalance: mocks.userBalance },
 }));
 
 import {
   classifyPendingMediaCharge,
+  getUserBalance,
   settleMediaTaskCharge,
 } from "./service";
 
@@ -42,6 +43,31 @@ describe("billing reconciliation", () => {
         now,
       }),
     ).toBe("release");
+  });
+
+  it("reads the balance created by a concurrent first request", async () => {
+    const balance = {
+      balance: new Prisma.Decimal("10"),
+      frozenAmount: new Prisma.Decimal("1.25"),
+      totalSpent: new Prisma.Decimal("2"),
+    };
+    mocks.userBalance.upsert.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("duplicate", {
+        clientVersion: "6.19.2",
+        code: "P2002",
+      }),
+    );
+    mocks.userBalance.findUnique.mockResolvedValue(balance);
+
+    await expect(getUserBalance("user-1")).resolves.toEqual({
+      available: "8.75",
+      balance: "10",
+      frozenAmount: "1.25",
+      totalSpent: "2",
+    });
+    expect(mocks.userBalance.findUnique).toHaveBeenCalledWith({
+      where: { userId: "user-1" },
+    });
   });
 
   it("settles a successful task once across repeated calls", async () => {

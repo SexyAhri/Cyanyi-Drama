@@ -6,6 +6,8 @@ import type { AgentAdapter } from "@/lib/agent/adapter";
 import { mergeAgentEvent } from "@/lib/agent/events";
 import type { AgentEvent, AgentMessage } from "@/lib/agent/types";
 
+const EMPTY_MESSAGES: AgentMessage[] = [];
+
 export type UseAgentOptions = {
   adapter?: AgentAdapter;
   initialMessages?: AgentMessage[];
@@ -28,7 +30,7 @@ export type AgentDebugState = {
 
 export function useAgent({
   adapter,
-  initialMessages = [],
+  initialMessages = EMPTY_MESSAGES,
   threadId,
   runId,
   onError,

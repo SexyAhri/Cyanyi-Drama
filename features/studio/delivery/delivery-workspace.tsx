@@ -42,6 +42,7 @@ import type {
   ProjectMediaAsset,
   StudioLocale,
   StudioModelOption,
+  StudioSelectionContext,
   StudioStoryboardData,
   WorkspaceSnapshot,
 } from "../types";
@@ -120,12 +121,14 @@ type DeliveryData = {
 export function DeliveryWorkspace({
   episode,
   locale,
+  onContextChange,
   onRefresh,
   snapshot,
   videoModels,
 }: {
   episode: WorkspaceSnapshot["project"]["episodes"][number];
   locale: StudioLocale;
+  onContextChange: (selection?: StudioSelectionContext) => void;
   onRefresh: () => Promise<unknown> | void;
   snapshot: WorkspaceSnapshot;
   videoModels: StudioModelOption[];
@@ -183,6 +186,22 @@ export function DeliveryWorkspace({
   const tracks = useMemo(() => timeline?.tracks ?? [], [timeline]);
   const selectedTrack =
     tracks.find((track) => track.id === selectedTrackId) ?? tracks[0];
+
+  useEffect(() => {
+    onContextChange(
+      selectedTrack
+        ? {
+            id: selectedTrack.id,
+            kind: "timeline_track",
+            label: `${String(selectedTrack.shotIndex + 1).padStart(2, "0")} · ${selectedTrack.start.toFixed(1)}–${selectedTrack.end.toFixed(1)}`,
+            metadata: {
+              duration: selectedTrack.duration,
+              shotIndex: selectedTrack.shotIndex,
+            },
+          }
+        : undefined,
+    );
+  }, [onContextChange, selectedTrack]);
 
   useEffect(() => {
     if (!tracks.length) return setSelectedTrackId("");

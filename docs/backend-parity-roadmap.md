@@ -223,7 +223,7 @@ Project / Episode / Stage URL
 | M7.2 小说与资产 | 原文/分集/剧本界面，角色/场景/道具资产库，上传、提取、生成、选择与批次反馈 | `story-to-script` 可完整操作；资产来源和当前基准可追踪；跨项目资产不可见 | 已完成 |
 | M7.3 分镜与镜头 | Clip/Panel 分镜编辑、连续性问题、图片/视频候选、单项与批量任务控制 | `script-to-storyboard` 可完整操作；失败只重试目标范围；任务结果不伪造 | 已完成 |
 | M7.4 声音与交付 | 音色与台词、语音、合并、口型、Timeline、渲染、预览与下载 | 真实任务可取消/重试；混合素材成片可渲染；失败有 Trace 和恢复入口 | 已完成 |
-| M7.5 Agent 与可观测 | 上下文 Agent、审批、任务中心、费用摘要、Run/Step/Task Trace 检查器 | Agent 工具调用携带当前结构化上下文；状态、费用和 Trace 可串联核对 | 待开发 |
+| M7.5 Agent 与可观测 | 上下文 Agent、审批、任务中心、费用摘要、Run/Step/Task Trace 检查器 | Agent 工具调用携带当前结构化上下文；状态、费用和 Trace 可串联核对 | 已完成 |
 | M7.6 质量收口 | i18n、键盘与焦点、WCAG AA、空/载入/错误/部分成功状态、性能和端到端回归 | 中英文无溢出；关键路径端到端通过；生产构建、类型、Lint 和测试通过 | 待开发 |
 
 每个批次使用独立双语提交并保持可运行。只有当前批次通过验收门禁后，才进入下一批次；不得用静态展示页代替对应业务闭环。
@@ -273,7 +273,7 @@ Project / Episode / Stage URL
 | `feat(studio): connect writing and asset workflows / 接入编剧与资产工作流` | M7.2 小说、剧本和资产闭环 | 已提交 |
 | `feat(studio): connect storyboard and shot production / 接入分镜与镜头生产` | M7.3 分镜、图片和视频闭环 | 已提交 |
 | `feat(studio): connect audio timeline and delivery / 接入声音时间线与交付` | M7.4 声音、口型、时间线和渲染闭环 | 已提交 |
-| `feat(studio): add contextual agent and observability / 增加上下文智能体与可观测性` | M7.5 Agent、审批、任务、费用和 Trace | 待提交 |
+| `feat(studio): add contextual agent and observability / 增加上下文智能体与可观测性` | M7.5 Agent、审批、任务、费用和 Trace | 已提交 |
 | `test(studio): complete M7 quality gates / 完成 M7 质量门禁` | M7.6 i18n、无障碍、响应式、端到端和回归测试 | 待提交 |
 
 当前 Prisma Schema、迁移、资产、计费、媒体和 Workflow 改动相互依赖，因此现有功能使用一个可编译、可迁移的基线提交，不拆成无法独立运行的中间提交。后续每个里程碑按功能和测试独立提交。

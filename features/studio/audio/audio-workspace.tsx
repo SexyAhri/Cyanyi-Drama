@@ -53,6 +53,7 @@ import type {
   ProjectMediaAsset,
   StudioLocale,
   StudioModelOption,
+  StudioSelectionContext,
   StudioStoryboardData,
   VoiceLineRecord,
   VoicePresetRecord,
@@ -164,6 +165,7 @@ export function AudioWorkspace({
   episode,
   lipSyncModels,
   locale,
+  onContextChange,
   onRefresh,
   snapshot,
 }: {
@@ -172,6 +174,7 @@ export function AudioWorkspace({
   episode: WorkspaceSnapshot["project"]["episodes"][number];
   lipSyncModels: StudioModelOption[];
   locale: StudioLocale;
+  onContextChange: (selection?: StudioSelectionContext) => void;
   onRefresh: () => Promise<unknown> | void;
   snapshot: WorkspaceSnapshot;
 }) {
@@ -262,6 +265,19 @@ export function AudioWorkspace({
   const tasks = snapshot.tasks.filter((task) => task.episodeId === episode.id);
   const selectedLine =
     lines.find((line) => line.id === selectedLineId) ?? lines[0];
+
+  useEffect(() => {
+    onContextChange(
+      selectedLine
+        ? {
+            id: selectedLine.id,
+            kind: "voice_line",
+            label: `${selectedLine.speaker} · ${selectedLine.content}`,
+            metadata: { lineIndex: selectedLine.lineIndex },
+          }
+        : undefined,
+    );
+  }, [onContextChange, selectedLine]);
 
   useEffect(() => {
     if (!lines.length) return setSelectedLineId("");

@@ -12,6 +12,9 @@ import type {
   ProjectWithEpisodes,
   StudioModelOption,
   StudioStoryboardData,
+  StudioBalance,
+  StudioExecutionTrace,
+  StudioUsageCost,
   StudioStoryboardPanel,
   VoiceLineRecord,
   VoicePresetRecord,
@@ -94,7 +97,11 @@ export async function createStudioEpisode(
 export async function updateStudioEpisode(
   projectId: string,
   episodeId: string,
-  input: { name?: string; description?: string | null; novelText?: string | null },
+  input: {
+    name?: string;
+    description?: string | null;
+    novelText?: string | null;
+  },
 ) {
   return request<{ episode: EpisodeRecord }>(
     `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}`,
@@ -306,10 +313,14 @@ export async function uploadStudioAsset(
   form.set("kind", "image");
   form.set("targetType", input.targetType);
   form.set("targetId", input.targetId);
-  return request<{ asset: ProjectMediaAsset & { target: { entityId: string; entityType: string } } }>(
-    `/api/projects/${encodeURIComponent(projectId)}/assets/upload`,
-    { body: form, method: "POST" },
-  );
+  return request<{
+    asset: ProjectMediaAsset & {
+      target: { entityId: string; entityType: string };
+    };
+  }>(`/api/projects/${encodeURIComponent(projectId)}/assets/upload`, {
+    body: form,
+    method: "POST",
+  });
 }
 
 export async function extractStudioAssets(
@@ -343,14 +354,14 @@ export async function generateStudioAsset(
     resolution?: string;
   },
 ) {
-  return request<{ task: MediaTask; entity: { id: string; entityType: string } }>(
-    `/api/projects/${encodeURIComponent(projectId)}/assets/generate`,
-    {
-      body: JSON.stringify(input),
-      headers: { "Content-Type": "application/json" },
-      method: "POST",
-    },
-  );
+  return request<{
+    task: MediaTask;
+    entity: { id: string; entityType: string };
+  }>(`/api/projects/${encodeURIComponent(projectId)}/assets/generate`, {
+    body: JSON.stringify(input),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
 }
 
 export async function generateStudioAssetBatch(
@@ -743,6 +754,29 @@ export async function renderStudioTimeline(
       method: "POST",
     },
   );
+}
+
+export async function loadStudioBilling(
+  projectId: string,
+  signal?: AbortSignal,
+) {
+  const encodedProjectId = encodeURIComponent(projectId);
+  const [balanceResult, costResult] = await Promise.all([
+    request<{ balance: StudioBalance }>("/api/user/balance", { signal }),
+    request<{ costs: StudioUsageCost[] }>(
+      `/api/user/costs?projectId=${encodedProjectId}&limit=100`,
+      { signal },
+    ),
+  ]);
+  return { balance: balanceResult.balance, costs: costResult.costs };
+}
+
+export async function loadStudioTrace(traceId: string, signal?: AbortSignal) {
+  const result = await request<{ trace: StudioExecutionTrace }>(
+    `/api/traces/${encodeURIComponent(traceId)}`,
+    { signal },
+  );
+  return result.trace;
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { FolderX, LoaderCircle, RotateCcw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { FolderX, LoaderCircle, RotateCcw, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/empty";
 import {
   Sheet,
+  SheetClose,
   SheetContent,
   SheetDescription,
   SheetHeader,
@@ -36,8 +37,8 @@ import {
   getStudioStageStates,
   STUDIO_STAGE_IDS,
 } from "../stage-state";
-import type { StudioStageId } from "../types";
-import { ActivityPanel } from "./activity-panel";
+import type { StudioSelectionContext, StudioStageId } from "../types";
+import { StudioInspector } from "../inspector/studio-inspector";
 import { EpisodeSidebar } from "./episode-sidebar";
 import { StageNavigation } from "./stage-navigation";
 import { StageOverview } from "./stage-overview";
@@ -52,6 +53,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
   const searchParams = useSearchParams();
   const [episodesOpen, setEpisodesOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [selection, setSelection] = useState<StudioSelectionContext>();
   const {
     analysisModels,
     audioModels,
@@ -76,6 +78,18 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
     : [];
   const selectedStage =
     stages.find((stage) => stage.id === activeStage) ?? stages[0];
+  const inspectorContext = useMemo(
+    () => ({
+      episodeId: selectedEpisode?.id,
+      selection,
+      stageId: activeStage,
+    }),
+    [activeStage, selectedEpisode?.id, selection],
+  );
+
+  useEffect(() => {
+    setSelection(undefined);
+  }, [activeStage, selectedEpisode?.id]);
 
   useEffect(() => {
     if (!snapshot || !selectedEpisode) return;
@@ -192,6 +206,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
                 episode={selectedEpisode}
                 locale={locale}
                 models={analysisModels}
+                onContextChange={setSelection}
                 onRefresh={() => refresh()}
                 snapshot={snapshot}
               />
@@ -200,6 +215,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
                 analysisModels={analysisModels}
                 imageModels={imageModels}
                 locale={locale}
+                onContextChange={setSelection}
                 onRefresh={() => refresh()}
                 snapshot={snapshot}
               />
@@ -208,6 +224,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
                 episode={selectedEpisode}
                 locale={locale}
                 models={analysisModels}
+                onContextChange={setSelection}
                 onRefresh={() => refresh()}
                 snapshot={snapshot}
               />
@@ -216,6 +233,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
                 episode={selectedEpisode}
                 imageModels={imageModels}
                 locale={locale}
+                onContextChange={setSelection}
                 onRefresh={() => refresh()}
                 snapshot={snapshot}
                 videoModels={videoModels}
@@ -227,6 +245,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
                 episode={selectedEpisode}
                 lipSyncModels={lipSyncModels}
                 locale={locale}
+                onContextChange={setSelection}
                 onRefresh={() => refresh()}
                 snapshot={snapshot}
               />
@@ -234,6 +253,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
               <DeliveryWorkspace
                 episode={selectedEpisode}
                 locale={locale}
+                onContextChange={setSelection}
                 onRefresh={() => refresh()}
                 snapshot={snapshot}
                 videoModels={videoModels}
@@ -253,7 +273,12 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
           </main>
 
           <aside className="hidden w-80 shrink-0 border-l xl:block">
-            <ActivityPanel locale={locale} snapshot={snapshot} />
+            <StudioInspector
+              context={inspectorContext}
+              locale={locale}
+              onRefresh={() => refresh()}
+              snapshot={snapshot}
+            />
           </aside>
         </div>
 
@@ -268,12 +293,35 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
         </Sheet>
 
         <Sheet onOpenChange={setActivityOpen} open={activityOpen}>
-          <SheetContent className="w-[min(90vw,24rem)] gap-0 p-0" side="right">
-            <SheetHeader className="sr-only">
-              <SheetTitle>{copy.productionActivity}</SheetTitle>
-              <SheetDescription>{copy.productionActivity}</SheetDescription>
+          <SheetContent
+            className="w-[min(90vw,24rem)] gap-0 p-0"
+            showCloseButton={false}
+            side="right"
+          >
+            <SheetHeader className="flex h-12 shrink-0 flex-row items-center justify-between border-b px-3 py-0">
+              <SheetTitle className="text-sm">{copy.productionActivity}</SheetTitle>
+              <SheetDescription className="sr-only">
+                {copy.productionActivity}
+              </SheetDescription>
+              <SheetClose
+                render={
+                  <Button
+                    aria-label={locale === "en" ? "Close" : "关闭"}
+                    size="icon-sm"
+                    type="button"
+                    variant="ghost"
+                  />
+                }
+              >
+                <X className="size-4" />
+              </SheetClose>
             </SheetHeader>
-            <ActivityPanel locale={locale} snapshot={snapshot} />
+            <StudioInspector
+              context={inspectorContext}
+              locale={locale}
+              onRefresh={() => refresh()}
+              snapshot={snapshot}
+            />
           </SheetContent>
         </Sheet>
       </div>

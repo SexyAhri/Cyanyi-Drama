@@ -5,18 +5,36 @@ import { Button } from "@/components/ui/button";
 
 type ApprovalButtonsProps = {
   disabled?: boolean;
+  locale?: "en" | "zh-CN";
   onApprove?: () => Promise<void> | void;
   onDeny?: () => Promise<void> | void;
 };
 
+const copy = {
+  "zh-CN": {
+    approve: "批准",
+    approving: "批准中...",
+    deny: "拒绝",
+    denying: "拒绝中...",
+    submitting: "正在提交审批决定。",
+  },
+  en: {
+    approve: "Approve",
+    approving: "Approving...",
+    deny: "Deny",
+    denying: "Denying...",
+    submitting: "Submitting approval decision.",
+  },
+} as const;
+
 export function ApprovalButtons({
   disabled,
+  locale = "en",
   onApprove,
   onDeny,
 }: ApprovalButtonsProps) {
-  const [submitting, setSubmitting] = useState<"approve" | "deny" | null>(
-    null,
-  );
+  const text = copy[locale];
+  const [submitting, setSubmitting] = useState<"approve" | "deny" | null>(null);
   const isDisabled = disabled || submitting !== null;
 
   async function handleDecision(decision: "approve" | "deny") {
@@ -48,7 +66,7 @@ export function ApprovalButtons({
         {submitting === "approve" ? (
           <Loader2 className="size-3.5 animate-spin" />
         ) : null}
-        {submitting === "approve" ? "Approving..." : "Approve"}
+        {submitting === "approve" ? text.approving : text.approve}
       </Button>
       <Button
         disabled={isDisabled}
@@ -60,11 +78,11 @@ export function ApprovalButtons({
         {submitting === "deny" ? (
           <Loader2 className="size-3.5 animate-spin" />
         ) : null}
-        {submitting === "deny" ? "Denying..." : "Deny"}
+        {submitting === "deny" ? text.denying : text.deny}
       </Button>
       {submitting ? (
         <span className="text-xs text-muted-foreground" role="status">
-          Submitting approval decision.
+          {text.submitting}
         </span>
       ) : null}
     </div>

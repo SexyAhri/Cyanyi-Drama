@@ -45,6 +45,7 @@ type ToolCardProps = {
   onApprove?: (approvalId: string) => Promise<void> | void;
   onDeny?: (approvalId: string) => Promise<void> | void;
   isApprovalSubmitting?: boolean;
+  locale?: "en" | "zh-CN";
   registry?: ToolRegistry;
   embedded?: boolean;
   onUseAsReferenceImage?: (referenceImage: AgentComposerReferenceImage) => void;
@@ -53,42 +54,74 @@ type ToolCardProps = {
 const statusMeta: Record<
   ToolCallStatus,
   {
-    label: string;
     icon: typeof Clock3;
     badgeClassName: string;
   }
 > = {
   pending: {
-    label: "Pending",
     icon: Clock3,
     badgeClassName: "border-border bg-secondary text-secondary-foreground",
   },
   approved: {
-    label: "Approved",
     icon: CheckCircle2,
     badgeClassName: "border-border bg-secondary text-secondary-foreground",
   },
   denied: {
-    label: "Denied",
     icon: Ban,
     badgeClassName: "bg-destructive/10 text-destructive",
   },
   running: {
-    label: "Running",
     icon: Loader2,
     badgeClassName: "border-border bg-secondary text-secondary-foreground",
   },
   done: {
-    label: "Done",
     icon: CheckCircle2,
     badgeClassName: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
   },
   error: {
-    label: "Error",
     icon: XCircle,
     badgeClassName: "bg-destructive/10 text-destructive",
   },
 };
+
+const copy = {
+  "zh-CN": {
+    arguments: "参数",
+    description: "工具调用",
+    error: "错误",
+    name: "名称",
+    result: "结果",
+    running: "工具正在执行。",
+    statuses: {
+      approved: "已批准",
+      denied: "已拒绝",
+      done: "已完成",
+      error: "错误",
+      pending: "待审批",
+      running: "执行中",
+    },
+    toolId: "工具 ID",
+    waiting: "正在等待工具开始执行。",
+  },
+  en: {
+    arguments: "Arguments",
+    description: "Tool call",
+    error: "Error",
+    name: "Name",
+    result: "Result",
+    running: "Tool is running.",
+    statuses: {
+      approved: "Approved",
+      denied: "Denied",
+      done: "Done",
+      error: "Error",
+      pending: "Pending",
+      running: "Running",
+    },
+    toolId: "Tool ID",
+    waiting: "Waiting for the tool to start.",
+  },
+} as const;
 
 export function ToolCard({
   toolCall,
@@ -96,13 +129,15 @@ export function ToolCard({
   onApprove,
   onDeny,
   isApprovalSubmitting,
+  locale = "en",
   registry = defaultToolRegistry,
   embedded = false,
   onUseAsReferenceImage,
 }: ToolCardProps) {
   const registryItem = registry[toolCall.name];
+  const text = copy[locale];
   const title = registryItem?.label ?? toolCall.name;
-  const description = registryItem?.description ?? "Tool call";
+  const description = registryItem?.description ?? text.description;
   const meta = statusMeta[toolCall.status];
   const StatusIcon = meta.icon;
   const isMediaTool =
@@ -148,7 +183,7 @@ export function ToolCard({
             <StatusIcon
               className={cn(toolCall.status === "running" && "animate-spin")}
             />
-            {meta.label}
+            {text.statuses[toolCall.status]}
           </Badge>
         </CardAction>
       </CardHeader>
@@ -156,11 +191,11 @@ export function ToolCard({
       <CardContent className="space-y-3">
         <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
           <div>
-            <span className="font-medium text-foreground">Tool ID</span>
+            <span className="font-medium text-foreground">{text.toolId}</span>
             <p className="mt-1 truncate font-mono">{toolCall.id}</p>
           </div>
           <div>
-            <span className="font-medium text-foreground">Name</span>
+            <span className="font-medium text-foreground">{text.name}</span>
             <p className="mt-1 truncate font-mono">{toolCall.name}</p>
           </div>
         </div>
@@ -170,7 +205,7 @@ export function ToolCard({
         {registryItem?.showArgs !== false ? (
           <ToolDataSection
             defaultOpen
-            label="Arguments"
+            label={text.arguments}
             value={
               registryItem?.renderArgs?.(toolCall.args) ?? (
                 <JsonBlock value={toolCall.args} />
@@ -182,7 +217,7 @@ export function ToolCard({
         {toolCall.result !== undefined ? (
           <ToolDataSection
             defaultOpen
-            label="Result"
+            label={text.result}
             value={
               registryItem?.renderResult?.(toolCall.result) ?? (
                 <JsonBlock value={toolCall.result} />
@@ -194,7 +229,7 @@ export function ToolCard({
         {toolCall.error ? (
           <ToolDataSection
             defaultOpen
-            label="Error"
+            label={text.error}
             tone="error"
             value={
               <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
@@ -207,20 +242,21 @@ export function ToolCard({
         {toolCall.status === "pending" && !toolCall.approvalId ? (
           <div className="flex items-center gap-2 rounded-md bg-muted/50 p-3 text-sm text-muted-foreground">
             <CircleDashed className="size-4" />
-            Waiting for the tool to start.
+            {text.waiting}
           </div>
         ) : null}
 
         {toolCall.status === "running" ? (
           <div className="flex items-center gap-2 rounded-md bg-muted/50 p-3 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
-            Tool is running.
+            {text.running}
           </div>
         ) : null}
 
-        {toolCall.approvalId ? (
+        {toolCall.approvalId && toolCall.status === "pending" ? (
           <ApprovalButtons
-            disabled={toolCall.status !== "pending" || isApprovalSubmitting}
+            disabled={isApprovalSubmitting}
+            locale={locale}
             onApprove={() => onApprove?.(toolCall.approvalId!)}
             onDeny={() => onDeny?.(toolCall.approvalId!)}
           />

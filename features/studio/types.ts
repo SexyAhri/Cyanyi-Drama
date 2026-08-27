@@ -264,3 +264,75 @@ export type StudioStageState = {
   totalTasks: number;
   workflow?: WorkflowRunSummary;
 };
+
+export type StudioSelectionContext = {
+  id: string;
+  kind:
+    | "character"
+    | "clip"
+    | "location"
+    | "panel"
+    | "prop"
+    | "timeline_track"
+    | "voice_line";
+  label: string;
+  metadata?: Record<string, boolean | number | string | null>;
+};
+
+export type StudioAgentContext = {
+  episodeId?: string;
+  selection?: StudioSelectionContext;
+  stageId: StudioStageId;
+};
+
+export type StudioBalance = {
+  available: string;
+  balance: string;
+  frozenAmount: string;
+  totalSpent: string;
+};
+
+export type StudioUsageCost = {
+  id: string;
+  projectId: string;
+  apiType: string;
+  model: string;
+  action: string;
+  quantity: number;
+  unit: string;
+  cost: string;
+  sourceType: string | null;
+  sourceId: string | null;
+  createdAt: string;
+};
+
+export type StudioExecutionSpan = {
+  spanId: string;
+  parentSpanId?: string;
+  kind:
+    | "workflow_run"
+    | "workflow_step"
+    | "workflow_attempt"
+    | "prompt"
+    | "media_task";
+  name: string;
+  status: string;
+  startedAt: string;
+  completedAt?: string;
+  attributes: Record<string, unknown>;
+};
+
+export type StudioExecutionTrace = {
+  traceId: string;
+  rootSpanId?: string;
+  spans: StudioExecutionSpan[];
+  events: Array<{
+    source: "media_task" | "workflow";
+    id: string;
+    spanId: string;
+    type: string;
+    status?: string;
+    message?: string;
+    createdAt: string;
+  }>;
+};

@@ -35,6 +35,7 @@ import type {
   ProjectMediaAsset,
   StudioLocale,
   StudioModelOption,
+  StudioSelectionContext,
   StudioStoryboardData,
   StudioStoryboardPanel,
   WorkspaceSnapshot,
@@ -52,6 +53,7 @@ export function ShotsWorkspace({
   episode,
   imageModels,
   locale,
+  onContextChange,
   onRefresh,
   snapshot,
   videoModels,
@@ -59,6 +61,7 @@ export function ShotsWorkspace({
   episode: WorkspaceSnapshot["project"]["episodes"][number];
   imageModels: StudioModelOption[];
   locale: StudioLocale;
+  onContextChange: (selection?: StudioSelectionContext) => void;
   onRefresh: () => Promise<unknown> | void;
   snapshot: WorkspaceSnapshot;
   videoModels: StudioModelOption[];
@@ -124,6 +127,22 @@ export function ShotsWorkspace({
   );
   const selectedPanel =
     panels.find((panel) => panel.id === selectedPanelId) ?? panels[0];
+
+  useEffect(() => {
+    onContextChange(
+      selectedPanel
+        ? {
+            id: selectedPanel.id,
+            kind: "panel",
+            label: `${copy.panel} ${String(selectedPanel.panelIndex + 1).padStart(2, "0")}`,
+            metadata: {
+              mediaKind: kind,
+              shotType: selectedPanel.shotType ?? "",
+            },
+          }
+        : undefined,
+    );
+  }, [copy.panel, kind, onContextChange, selectedPanel]);
 
   useEffect(() => {
     if (!panels.length) {
