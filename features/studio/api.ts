@@ -668,6 +668,13 @@ export async function deleteStudioMediaTask(taskId: string) {
   );
 }
 
+export async function deleteStudioMediaAsset(assetId: string) {
+  return request<{ ok: true }>(
+    `/api/media/assets/${encodeURIComponent(assetId)}`,
+    { method: "DELETE" },
+  );
+}
+
 export async function loadStudioVoicePresets(
   projectId: string,
   signal?: AbortSignal,

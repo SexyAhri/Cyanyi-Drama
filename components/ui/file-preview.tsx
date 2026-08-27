@@ -9,7 +9,7 @@ import {
 import { motion } from "framer-motion";
 import { FileIcon, X } from "lucide-react";
 
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { MediaPreviewDialog } from "@/components/ui/media-preview-dialog";
 import { cn } from "@/lib/utils";
 
 type FilePreviewProps = {
@@ -142,18 +142,15 @@ function ImageFilePreview({
       </PreviewShell>
 
       {!onPreview && resolvedUrl ? (
-        <Dialog onOpenChange={setPreviewOpen} open={previewOpen}>
-          <DialogContent className="max-w-[calc(100vw-2rem)] border-none bg-black/82 p-0 shadow-none sm:max-w-[calc(100vw-6rem)]">
-            <div className="flex max-h-[88vh] min-h-[60vh] items-center justify-center p-4 sm:p-8">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                alt={`Preview ${resolvedName}`}
-                className="max-h-[78vh] max-w-full rounded-2xl bg-white object-contain shadow-2xl"
-                src={resolvedUrl}
-              />
-            </div>
-          </DialogContent>
-        </Dialog>
+        <MediaPreviewDialog
+          alt={`Preview ${resolvedName}`}
+          description={`Full-size preview of ${resolvedName}`}
+          kind="image"
+          onOpenChange={setPreviewOpen}
+          open={previewOpen}
+          title={`Preview ${resolvedName}`}
+          url={resolvedUrl}
+        />
       ) : null}
     </>
   );

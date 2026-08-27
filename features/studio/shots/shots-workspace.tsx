@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 
 import {
   controlStudioMediaTask,
+  deleteStudioMediaAsset,
   loadStudioProjectAssets,
   loadStudioDeliverables,
   loadStudioStoryboard,
@@ -87,6 +88,7 @@ export function ShotsWorkspace({
   const [isUploading, setIsUploading] = useState(false);
   const [isSelecting, setIsSelecting] = useState(false);
   const [busyTaskId, setBusyTaskId] = useState("");
+  const [deletingAssetId, setDeletingAssetId] = useState("");
   const [batchAction, setBatchAction] = useState<"cancel" | "retry" | "">("");
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const projectId = snapshot.project.id;
@@ -256,6 +258,24 @@ export function ShotsWorkspace({
       );
     } finally {
       setBusyTaskId("");
+    }
+  }
+
+  async function deleteCandidate(candidate: ShotMediaCandidate) {
+    if (!candidate.assetId) return false;
+    setDeletingAssetId(candidate.assetId);
+    try {
+      await deleteStudioMediaAsset(candidate.assetId);
+      toast.success(copy.mediaDeleted);
+      await refreshAll();
+      return true;
+    } catch (requestError) {
+      toast.error(
+        requestError instanceof Error ? requestError.message : copy.actionFailed,
+      );
+      return false;
+    } finally {
+      setDeletingAssetId("");
     }
   }
 
@@ -517,8 +537,10 @@ export function ShotsWorkspace({
                       <ShotCandidateGrid
                         busyTaskId={busyTaskId}
                         candidates={candidates}
+                        deletingAssetId={deletingAssetId}
                         isSelecting={isSelecting}
                         locale={locale}
+                        onDelete={deleteCandidate}
                         onSelect={(candidate) => void selectCandidate(candidate)}
                         onTaskAction={(task, action) =>
                           void controlTask(task, action)
