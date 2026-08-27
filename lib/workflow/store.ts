@@ -174,6 +174,17 @@ export async function getWorkflowRun(userId: string, runId: string) {
   return row ? toRun(row) : null;
 }
 
+export async function removeTerminalWorkflowRun(userId: string, runId: string) {
+  const result = await prisma.workflowRun.deleteMany({
+    where: {
+      id: runId,
+      userId,
+      status: { in: ["blocked", "canceled", "failed", "succeeded"] },
+    },
+  });
+  return result.count > 0;
+}
+
 export async function listWorkflowRuns(
   userId: string,
   projectId: string,

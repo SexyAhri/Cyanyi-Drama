@@ -7,6 +7,7 @@ export interface MediaTaskStore {
   create(task: MediaTask): Promise<MediaTask>;
   findByIdempotencyKey(key: string): Promise<MediaTask | null>;
   get(id: string): Promise<MediaTask | null>;
+  removeTerminal(id: string): Promise<boolean>;
   update(task: MediaTask): Promise<MediaTask>;
   requestCancel(id: string): Promise<MediaTask | null>;
   appendEvent(
@@ -50,6 +51,12 @@ export function createDatabaseMediaTaskStore(userId: string): MediaTaskStore {
     async get(id) {
       const task = await prisma.mediaTask.findFirst({ where: { id, userId } });
       return task ? fromRow(task) : null;
+    },
+    async removeTerminal(id) {
+      const result = await prisma.mediaTask.deleteMany({
+        where: { id, userId, status: { in: ["canceled", "failed"] } },
+      });
+      return result.count > 0;
     },
     async update(task) {
       await prisma.mediaTask.updateMany({

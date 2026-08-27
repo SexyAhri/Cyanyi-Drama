@@ -117,24 +117,32 @@ async function requestText(input: {
   temperature?: number;
   timeoutMs?: number;
 }) {
-  const response = await fetchWithProviderRetry(
-    `${input.baseUrl.replace(/\/+$/, "")}/chat/completions`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${input.apiKey}`,
-        "Content-Type": "application/json",
+  const timeoutMs = input.timeoutMs ?? 120_000;
+  let response: Response;
+  try {
+    response = await fetchWithProviderRetry(
+      `${input.baseUrl.replace(/\/+$/, "")}/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${input.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: input.model,
+          temperature: input.temperature ?? 0.2,
+          response_format: input.responseFormat,
+          messages: buildOpenAiMessages(input.messages, input.imageUrls),
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+        cache: "no-store",
       },
-      body: JSON.stringify({
-        model: input.model,
-        temperature: input.temperature ?? 0.2,
-        response_format: input.responseFormat,
-        messages: buildOpenAiMessages(input.messages, input.imageUrls),
-      }),
-      signal: AbortSignal.timeout(input.timeoutMs ?? 120_000),
-      cache: "no-store",
-    },
-  );
+    );
+  } catch (error) {
+    if (isTimeoutError(error))
+      throw new Error(`STRUCTURED_PROVIDER_TIMEOUT:${timeoutMs}`);
+    throw error;
+  }
   const payload = await readJson(response);
   if (!response.ok)
     throw new Error(
@@ -144,6 +152,14 @@ async function requestText(input: {
     text: extractText(payload),
     tokenUsage: normalizeTokenUsage(payload),
   };
+}
+
+function isTimeoutError(error: unknown) {
+  return (
+    error instanceof Error &&
+    (error.name === "TimeoutError" ||
+      /aborted due to timeout|timed out/i.test(error.message))
+  );
 }
 
 function buildOpenAiMessages(

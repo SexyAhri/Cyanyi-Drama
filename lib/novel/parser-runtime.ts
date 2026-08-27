@@ -26,6 +26,7 @@ import {
   listProductionProps,
   upsertProductionProps,
 } from "@/lib/production/domain-store";
+import { STORY_STRUCTURED_REQUEST_TIMEOUT_MS } from "./story-runtime-config";
 
 export type NovelParseInput = {
   projectId: string;
@@ -224,6 +225,7 @@ async function requestNovelParse(
   const analysis = await Promise.allSettled([
     requestOpenAiStructured({
       ...provider,
+      timeoutMs: STORY_STRUCTURED_REQUEST_TIMEOUT_MS,
       prompt: renderPrompt({
         id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
         locale,
@@ -240,6 +242,7 @@ async function requestNovelParse(
     }),
     requestOpenAiStructured({
       ...provider,
+      timeoutMs: STORY_STRUCTURED_REQUEST_TIMEOUT_MS,
       prompt: renderPrompt({
         id: PROMPT_IDS.STORY_LOCATION_PROP_ANALYSIS,
         locale,

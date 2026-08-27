@@ -13,6 +13,28 @@ export class MediaTaskActionError extends Error {
   }
 }
 
+export async function deleteMediaTask(input: {
+  projectId?: string;
+  taskId: string;
+  userId: string;
+}) {
+  const store = createDatabaseMediaTaskStore(input.userId);
+  const task = await store.get(input.taskId);
+  if (!task) throw new MediaTaskActionError("Media task not found.", 404);
+  if (input.projectId && task.projectId !== input.projectId)
+    throw new MediaTaskActionError("Media task not found.", 404);
+  if (!["canceled", "failed"].includes(task.status))
+    throw new MediaTaskActionError(
+      "Only failed or canceled media tasks can be deleted.",
+    );
+
+  const deleted = await store.removeTerminal(task.id);
+  if (!deleted)
+    throw new MediaTaskActionError(
+      "Task state changed. Refresh and try again.",
+    );
+}
+
 export async function controlMediaTask(input: {
   action: "cancel" | "retry";
   projectId?: string;

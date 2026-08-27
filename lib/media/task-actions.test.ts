@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   enqueueMediaJob: vi.fn(),
   get: vi.fn(),
   requestCancel: vi.fn(),
+  removeTerminal: vi.fn(),
   settleMediaTaskCharge: vi.fn(),
   update: vi.fn(),
 }));
@@ -24,11 +25,12 @@ vi.mock("./task-store", () => ({
     appendEvent: mocks.appendEvent,
     get: mocks.get,
     requestCancel: mocks.requestCancel,
+    removeTerminal: mocks.removeTerminal,
     update: mocks.update,
   }),
 }));
 
-import { controlMediaTask } from "./task-actions";
+import { controlMediaTask, deleteMediaTask } from "./task-actions";
 
 describe("media task actions", () => {
   beforeEach(() => {
@@ -103,6 +105,26 @@ describe("media task actions", () => {
     expect(mocks.enqueueMediaJob).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: "project-a", taskId: failed.id }),
     );
+  });
+
+  it("deletes failed or canceled media tasks", async () => {
+    const failed = task({ status: "failed" });
+    mocks.get.mockResolvedValue(failed);
+    mocks.removeTerminal.mockResolvedValue(true);
+
+    await expect(
+      deleteMediaTask({ taskId: failed.id, userId: "user-1" }),
+    ).resolves.toBeUndefined();
+    expect(mocks.removeTerminal).toHaveBeenCalledWith(failed.id);
+  });
+
+  it("keeps successful media tasks because they own output assets", async () => {
+    mocks.get.mockResolvedValue(task({ status: "succeeded" }));
+
+    await expect(
+      deleteMediaTask({ taskId: "task-1", userId: "user-1" }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(mocks.removeTerminal).not.toHaveBeenCalled();
   });
 });
 

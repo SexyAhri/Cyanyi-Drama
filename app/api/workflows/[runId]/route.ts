@@ -2,6 +2,7 @@ import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { getWorkflowRun } from "@/lib/workflow/store";
 import {
   controlWorkflowRun,
+  deleteWorkflowRun,
   WorkflowActionError,
   type WorkflowAction,
 } from "@/lib/workflow/actions";
@@ -41,6 +42,23 @@ export async function POST(request: Request, context: Context) {
     return attachSessionCookie(
       Response.json(
         { message: error instanceof Error ? error.message : "工作流操作失败" },
+        { status: error instanceof WorkflowActionError ? error.status : 500 },
+      ),
+      sessionId,
+    );
+  }
+}
+
+export async function DELETE(_request: Request, context: Context) {
+  const { user, sessionId } = await ensureAnonymousUser();
+  const { runId } = await context.params;
+  try {
+    await deleteWorkflowRun({ runId, userId: user.id });
+    return attachSessionCookie(Response.json({ ok: true }), sessionId);
+  } catch (error) {
+    return attachSessionCookie(
+      Response.json(
+        { message: error instanceof Error ? error.message : "工作流删除失败" },
         { status: error instanceof WorkflowActionError ? error.status : 500 },
       ),
       sessionId,

@@ -193,6 +193,13 @@ export async function controlStudioWorkflow(
   );
 }
 
+export async function deleteStudioWorkflow(runId: string) {
+  return request<{ ok: true }>(
+    `/api/workflows/${encodeURIComponent(runId)}`,
+    { method: "DELETE" },
+  );
+}
+
 export async function splitStudioNovel(
   projectId: string,
   input: {
@@ -567,6 +574,13 @@ export async function controlStudioMediaTask(
       headers: { "Content-Type": "application/json" },
       method: "POST",
     },
+  );
+}
+
+export async function deleteStudioMediaTask(taskId: string) {
+  return request<{ ok: true }>(
+    `/api/media/tasks/${encodeURIComponent(taskId)}`,
+    { method: "DELETE" },
   );
 }
 

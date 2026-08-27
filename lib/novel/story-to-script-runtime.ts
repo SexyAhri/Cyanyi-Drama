@@ -24,6 +24,7 @@ import {
 import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
 import { listNovelCharacters, listNovelLocations } from "./domain-store";
+import { STORY_STRUCTURED_REQUEST_TIMEOUT_MS } from "./story-runtime-config";
 
 export type StoryToScriptStepInput = {
   projectId: string;
@@ -98,6 +99,7 @@ export async function splitEpisodeIntoClips(
 
   const result = await requestOpenAiStructured({
     ...context.provider,
+    timeoutMs: STORY_STRUCTURED_REQUEST_TIMEOUT_MS,
     prompt: renderPrompt({
       id: PROMPT_IDS.STORY_CLIP_SEGMENTATION,
       locale: input.locale ?? "zh",
@@ -193,6 +195,7 @@ export async function convertEpisodeClipsToScreenplays(
         });
         const result = await requestOpenAiStructured({
           ...context.provider,
+          timeoutMs: STORY_STRUCTURED_REQUEST_TIMEOUT_MS,
           prompt: renderPrompt({
             id: PROMPT_IDS.STORY_SCREENPLAY_CONVERSION,
             locale: input.locale ?? "zh",

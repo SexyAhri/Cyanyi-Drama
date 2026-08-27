@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   enqueueWorkflowJob: vi.fn(),
   getWorkflowRun: vi.fn(),
+  removeTerminalWorkflowRun: vi.fn(),
   requestWorkflowCancel: vi.fn(),
   retryWorkflowRun: vi.fn(),
   updateWorkflowRunStatus: vi.fn(),
@@ -13,12 +14,13 @@ vi.mock("@/lib/queue/workflow-queue", () => ({
 }));
 vi.mock("./store", () => ({
   getWorkflowRun: mocks.getWorkflowRun,
+  removeTerminalWorkflowRun: mocks.removeTerminalWorkflowRun,
   requestWorkflowCancel: mocks.requestWorkflowCancel,
   retryWorkflowRun: mocks.retryWorkflowRun,
   updateWorkflowRunStatus: mocks.updateWorkflowRunStatus,
 }));
 
-import { controlWorkflowRun } from "./actions";
+import { controlWorkflowRun, deleteWorkflowRun } from "./actions";
 
 describe("workflow actions", () => {
   beforeEach(() => {
@@ -87,6 +89,33 @@ describe("workflow actions", () => {
       runId: current.id,
       userId: "user-1",
     });
+  });
+
+  it("deletes a terminal workflow owned by the user", async () => {
+    const failed = run({ status: "failed" });
+    mocks.getWorkflowRun.mockResolvedValue(failed);
+    mocks.removeTerminalWorkflowRun.mockResolvedValue(true);
+
+    await expect(
+      deleteWorkflowRun({
+        projectId: "project-a",
+        runId: failed.id,
+        userId: "user-1",
+      }),
+    ).resolves.toBeUndefined();
+    expect(mocks.removeTerminalWorkflowRun).toHaveBeenCalledWith(
+      "user-1",
+      failed.id,
+    );
+  });
+
+  it("refuses to delete an active workflow", async () => {
+    mocks.getWorkflowRun.mockResolvedValue(run({ status: "running" }));
+
+    await expect(
+      deleteWorkflowRun({ runId: "run-1", userId: "user-1" }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(mocks.removeTerminalWorkflowRun).not.toHaveBeenCalled();
   });
 });
 

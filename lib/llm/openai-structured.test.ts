@@ -294,6 +294,35 @@ describe("OpenAI structured requests", () => {
     ).toBe("Bearer good-key");
   });
 
+  it("reports provider timeouts with the configured duration", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockRejectedValue(
+          new DOMException(
+            "The operation was aborted due to timeout",
+            "TimeoutError",
+          ),
+        ),
+    );
+    const prompt = renderPrompt({
+      id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+      variables: { source_text: "source", character_library: "[]" },
+    });
+
+    await expect(
+      requestOpenAiStructured({
+        baseUrl: "https://provider.test/v1",
+        apiKeys: ["test-key"],
+        model: "test-model",
+        prompt,
+        schema,
+        timeoutMs: 600_000,
+      }),
+    ).rejects.toThrow("STRUCTURED_PROVIDER_TIMEOUT:600000");
+  });
+
   it("does not reset the semantic budget when correction changes API key", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()

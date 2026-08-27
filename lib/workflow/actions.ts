@@ -2,6 +2,7 @@ import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 
 import {
   getWorkflowRun,
+  removeTerminalWorkflowRun,
   requestWorkflowCancel,
   retryWorkflowRun,
   updateWorkflowRunStatus,
@@ -16,6 +17,22 @@ export class WorkflowActionError extends Error {
   ) {
     super(message);
   }
+}
+
+export async function deleteWorkflowRun(input: {
+  projectId?: string;
+  runId: string;
+  userId: string;
+}) {
+  const current = await getWorkflowRun(input.userId, input.runId);
+  if (!current) throw new WorkflowActionError("工作流不存在", 404);
+  if (input.projectId && current.projectId !== input.projectId)
+    throw new WorkflowActionError("工作流不存在", 404);
+  if (!["blocked", "canceled", "failed", "succeeded"].includes(current.status))
+    throw new WorkflowActionError("只能删除已结束的工作流");
+
+  const deleted = await removeTerminalWorkflowRun(input.userId, input.runId);
+  if (!deleted) throw new WorkflowActionError("工作流状态已变化，请刷新后重试");
 }
 
 export async function controlWorkflowRun(input: {

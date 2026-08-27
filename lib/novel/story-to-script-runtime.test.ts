@@ -156,6 +156,9 @@ describe("story-to-script runtime", () => {
     );
 
     expect(result.clipCount).toBe(2);
+    expect(requestOpenAiStructured).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 600_000 }),
+    );
     const persisted = saveProductionClips.mock.calls[0][3];
     expect(persisted.map((clip: { content: string }) => clip.content).join(""))
       .toBe(sourceText);
