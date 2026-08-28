@@ -1,5 +1,6 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { createOrReuseWorkflowRun } from "@/lib/workflow/store";
 
 type Context = { params: Promise<{ projectId: string; episodeId: string }> };
@@ -8,6 +9,7 @@ export async function POST(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { projectId, episodeId } = await context.params;
   const body = await readObject(request);
+  const runtimeSettings = await loadUserRuntimeSettings(user.id);
   const channelId =
     typeof body.channelId === "string" ? body.channelId.trim() : "";
   const model = typeof body.model === "string" ? body.model.trim() : "";
@@ -15,7 +17,7 @@ export async function POST(request: Request, context: Context) {
   const concurrency =
     typeof body.concurrency === "number" && Number.isFinite(body.concurrency)
       ? Math.max(1, Math.min(8, Math.floor(body.concurrency)))
-      : 3;
+      : runtimeSettings.workflowConcurrency;
   if (!channelId || !model)
     return attachSessionCookie(
       Response.json(
@@ -45,7 +47,7 @@ export async function POST(request: Request, context: Context) {
         ],
         input: { channelId, model, locale },
         retryable: true,
-        maxAttempts: 3,
+        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
       },
       {
         key: "split_clips",
@@ -54,7 +56,7 @@ export async function POST(request: Request, context: Context) {
         artifactTypes: ["clips.split", "prompt.trace"],
         input: { channelId, model, locale },
         retryable: true,
-        maxAttempts: 3,
+        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
       },
       {
         key: "convert_screenplay",
@@ -63,10 +65,10 @@ export async function POST(request: Request, context: Context) {
         artifactTypes: ["screenplay.clip", "prompt.trace"],
         input: { channelId, model, locale, concurrency },
         retryable: true,
-        maxAttempts: 3,
+        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
       },
     ],
-    maxAttempts: 3,
+    maxAttempts: runtimeSettings.workflowStepMaxAttempts,
   });
   if (!result)
     return attachSessionCookie(

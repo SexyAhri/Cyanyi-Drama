@@ -5,6 +5,8 @@ import { decryptSecret } from "@/lib/server/crypto";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import { prisma } from "@/lib/server/prisma";
+import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { upsertNovelCharacters, upsertNovelLocations } from "@/lib/novel/domain-store";
 import { upsertProductionProps } from "@/lib/production/domain-store";
 import { extractVideoFrameDataUrls } from "@/lib/providers/local/video-frames";
@@ -188,10 +190,12 @@ async function resolveVisionProvider(input: {
     throw new ProjectAssetError("分析模型未声明支持图片输入", 400);
   const apiKeys = parseApiKeys(channel.encryptedApiKeys);
   if (!apiKeys.length) throw new ProjectAssetError("分析渠道缺少 API Key", 400);
+  const runtimeSettings = await loadUserRuntimeSettings(input.userId);
   return {
     baseUrl: channel.baseUrl,
     apiKeys,
     model: input.model,
+    ...structuredRequestOptions(runtimeSettings),
     structuredOutputMode: supportsStoredStructuredOutputs(
       configuredModel.capabilitiesJson,
     )

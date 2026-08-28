@@ -1,4 +1,9 @@
 export { ChatShell } from "./chat-shell";
+export { AgentSettingsDialog } from "./agent-settings-dialog";
+export {
+  createDefaultShellSettings,
+  type ShellSettings,
+} from "./shell-settings";
 export {
   demoArchivedThreads,
   demoRecentThreads,

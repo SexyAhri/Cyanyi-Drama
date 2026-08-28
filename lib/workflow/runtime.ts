@@ -300,9 +300,15 @@ async function processClaimedWorkflowJob(
       }
       throw control;
     }
+    const failureMessage = error instanceof Error ? error.message : String(error);
+    const retryExhausted = attemptNumber >= step.maxAttempts;
     const failure = {
-      code: "WORKFLOW_STEP_FAILED",
-      message: error instanceof Error ? error.message : String(error),
+      code: classifyWorkflowFailureCode(failureMessage),
+      message: failureMessage,
+      attempt: attemptNumber,
+      maxAttempts: step.maxAttempts,
+      retryable: step.retryable && !retryExhausted,
+      retryExhausted,
     };
     const failedAt = new Date();
     const failed = await prisma.$transaction(async (tx) => {
@@ -354,6 +360,15 @@ async function processClaimedWorkflowJob(
     });
     return "done";
   }
+}
+
+export function classifyWorkflowFailureCode(message: string) {
+  if (/STRUCTURED_PROVIDER_TIMEOUT:/.test(message)) return "PROVIDER_TIMEOUT";
+  if (/STRUCTURED_PROVIDER_TRANSPORT(?:_FAILED)?:/.test(message))
+    return "PROVIDER_TRANSPORT_ERROR";
+  if (/STRUCTURED_PROVIDER_FAILED:/.test(message))
+    return "PROVIDER_RESPONSE_ERROR";
+  return "WORKFLOW_STEP_FAILED";
 }
 
 async function runStep(

@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/select";
 
 import type { ShellCopy } from "./chat-shell-i18n";
-import type { ShellSettings } from "./chat-shell-panels";
+import type { ShellSettings } from "./shell-settings";
 import type { ModelOption } from "./chat-shell-types";
 
 type PreferencesSettingsPanelProps = {

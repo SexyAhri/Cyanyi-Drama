@@ -100,7 +100,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_ACTING_DIRECTION]: {
     pathStem: "domain/story_acting_direction",
-    version: 4,
+    version: 5,
     variables: ["panels_json", "characters_json"],
     agent: defineAgent({
       id: "acting_director",
@@ -230,6 +230,88 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       prohibited: ["rewriting source text", "omitting text", "inventing markers"],
       contextPolicy: { scope: "project", trust: "untrusted" },
       qualityGates: ["schema_valid", "source_boundaries_locatable", "full_source_coverage"],
+    }),
+  },
+  [PROMPT_IDS.STORY_SCREENPLAY_REVISION]: {
+    pathStem: "domain/story_screenplay_revision",
+    version: 1,
+    variables: [
+      "clip_id",
+      "clip_text",
+      "current_screenplay_json",
+      "revision_request",
+      "failure_context_json",
+      "character_library",
+      "location_library",
+      "prop_library",
+      "world_bible_json",
+    ],
+    agent: defineAgent({
+      id: "screenplay_revision_editor",
+      responsibility:
+        "Revise one screenplay clip from an explicit user request or validator failure while preserving source facts.",
+      prohibited: [
+        "changing original text",
+        "inventing dialogue",
+        "introducing ungrounded plot",
+      ],
+      contextPolicy: { scope: "clip", trust: "untrusted" },
+      evidencePolicy: { required: true, mode: "input_references" },
+      successCriteria: [
+        "The requested production or performance change is applied where source evidence permits",
+        "Validator-reported fields are repaired without unrelated rewriting",
+        "Every dialogue line and story fact remains grounded in the clip source",
+      ],
+      qualityGates: [
+        "schema_valid",
+        "source_event_coverage",
+        "canonical_entity_references",
+        "dialogue_exact_source",
+      ],
+      stopRules: [
+        "Refuse requested changes that contradict source facts",
+        "Stop after producing one complete validated screenplay revision",
+      ],
+    }),
+  },
+  [PROMPT_IDS.STUDIO_WORKFLOW_AGENT]: {
+    pathStem: "domain/studio_workflow_agent",
+    version: 1,
+    variables: ["state_json", "operation_candidates_json", "user_request"],
+    agent: defineAgent({
+      id: "studio_workflow_coordinator",
+      responsibility:
+        "Explain current production state and select safe workflow operations from explicit candidates.",
+      prohibited: [
+        "inventing production state",
+        "selecting an unlisted target",
+        "executing without approval",
+      ],
+      tools: [
+        "pause_workflow",
+        "resume_workflow",
+        "revise_screenplay",
+        "retry_workflow",
+        "cancel_workflow",
+        "retry_media_task",
+        "cancel_media_task",
+      ],
+      contextPolicy: { scope: "episode", trust: "untrusted" },
+      evidencePolicy: { required: true, mode: "input_references" },
+      successCriteria: [
+        "The reply answers from the supplied project and execution state",
+        "Any proposed operation references one listed eligible target",
+        "Read-only questions never propose an unnecessary state change",
+      ],
+      qualityGates: [
+        "schema_valid",
+        "operation_target_eligible",
+        "state_claims_grounded",
+      ],
+      stopRules: [
+        "Return no operation when no eligible target exists",
+        "Stop after proposing at most one approval-gated operation",
+      ],
     }),
   },
 };

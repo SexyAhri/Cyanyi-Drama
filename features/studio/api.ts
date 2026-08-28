@@ -99,6 +99,20 @@ export async function updateStudioEpisode(
   );
 }
 
+export async function updateStudioProjectConfig(
+  projectId: string,
+  input: { analysisModel: string },
+) {
+  return request<{ config: { analysisModel: string | null } }>(
+    `/api/projects/${encodeURIComponent(projectId)}/config`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "PATCH",
+    },
+  );
+}
+
 export async function loadStudioModels(signal?: AbortSignal) {
   const result = await request<{
     channels: Array<{

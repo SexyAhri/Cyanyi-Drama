@@ -34,11 +34,17 @@ import {
 import { loadApprovedWorldBible } from "@/lib/production/world-bible";
 import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
+import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import {
   listNovelCharacters,
   listNovelLocations,
   saveStoryboard,
 } from "./domain-store";
+import {
+  normalizeStoryboardDialogueTiming,
+  STORYBOARD_DIALOGUE_TIMING_VERSION,
+} from "./storyboard-dialogue-timing";
 import { mapWithConcurrency } from "./story-to-script-runtime";
 
 type StoryboardPlanning = z.infer<typeof storyboardPlanningSchema>;
@@ -122,7 +128,7 @@ export async function buildEpisodeStoryboard(
   const context = await loadStoryboardContext(userId, input);
   const results = await mapWithConcurrency(
     context.clips,
-    normalizeConcurrency(input.concurrency),
+    normalizeConcurrency(input.concurrency ?? context.workflowConcurrency),
     async (clip): Promise<StoryboardClipResult> => {
       let clipContext: ClipContext | undefined;
       try {
@@ -303,7 +309,10 @@ export async function buildEpisodeStoryboard(
       characters: panel.characters,
       props: panel.props,
       imagePrompt: panel.imagePrompt,
-      videoPrompt: formatMotionTimelinePrompt(panel),
+      videoPrompt: formatMotionTimelinePrompt(
+        panel,
+        actingByPanel.get(panel.panelIndex)?.characters ?? [],
+      ),
       durationSeconds: panel.durationSeconds,
       sceneNumber: panel.sceneNumber ?? null,
       speakingCharacter: panel.speakingCharacter ?? null,
@@ -382,6 +391,12 @@ async function runPlanningPhase(
   context: ClipContext,
   hooks: ScriptToStoryboardRuntimeHooks,
 ) {
+  const validationContext = {
+    sourceText: context.sourceText,
+    canonical: context.canonical,
+    screenplay: context.screenplay,
+    productionContextText: storyboardProductionContextText(context),
+  };
   const prompt = renderPrompt({
     id: PROMPT_IDS.STORY_STORYBOARD_PLANNING,
     locale: input.locale ?? "zh",
@@ -393,7 +408,6 @@ async function runPlanningPhase(
       world_bible_json: context.worldBibleText,
     },
   });
-  const productionContextText = storyboardProductionContextText(context);
   return resolvePhase({
     artifactType: "storyboard.clip.phase1",
     traceRefId: `${context.clip.id}:phase1`,
@@ -405,15 +419,11 @@ async function runPlanningPhase(
       locations: context.locations,
       props: context.props,
       worldBible: context.worldBibleText,
+      dialogueTimingVersion: STORYBOARD_DIALOGUE_TIMING_VERSION,
     }),
     schema: storyboardPlanningSchema,
-    validate: (data) =>
-      validateStoryboardPlanning(data, {
-        sourceText: context.sourceText,
-        canonical: context.canonical,
-        screenplay: context.screenplay,
-        productionContextText,
-      }),
+    normalize: normalizeStoryboardDialogueTiming,
+    validate: (data) => validateStoryboardPlanning(data, validationContext),
     hooks,
     request: () =>
       requestOpenAiStructured({
@@ -421,12 +431,9 @@ async function runPlanningPhase(
         prompt,
         schema: storyboardPlanningSchema,
         validate: (data) =>
-          validateStoryboardPlanning(data, {
-            sourceText: context.sourceText,
-            canonical: context.canonical,
-            screenplay: context.screenplay,
-            productionContextText,
-          }),
+          validateStoryboardPlanning(data, validationContext).filter(
+            (issue) => issue.code !== "DIALOGUE_DURATION_OVERFLOW",
+          ),
       }),
   });
 }
@@ -596,6 +603,7 @@ async function resolvePhase<T>(input: {
   refId: string;
   inputHash: string;
   schema: z.ZodType<T>;
+  normalize?: (data: T) => T;
   validate: (data: T) => readonly unknown[];
   hooks: ScriptToStoryboardRuntimeHooks;
   request: () => Promise<{ data: T; trace: PromptExecutionTrace }>;
@@ -608,6 +616,7 @@ async function resolvePhase<T>(input: {
     stored,
     input.inputHash,
     input.schema,
+    input.normalize,
     input.validate,
   );
   if (reused) return { data: reused, reused: true };
@@ -616,7 +625,10 @@ async function resolvePhase<T>(input: {
     await input.hooks.assertActive();
     const result = await input.request();
     await input.hooks.assertActive();
-    const data = input.schema.parse(result.data);
+    const parsed = input.schema.parse(result.data);
+    const data = input.schema.parse(input.normalize?.(parsed) ?? parsed);
+    if (input.validate(data).length)
+      throw new Error("STRUCTURED_OUTPUT_NORMALIZATION_FAILED");
     await input.hooks.persistArtifact(input.artifactType, input.refId, {
       success: true,
       inputHash: input.inputHash,
@@ -643,6 +655,7 @@ function parsePhaseArtifact<T>(
   value: unknown,
   inputHash: string,
   schema: z.ZodType<T>,
+  normalize: ((data: T) => T) | undefined,
   validate: (data: T) => readonly unknown[],
 ) {
   if (
@@ -652,8 +665,10 @@ function parsePhaseArtifact<T>(
   )
     return null;
   const parsed = schema.safeParse(value.data);
-  if (!parsed.success || validate(parsed.data).length) return null;
-  return parsed.data;
+  if (!parsed.success) return null;
+  const normalized = schema.safeParse(normalize?.(parsed.data) ?? parsed.data);
+  if (!normalized.success || validate(normalized.data).length) return null;
+  return normalized.data;
 }
 
 type LoadedContext = Awaited<ReturnType<typeof loadStoryboardContext>>;
@@ -800,9 +815,9 @@ export function buildDeterministicStoryboardPhases(
         props: previous.endState.props,
       };
   });
-  const planning: StoryboardPlanning = { panels };
+  const planning = normalizeStoryboardDialogueTiming({ panels });
   const cinematography: Cinematography = {
-    rules: panels.map((panel) => ({
+    rules: planning.panels.map((panel) => ({
       panelIndex: panel.panelIndex,
       camera: panel.shotType ?? "中景",
       cameraPosition: "平视，主体正前方",
@@ -814,7 +829,7 @@ export function buildDeterministicStoryboardPhases(
     })),
   };
   const acting: ActingDirection = {
-    directions: panels.map((panel) => ({
+    directions: planning.panels.map((panel) => ({
       panelIndex: panel.panelIndex,
       characters: panel.characters.map((name) => ({
         name,
@@ -825,7 +840,7 @@ export function buildDeterministicStoryboardPhases(
     })),
   };
   const refinement: StoryboardRefinement = {
-    panels: panels.map((panel) => ({ ...panel })),
+    panels: planning.panels.map((panel) => ({ ...panel })),
   };
   const continuity: ContinuityReview = { passed: true, issues: [] };
   return { planning, cinematography, acting, refinement, continuity };
@@ -833,6 +848,7 @@ export function buildDeterministicStoryboardPhases(
 
 function formatMotionTimelinePrompt(
   panel: StoryboardRefinement["panels"][number],
+  actingDirections: ActingDirection["directions"][number]["characters"],
 ) {
   const beats = panel.motionTimeline.map(
     (beat) =>
@@ -860,12 +876,23 @@ function formatMotionTimelinePrompt(
     (cue) =>
       `${cue.startSecond}-${cue.endSecond}s | ${cue.type} | ${cue.description}`,
   );
+  const performance = actingDirections.map(
+    (direction) =>
+      `${direction.name} | 心理与情绪：${direction.emotion} | 动作与反应：${direction.action} | 表情变化：${direction.expression}`,
+  );
   return [
     `总时长：${panel.durationSeconds}s`,
     `整体运镜：${panel.cameraMove}`,
     `连续动作：${panel.videoPrompt}`,
     "关键动作节拍：",
     ...beats,
+    ...(performance.length
+      ? [
+          "角色表演与心理外化：",
+          ...performance,
+          "表演要求：除非指导明确要求面无表情，否则角色必须通过视线焦点与转移、眨眼节奏、呼吸深浅、眉眼嘴角、下颌张力、手部微动作和重心变化持续外化心理活动；动作前有意图，动作中有情绪阻力，动作后有余韵或对他人的无声反应。不得新增剧情事实或夸张表演。",
+        ]
+      : []),
     ...(world.length ? ["世界观与战力约束：", ...world] : []),
     ...(vfx.length ? ["VFX 时间点：", ...vfx] : []),
     ...(sfx.length ? ["环境声与动作音效时间点：", ...sfx] : []),
@@ -941,7 +968,8 @@ function storyboardFallbackInputHash(
   context: Pick<ClipContext, "sourceText" | "canonical">,
 ) {
   return hashJson({
-      fallbackVersion: 4,
+    fallbackVersion: 5,
+    dialogueTimingVersion: STORYBOARD_DIALOGUE_TIMING_VERSION,
     sourceText: context.sourceText,
     canonical: context.canonical,
   });
@@ -1037,6 +1065,7 @@ async function loadStoryboardContext(
     props,
     clips,
     worldBible,
+    runtimeSettings,
   ] = await Promise.all([
     prisma.episode.findFirst({
       where: {
@@ -1061,6 +1090,7 @@ async function loadStoryboardContext(
     listProductionProps(userId, input.projectId),
     listProductionClips(userId, input.projectId, input.episodeId),
     loadApprovedWorldBible(userId, input.projectId),
+    loadUserRuntimeSettings(userId),
   ]);
   if (!episode) throw new Error("STORYBOARD_EPISODE_NOT_FOUND");
   if (!channel) throw new Error("STORYBOARD_CHANNEL_NOT_FOUND");
@@ -1093,6 +1123,7 @@ async function loadStoryboardContext(
     })),
     worldBible,
     worldBibleText: JSON.stringify(worldBible?.payload ?? {}),
+    workflowConcurrency: runtimeSettings.workflowConcurrency,
     clips,
     canonical: {
       characters: characters.map((character) => character.name),
@@ -1104,6 +1135,7 @@ async function loadStoryboardContext(
       apiKeys,
       model: input.model,
       temperature: 0.2,
+      ...structuredRequestOptions(runtimeSettings),
       structuredOutputMode: supportsStoredStructuredOutputs(
         configuredModel.capabilitiesJson,
       )

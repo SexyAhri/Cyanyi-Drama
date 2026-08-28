@@ -124,6 +124,171 @@ describe("OpenAI structured requests", () => {
     expect(result.trace.outputHash).toHaveLength(64);
   });
 
+  it("supports non-streaming structured responses", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse('{"value":8}'));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await requestOpenAiStructured({
+      baseUrl: "https://provider.test/v1",
+      apiKeys: ["test-key"],
+      model: "test-model",
+      prompt: renderPrompt({
+        id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+        variables: { source_text: "source", character_library: "[]" },
+      }),
+      schema,
+      stream: false,
+    });
+
+    const requestBody = JSON.parse(
+      String(fetchMock.mock.calls[0][1]?.body),
+    ) as Record<string, unknown>;
+    expect(requestBody.stream).toBe(false);
+    expect(requestBody).not.toHaveProperty("stream_options");
+    expect(result.data).toEqual({ value: 8 });
+  });
+
+  it("reconnects when a provider terminates the response body", async () => {
+    const terminated = {
+      status: 200,
+      ok: true,
+      headers: new Headers({ "content-type": "application/json" }),
+      text: vi.fn().mockRejectedValue(new TypeError("terminated")),
+    } as unknown as Response;
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(terminated)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: '{"value":9}' } }],
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await requestOpenAiStructured({
+      baseUrl: "https://provider.test/v1",
+      apiKeys: ["test-key"],
+      model: "test-model",
+      prompt: renderPrompt({
+        id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+        variables: { source_text: "source", character_library: "[]" },
+      }),
+      schema,
+    });
+
+    expect(result.data).toEqual({ value: 9 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports where transport retries were exhausted and includes the timeout limit", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
+      status: 200,
+      ok: true,
+      headers: new Headers({ "content-type": "application/json" }),
+      text: vi.fn().mockRejectedValue(
+        Object.assign(new TypeError("terminated"), {
+          cause: Object.assign(new Error("socket closed"), {
+            code: "UND_ERR_SOCKET",
+          }),
+        }),
+      ),
+    } as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = requestOpenAiStructured({
+      baseUrl: "https://provider.test/v1",
+      apiKeys: ["test-key"],
+      model: "test-model",
+      prompt: renderPrompt({
+        id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+        variables: { source_text: "source", character_library: "[]" },
+      }),
+      schema,
+      timeoutMs: 600_000,
+    });
+
+    await expect(result).rejects.toThrow(
+      /STRUCTURED_PROVIDER_TRANSPORT_FAILED:stage=response_body;attempts=3;timeoutMs=600000;.*reason=terminated;causeCode=UND_ERR_SOCKET/,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("uses the configured transport retry limit", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
+      status: 200,
+      ok: true,
+      headers: new Headers({ "content-type": "application/json" }),
+      text: vi.fn().mockRejectedValue(new TypeError("terminated")),
+    } as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      requestOpenAiStructured({
+        baseUrl: "https://provider.test/v1",
+        apiKeys: ["test-key"],
+        model: "test-model",
+        prompt: renderPrompt({
+          id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+          variables: { source_text: "source", character_library: "[]" },
+        }),
+        schema,
+        maxTransportAttempts: 5,
+      }),
+    ).rejects.toThrow(/attempts=5/);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it("keeps a complete structured event-stream result when the socket closes", async () => {
+    const encoder = new TextEncoder();
+    let readCount = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (readCount === 0) {
+          readCount += 1;
+          controller.enqueue(
+            encoder.encode(
+              [
+                'data: {"choices":[{"delta":{"content":"{\\"value\\":11}"}}]}',
+                "",
+              ].join("\n"),
+            ),
+          );
+          return;
+        }
+        controller.error(
+          Object.assign(new TypeError("terminated"), { code: "ECONNRESET" }),
+        );
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(stream, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+      ),
+    );
+
+    const result = await requestOpenAiStructured({
+      baseUrl: "https://provider.test/v1",
+      apiKeys: ["test-key"],
+      model: "test-model",
+      prompt: renderPrompt({
+        id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+        variables: { source_text: "source", character_library: "[]" },
+      }),
+      schema,
+    });
+
+    expect(result.data).toEqual({ value: 11 });
+  });
+
   it("assembles structured JSON and usage from an event stream", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
@@ -359,16 +524,23 @@ describe("OpenAI structured requests", () => {
         schema,
         timeoutMs: 600_000,
       }),
-    ).rejects.toThrow("STRUCTURED_PROVIDER_TIMEOUT:600000");
+    ).rejects.toThrow(
+      "STRUCTURED_PROVIDER_TIMEOUT:stage=request;timeoutMs=600000",
+    );
   });
 
   it("reports a stream read timeout with the configured duration", async () => {
-    const response = new Response('data: {"choices":[]}\n\n');
-    vi.spyOn(response, "text").mockRejectedValue(
-      new DOMException(
-        "The operation was aborted due to timeout",
-        "TimeoutError",
-      ),
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(
+            new DOMException(
+              "The operation was aborted due to timeout",
+              "TimeoutError",
+            ),
+          );
+        },
+      }),
     );
     vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(response));
     const prompt = renderPrompt({
@@ -385,7 +557,9 @@ describe("OpenAI structured requests", () => {
         schema,
         timeoutMs: 600_000,
       }),
-    ).rejects.toThrow("STRUCTURED_PROVIDER_TIMEOUT:600000");
+    ).rejects.toThrow(
+      "STRUCTURED_PROVIDER_TIMEOUT:stage=response_body;timeoutMs=600000",
+    );
   });
 
   it("stores a concise message for an HTML gateway timeout", async () => {

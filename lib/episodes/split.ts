@@ -6,6 +6,8 @@ import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import { episodeSplitSchema } from "@/lib/prompts/schemas";
 import { prisma } from "@/lib/server/prisma";
+import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 
 export type EpisodeSplitDraft = {
   number: number;
@@ -167,7 +169,6 @@ export async function splitEpisodesWithAi(input: {
     schema: episodeSplitSchema,
     validate: (data) => validateAiBoundaries(data.episodes, input.content),
     temperature: 0.2,
-    timeoutMs: 180_000,
   });
   return {
     episodes: resolveAiEpisodeBoundaries(result.data.episodes, input.content),
@@ -363,10 +364,12 @@ async function resolveProvider(input: {
   if (!configuredModel) throw new EpisodeSplitError("分析模型未配置");
   const apiKeys = parseApiKeys(channel.encryptedApiKeys);
   if (!apiKeys.length) throw new EpisodeSplitError("分析渠道缺少 API Key");
+  const runtimeSettings = await loadUserRuntimeSettings(input.userId);
   return {
     baseUrl: channel.baseUrl,
     apiKeys,
     model: input.model,
+    ...structuredRequestOptions(runtimeSettings),
     structuredOutputMode: supportsStoredStructuredOutputs(
       configuredModel.capabilitiesJson,
     )

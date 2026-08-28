@@ -6,7 +6,6 @@ import {
   Bot,
   Compass,
   Search,
-  Settings,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -19,9 +18,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
+import { AgentSettingsDialog } from "./agent-settings-dialog";
 import type { ShellCopy } from "./chat-shell-i18n";
 import type {
   ModelOption,
@@ -30,25 +29,9 @@ import type {
   ShellNavItem,
   ShellThread,
 } from "./chat-shell-types";
-import { ChannelSettingsPanel } from "./channel-settings-panel";
-import { PreferencesSettingsPanel } from "./preferences-settings-panel";
+import type { ShellSettings } from "./shell-settings";
 
 export type ShellPanel = "archive" | "explore" | "help" | "search" | "settings";
-
-export type ShellSettings = {
-  compactSidebar: boolean;
-  analysisModel: string;
-  characterModel: string;
-  locationModel: string;
-  storyboardModel: string;
-  editModel: string;
-  videoModel: string;
-  audioModel: string;
-  lipSyncModel: string;
-  videoRatio: string;
-  artStyle: string;
-  ttsRate: string;
-};
 
 type ChatShellPanelsProps = {
   archivedThreads: ShellThread[];
@@ -174,73 +157,19 @@ export function ChatShellPanels({
         </div>
       </ShellDialog>
 
-      <ShellDialog
-        className="max-h-[92vh] overflow-y-auto sm:max-w-5xl"
-        description={copy.settingsDescription}
-        icon={<Settings />}
+      <AgentSettingsDialog
+        copy={copy}
+        models={models}
+        onModelsChange={onModelsChange}
         onOpenChange={(open) => onOpenChange(open ? "settings" : null)}
+        onRuntimeConnectionChange={onRuntimeConnectionChange}
+        onRuntimeConnectionClear={onRuntimeConnectionClear}
+        onSettingsChange={onSettingsChange}
+        onTestRuntimeConnection={onTestRuntimeConnection}
         open={openPanel === "settings"}
-        title={copy.settings}
-      >
-        <Tabs className="w-full" defaultValue="channels">
-          <TabsList
-            className="w-full justify-start gap-5 border-b px-0 pb-0"
-            variant="line"
-          >
-            <TabsTrigger className="flex-none px-0 pb-3" value="channels">
-              {copy.settingsChannels}
-            </TabsTrigger>
-            <TabsTrigger className="flex-none px-0 pb-3" value="preferences">
-              {copy.settingsPreferences}
-            </TabsTrigger>
-            <TabsTrigger
-              className="flex-none px-0 pb-3"
-              value="prompt-sources"
-            >
-              {copy.settingsPromptSources}
-            </TabsTrigger>
-            <TabsTrigger className="flex-none px-0 pb-3" value="webdav">
-              {copy.settingsWebdav}
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent className="mt-4 grid gap-3" value="channels">
-            <ChannelSettingsPanel
-              copy={copy}
-              models={models}
-              onFinish={() => onOpenChange(null)}
-              onRefreshModels={onTestRuntimeConnection}
-              onRuntimeConnectionChange={onRuntimeConnectionChange}
-              onModelsChange={onModelsChange}
-              onRuntimeConnectionClear={onRuntimeConnectionClear}
-              runtimeConnection={runtimeConnection}
-            />
-          </TabsContent>
-
-          <TabsContent className="mt-4 grid gap-3" value="preferences">
-            <PreferencesSettingsPanel
-              copy={copy}
-              models={models}
-              onChange={onSettingsChange}
-              settings={settings}
-            />
-          </TabsContent>
-
-          <TabsContent className="mt-4" value="prompt-sources">
-            <SettingsPlaceholder
-              description={copy.settingsPromptSourcesDescription}
-              message={copy.settingsComingSoon}
-            />
-          </TabsContent>
-
-          <TabsContent className="mt-4" value="webdav">
-            <SettingsPlaceholder
-              description={copy.settingsWebdavDescription}
-              message={copy.settingsComingSoon}
-            />
-          </TabsContent>
-        </Tabs>
-      </ShellDialog>
+        runtimeConnection={runtimeConnection}
+        settings={settings}
+      />
     </>
   );
 }
@@ -343,22 +272,6 @@ function HelpRow({ label, value }: { label: string; value: string }) {
       <Badge className="max-w-56 justify-start truncate" variant="outline">
         {value}
       </Badge>
-    </div>
-  );
-}
-
-
-function SettingsPlaceholder({
-  description,
-  message,
-}: {
-  description: string;
-  message: string;
-}) {
-  return (
-    <div className="grid min-h-48 place-content-center gap-2 rounded-lg border border-dashed p-6 text-center">
-      <p className="font-medium">{message}</p>
-      <p className="text-sm text-muted-foreground">{description}</p>
     </div>
   );
 }

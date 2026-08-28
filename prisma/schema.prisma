@@ -32,8 +32,25 @@ model User {
   productionDeliverables         ProductionDeliverable[]  @relation("ProductionDeliverableOwner")
   approvedProductionDeliverables ProductionDeliverable[]  @relation("ProductionDeliverableApprover")
   productionApprovalDecisions    ProductionApprovalGate[] @relation("ProductionApprovalDecider")
+  runtimeSettings                UserRuntimeSettings?
 
   @@map("users")
+}
+
+model UserRuntimeSettings {
+  id                              String   @id
+  userId                          String   @unique @map("user_id")
+  structuredRequestTimeoutSeconds Int      @default(600) @map("structured_request_timeout_seconds")
+  structuredOutputStreaming       Boolean  @default(true) @map("structured_output_streaming")
+  structuredTransportMaxAttempts  Int      @default(3) @map("structured_transport_max_attempts")
+  workflowStepMaxAttempts         Int      @default(3) @map("workflow_step_max_attempts")
+  workflowConcurrency             Int      @default(2) @map("workflow_concurrency")
+  screenplayClipMaxChars          Int      @default(1600) @map("screenplay_clip_max_chars")
+  createdAt                       DateTime @default(now()) @map("created_at")
+  updatedAt                       DateTime @updatedAt @map("updated_at")
+  user                            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_runtime_settings")
 }
 
 model Session {

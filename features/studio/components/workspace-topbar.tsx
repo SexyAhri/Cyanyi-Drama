@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   ArrowLeft,
   BellDot,
@@ -10,11 +11,19 @@ import {
   ListTree,
   LoaderCircle,
   RefreshCw,
+  Settings,
 } from "lucide-react";
 import Link from "next/link";
 
+import {
+  AgentSettingsDialog,
+  createDefaultShellSettings,
+  getShellCopy,
+  type ShellSettings,
+} from "@/components/agent/shell";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { useRuntimeConnection } from "@/hooks/use-runtime-connection";
 import {
   Tooltip,
   TooltipContent,
@@ -46,9 +55,16 @@ export function WorkspaceTopbar({
   projectName: string;
 }) {
   const copy = getStudioCopy(locale);
+  const shellCopy = getShellCopy(locale);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const runtime = useRuntimeConnection([]);
+  const [settings, setSettings] = useState<ShellSettings>(() =>
+    createDefaultShellSettings(""),
+  );
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-2 sm:px-3">
+    <>
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-2 sm:px-3">
       <Tooltip>
         <TooltipTrigger
           render={
@@ -94,6 +110,22 @@ export function WorkspaceTopbar({
       </div>
 
       <div className="flex shrink-0 items-center gap-0.5">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label={copy.settings}
+                onClick={() => setSettingsOpen(true)}
+                size="icon"
+                type="button"
+                variant="ghost"
+              />
+            }
+          >
+            <Settings className="size-4" />
+          </TooltipTrigger>
+          <TooltipContent>{copy.settings}</TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger
             render={
@@ -173,6 +205,21 @@ export function WorkspaceTopbar({
           <TooltipContent>{copy.language}</TooltipContent>
         </Tooltip>
       </div>
-    </header>
+      </header>
+
+      <AgentSettingsDialog
+        copy={shellCopy}
+        models={runtime.models}
+        onModelsChange={runtime.addChannelModels}
+        onOpenChange={setSettingsOpen}
+        onRuntimeConnectionChange={runtime.setConnection}
+        onRuntimeConnectionClear={runtime.clearConnection}
+        onSettingsChange={setSettings}
+        onTestRuntimeConnection={runtime.fetchModels}
+        open={settingsOpen}
+        runtimeConnection={runtime.connection}
+        settings={settings}
+      />
+    </>
   );
 }

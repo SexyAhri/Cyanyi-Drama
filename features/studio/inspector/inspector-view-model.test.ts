@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
 
-import type { StudioExecutionSpan, StudioUsageCost, WorkspaceSnapshot } from "../types";
+import type {
+  StudioExecutionSpan,
+  StudioUsageCost,
+  WorkflowStepSummary,
+  WorkspaceSnapshot,
+} from "../types";
 import {
   buildOperationItems,
   buildTraceRows,
+  isOperationDeletable,
   isOperationRetryable,
+  operationErrorMessage,
   type OperationItem,
   summarizeUsageCosts,
+  workflowAttemptLabel,
 } from "./inspector-view-model";
 
 describe("studio inspector view model", () => {
@@ -135,6 +143,54 @@ describe("studio inspector view model", () => {
       },
     } as OperationItem;
     expect(isOperationRetryable(step)).toBe(true);
+  });
+
+  it("exposes one delete action for every terminal workflow", () => {
+    const workflow = {
+      id: "run-1",
+      status: "failed",
+      steps: [
+        { id: "step-1", status: "succeeded" },
+        { id: "step-2", status: "failed" },
+        { id: "step-3", status: "pending" },
+      ],
+    };
+    expect(
+      isOperationDeletable({
+        id: "step-1",
+        kind: "workflow-step",
+        updatedAt: "",
+        workflow,
+        step: workflow.steps[0],
+      } as OperationItem),
+    ).toBe(false);
+    expect(
+      isOperationDeletable({
+        id: "step-2",
+        kind: "workflow-step",
+        updatedAt: "",
+        workflow,
+        step: workflow.steps[1],
+      } as OperationItem),
+    ).toBe(true);
+  });
+
+  it("labels exhausted attempts and explains response-stream termination", () => {
+    const step = {
+      status: "failed",
+      attempt: 3,
+      maxAttempts: 3,
+    } as WorkflowStepSummary;
+    expect(workflowAttemptLabel(step, "zh-CN")).toBe("已用尽 3/3 次尝试");
+    expect(
+      operationErrorMessage(
+        {
+          message:
+            "SCREENPLAY_CONVERT_PARTIAL_FAILED:STRUCTURED_PROVIDER_TRANSPORT_FAILED:stage=response_body;attempts=3;timeoutMs=600000;elapsedMs=41872;reason=terminated;causeCode=UND_ERR_SOCKET",
+        },
+        "zh-CN",
+      ),
+    ).toContain("不是应用超时");
   });
 
   it("builds trace rows from parent span relationships", () => {

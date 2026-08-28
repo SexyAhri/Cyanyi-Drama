@@ -402,11 +402,30 @@ export const episodeSplitSchema = z
   })
   .strict();
 
+export const studioWorkflowAgentSchema = z
+  .object({
+    reply: z.string().trim().min(1).max(4_000),
+    operation: z
+      .enum([
+        "cancel_media_task",
+        "cancel_workflow",
+        "pause_workflow",
+        "resume_workflow",
+        "revise_screenplay",
+        "retry_media_task",
+        "retry_workflow",
+      ])
+      .nullable(),
+    targetId: z.string().trim().min(1).nullable(),
+  })
+  .strict();
+
 export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
   [PROMPT_IDS.STORY_CHARACTER_ANALYSIS]: characterAnalysisSchema,
   [PROMPT_IDS.STORY_LOCATION_PROP_ANALYSIS]: locationPropAnalysisSchema,
   [PROMPT_IDS.STORY_CLIP_SEGMENTATION]: clipSegmentationSchema,
   [PROMPT_IDS.STORY_SCREENPLAY_CONVERSION]: screenplayConversionSchema,
+  [PROMPT_IDS.STORY_SCREENPLAY_REVISION]: screenplayConversionSchema,
   [PROMPT_IDS.STORY_STORYBOARD_PLANNING]: storyboardPlanningSchema,
   [PROMPT_IDS.STORY_CINEMATOGRAPHY]: cinematographySchema,
   [PROMPT_IDS.STORY_ACTING_DIRECTION]: actingDirectionSchema,
@@ -416,4 +435,5 @@ export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
   [PROMPT_IDS.ASSET_VISUAL_EXTRACTION]: visualAssetExtractionSchema,
   [PROMPT_IDS.CHARACTER_REFERENCE_DESCRIPTION]: characterReferenceDescriptionSchema,
   [PROMPT_IDS.EPISODE_SPLIT]: episodeSplitSchema,
+  [PROMPT_IDS.STUDIO_WORKFLOW_AGENT]: studioWorkflowAgentSchema,
 };

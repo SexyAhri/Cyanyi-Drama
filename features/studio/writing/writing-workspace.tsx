@@ -46,16 +46,20 @@ import { getProductionCopy } from "../production/copy";
 import { DepartmentDeliverablesWorkspace } from "../production/department-deliverables";
 
 export function WritingWorkspace({
+  analysisModelId,
   episode,
   locale,
   models,
+  onAnalysisModelChange,
   onContextChange,
   onRefresh,
   snapshot,
 }: {
+  analysisModelId: string;
   episode: WorkspaceSnapshot["project"]["episodes"][number];
   locale: StudioLocale;
   models: StudioModelOption[];
+  onAnalysisModelChange: (modelId: string) => void;
   onContextChange: (selection?: StudioSelectionContext) => void;
   onRefresh: () => Promise<unknown> | void;
   snapshot: WorkspaceSnapshot;
@@ -76,7 +80,6 @@ export function WritingWorkspace({
   const [isLoadingClips, setIsLoadingClips] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isActing, setIsActing] = useState(false);
-  const [modelId, setModelId] = useState("");
   const workflows = snapshot.workflows.filter(
     (workflow) => workflow.episodeId === episode.id,
   );
@@ -95,14 +98,6 @@ export function WritingWorkspace({
     setSavedText(nextText);
     serverTextRef.current = { episodeId: episode.id, text: nextText };
   }, [episode.id, episode.novelText]);
-
-  useEffect(() => {
-    if (models.some((model) => model.id === modelId)) return;
-    const configured = models.find(
-      (model) => model.modelId === snapshot.project.config.analysisModel,
-    );
-    setModelId(configured?.id ?? models[0]?.id ?? "");
-  }, [modelId, models, snapshot.project.config.analysisModel]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -178,7 +173,7 @@ export function WritingWorkspace({
   }
 
   async function startWorkflow() {
-    const model = models.find((item) => item.id === modelId);
+    const model = models.find((item) => item.id === analysisModelId);
     if (!model || !savedText.trim() || isDirty) return;
     setIsActing(true);
     try {
@@ -364,9 +359,9 @@ export function WritingWorkspace({
                   className="h-8"
                   disabled={isActing || workflowActive}
                   models={models}
-                  onChange={setModelId}
+                  onChange={onAnalysisModelChange}
                   placeholder={copy.analysisModel}
-                  value={modelId}
+                  value={analysisModelId}
                 />
                 {!models.length ? (
                   <p className="text-xs leading-5 text-destructive">
@@ -377,7 +372,10 @@ export function WritingWorkspace({
                   <Button
                     className="w-full"
                     disabled={
-                      isActing || !savedText.trim() || isDirty || !modelId
+                      isActing ||
+                      !savedText.trim() ||
+                      isDirty ||
+                      !analysisModelId
                     }
                     onClick={() => void startWorkflow()}
                     type="button"

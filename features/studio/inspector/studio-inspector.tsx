@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
   StudioAgentContext,
   StudioLocale,
+  StudioModelOption,
   WorkspaceSnapshot,
 } from "../types";
 import { AgentPanel } from "./agent-panel";
@@ -23,14 +24,20 @@ const copy = {
 type InspectorTab = "agent" | "operations" | "costs";
 
 export function StudioInspector({
+  analysisModelId,
   context,
   locale,
   onRefresh,
+  models,
+  onAnalysisModelChange,
   snapshot,
 }: {
+  analysisModelId: string;
   context: StudioAgentContext;
   locale: StudioLocale;
   onRefresh: () => Promise<unknown> | void;
+  models: StudioModelOption[];
+  onAnalysisModelChange: (modelId: string) => void;
   snapshot: WorkspaceSnapshot;
 }) {
   const text = copy[locale];
@@ -62,8 +69,11 @@ export function StudioInspector({
         </TabsList>
         <TabsContent className="min-h-0 border-t" value="agent">
           <AgentPanel
+            analysisModelId={analysisModelId}
             context={context}
             locale={locale}
+            models={models}
+            onAnalysisModelChange={onAnalysisModelChange}
             onRefresh={onRefresh}
             snapshot={snapshot}
           />

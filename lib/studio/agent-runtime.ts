@@ -3,15 +3,26 @@ import type {
   AgentMessage,
   AgentToolCall,
 } from "@/lib/agent/types";
+import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
+import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { controlMediaTask } from "@/lib/media/task-actions";
 import { createDatabaseMediaTaskStore } from "@/lib/media/task-store";
+import {
+  canReviseScreenplayClip,
+  classifyScreenplayFailureContext,
+  reviseScreenplayClip,
+} from "@/lib/novel/screenplay-revision";
 import { decryptSecret, encryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
+import { PROMPT_IDS, renderPrompt } from "@/lib/prompts";
+import { studioWorkflowAgentSchema } from "@/lib/prompts/schemas";
+import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import {
   controlWorkflowRun,
   type WorkflowAction,
 } from "@/lib/workflow/actions";
-import { listWorkflowRuns } from "@/lib/workflow/store";
+import { getWorkflowRun, listWorkflowRuns } from "@/lib/workflow/store";
 
 const APPROVAL_TTL_MS = 15 * 60 * 1000;
 const STAGE_IDS = [
@@ -39,11 +50,17 @@ export type StudioAgentContext = {
 };
 
 type StudioAgentLocale = "en" | "zh-CN";
+export type StudioAgentModelSelection = {
+  channelId: string;
+  model: string;
+};
+
 type StudioAgentOperation =
   | "cancel_media_task"
   | "cancel_workflow"
   | "pause_workflow"
   | "resume_workflow"
+  | "revise_screenplay"
   | "retry_media_task"
   | "retry_workflow";
 
@@ -56,6 +73,10 @@ type ApprovalPayload = {
   targetId: string;
   toolCallId: string;
   userId: string;
+  channelId?: string;
+  failureContext?: unknown;
+  model?: string;
+  request?: string;
   version: 1;
 };
 
@@ -65,6 +86,7 @@ export async function runStudioAgent(input: {
   content: string;
   context: StudioAgentContext;
   locale: StudioAgentLocale;
+  modelSelection?: StudioAgentModelSelection;
   projectId: string;
   userId: string;
 }): Promise<AsyncIterable<AgentEvent>> {
@@ -77,31 +99,52 @@ async function* runStudioAgentEvents(
     content: string;
     context: StudioAgentContext;
     locale: StudioAgentLocale;
+    modelSelection?: StudioAgentModelSelection;
     projectId: string;
     userId: string;
   },
   state: AgentState,
 ): AsyncIterable<AgentEvent> {
-  const intent = getStudioAgentIntent(input.content);
-  if (!intent) {
-    yield messageEvent(buildContextSummary(state, input.locale));
+  const decision = await decideStudioAgentAction(input, state);
+  if (!decision.operation) {
+    yield messageEvent(decision.reply);
     return;
   }
 
-  const target = findOperationTarget(state, intent);
+  const target = findOperationTarget(
+    state,
+    decision.operation,
+    decision.targetId ?? undefined,
+  );
   if (!target) {
-    yield messageEvent(noActionableTarget(intent, input.locale));
+    yield messageEvent(noActionableTarget(decision.operation, input.locale));
     return;
   }
+
+  yield messageEvent(decision.reply);
 
   const messageId = createId("msg");
   const toolCallId = createId("tool");
+  const screenplayFailureContext =
+    decision.operation === "revise_screenplay" &&
+    "failureCategory" in target &&
+    target.failureCategory === "semantic"
+      ? target.failureContext
+      : undefined;
   const approvalId = encryptSecret(
     JSON.stringify({
+      ...(decision.operation === "revise_screenplay"
+        ? {
+            channelId: decision.modelSelection?.channelId,
+            failureContext: screenplayFailureContext,
+            model: decision.modelSelection?.model,
+            request: input.content.trim().slice(0, 8_000),
+          }
+        : {}),
       expiresAt: Date.now() + APPROVAL_TTL_MS,
       locale: input.locale,
       messageId,
-      operation: intent,
+      operation: decision.operation,
       projectId: input.projectId,
       targetId: target.id,
       toolCallId,
@@ -111,7 +154,7 @@ async function* runStudioAgentEvents(
   );
   const toolCall: AgentToolCall = {
     id: toolCallId,
-    name: intent,
+    name: decision.operation,
     args: {
       context: {
         episodeId: state.episode?.id ?? null,
@@ -122,9 +165,20 @@ async function* runStudioAgentEvents(
       target: {
         id: target.id,
         status: target.status,
-        traceId: target.traceId,
-        type: intent.includes("workflow") ? "workflow" : "media_task",
+        traceId: "traceId" in target ? target.traceId : undefined,
+        type:
+          decision.operation === "revise_screenplay"
+            ? "screenplay_clip"
+            : decision.operation.includes("workflow")
+              ? "workflow"
+              : "media_task",
       },
+      ...(decision.operation === "revise_screenplay"
+        ? {
+            failureContext: screenplayFailureContext ?? null,
+            request: input.content.trim().slice(0, 8_000),
+          }
+        : {}),
     },
     approvalId,
     status: "pending",
@@ -218,6 +272,14 @@ export function getStudioAgentIntent(
   if (!normalized) return null;
   const mediaTarget = /任务|媒体|task|media/.test(normalized);
   const workflowTarget = /工作流|运行|workflow|\brun\b/.test(normalized);
+  const screenplayTarget = /剧本|脚本|screenplay|script/.test(normalized);
+  if (
+    screenplayTarget &&
+    /修改|调整|修订|修复|改写|完善|modify|revise|repair|adjust|rewrite/.test(
+      normalized,
+    )
+  )
+    return "revise_screenplay";
   if (!mediaTarget && !workflowTarget) return null;
 
   if (/重试|再试|retry/.test(normalized))
@@ -264,43 +326,99 @@ async function loadAgentState(input: {
   if (input.context.episodeId && !episode)
     throw new StudioAgentError("剧集不存在", 404);
 
-  const [workflows, tasks] = await Promise.all([
+  const [workflows, tasks, clips] = await Promise.all([
     listWorkflowRuns(input.userId, input.projectId, 100),
     createDatabaseMediaTaskStore(input.userId).list({
       projectId: input.projectId,
       ...(episode ? { episodeId: episode.id } : {}),
       limit: 100,
     }),
+    prisma.storyClip.findMany({
+      where: {
+        projectId: input.projectId,
+        ...(episode ? { episodeId: episode.id } : {}),
+      },
+      orderBy: { clipIndex: "asc" },
+      take: 200,
+      select: {
+        clipIndex: true,
+        episodeId: true,
+        id: true,
+        screenplay: true,
+        status: true,
+        summary: true,
+      },
+    }),
   ]);
+  const relevantWorkflows = workflows.filter(
+    (workflow) =>
+      (!episode || workflow.episodeId === episode.id) &&
+      workflowMatchesStage(workflow.workflowType, input.context.stageId),
+  );
+  const screenplayArtifacts = relevantWorkflows.length
+    ? await prisma.workflowArtifact.findMany({
+        where: {
+          artifactType: "screenplay.clip",
+          runId: { in: relevantWorkflows.map((workflow) => workflow.id) },
+        },
+        orderBy: { createdAt: "desc" },
+        select: {
+          createdAt: true,
+          payload: true,
+          refId: true,
+          runId: true,
+        },
+      })
+    : [];
   return {
+    clips: clips.map((clip) => {
+      const failureContext =
+        clip.status === "screenplay_failed"
+          ? findClipFailureContext(
+              clip.id,
+              relevantWorkflows,
+              screenplayArtifacts,
+            )
+          : undefined;
+      return {
+        ...clip,
+        failureCategory: classifyScreenplayFailureContext(failureContext),
+        failureContext,
+      };
+    }),
     context: input.context,
     episode,
     project,
     tasks: tasks.filter((task) =>
       taskMatchesStage(task, input.context.stageId),
     ),
-    workflows: workflows.filter(
-      (workflow) =>
-        (!episode || workflow.episodeId === episode.id) &&
-        workflowMatchesStage(workflow.workflowType, input.context.stageId),
-    ),
+    workflows: relevantWorkflows,
   };
 }
 
 function findOperationTarget(
   state: AgentState,
   operation: StudioAgentOperation,
+  requestedTargetId?: string,
 ) {
   const selectionId = state.context.selection?.id;
+  if (operation === "revise_screenplay") {
+    if (state.context.stageId !== "writing") return undefined;
+    return selectScreenplayRevisionClip(
+      state.clips,
+      selectionId,
+      requestedTargetId,
+    );
+  }
   if (operation.includes("media_task")) {
     const eligible = state.tasks.filter((task) =>
       operation === "retry_media_task"
         ? task.status === "failed"
         : ["queued", "running"].includes(task.status),
     );
-    return (
-      eligible.find((task) => task.targetId === selectionId) ?? eligible[0]
-    );
+    return requestedTargetId
+      ? eligible.find((task) => task.id === requestedTargetId)
+      : (eligible.find((task) => task.targetId === selectionId) ?? eligible[0]);
   }
   const eligible = state.workflows.filter((workflow) => {
     if (operation === "retry_workflow")
@@ -311,10 +429,354 @@ function findOperationTarget(
       workflow.status,
     );
   });
-  return eligible[0];
+  return requestedTargetId
+    ? eligible.find((workflow) => workflow.id === requestedTargetId)
+    : eligible[0];
+}
+
+export function selectScreenplayRevisionClip<
+  T extends {
+    failureContext?: unknown;
+    id: string;
+    screenplay: string | null;
+  },
+>(clips: readonly T[], selectionId?: string, requestedTargetId?: string) {
+  const eligible = clips.filter((clip) => canReviseScreenplayClip(clip));
+  return requestedTargetId
+    ? eligible.find((clip) => clip.id === requestedTargetId)
+    : (eligible.find((clip) => clip.id === selectionId) ?? eligible[0]);
+}
+
+async function decideStudioAgentAction(
+  input: {
+    content: string;
+    locale: StudioAgentLocale;
+    modelSelection?: StudioAgentModelSelection;
+    userId: string;
+  },
+  state: AgentState,
+) {
+  const provider = await resolveStudioAgentProvider(input, state);
+  if (!provider) return deterministicStudioAgentDecision(input, state);
+  const candidates = buildOperationCandidates(state);
+  const prompt = renderPrompt({
+    id: PROMPT_IDS.STUDIO_WORKFLOW_AGENT,
+    locale: input.locale === "en" ? "en" : "zh",
+    variables: {
+      state_json: JSON.stringify(buildModelState(state)),
+      operation_candidates_json: JSON.stringify(candidates),
+      user_request: input.content.trim(),
+    },
+  });
+  const result = await requestOpenAiStructured({
+    baseUrl: provider.baseUrl,
+    apiKeys: provider.apiKeys,
+    model: provider.model,
+    prompt,
+    schema: studioWorkflowAgentSchema,
+    structuredOutputMode: provider.structuredOutputMode,
+    temperature: 0.1,
+    ...provider.requestOptions,
+  });
+  const decision = {
+    ...result.data,
+    modelSelection: {
+      channelId: provider.channelId,
+      model: provider.model,
+    },
+  };
+  if (!decision.operation && !decision.targetId) return decision;
+  if (!decision.operation || !decision.targetId)
+    return {
+      reply: decision.reply,
+      operation: null,
+      targetId: null,
+    };
+  const target = findOperationTarget(state, decision.operation, decision.targetId);
+  return target
+    ? decision
+    : {
+        reply:
+          input.locale === "en"
+            ? `${decision.reply}\n\nThe proposed target is not eligible in the current stage, so no action was created.`
+            : `${decision.reply}\n\n模型选择的目标不属于当前阶段可操作候选，因此未创建操作。`,
+        operation: null,
+        targetId: null,
+      };
+}
+
+async function resolveStudioAgentProvider(
+  input: {
+    modelSelection?: StudioAgentModelSelection;
+    userId: string;
+  },
+  state: AgentState,
+) {
+  let selection = input.modelSelection;
+  if (!selection && state.workflows[0]) {
+    const workflow = await getWorkflowRun(input.userId, state.workflows[0].id);
+    const channelId = stringValue(workflow?.input?.channelId);
+    const model = stringValue(workflow?.input?.model);
+    if (channelId && model) selection = { channelId, model };
+  }
+  if (!selection) return null;
+  const configuredModel = await prisma.providerModel.findFirst({
+    where: {
+      channelId: selection.channelId,
+      modelId: selection.model,
+      selected: true,
+      channel: { userId: input.userId },
+    },
+    select: {
+      capabilitiesJson: true,
+      channel: {
+        select: {
+          baseUrl: true,
+          encryptedApiKeys: true,
+          protocol: true,
+        },
+      },
+    },
+  });
+  if (!configuredModel)
+    throw new StudioAgentError("AGENT_MODEL_NOT_CONFIGURED", 400);
+  if (
+    configuredModel.channel.protocol !== "openai-compatible" &&
+    configuredModel.channel.protocol !== "volcengine-ark"
+  )
+    throw new StudioAgentError(
+      `AGENT_MODEL_PROTOCOL_NOT_SUPPORTED:${configuredModel.channel.protocol}`,
+      400,
+    );
+  const apiKeys = parseApiKeys(configuredModel.channel.encryptedApiKeys);
+  if (!apiKeys.length)
+    throw new StudioAgentError("AGENT_MODEL_API_KEY_MISSING", 400);
+  const runtimeSettings = await loadUserRuntimeSettings(input.userId);
+  return {
+    apiKeys,
+    baseUrl: configuredModel.channel.baseUrl,
+    channelId: selection.channelId,
+    model: selection.model,
+    requestOptions: structuredRequestOptions(runtimeSettings),
+    structuredOutputMode: supportsStoredStructuredOutputs(
+      configuredModel.capabilitiesJson,
+    )
+      ? ("json_schema" as const)
+      : ("json_object" as const),
+  };
+}
+
+function deterministicStudioAgentDecision(
+  input: { content: string; locale: StudioAgentLocale },
+  state: AgentState,
+) {
+  const operation = getStudioAgentIntent(input.content);
+  if (operation === "revise_screenplay")
+    return {
+      reply:
+        input.locale === "en"
+          ? "Select a configured Agent model before requesting a screenplay revision."
+          : "请先选择可用的 Agent 模型，再提交剧本修改。",
+      operation: null,
+      targetId: null,
+    };
+  const target = operation ? findOperationTarget(state, operation) : null;
+  return {
+    reply: operation
+      ? target
+        ? input.locale === "en"
+          ? `I found an eligible ${operationLabel(operation)} target in the current stage. Approval is required before execution.`
+          : `已在当前阶段找到可执行“${operationLabel(operation)}”的目标，执行前需要你的批准。`
+        : noActionableTarget(operation, input.locale)
+      : buildContextSummary(state, input.locale),
+    operation: target ? operation : null,
+    targetId: target?.id ?? null,
+  };
+}
+
+function buildOperationCandidates(state: AgentState) {
+  return Object.fromEntries(
+    (
+      [
+        "cancel_media_task",
+        "cancel_workflow",
+        "pause_workflow",
+        "resume_workflow",
+        "revise_screenplay",
+        "retry_media_task",
+        "retry_workflow",
+      ] as StudioAgentOperation[]
+    ).map((operation) => [
+      operation,
+      operation === "revise_screenplay"
+        ? state.clips
+            .filter((clip) => findOperationTarget(state, operation, clip.id))
+            .map((clip) => ({
+              clipIndex: clip.clipIndex,
+              failureCategory: clip.failureCategory,
+              failureContext: clip.failureContext ?? null,
+              hasScreenplay: Boolean(clip.screenplay),
+              id: clip.id,
+              status: clip.status,
+              summary: clip.summary,
+            }))
+        : operation.includes("media_task")
+        ? state.tasks
+            .filter((task) => findOperationTarget(state, operation, task.id))
+            .map((task) => ({
+              id: task.id,
+              status: task.status,
+              targetId: task.targetId ?? null,
+              targetType: task.targetType ?? null,
+              traceId: task.traceId,
+            }))
+        : state.workflows
+            .filter((workflow) =>
+              findOperationTarget(state, operation, workflow.id),
+            )
+            .map((workflow) => ({
+              id: workflow.id,
+              status: workflow.status,
+              traceId: workflow.traceId,
+              workflowType: workflow.workflowType,
+            })),
+    ]),
+  );
+}
+
+function buildModelState(state: AgentState) {
+  return {
+    context: state.context,
+    clips: state.clips.map((clip) => ({
+      clipIndex: clip.clipIndex,
+      failureCategory: clip.failureCategory,
+      failureContext: clip.failureContext ?? null,
+      hasScreenplay: Boolean(clip.screenplay),
+      id: clip.id,
+      status: clip.status,
+      summary: clip.summary,
+    })),
+    episode: state.episode ?? null,
+    project: { id: state.project.id, name: state.project.name },
+    tasks: state.tasks.map((task) => ({
+      id: task.id,
+      error: task.error ?? null,
+      kind: task.kind,
+      status: task.status,
+      targetId: task.targetId ?? null,
+      targetType: task.targetType ?? null,
+      traceId: task.traceId,
+      updatedAt: task.updatedAt,
+    })),
+    workflows: state.workflows.map((workflow) => ({
+      id: workflow.id,
+      error: workflow.error ?? null,
+      status: workflow.status,
+      steps: workflow.steps.map((step) => ({
+        attempt: step.attempt,
+        error: step.error ?? null,
+        key: step.key,
+        maxAttempts: step.maxAttempts,
+        retryable: step.retryable,
+        status: step.status,
+      })),
+      traceId: workflow.traceId,
+      updatedAt: workflow.updatedAt,
+      workflowType: workflow.workflowType,
+    })),
+  };
+}
+
+function findClipFailureContext(
+  clipId: string,
+  workflows: Array<{
+    error?: Record<string, unknown>;
+    id: string;
+    steps: Array<{
+      attempt: number;
+      error?: Record<string, unknown>;
+      key: string;
+      maxAttempts: number;
+      status: string;
+    }>;
+    workflowType: string;
+  }>,
+  artifacts: Array<{
+    createdAt: Date;
+    payload: unknown;
+    refId: string | null;
+    runId: string;
+  }>,
+) {
+  const artifact = artifacts.find((item) => {
+    if (item.refId !== clipId || !isRecord(item.payload)) return false;
+    return item.payload.success === false || typeof item.payload.error === "string";
+  });
+  const workflow = artifact
+    ? workflows.find((item) => item.id === artifact.runId)
+    : workflows.find((item) => JSON.stringify(item.error ?? {}).includes(clipId));
+  if (!artifact && !workflow) return undefined;
+  const payload = artifact && isRecord(artifact.payload) ? artifact.payload : {};
+  return {
+    artifactCreatedAt: artifact?.createdAt.toISOString() ?? null,
+    clipId,
+    error: typeof payload.error === "string" ? payload.error : null,
+    failedSteps:
+      workflow?.steps
+        .filter((step) => step.status === "failed")
+        .map((step) => ({
+          attempt: step.attempt,
+          error: step.error ?? null,
+          key: step.key,
+          maxAttempts: step.maxAttempts,
+        })) ?? [],
+    workflowError: workflow?.error ?? null,
+    workflowId: workflow?.id ?? artifact?.runId ?? null,
+    workflowType: workflow?.workflowType ?? null,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseApiKeys(value: string) {
+  try {
+    const parsed: unknown = JSON.parse(decryptSecret(value));
+    return Array.isArray(parsed)
+      ? parsed.filter(
+          (item): item is string =>
+            typeof item === "string" && Boolean(item.trim()),
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 async function executeOperation(approval: ApprovalPayload) {
+  if (approval.operation === "revise_screenplay") {
+    if (!approval.channelId || !approval.model || !approval.request)
+      throw new StudioAgentError("AGENT_SCREENPLAY_REVISION_CONTEXT_MISSING");
+    const result = await reviseScreenplayClip({
+      channelId: approval.channelId,
+      clipId: approval.targetId,
+      failureContext: approval.failureContext,
+      locale: approval.locale === "en" ? "en" : "zh",
+      model: approval.model,
+      projectId: approval.projectId,
+      request: approval.request,
+      userId: approval.userId,
+    });
+    return {
+      action: approval.operation,
+      ...result,
+    };
+  }
   if (approval.operation.includes("media_task")) {
     const task = await controlMediaTask({
       action: approval.operation === "retry_media_task" ? "retry" : "cancel",
@@ -356,6 +818,8 @@ function readApproval(value: string): ApprovalPayload {
       !parsed.messageId ||
       !parsed.toolCallId ||
       !parsed.operation ||
+      (parsed.operation === "revise_screenplay" &&
+        (!parsed.channelId || !parsed.model || !parsed.request)) ||
       parsed.expiresAt < Date.now()
     ) {
       throw new Error("invalid");
@@ -421,6 +885,7 @@ function operationLabel(operation: StudioAgentOperation) {
     cancel_workflow: "取消工作流",
     pause_workflow: "暂停工作流",
     resume_workflow: "恢复工作流",
+    revise_screenplay: "修改剧本",
     retry_media_task: "重试媒体任务",
     retry_workflow: "重试工作流",
   };

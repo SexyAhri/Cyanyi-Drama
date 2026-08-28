@@ -15,8 +15,11 @@ import { getShellCopy } from "./chat-shell-i18n";
 import {
   ChatShellPanels,
   type ShellPanel,
-  type ShellSettings,
 } from "./chat-shell-panels";
+import {
+  createDefaultShellSettings,
+  type ShellSettings,
+} from "./shell-settings";
 import { ChatTopbar } from "./chat-topbar";
 import type {
   AgentLocale,
@@ -102,20 +105,9 @@ export function ChatShell({
   >(null);
   const [openPanel, setOpenPanel] = useState<ShellPanel | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [settings, setSettings] = useState<ShellSettings>({
-    compactSidebar: false,
-    analysisModel: selectedModel,
-    characterModel: selectedModel,
-    locationModel: selectedModel,
-    storyboardModel: selectedModel,
-    editModel: selectedModel,
-    videoModel: selectedModel,
-    audioModel: selectedModel,
-    lipSyncModel: selectedModel,
-    videoRatio: "9:16",
-    artStyle: "american-comic",
-    ttsRate: "+0%",
-  });
+  const [settings, setSettings] = useState<ShellSettings>(() =>
+    createDefaultShellSettings(selectedModel),
+  );
 
   const allThreads = useMemo(
     () => [...recentThreads, ...archivedThreads],

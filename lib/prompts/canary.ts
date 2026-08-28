@@ -14,12 +14,14 @@ export const PROMPT_CANARY_MANIFEST = {
   "story_clip_segmentation:en": "a507fdce7828a1dc9fa5cca06cbbe4c5d7a94072ab4db868afb48a2d4ae6c088",
   "story_screenplay_conversion:zh": "fad46161a1b1619c7ef64f10ea201f18df296d29d89e9476331525207378218a",
   "story_screenplay_conversion:en": "3b5f64fbc40ba0a47b43fc433e1075c0cbd7c294a7097ec97fb81e9549b80196",
+  "story_screenplay_revision:zh": "fd38af4583c57c530404b3827a92cb52f6a94ad3bdf6f1b5f77aaac0d9e0534d",
+  "story_screenplay_revision:en": "5f6af488c856bca7da2aa3145fef7a8cf966f96aea1a2f28020df11bda25e31f",
   "story_storyboard_planning:zh": "cfbff765bdb4e85481d63213647d55863353c6aca327c3a8cd09c7ef2cd59daa",
   "story_storyboard_planning:en": "80d896c377309677d6c12662027a01b35153dcc23e038caf85adbcf4861c8d6e",
   "story_cinematography:zh": "c1c227061d17b170a2df882cc4bfc647deb0084f0a3ba2757d580f58077d80aa",
   "story_cinematography:en": "2684a60687f1f9f921ea822dc95abf81c7514c7744ad6522274ee65a3bb87a31",
-  "story_acting_direction:zh": "71ae3686f852f08465e21d7b1147852c0eac43dc9a10d514ba30c08802b2f476",
-  "story_acting_direction:en": "cb7fedd168f410072e1c192211f3326d888b40ce142114cb72389c510cf3e5c8",
+  "story_acting_direction:zh": "5f25290ea0b5c591c030c417a116802fd4408eca699b964831df6e0aba7d6829",
+  "story_acting_direction:en": "522281c9b20c82ff839a8d3ec9602a21944e7f7ebf43c424771d3952847d8543",
   "story_storyboard_refinement:zh": "c3beede0ee1f4aa2e93762789470ea0ebc80279619e4d0e66d70118ab9360e74",
   "story_storyboard_refinement:en": "fdc7fd29736b4c840d9a544ab0a1da6c5e7adafa0081f2d3cd1766159faadf8a",
   "story_voice_analysis:zh": "440af4d18a625dc2d83e998bfe1ba5c0e7e770807230bf3a3887cafdf9d43d6e",
@@ -32,6 +34,8 @@ export const PROMPT_CANARY_MANIFEST = {
   "character_reference_description:en": "e61b5baa74900ff2db4e36ad88b0881a22af43dbc11d33a6bf87d1e6b46addcc",
   "episode_split:zh": "e2bf3baa71ee40d2355bb973aec8b919be3c8ec01ab682f96c8dad4265e13124",
   "episode_split:en": "f04153d11057bbd8800178d4a310074e9c1a4e7ed937c9fcc9c6b9faeefbdcfb",
+  "studio_workflow_agent:zh": "3cbe91f53fc2e37feb4583a3728f85b63bad8ad6d246572e828c9032c3ad16e6",
+  "studio_workflow_agent:en": "88fb5ec9b7c6265bde9deb88192a66200b82ace7797688814bdb177d6219bf79",
 } satisfies Record<CanaryKey, string>;
 
 export type PromptCanaryIssue = {

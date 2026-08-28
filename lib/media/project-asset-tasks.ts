@@ -283,6 +283,7 @@ export async function createStoryboardPanelVideoTask(input: {
       durationSeconds: true,
       videoPrompt: true,
       firstLastFramePrompt: true,
+      actingNotesJson: true,
       imageAsset: {
         select: { url: true, storageKey: true, mimeType: true },
       },
@@ -361,6 +362,8 @@ export async function createStoryboardPanelVideoTask(input: {
   });
   const dialoguePrompt = dialogueVideoPrompt({
     description: panel.description ?? basePrompt,
+    motionPrompt: basePrompt,
+    actingDirections: parseStoryboardActingDirections(panel.actingNotesJson),
     durationSeconds: dialogue.durationSeconds,
     lines: dialogue.lines,
     playbackRate: dialogue.playbackRate,
@@ -492,16 +495,27 @@ async function prepareStoryboardDialogue(input: {
 
 export function dialogueVideoPrompt(input: {
   description: string;
+  motionPrompt: string;
+  actingDirections: StoryboardActingDirection[];
   durationSeconds: number;
   lines: Array<{ speaker: string; content: string; delivery: string }>;
   playbackRate: number;
   timings: Array<{ lineIndex: number; startSeconds: number; endSeconds: number }>;
 }) {
+  const actingByCharacter = new Map(
+    input.actingDirections.map((direction) => [direction.name, direction]),
+  );
+  const performanceDirection = (character: string) => {
+    const direction = actingByCharacter.get(character);
+    return direction
+      ? `心理与情绪“${direction.emotion}”，动作与反应“${direction.action}”，表情变化“${direction.expression}”`
+      : "保持符合当前剧情的呼吸、视线、表情和重心变化";
+  };
   const timingLines = input.timings.map((timing) => {
     const line = input.lines[timing.lineIndex];
     return line.delivery === "dialogue"
-      ? `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}s | ${line.speaker}按已生成配音的时长做无声自然口型 | 其他角色闭口并保持倾听反应`
-      : `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}s | 画外音时段 | 画面中所有人物保持闭口，不做口型，只保留自然呼吸、目光和反应`;
+      ? `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}s | ${line.speaker}按已生成配音的时长做无声自然口型，同时执行：${performanceDirection(line.speaker)} | 其他角色闭口，并按各自表演指导给出持续倾听、判断或情绪变化的无声反应`
+      : `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}s | ${line.speaker}的内心独白/画外音时段 | 画面中所有人物保持闭口、不做口型；${line.speaker}通过${performanceDirection(line.speaker)}外化心理变化，其他角色不得感知未说出口的内容`;
   });
   const secondBeats = Array.from(
     { length: input.durationSeconds },
@@ -511,15 +525,26 @@ export function dialogueVideoPrompt(input: {
       );
       const action = active
         ? input.lines[active.lineIndex].delivery === "dialogue"
-          ? `${input.lines[active.lineIndex].speaker}持续当前对白与自然表演，其他角色保持视线和反应连续`
-          : `${input.lines[active.lineIndex].speaker}在内心独白中保持闭口与克制反应，所有人物均不得做口型`
-        : "对白间隙，人物保持自然呼吸、视线和克制反应";
+          ? `${input.lines[active.lineIndex].speaker}持续当前对白，并以${performanceDirection(input.lines[active.lineIndex].speaker)}推进表演；其他角色保持视线和无声反应连续`
+          : `${input.lines[active.lineIndex].speaker}在内心独白中保持闭口，以${performanceDirection(input.lines[active.lineIndex].speaker)}呈现思绪变化；所有人物均不得做口型`
+        : "对白间隙，人物不能冻结或回到默认中性状态；延续上一拍的呼吸、视线、表情余韵和重心，并对刚发生的动作保持无声反应";
       return `${second}-${second + 1}s | ${action} | 镜头保持同侧轴线并做轻微稳定推进`;
     },
   );
   return [
     `总时长：${input.durationSeconds}s`,
     `场景与动作：${input.description}`,
+    `完整分镜运动蓝图：\n${input.motionPrompt}`,
+    ...(input.actingDirections.length
+      ? [
+          "逐角色表演指导：",
+          ...input.actingDirections.map(
+            (direction) =>
+              `${direction.name} | 心理与情绪：${direction.emotion} | 动作与反应：${direction.action} | 表情变化：${direction.expression}`,
+          ),
+        ]
+      : []),
+    "表演硬约束：除非逐角色指导明确要求面无表情，否则禁止全程中性脸、僵硬凝视、机械站立或只动嘴不表演。角色要以视线焦点和转移、自然眨眼、呼吸深浅、眉眼嘴角、下颌张力、吞咽、手指与肩颈微动作、身体重心及与他人的无声反应，连续外化已有心理活动和潜台词。每个动作必须有动作前意图、动作中情绪阻力和动作后余韵；保持克制自然，不新增剧情动作、关系、对白或结果。",
     "声音硬约束：只生成与场景匹配的环境声和动作音效。禁止生成任何角色声音、对白、旁白、内心独白、吟唱或其他可辨识人声。角色配音已由独立声音模型生成，将在口型与成片阶段另行合成；本视频不得代替、复述或混入角色配音。不要生成画面内字幕、文字或水印。",
     input.playbackRate > 1
       ? `口型时序已按正式配音调整为 ${input.playbackRate.toFixed(2)} 倍语速，仅用于无声表演同步。`
@@ -530,6 +555,43 @@ export function dialogueVideoPrompt(input: {
     ...secondBeats,
     "连续性：角色身份、服装、站位、视线、光向和空间轴线前后一致；口型只跟随当前说话者，避免多人同时开口、跳帧、瞬移或动作重置；音轨始终只有环境声与动作音效。",
   ].join("\n");
+}
+
+type StoryboardActingDirection = {
+  name: string;
+  emotion: string;
+  action: string;
+  expression: string;
+};
+
+function parseStoryboardActingDirections(
+  value: string | null,
+): StoryboardActingDirection[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    const characters = (parsed as Record<string, unknown>).characters;
+    if (!Array.isArray(characters)) return [];
+    return characters.flatMap((character) => {
+      if (!character || typeof character !== "object" || Array.isArray(character))
+        return [];
+      const item = character as Record<string, unknown>;
+      const name = textValue(item.name);
+      const emotion = textValue(item.emotion);
+      const action = textValue(item.action);
+      const expression = textValue(item.expression);
+      return name && emotion && action && expression
+        ? [{ name, emotion, action, expression }]
+        : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function textValue(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function parseDurationSeconds(value?: string) {

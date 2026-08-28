@@ -1,5 +1,7 @@
 import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
+import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import type { PromptExecutionTrace } from "@/lib/llm/openai-structured";
@@ -26,7 +28,6 @@ import {
   listProductionProps,
   upsertProductionProps,
 } from "@/lib/production/domain-store";
-import { STORY_STRUCTURED_REQUEST_TIMEOUT_MS } from "./story-runtime-config";
 
 export type NovelParseInput = {
   projectId: string;
@@ -202,6 +203,7 @@ async function requestNovelParse(
   }
   const apiKeys = parseApiKeys(channel.encryptedApiKeys);
   if (!apiKeys.length) throw new Error("NOVEL_CHANNEL_API_KEY_MISSING");
+  const runtimeSettings = await loadUserRuntimeSettings(userId);
   const [characterLibrary, locationLibrary, propLibrary] = await Promise.all([
     listNovelCharacters(userId, input.projectId),
     listNovelLocations(userId, input.projectId),
@@ -216,6 +218,7 @@ async function requestNovelParse(
     apiKeys,
     model: input.model,
     temperature: 0.2,
+    ...structuredRequestOptions(runtimeSettings),
     structuredOutputMode: supportsStoredStructuredOutputs(
       configuredModel.capabilitiesJson,
     )
@@ -225,7 +228,6 @@ async function requestNovelParse(
   const analysis = await Promise.allSettled([
     requestOpenAiStructured({
       ...provider,
-      timeoutMs: STORY_STRUCTURED_REQUEST_TIMEOUT_MS,
       prompt: renderPrompt({
         id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
         locale,
@@ -242,7 +244,6 @@ async function requestNovelParse(
     }),
     requestOpenAiStructured({
       ...provider,
-      timeoutMs: STORY_STRUCTURED_REQUEST_TIMEOUT_MS,
       prompt: renderPrompt({
         id: PROMPT_IDS.STORY_LOCATION_PROP_ANALYSIS,
         locale,

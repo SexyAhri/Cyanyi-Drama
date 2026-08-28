@@ -18,8 +18,10 @@ import { getStageCopy } from "../i18n";
 import type {
   StudioAgentContext,
   StudioLocale,
+  StudioModelOption,
   WorkspaceSnapshot,
 } from "../types";
+import { ModelSelect } from "../components/model-select";
 import { createStudioAgentAdapter } from "./studio-agent-adapter";
 
 const copy = {
@@ -32,6 +34,7 @@ const copy = {
     send: "发送",
     selected: "当前选择",
     messages: "Agent 消息",
+    model: "Agent 模型",
     working: "Agent 正在处理",
   },
   en: {
@@ -43,6 +46,7 @@ const copy = {
     send: "Send",
     selected: "Selected",
     messages: "Agent messages",
+    model: "Agent model",
     working: "Agent is working",
   },
 } as const;
@@ -52,6 +56,7 @@ const operations = [
   "cancel_workflow",
   "pause_workflow",
   "resume_workflow",
+  "revise_screenplay",
   "retry_media_task",
   "retry_workflow",
 ] as const;
@@ -64,6 +69,7 @@ function createStudioToolRegistry(locale: StudioLocale): ToolRegistry {
           "Cancel workflow",
           "Pause workflow",
           "Resume workflow",
+          "Revise screenplay",
           "Retry media task",
           "Retry workflow",
         ]
@@ -72,6 +78,7 @@ function createStudioToolRegistry(locale: StudioLocale): ToolRegistry {
           "取消工作流",
           "暂停工作流",
           "恢复工作流",
+          "修改剧本",
           "重试媒体任务",
           "重试工作流",
         ];
@@ -82,19 +89,30 @@ function createStudioToolRegistry(locale: StudioLocale): ToolRegistry {
   return Object.fromEntries(
     operations.map((name, index) => [
       name,
-      { description, label: labels[index], name, showArgs: false },
+      {
+        description,
+        label: labels[index],
+        name,
+        showArgs: name === "revise_screenplay",
+      },
     ]),
   );
 }
 
 export function AgentPanel({
+  analysisModelId,
   context,
   locale,
+  models,
+  onAnalysisModelChange,
   onRefresh,
   snapshot,
 }: {
+  analysisModelId: string;
   context: StudioAgentContext;
   locale: StudioLocale;
+  models: StudioModelOption[];
+  onAnalysisModelChange: (modelId: string) => void;
   onRefresh: () => Promise<unknown> | void;
   snapshot: WorkspaceSnapshot;
 }) {
@@ -123,9 +141,21 @@ export function AgentPanel({
   function submit(value = input) {
     const content = value.trim();
     if (!content || agent.isLoading || agent.isStreaming) return;
+    const selectedModel = models.find(
+      (model) => model.id === analysisModelId,
+    );
     setInput("");
     void agent.sendMessage(content, {
-      metadata: { locale, studioContext: context },
+      metadata: {
+        locale,
+        studioContext: context,
+        studioAgentModel: selectedModel
+          ? {
+              channelId: selectedModel.channelId,
+              model: selectedModel.modelId,
+            }
+          : undefined,
+      },
     });
   }
 
@@ -140,6 +170,15 @@ export function AgentPanel({
             ? `${text.selected} · ${context.selection.label}`
             : snapshot.project.name}
         </p>
+        <ModelSelect
+          ariaLabel={text.model}
+          className="mt-3 h-8"
+          disabled={agent.isLoading || agent.isStreaming}
+          models={models}
+          onChange={onAnalysisModelChange}
+          placeholder={text.model}
+          value={analysisModelId}
+        />
       </div>
 
       <div

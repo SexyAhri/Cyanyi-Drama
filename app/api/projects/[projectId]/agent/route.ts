@@ -27,6 +27,7 @@ export async function POST(request: Request, context: Context) {
         : await runStudioAgent({
             content: typeof body.content === "string" ? body.content : "",
             context: readStudioContext(body),
+            modelSelection: readStudioAgentModel(metadata),
             locale:
               body.locale === "en" || metadata.locale === "en" ? "en" : "zh-CN",
             projectId,
@@ -53,6 +54,17 @@ function readStudioContext(body: Record<string, unknown>) {
     ? metadata.studioContext
     : {};
   return context as StudioAgentContext;
+}
+
+function readStudioAgentModel(metadata: Record<string, unknown>) {
+  const value = isRecord(metadata.studioAgentModel)
+    ? metadata.studioAgentModel
+    : null;
+  return value &&
+    typeof value.channelId === "string" &&
+    typeof value.model === "string"
+    ? { channelId: value.channelId, model: value.model }
+    : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -29,6 +29,16 @@ vi.mock("./domain-store", () => ({
 vi.mock("@/lib/server/crypto", () => ({
   decryptSecret: (value: string) => value,
 }));
+vi.mock("@/lib/settings/runtime-store", () => ({
+  loadUserRuntimeSettings: vi.fn().mockResolvedValue({
+    structuredRequestTimeoutSeconds: 600,
+    structuredOutputStreaming: true,
+    structuredTransportMaxAttempts: 3,
+    workflowStepMaxAttempts: 3,
+    workflowConcurrency: 2,
+    screenplayClipMaxChars: 1_600,
+  }),
+}));
 vi.mock("@/lib/server/prisma", () => ({
   prisma: {
     episode: { findFirst: episodeFindFirst },
@@ -44,6 +54,8 @@ import {
   convertEpisodeClipsToScreenplays,
   hasCompleteClipCoverage,
   mapWithConcurrency,
+  MAX_SCREENPLAY_CLIP_CHARS,
+  normalizeScreenplayClipSizes,
   ScreenplayBatchError,
   splitEpisodeIntoClips,
 } from "./story-to-script-runtime";
@@ -258,6 +270,38 @@ describe("story-to-script runtime", () => {
       props: ["长剑"],
     });
     expect(clips.at(-1)?.characters).toEqual(expect.arrayContaining(["乙"]));
+  });
+
+  it("deterministically bounds oversized provider clips before persistence", () => {
+    const sourceText = `${"甲在练武场挥剑。".repeat(220)}乙拿起长剑回到书房。`;
+    const clips = normalizeScreenplayClipSizes(
+      [
+        {
+          start: sourceText.slice(0, 20),
+          end: sourceText.slice(-20),
+          text: sourceText,
+          summary: "模型返回的整章片段",
+          location: "练武场",
+          characters: ["甲", "乙"],
+          props: ["长剑"],
+        },
+      ],
+      {
+        characters: ["甲", "乙"],
+        locations: ["练武场", "书房"],
+        props: ["长剑"],
+      },
+    );
+
+    expect(clips.length).toBeGreaterThan(1);
+    expect(clips.map((clip) => clip.text).join("")).toBe(sourceText);
+    expect(
+      clips.every((clip) => clip.text.length <= MAX_SCREENPLAY_CLIP_CHARS),
+    ).toBe(true);
+    expect(clips.at(-1)).toMatchObject({
+      location: "书房",
+      props: ["长剑"],
+    });
   });
 
   it("keeps successful clips and retries only failed screenplay work", async () => {

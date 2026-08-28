@@ -30,6 +30,16 @@ vi.mock("./domain-store", () => ({
 vi.mock("@/lib/server/crypto", () => ({
   decryptSecret: (value: string) => value,
 }));
+vi.mock("@/lib/settings/runtime-store", () => ({
+  loadUserRuntimeSettings: vi.fn().mockResolvedValue({
+    structuredRequestTimeoutSeconds: 600,
+    structuredOutputStreaming: true,
+    structuredTransportMaxAttempts: 3,
+    workflowStepMaxAttempts: 3,
+    workflowConcurrency: 2,
+    screenplayClipMaxChars: 1_600,
+  }),
+}));
 vi.mock("@/lib/server/prisma", () => ({
   prisma: {
     episode: { findFirst: episodeFindFirst },
@@ -132,6 +142,13 @@ describe("script-to-storyboard runtime", () => {
           }),
         ],
       }),
+    );
+    const savedPanel = saveStoryboard.mock.calls[0]?.[3]?.panels?.[0] as {
+      videoPrompt?: string;
+    };
+    expect(savedPanel.videoPrompt).toContain("角色表演与心理外化");
+    expect(savedPanel.videoPrompt).toContain(
+      "甲 | 心理与情绪：平静 | 动作与反应：说话 | 表情变化：自然",
     );
     expect(hooks.persistArtifact).toHaveBeenCalledWith(
       "storyboard.clip.phase3",

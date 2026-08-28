@@ -266,6 +266,42 @@ export async function updateWorkflowRunStatus(
   )
     return null;
   const now = new Date();
+  if (status === "paused") {
+    const row = await prisma.$transaction(async (tx) => {
+      await tx.workflowRun.update({
+        where: { id: runId },
+        data: {
+          status,
+          heartbeatAt: now,
+          cancelRequestedAt: null,
+          completedAt: null,
+          activeDedupeKey: null,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          updatedAt: now,
+        },
+      });
+      await tx.workflowStep.updateMany({
+        where: { runId, status: "running" },
+        data: { status: "pending", completedAt: null, updatedAt: now },
+      });
+      await tx.workflowStepAttempt.updateMany({
+        where: { runId, status: "running" },
+        data: {
+          status: "paused",
+          errorCode: "WORKFLOW_PAUSED",
+          errorMessage: "工作流已暂停。",
+          finishedAt: now,
+          updatedAt: now,
+        },
+      });
+      await tx.workflowEvent.create({
+        data: { runId, type: status, status, message },
+      });
+      return tx.workflowRun.findUnique({ where: { id: runId }, include });
+    });
+    return row ? toRun(row) : null;
+  }
   const row = await prisma.workflowRun.update({
     where: { id: runId },
     data: {
@@ -284,7 +320,7 @@ export async function updateWorkflowRunStatus(
             leaseExpiresAt: null,
           }
         : {}),
-      ...(status === "paused" || status === "queued"
+      ...(status === "queued"
         ? { cancelRequestedAt: null, completedAt: null }
         : {}),
     },
@@ -306,34 +342,40 @@ export async function requestWorkflowCancel(userId: string, runId: string) {
     !["queued", "running", "canceling", "paused"].includes(current.status)
   )
     return null;
-  if (current.status === "canceling") return getWorkflowRun(userId, runId);
   const now = new Date();
-  const requiresWorkerAck = current.status === "running";
-  const row = await prisma.workflowRun.update({
-    where: { id: runId },
-    data: {
-      status: requiresWorkerAck ? "canceling" : "canceled",
-      cancelRequestedAt: now,
-      completedAt: requiresWorkerAck ? null : now,
-      ...(requiresWorkerAck
-        ? {}
-        : {
-            activeDedupeKey: null,
-            leaseOwner: null,
-            leaseExpiresAt: null,
-          }),
-      updatedAt: now,
-    },
-    include,
+  const row = await prisma.$transaction(async (tx) => {
+    await tx.workflowRun.update({
+      where: { id: runId },
+      data: {
+        status: "canceled",
+        cancelRequestedAt: now,
+        completedAt: now,
+        activeDedupeKey: null,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        updatedAt: now,
+      },
+    });
+    await tx.workflowStep.updateMany({
+      where: { runId, status: "running" },
+      data: { status: "paused", completedAt: now, updatedAt: now },
+    });
+    await tx.workflowStepAttempt.updateMany({
+      where: { runId, status: "running" },
+      data: {
+        status: "canceled",
+        errorCode: "WORKFLOW_CANCELED",
+        errorMessage: "工作流已取消。",
+        finishedAt: now,
+        updatedAt: now,
+      },
+    });
+    await tx.workflowEvent.create({
+      data: { runId, type: "cancel_requested", status: "canceled" },
+    });
+    return tx.workflowRun.findUnique({ where: { id: runId }, include });
   });
-  await prisma.workflowEvent.create({
-    data: {
-      runId,
-      type: "cancel_requested",
-      status: requiresWorkerAck ? "canceling" : "canceled",
-    },
-  });
-  return toRun(row);
+  return row ? toRun(row) : null;
 }
 
 export async function retryWorkflowRun(userId: string, runId: string) {

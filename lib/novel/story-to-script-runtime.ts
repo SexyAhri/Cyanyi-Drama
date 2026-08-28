@@ -21,9 +21,10 @@ import {
 import { loadApprovedWorldBible } from "@/lib/production/world-bible";
 import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
+import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { listNovelCharacters, listNovelLocations } from "./domain-store";
 import { normalizeScreenplayDialogue } from "./screenplay-dialogue";
-import { STORY_STRUCTURED_REQUEST_TIMEOUT_MS } from "./story-runtime-config";
 
 export type StoryToScriptStepInput = {
   projectId: string;
@@ -73,6 +74,8 @@ type SegmentedClip = {
   props: string[];
 };
 
+export const MAX_SCREENPLAY_CLIP_CHARS = 1_600;
+
 export class ScreenplayBatchError extends Error {
   constructor(readonly results: ScreenplayBatchResult[]) {
     const failed = results.filter((result) => !result.success);
@@ -116,7 +119,6 @@ export async function splitEpisodeIntoClips(
 
   const result = await requestOpenAiStructured({
     ...context.provider,
-    timeoutMs: STORY_STRUCTURED_REQUEST_TIMEOUT_MS,
     prompt: renderPrompt({
       id: PROMPT_IDS.STORY_CLIP_SEGMENTATION,
       locale: input.locale ?? "zh",
@@ -134,7 +136,11 @@ export async function splitEpisodeIntoClips(
         canonical: context.canonical,
       }),
   });
-  const segmentedClips = result.data.clips;
+  const segmentedClips = normalizeScreenplayClipSizes(
+    result.data.clips,
+    context.canonical,
+    context.screenplayClipMaxChars,
+  );
   const promptTraces = [result.trace];
 
   await hooks.assertActive();
@@ -199,6 +205,19 @@ export function buildDeterministicClipSegmentation(
   });
 }
 
+export function normalizeScreenplayClipSizes(
+  clips: readonly SegmentedClip[],
+  canonical: CanonicalContext,
+  maxChars = MAX_SCREENPLAY_CLIP_CHARS,
+) {
+  const limit = Math.max(200, maxChars);
+  return clips.flatMap((clip) =>
+    clip.text.length <= limit
+      ? [clip]
+      : buildDeterministicClipSegmentation(clip.text, canonical, limit),
+  );
+}
+
 function splitAtEditorialBoundaries(sourceText: string, maxChars: number) {
   if (sourceText.length <= maxChars) return [sourceText];
   const chunks: string[] = [];
@@ -237,7 +256,7 @@ export async function convertEpisodeClipsToScreenplays(
 
   const results = await mapWithConcurrency(
     clips,
-    normalizeConcurrency(input.concurrency),
+    normalizeConcurrency(input.concurrency ?? context.workflowConcurrency),
     async (clip): Promise<ScreenplayBatchResult> => {
       await hooks.assertActive();
       const stored = parseReusableScreenplay(
@@ -271,7 +290,6 @@ export async function convertEpisodeClipsToScreenplays(
         });
         const result = await requestOpenAiStructured({
           ...context.provider,
-          timeoutMs: STORY_STRUCTURED_REQUEST_TIMEOUT_MS,
           prompt: renderPrompt({
             id: PROMPT_IDS.STORY_SCREENPLAY_CONVERSION,
             locale: input.locale ?? "zh",
@@ -478,6 +496,7 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
     locations,
     props,
     worldBible,
+    runtimeSettings,
   ] =
     await Promise.all([
       prisma.episode.findFirst({
@@ -502,6 +521,7 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
       listNovelLocations(userId, input.projectId),
       listProductionProps(userId, input.projectId),
       loadApprovedWorldBible(userId, input.projectId),
+      loadUserRuntimeSettings(userId),
     ]);
   if (!episode) throw new Error("STORY_EPISODE_NOT_FOUND");
   if (!channel) throw new Error("STORY_CHANNEL_NOT_FOUND");
@@ -529,11 +549,14 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
     },
     worldBible,
     worldBibleText: JSON.stringify(worldBible?.payload ?? {}),
+    screenplayClipMaxChars: runtimeSettings.screenplayClipMaxChars,
+    workflowConcurrency: runtimeSettings.workflowConcurrency,
     provider: {
       baseUrl: channel.baseUrl,
       apiKeys,
       model: input.model,
       temperature: 0.2,
+      ...structuredRequestOptions(runtimeSettings),
       structuredOutputMode: supportsStoredStructuredOutputs(
         configuredModel.capabilitiesJson,
       )

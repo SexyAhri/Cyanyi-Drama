@@ -43,6 +43,8 @@ export async function requestOpenAiStructured<T>(input: {
   imageUrls?: string[];
   temperature?: number;
   timeoutMs?: number;
+  stream?: boolean;
+  maxTransportAttempts?: number;
 }) {
   let tokenUsage: PromptTokenUsage | null = null;
   let apiKeyIndex = 0;
@@ -72,6 +74,8 @@ export async function requestOpenAiStructured<T>(input: {
             imageUrls: input.imageUrls,
             temperature: input.temperature,
             timeoutMs: input.timeoutMs,
+            stream: input.stream,
+            maxTransportAttempts: input.maxTransportAttempts,
           });
           apiKeyIndex = candidateIndex;
           tokenUsage = addTokenUsage(tokenUsage, response.tokenUsage);
@@ -116,10 +120,57 @@ async function requestText(input: {
   imageUrls?: string[];
   temperature?: number;
   timeoutMs?: number;
+  stream?: boolean;
+  maxTransportAttempts?: number;
+}) {
+  let lastError: unknown;
+  const startedAt = Date.now();
+  const maxAttempts = normalizeTransportAttempts(input.maxTransportAttempts);
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await requestTextAttempt(input);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableTextTransportError(error)) throw error;
+      if (attempt >= maxAttempts)
+        throw buildTransportRetryExhaustedError({
+          attempt,
+          error,
+          startedAt,
+          timeoutMs: input.timeoutMs ?? 120_000,
+        });
+      await new Promise((resolve) =>
+        setTimeout(resolve, 250 * 2 ** (attempt - 1)),
+      );
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("STRUCTURED_PROVIDER_REQUEST_FAILED");
+}
+
+function normalizeTransportAttempts(value: number | undefined) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(1, Math.min(10, Math.floor(value)))
+    : 3;
+}
+
+async function requestTextAttempt(input: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  messages: StructuredMessage[];
+  responseFormat: ReturnType<typeof buildStructuredResponseFormat>;
+  imageUrls?: string[];
+  temperature?: number;
+  timeoutMs?: number;
+  stream?: boolean;
+  maxTransportAttempts?: number;
 }) {
   const timeoutMs = input.timeoutMs ?? 120_000;
   let response: Response;
   let responseText: string;
+  const startedAt = Date.now();
   try {
     response = await fetchWithProviderRetry(
       `${input.baseUrl.replace(/\/+$/, "")}/chat/completions`,
@@ -133,19 +184,33 @@ async function requestText(input: {
           model: input.model,
           temperature: input.temperature ?? 0.2,
           response_format: input.responseFormat,
-          stream: true,
-          stream_options: { include_usage: true },
+          stream: input.stream ?? true,
+          ...((input.stream ?? true)
+            ? { stream_options: { include_usage: true } }
+            : {}),
           messages: buildOpenAiMessages(input.messages, input.imageUrls),
         }),
         signal: AbortSignal.timeout(timeoutMs),
         cache: "no-store",
       },
     );
-    responseText = await response.text();
   } catch (error) {
-    if (isTimeoutError(error))
-      throw new Error(`STRUCTURED_PROVIDER_TIMEOUT:${timeoutMs}`);
-    throw error;
+    throw buildProviderRequestError({
+      error,
+      stage: "request",
+      startedAt,
+      timeoutMs,
+    });
+  }
+  try {
+    responseText = await readResponseText(response);
+  } catch (error) {
+    throw buildProviderRequestError({
+      error,
+      stage: "response_body",
+      startedAt,
+      timeoutMs,
+    });
   }
   const payload = parseJsonText(responseText);
   if (!response.ok)
@@ -163,7 +228,8 @@ async function requestText(input: {
 function isTimeoutError(error: unknown) {
   return (
     error instanceof Error &&
-    (error.name === "TimeoutError" ||
+    (/^STRUCTURED_PROVIDER_TIMEOUT:/.test(error.message) ||
+      error.name === "TimeoutError" ||
       /aborted due to timeout|timed out/i.test(error.message))
   );
 }
@@ -173,9 +239,160 @@ export function isRetryableStructuredProviderError(error: unknown) {
   return (
     /^STRUCTURED_PROVIDER_TIMEOUT:/.test(error.message) ||
     /^STRUCTURED_PROVIDER_FAILED:(408|425|429|5\d\d):/.test(error.message) ||
+    /^STRUCTURED_PROVIDER_TRANSPORT(?:_FAILED)?:/.test(error.message) ||
     isTimeoutError(error) ||
-    /fetch failed|ECONNRESET|ETIMEDOUT|socket hang up/i.test(error.message)
+    /fetch failed|ECONNRESET|ETIMEDOUT|socket hang up|terminated|UND_ERR_SOCKET/i.test(
+      error.message,
+    )
   );
+}
+
+function isRetryableTextTransportError(error: unknown) {
+  return (
+    error instanceof Error &&
+    !isTimeoutError(error) &&
+    /STRUCTURED_PROVIDER_TRANSPORT|fetch failed|ECONNRESET|ETIMEDOUT|socket hang up|terminated|UND_ERR_SOCKET/i.test(
+      `${error.message} ${error.cause instanceof Error ? error.cause.message : ""}`,
+    )
+  );
+}
+
+type ProviderRequestStage = "request" | "response_body";
+
+class StructuredProviderTransportError extends Error {
+  constructor(
+    readonly stage: ProviderRequestStage,
+    readonly reason: string,
+    readonly causeCode: string,
+    cause: unknown,
+  ) {
+    super(
+      `STRUCTURED_PROVIDER_TRANSPORT:stage=${stage};reason=${reason};causeCode=${causeCode}`,
+    );
+    this.name = "StructuredProviderTransportError";
+    this.cause = cause;
+  }
+}
+
+class ResponseBodyReadError extends Error {
+  constructor(
+    cause: unknown,
+    readonly partialBytes: number,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = "ResponseBodyReadError";
+    this.cause = cause;
+  }
+}
+
+async function readResponseText(response: Response) {
+  if (!response.body) return response.text();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) return text + decoder.decode();
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+  } catch (error) {
+    text += decoder.decode();
+    if (isCompleteInterruptedResponse(response, text)) return text;
+    throw new ResponseBodyReadError(
+      error,
+      new TextEncoder().encode(text).byteLength,
+    );
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function isCompleteInterruptedResponse(response: Response, text: string) {
+  if (!text.trim()) return false;
+  if (!isEventStreamResponse(response, text)) return isCompleteJson(text);
+  try {
+    const assembled = parseOpenAiEventStream(text).text;
+    return /data:\s*\[DONE\]/.test(text) || isCompleteJson(assembled);
+  } catch {
+    return false;
+  }
+}
+
+function isCompleteJson(text: string) {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function buildProviderRequestError(input: {
+  error: unknown;
+  stage: ProviderRequestStage;
+  startedAt: number;
+  timeoutMs: number;
+}) {
+  const elapsedMs = Math.max(0, Date.now() - input.startedAt);
+  const reason = diagnosticErrorMessage(input.error);
+  const causeCode = diagnosticErrorCode(input.error);
+  if (isTimeoutError(input.error))
+    return new Error(
+      `STRUCTURED_PROVIDER_TIMEOUT:stage=${input.stage};timeoutMs=${input.timeoutMs};elapsedMs=${elapsedMs};reason=${reason};causeCode=${causeCode}`,
+    );
+  return new StructuredProviderTransportError(
+    input.stage,
+    reason,
+    causeCode,
+    input.error,
+  );
+}
+
+function buildTransportRetryExhaustedError(input: {
+  attempt: number;
+  error: unknown;
+  startedAt: number;
+  timeoutMs: number;
+}) {
+  const transport =
+    input.error instanceof StructuredProviderTransportError
+      ? input.error
+      : new StructuredProviderTransportError(
+          "request",
+          diagnosticErrorMessage(input.error),
+          diagnosticErrorCode(input.error),
+          input.error,
+        );
+  const error = new Error(
+    `STRUCTURED_PROVIDER_TRANSPORT_FAILED:stage=${transport.stage};attempts=${input.attempt};timeoutMs=${input.timeoutMs};elapsedMs=${Math.max(0, Date.now() - input.startedAt)};reason=${transport.reason};causeCode=${transport.causeCode};partialBytes=${diagnosticPartialBytes(transport.cause)}`,
+  );
+  error.cause = input.error;
+  return error;
+}
+
+function diagnosticPartialBytes(error: unknown): number {
+  if (error instanceof ResponseBodyReadError) return error.partialBytes;
+  if (isRecord(error) && error.cause && error.cause !== error)
+    return diagnosticPartialBytes(error.cause);
+  return 0;
+}
+
+function diagnosticErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return sanitizeDiagnosticValue(message || "unknown");
+}
+
+function diagnosticErrorCode(error: unknown): string {
+  if (isRecord(error) && typeof error.code === "string" && error.code.trim())
+    return sanitizeDiagnosticValue(error.code);
+  if (isRecord(error) && error.cause && error.cause !== error)
+    return diagnosticErrorCode(error.cause);
+  return "unknown";
+}
+
+function sanitizeDiagnosticValue(value: string) {
+  return value.replace(/[;\r\n]+/g, " ").trim().slice(0, 240) || "unknown";
 }
 
 function buildOpenAiMessages(

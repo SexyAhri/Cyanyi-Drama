@@ -21,6 +21,16 @@ vi.mock("@/lib/llm/openai-structured", () => ({
 vi.mock("@/lib/server/crypto", () => ({
   decryptSecret: () => '["test-key"]',
 }));
+vi.mock("@/lib/settings/runtime-store", () => ({
+  loadUserRuntimeSettings: vi.fn().mockResolvedValue({
+    structuredRequestTimeoutSeconds: 600,
+    structuredOutputStreaming: true,
+    structuredTransportMaxAttempts: 3,
+    workflowStepMaxAttempts: 3,
+    workflowConcurrency: 2,
+    screenplayClipMaxChars: 1_600,
+  }),
+}));
 
 vi.mock("@/lib/server/prisma", () => ({
   prisma: {

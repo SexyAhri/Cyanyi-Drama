@@ -19,6 +19,16 @@ vi.mock("@/lib/llm/openai-structured", () => ({
 vi.mock("@/lib/server/crypto", () => ({
   decryptSecret: (value: string) => value,
 }));
+vi.mock("@/lib/settings/runtime-store", () => ({
+  loadUserRuntimeSettings: vi.fn().mockResolvedValue({
+    structuredRequestTimeoutSeconds: 600,
+    structuredOutputStreaming: true,
+    structuredTransportMaxAttempts: 3,
+    workflowStepMaxAttempts: 3,
+    workflowConcurrency: 2,
+    screenplayClipMaxChars: 1_600,
+  }),
+}));
 vi.mock("@/lib/server/prisma", () => ({
   prisma: {
     episode: { findFirst: episodeFindFirst },
@@ -177,6 +187,63 @@ describe("voice analysis", () => {
         content: "只要坚持，终有一天能让轻视他们的人闭嘴。",
         matchedPanelIndex: 2,
       }),
+    ]);
+  });
+
+  it("uses the deterministic storyboard split for independent voice lines", () => {
+    const fullText =
+      "你以为凭这点修为就能挡住我吗？今日我便让你看清境界之间不可逾越的差距！";
+    const first = "你以为凭这点修为就能挡住我吗？";
+    const second = "今日我便让你看清境界之间不可逾越的差距！";
+    const data = buildScreenplayVoiceAnalysis({
+      clips: [
+        {
+          id: "clip-1",
+          screenplay: JSON.stringify({
+            clipId: "clip-1",
+            originalText: `甲说：“${fullText}”`,
+            scenes: [
+              {
+                sceneNumber: 0,
+                heading: { intExt: "EXT", location: "演武场", time: "日" },
+                description: "",
+                characters: ["甲"],
+                content: [
+                  {
+                    type: "dialogue",
+                    character: "甲",
+                    parenthetical: null,
+                    lines: fullText,
+                  },
+                ],
+              },
+            ],
+          }),
+        },
+      ],
+      panels: [
+        {
+          clipId: "clip-1",
+          panelIndex: 8,
+          description: "甲开口",
+          subtitleText: "",
+          speakingCharacter: "甲",
+          lipSyncText: first,
+        },
+        {
+          clipId: "clip-1",
+          panelIndex: 9,
+          description: "甲继续说",
+          subtitleText: "",
+          speakingCharacter: "甲",
+          lipSyncText: second,
+        },
+      ],
+    });
+
+    expect(data?.lines.map((line) => [line.content, line.matchedPanelIndex])).toEqual([
+      [first, 8],
+      [second, 9],
     ]);
   });
 

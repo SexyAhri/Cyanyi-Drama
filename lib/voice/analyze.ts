@@ -12,6 +12,8 @@ import {
 } from "@/lib/prompts/schemas";
 import { validateVoiceAnalysis } from "@/lib/prompts/validators";
 import { normalizeScreenplayDialogue } from "@/lib/novel/screenplay-dialogue";
+import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 
 export type VoiceAnalyzeInput = {
   userId: string;
@@ -88,6 +90,7 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
   if (!model) throw new VoiceAnalyzeError("分析模型未在该渠道中配置或未选中");
   const keys = parseKeys(channel.encryptedApiKeys);
   if (!keys.length) throw new VoiceAnalyzeError("渠道没有可用 API Key");
+  const runtimeSettings = await loadUserRuntimeSettings(input.userId);
 
   const characters = await prisma.novelCharacter.findMany({
     where: { projectId: input.projectId },
@@ -149,6 +152,7 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
       )
         ? "json_schema"
         : "json_object",
+      ...structuredRequestOptions(runtimeSettings),
     });
     analyzedData = analyzed.data;
     trace = analyzed.trace;
@@ -477,6 +481,9 @@ function requestVoiceAnalysis(input: {
   characters: unknown[];
   panels: unknown[];
   structuredOutputMode: "json_object" | "json_schema";
+  timeoutMs?: number;
+  stream?: boolean;
+  maxTransportAttempts?: number;
 }) {
   return requestOpenAiStructured({
     baseUrl: input.baseUrl,
@@ -484,6 +491,9 @@ function requestVoiceAnalysis(input: {
     model: input.model,
     temperature: 0.1,
     structuredOutputMode: input.structuredOutputMode,
+    timeoutMs: input.timeoutMs,
+    stream: input.stream,
+    maxTransportAttempts: input.maxTransportAttempts,
     prompt: renderPrompt({
       id: PROMPT_IDS.STORY_VOICE_ANALYSIS,
       locale: input.locale,

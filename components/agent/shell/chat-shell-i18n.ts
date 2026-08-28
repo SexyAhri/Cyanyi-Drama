@@ -97,6 +97,30 @@ export type ShellCopy = {
   settingsComingSoon: string;
   settingsPreferences: string;
   settingsPreferencesDescription: string;
+  settingsRuntime: string;
+  settingsRuntimeDescription: string;
+  settingsRuntimeRequests: string;
+  settingsRuntimeRequestsDescription: string;
+  settingsStructuredTimeout: string;
+  settingsStructuredTimeoutHint: string;
+  settingsStructuredStreaming: string;
+  settingsStreamingEnabled: string;
+  settingsStreamingDisabled: string;
+  settingsTransportAttempts: string;
+  settingsTransportAttemptsHint: string;
+  settingsWorkflowExecution: string;
+  settingsWorkflowExecutionDescription: string;
+  settingsWorkflowAttempts: string;
+  settingsWorkflowAttemptsHint: string;
+  settingsWorkflowConcurrency: string;
+  settingsWorkflowConcurrencyHint: string;
+  settingsClipMaxChars: string;
+  settingsClipMaxCharsHint: string;
+  settingsRuntimeLoadError: string;
+  settingsRuntimeSaveError: string;
+  settingsRuntimeSaveSuccess: string;
+  settingsRuntimeSaving: string;
+  settingsRuntimeReset: string;
   settingsWorkflowModels: string;
   settingsWorkflowModelsDescription: string;
   settingsAnalysisModel: string;
@@ -238,6 +262,33 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsPreferences: "Preferences",
     settingsPreferencesDescription:
       "Adjust the workspace layout and model display preferences.",
+    settingsRuntime: "Runtime settings",
+    settingsRuntimeDescription:
+      "Control model request reliability and workflow execution defaults.",
+    settingsRuntimeRequests: "Model requests",
+    settingsRuntimeRequestsDescription:
+      "Global request behavior for all structured model calls.",
+    settingsStructuredTimeout: "Request timeout (seconds)",
+    settingsStructuredTimeoutHint: "10-3600 seconds per request.",
+    settingsStructuredStreaming: "Response mode",
+    settingsStreamingEnabled: "Streaming",
+    settingsStreamingDisabled: "Non-streaming",
+    settingsTransportAttempts: "Transport attempts",
+    settingsTransportAttemptsHint: "1-10 attempts for connection failures.",
+    settingsWorkflowExecution: "Workflow execution",
+    settingsWorkflowExecutionDescription:
+      "Defaults used when a workflow does not provide an explicit value.",
+    settingsWorkflowAttempts: "Step attempts",
+    settingsWorkflowAttemptsHint: "1-10 attempts before a step is exhausted.",
+    settingsWorkflowConcurrency: "Default concurrency",
+    settingsWorkflowConcurrencyHint: "1-8 clips processed at the same time.",
+    settingsClipMaxChars: "Clip character limit",
+    settingsClipMaxCharsHint: "400-4000 source characters per screenplay clip.",
+    settingsRuntimeLoadError: "Failed to load runtime settings.",
+    settingsRuntimeSaveError: "Failed to save runtime settings.",
+    settingsRuntimeSaveSuccess: "Runtime settings saved.",
+    settingsRuntimeSaving: "Saving...",
+    settingsRuntimeReset: "Restore defaults",
     settingsWorkflowModels: "Workflow models",
     settingsWorkflowModelsDescription:
       "Defaults used by each generation workflow.",
@@ -267,7 +318,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsPromptSourcesDescription:
       "Manage reusable prompt and template sources.",
     settingsDescription:
-      "Defaults are organized around the generation workflow and ready for a future preferences API.",
+      "Manage model channels, creative defaults, and workflow runtime behavior.",
     settingsWebdav: "WebDAV",
     settingsWebdavDescription:
       "Connect WebDAV storage for syncing workspace assets.",
@@ -379,6 +430,32 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsComingSoon: "此功能暂未配置。",
     settingsPreferences: "偏好设置",
     settingsPreferencesDescription: "调整工作区布局和模型显示偏好。",
+    settingsRuntime: "运行设置",
+    settingsRuntimeDescription: "控制模型请求可靠性和工作流执行默认值。",
+    settingsRuntimeRequests: "模型请求",
+    settingsRuntimeRequestsDescription:
+      "统一作用于所有结构化模型调用，新任务会使用保存后的参数。",
+    settingsStructuredTimeout: "单次请求超时（秒）",
+    settingsStructuredTimeoutHint: "范围 10-3600 秒。",
+    settingsStructuredStreaming: "响应模式",
+    settingsStreamingEnabled: "流式响应",
+    settingsStreamingDisabled: "非流式响应",
+    settingsTransportAttempts: "传输尝试次数",
+    settingsTransportAttemptsHint: "连接中断时尝试 1-10 次。",
+    settingsWorkflowExecution: "工作流执行",
+    settingsWorkflowExecutionDescription:
+      "工作流没有显式指定参数时使用这些全局默认值。",
+    settingsWorkflowAttempts: "步骤尝试次数",
+    settingsWorkflowAttemptsHint: "单步骤用尽 1-10 次后标记失败。",
+    settingsWorkflowConcurrency: "默认并发数",
+    settingsWorkflowConcurrencyHint: "同时处理 1-8 个剧本片段。",
+    settingsClipMaxChars: "剧本分段字符上限",
+    settingsClipMaxCharsHint: "每段原文 400-4000 字符。",
+    settingsRuntimeLoadError: "运行设置加载失败。",
+    settingsRuntimeSaveError: "运行设置保存失败。",
+    settingsRuntimeSaveSuccess: "运行设置已保存。",
+    settingsRuntimeSaving: "保存中...",
+    settingsRuntimeReset: "恢复默认值",
     settingsWorkflowModels: "工作流模型",
     settingsWorkflowModelsDescription:
       "对应各个生成工作流的默认模型。",
@@ -407,7 +484,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsPromptSources: "提示词来源",
     settingsPromptSourcesDescription: "管理可复用的提示词和模板来源。",
     settingsDescription:
-      "偏好字段按生成工作流整理，后续可直接接入偏好接口。",
+      "管理模型渠道、创作默认值和工作流运行参数。",
     settingsWebdav: "WebDAV",
     settingsWebdavDescription: "连接 WebDAV 存储，同步工作区资源。",
     showApiKey: "显示 API Key",

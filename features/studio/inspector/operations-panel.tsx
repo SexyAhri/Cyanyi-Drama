@@ -33,6 +33,7 @@ import {
   controlStudioMediaTask,
   controlStudioWorkflow,
   deleteStudioMediaTask,
+  deleteStudioWorkflow,
   retryStudioWorkflowStep,
 } from "../api";
 import { formatStudioDate } from "../i18n";
@@ -45,8 +46,11 @@ import {
 import { StatusIndicator } from "../components/status-indicator";
 import {
   buildOperationItems,
+  isOperationDeletable,
   isOperationRetryable,
+  operationErrorMessage,
   type OperationItem,
+  workflowAttemptLabel,
 } from "./inspector-view-model";
 
 const copy = {
@@ -56,9 +60,10 @@ const copy = {
     cancel: "取消",
     confirmDelete: "确认删除",
     delete: "删除",
-    deleteDescription: "将永久删除此任务记录及关联数据，且无法撤销。",
-    deleteSuccess: "任务已删除",
-    deleteTitle: "删除任务记录？",
+    deleteDescription:
+      "将永久删除这条运行记录、Trace、步骤和重试历史，且无法撤销。已经写入项目的制作数据不会删除。",
+    deleteSuccess: "运行记录已删除",
+    deleteTitle: "删除运行记录？",
     empty: "当前剧集还没有运行记录",
     failed: "失败",
     inspect: "查看 Trace",
@@ -74,8 +79,8 @@ const copy = {
     delete: "Delete",
     deleteDescription:
       "This permanently deletes the task record and its related data.",
-    deleteSuccess: "Task deleted",
-    deleteTitle: "Delete task record?",
+    deleteSuccess: "Run record deleted",
+    deleteTitle: "Delete run record?",
     empty: "No runs for this episode",
     failed: "Failed",
     inspect: "Inspect trace",
@@ -120,6 +125,7 @@ export function OperationsPanel({
     try {
       if (action === "delete") {
         if (item.kind === "task") await deleteStudioMediaTask(item.id);
+        else await deleteStudioWorkflow(item.workflow.id);
       } else if (item.kind === "task") {
         await controlStudioMediaTask(item.id, action as "cancel" | "retry");
       } else if (action === "retry") {
@@ -210,7 +216,6 @@ export function OperationsPanel({
     </div>
   );
 }
-
 function OperationRow({
   busy,
   item,
@@ -241,8 +246,7 @@ function OperationRow({
     item.kind === "task" ? item.task.error : item.step.error,
     locale,
   );
-  const canDelete =
-    item.kind === "task" && ["canceled", "failed"].includes(status);
+  const canDelete = isOperationDeletable(item);
   const canRetry = isOperationRetryable(item);
   return (
     <div className="px-3 py-3">
@@ -261,6 +265,18 @@ function OperationRow({
           <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
             <span>{formatStudioDate(locale, item.updatedAt)}</span>
             {item.kind === "task" ? <span>{item.task.progress}%</span> : null}
+            {item.kind === "workflow-step" ? (
+              <span
+                className={
+                  item.step.attempt >= item.step.maxAttempts &&
+                  ["blocked", "failed"].includes(item.step.status)
+                    ? "font-medium text-destructive"
+                    : undefined
+                }
+              >
+                {workflowAttemptLabel(item.step, locale)}
+              </span>
+            ) : null}
           </div>
           {errorMessage ? (
             <p
@@ -346,7 +362,6 @@ function OperationRow({
     </div>
   );
 }
-
 function Metric({ label, value }: { label: string; value: number }) {
   return (
     <div className="border-r px-3 py-3 last:border-r-0">
@@ -391,23 +406,4 @@ function Action({
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
   );
-}
-
-function operationErrorMessage(
-  error: Record<string, unknown> | undefined,
-  locale: StudioLocale,
-) {
-  const message =
-    typeof error?.message === "string" ? error.message.trim() : "";
-  if (!message) return "";
-  const timeout = message.match(/^STRUCTURED_PROVIDER_TIMEOUT:(\d+)$/);
-  if (timeout) {
-    const seconds = Math.round(Number(timeout[1]) / 1_000);
-    return locale === "zh-CN"
-      ? `模型响应超时（${seconds} 秒）`
-      : `Model response timed out (${seconds}s)`;
-  }
-  if (/aborted due to timeout|timed out/i.test(message))
-    return locale === "zh-CN" ? "模型响应超时" : "Model response timed out";
-  return message;
 }

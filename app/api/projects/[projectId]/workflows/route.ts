@@ -5,6 +5,7 @@ import {
   listWorkflowRunSummaries,
 } from "@/lib/workflow/store";
 import { getWorkflowTemplate } from "@/lib/workflow/registry";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 
 type Context = { params: Promise<{ projectId: string }> };
 
@@ -23,13 +24,22 @@ export async function POST(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { projectId } = await context.params;
   const body = await readObject(request);
+  const runtimeSettings = await loadUserRuntimeSettings(user.id);
   const workflowType =
     typeof body.workflowType === "string" ? body.workflowType.trim() : "";
   const explicitSteps = Array.isArray(body.steps)
     ? body.steps.filter(isStep)
     : [];
   const template = workflowType ? getWorkflowTemplate(workflowType) : null;
-  const steps = explicitSteps.length ? explicitSteps : (template?.steps ?? []);
+  const steps = (explicitSteps.length
+    ? explicitSteps
+    : (template?.steps ?? [])
+  ).map((step) => ({
+    ...step,
+    maxAttempts: explicitSteps.length
+      ? (step.maxAttempts ?? runtimeSettings.workflowStepMaxAttempts)
+      : runtimeSettings.workflowStepMaxAttempts,
+  }));
   if (!workflowType || !steps.length)
     return attachSessionCookie(
       Response.json(
@@ -50,7 +60,15 @@ export async function POST(request: Request, context: Context) {
       targetType:
         typeof body.targetType === "string" ? body.targetType : undefined,
       targetId: typeof body.targetId === "string" ? body.targetId : undefined,
-      input: isRecord(body.input) ? body.input : undefined,
+      input: {
+        ...(isRecord(body.input) ? body.input : {}),
+        concurrency:
+          isRecord(body.input) &&
+          typeof body.input.concurrency === "number" &&
+          Number.isFinite(body.input.concurrency)
+            ? Math.max(1, Math.min(8, Math.floor(body.input.concurrency)))
+            : runtimeSettings.workflowConcurrency,
+      },
       steps,
     });
   } catch (error) {

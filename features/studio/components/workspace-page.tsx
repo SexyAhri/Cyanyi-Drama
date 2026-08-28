@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FolderX, LoaderCircle, RotateCcw, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -40,12 +41,14 @@ import {
 } from "../stage-state";
 import type { StudioSelectionContext, StudioStageId } from "../types";
 import { StudioInspector } from "../inspector/studio-inspector";
+import { operationErrorMessage } from "../inspector/inspector-view-model";
 import { EpisodeSidebar } from "./episode-sidebar";
 import { StageNavigation } from "./stage-navigation";
 import { StageOverview } from "./stage-overview";
 import { WorkspaceTopbar } from "./workspace-topbar";
 import { WritingWorkspace } from "../writing/writing-workspace";
 import { ProductionControlWorkspace } from "../production-control/production-control-workspace";
+import { updateStudioProjectConfig } from "../api";
 
 export function WorkspacePage({ projectId }: { projectId: string }) {
   const { locale, toggleLocale } = useStudioLocale();
@@ -57,6 +60,8 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
   const [episodesOpen, setEpisodesOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [selection, setSelection] = useState<StudioSelectionContext>();
+  const [analysisModelId, setAnalysisModelId] = useState("");
+  const previousWorkflowSteps = useRef<Map<string, string> | null>(null);
   const {
     analysisModels,
     audioModels,
@@ -101,6 +106,59 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
   useEffect(() => {
     setSelection(undefined);
   }, [activeStage, selectedEpisode?.id]);
+
+  useEffect(() => {
+    if (analysisModels.some((model) => model.id === analysisModelId)) return;
+    const configured = analysisModels.find(
+      (model) => model.modelId === snapshot?.project.config.analysisModel,
+    );
+    setAnalysisModelId(configured?.id ?? analysisModels[0]?.id ?? "");
+  }, [analysisModelId, analysisModels, snapshot?.project.config.analysisModel]);
+
+  function changeAnalysisModel(nextModelId: string) {
+    const model = analysisModels.find((item) => item.id === nextModelId);
+    if (!model) return;
+    setAnalysisModelId(nextModelId);
+    void updateStudioProjectConfig(projectId, {
+      analysisModel: model.modelId,
+    }).catch((requestError) => {
+      toast.error(
+        requestError instanceof Error ? requestError.message : copy.actionFailed,
+      );
+    });
+  }
+
+  useEffect(() => {
+    if (!snapshot) return;
+    const current = new Map<string, string>();
+    for (const workflow of snapshot.workflows) {
+      for (const step of workflow.steps) {
+        const state = `${step.status}:${step.attempt}`;
+        current.set(step.id, state);
+        const previous = previousWorkflowSteps.current?.get(step.id);
+        if (
+          previous &&
+          previous !== state &&
+          ["blocked", "failed"].includes(step.status)
+        ) {
+          const exhausted = step.attempt >= step.maxAttempts;
+          const title =
+            locale === "zh-CN"
+              ? exhausted
+                ? `工作流失败，已用尽 ${step.attempt}/${step.maxAttempts} 次尝试`
+                : `工作流失败，已使用 ${step.attempt}/${step.maxAttempts} 次尝试`
+              : exhausted
+                ? `Workflow failed: ${step.attempt}/${step.maxAttempts} attempts exhausted`
+                : `Workflow failed: attempt ${step.attempt}/${step.maxAttempts}`;
+          toast.error(title, {
+            description: operationErrorMessage(step.error, locale),
+            id: `workflow-failure-${step.id}-${step.attempt}`,
+          });
+        }
+      }
+    }
+    previousWorkflowSteps.current = current;
+  }, [locale, snapshot]);
 
   useEffect(() => {
     if (!snapshot || !selectedEpisode) return;
@@ -235,9 +293,11 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
               />
             ) : selectedStage?.id === "writing" && selectedEpisode ? (
               <WritingWorkspace
+                analysisModelId={analysisModelId}
                 episode={selectedEpisode}
                 locale={locale}
                 models={analysisModels}
+                onAnalysisModelChange={changeAnalysisModel}
                 onContextChange={setSelection}
                 onRefresh={() => refresh()}
                 snapshot={snapshot}
@@ -308,8 +368,11 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
           <aside className="hidden w-80 shrink-0 border-l xl:block">
             {wideLayout ? (
               <StudioInspector
+                analysisModelId={analysisModelId}
                 context={inspectorContext}
                 locale={locale}
+                models={analysisModels}
+                onAnalysisModelChange={changeAnalysisModel}
                 onRefresh={() => refresh()}
                 snapshot={snapshot}
               />
@@ -355,8 +418,11 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
             </SheetHeader>
             {activityOpen ? (
               <StudioInspector
+                analysisModelId={analysisModelId}
                 context={inspectorContext}
                 locale={locale}
+                models={analysisModels}
+                onAnalysisModelChange={changeAnalysisModel}
                 onRefresh={() => refresh()}
                 snapshot={snapshot}
               />
