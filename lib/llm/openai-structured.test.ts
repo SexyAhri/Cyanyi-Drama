@@ -185,6 +185,57 @@ describe("OpenAI structured requests", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("retries an empty structured response payload", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ choices: [{ message: {} }] }), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse('{"value":9}'));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await requestOpenAiStructured({
+      baseUrl: "https://provider.test/v1",
+      apiKeys: ["test-key"],
+      model: "test-model",
+      prompt: renderPrompt({
+        id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+        variables: { source_text: "source", character_library: "[]" },
+      }),
+      schema,
+    });
+
+    expect(result.data).toEqual({ value: 9 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports exhausted empty payload retries with the response stage", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: {} }] }), {
+        status: 200,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      requestOpenAiStructured({
+        baseUrl: "https://provider.test/v1",
+        apiKeys: ["test-key"],
+        model: "test-model",
+        prompt: renderPrompt({
+          id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+          variables: { source_text: "source", character_library: "[]" },
+        }),
+        schema,
+      }),
+    ).rejects.toThrow(
+      /STRUCTURED_PROVIDER_TRANSPORT_FAILED:stage=response_payload;attempts=3;.*reason=empty structured response content;causeCode=STRUCTURED_PROVIDER_TEXT_MISSING/,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("reports where transport retries were exhausted and includes the timeout limit", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
       status: 200,

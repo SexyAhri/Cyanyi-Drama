@@ -15,7 +15,7 @@ import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
 import { cn } from "@/lib/utils";
 
 const chatBubbleVariants = cva(
-  "group/message relative break-words rounded-md px-3 py-3 text-sm leading-6 sm:max-w-[70%]",
+  "group/message relative min-w-0 max-w-full break-words rounded-md px-3 py-3 text-sm leading-6 [overflow-wrap:anywhere] sm:max-w-[70%]",
   {
     variants: {
       isUser: {
@@ -135,7 +135,7 @@ export function ChatMessage({
 
   if (isUser) {
     return (
-      <div className="group/message-row flex flex-col items-end">
+      <div className="group/message-row flex w-full min-w-0 max-w-full flex-col items-end">
         <Bubble animation={animation} isUser={isUser}>
           <MarkdownRenderer>{content}</MarkdownRenderer>
           {experimental_attachments?.length ? (
@@ -252,7 +252,7 @@ function AssistantText({
   }
 
   return (
-    <div className="group/message-row flex w-full flex-col items-start">
+    <div className="group/message-row flex w-full min-w-0 max-w-full flex-col items-start">
       {hasPrimaryContent ? (
         <Bubble animation={animation} isUser={false}>
           {content.trim() ? (
@@ -265,7 +265,7 @@ function AssistantText({
       {supplementalContent ? (
         <div
           className={cn(
-            "w-full max-w-[628px] space-y-3",
+            "w-full min-w-0 max-w-[628px] space-y-3",
             hasPrimaryContent && "mt-3",
           )}
         >
@@ -387,7 +387,7 @@ function ReasoningBlock({ part }: { part: ReasoningPart }) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <div className="mb-2 flex flex-col items-start sm:max-w-[70%]">
+    <div className="mb-2 flex min-w-0 max-w-full flex-col items-start sm:max-w-[70%]">
       <Collapsible
         className="group w-full overflow-hidden rounded-lg border bg-muted/50"
         onOpenChange={setIsOpen}
@@ -430,7 +430,7 @@ function ToolCall({
   }
 
   return (
-    <div className="flex flex-col items-start gap-2">
+    <div className="flex min-w-0 max-w-full flex-col items-start gap-2">
       {toolInvocations.map((invocation, index) => {
         if (invocation.state !== "result") {
           return (
@@ -466,7 +466,7 @@ function ToolCall({
 
         return (
           <div
-            className="flex flex-col gap-1.5 rounded-lg border bg-muted/50 px-3 py-2 text-sm"
+            className="flex min-w-0 max-w-full flex-col gap-1.5 rounded-lg border bg-muted/50 px-3 py-2 text-sm"
             key={index}
           >
             <div className="flex items-center gap-2 text-muted-foreground">
@@ -476,7 +476,7 @@ function ToolCall({
                 <span className="font-mono">{invocation.toolName}</span>
               </span>
             </div>
-            <pre className="overflow-x-auto whitespace-pre-wrap text-foreground">
+            <pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-all text-foreground">
               {JSON.stringify(invocation.result, null, 2)}
             </pre>
           </div>

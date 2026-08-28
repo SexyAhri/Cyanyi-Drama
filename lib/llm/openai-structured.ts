@@ -217,12 +217,26 @@ async function requestTextAttempt(input: {
     throw new Error(
       `STRUCTURED_PROVIDER_FAILED:${response.status}:${providerMessage(payload)}`,
     );
-  if (isEventStreamResponse(response, responseText))
-    return parseOpenAiEventStream(responseText);
-  return {
-    text: extractText(payload),
-    tokenUsage: normalizeTokenUsage(payload),
-  };
+  try {
+    if (isEventStreamResponse(response, responseText))
+      return parseOpenAiEventStream(responseText);
+    return {
+      text: extractText(payload),
+      tokenUsage: normalizeTokenUsage(payload),
+    };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "STRUCTURED_PROVIDER_TEXT_MISSING"
+    )
+      throw new StructuredProviderTransportError(
+        "response_payload",
+        "empty structured response content",
+        "STRUCTURED_PROVIDER_TEXT_MISSING",
+        error,
+      );
+    throw error;
+  }
 }
 
 function isTimeoutError(error: unknown) {
@@ -240,6 +254,7 @@ export function isRetryableStructuredProviderError(error: unknown) {
     /^STRUCTURED_PROVIDER_TIMEOUT:/.test(error.message) ||
     /^STRUCTURED_PROVIDER_FAILED:(408|425|429|5\d\d):/.test(error.message) ||
     /^STRUCTURED_PROVIDER_TRANSPORT(?:_FAILED)?:/.test(error.message) ||
+    error.message === "STRUCTURED_PROVIDER_TEXT_MISSING" ||
     isTimeoutError(error) ||
     /fetch failed|ECONNRESET|ETIMEDOUT|socket hang up|terminated|UND_ERR_SOCKET/i.test(
       error.message,
@@ -257,7 +272,7 @@ function isRetryableTextTransportError(error: unknown) {
   );
 }
 
-type ProviderRequestStage = "request" | "response_body";
+type ProviderRequestStage = "request" | "response_body" | "response_payload";
 
 class StructuredProviderTransportError extends Error {
   constructor(

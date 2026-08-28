@@ -8,7 +8,7 @@
 5. 每个会改变人物、道具或空间状态的事件，都要写出起始状态、执行动作和完成状态。取物、开门、入室、交接、落座、起身、转身、移动等过程不可压缩成一句概述；根据原文密度拆成多个 action，方便后续分镜形成自然过渡。
 6. 原文存在打斗、决斗、追逐、功法、招式、武器攻击、防御、变身或召唤时，对相应 action 增加 actionDesign。phase 只能原样使用 anticipation、charge、release、travel、impact、aftermath 六个英文代码，绝对不能翻译或创造其他值。VFX category 只能使用 skill_energy、weapon_trail、shockwave、explosion_debris、elemental_spell、speed_afterimage、shield_barrier、transformation_summon、environment_interaction；SFX type 只能使用 foley、weapon、energy、impact、environment、destruction。不是每次动作都要强行包含全部阶段，但必须有清楚的因果和受力反馈。
 7. actionDesign 中的 realm、technique、能力上限、视觉母题和环境反馈只能来自片段原文、角色库或已批准的世界观与战力规则。允许把已确认能力做得宏大、清晰、适合镜头，但不得新增境界、技能名、功法、元素、武器、胜负、伤害结果或超出当前境界的威力。evidence 必须逐条引用输入中的精确依据。
-8. 使用资产库规范名称；无法可靠匹配时可保留原文中的精确名称。每个 scene.heading.location 只能填写一个规范场景名，或一个原文明示的精确地点名；禁止用分号、斜杠、逗号把“地区；具体场景”等多个层级拼在一个 location 中。地区背景留在 description 或独立场次。
+8. 使用资产库规范名称；无法可靠匹配时可保留原文中的精确名称。原文明示路人、守卫、弟子或群体说出直接台词时，即使角色库未登记，也必须以原文称谓作为临时配音角色写入 scene.characters 和 dialogue.character；引语前后同段出现的群体反应可作为归属依据。群体称谓必须逐字沿用原文，禁止把“无数人”“一些人”“附近的修者”等不同称谓概括或合并成原文没有的“众人”，也不得删台词、改成旁白或凭空拆分个人。每个 scene.heading.location 只能填写一个规范场景名，或一个原文明示的精确地点名；禁止用分号、斜杠、逗号把“地区；具体场景”等多个层级拼在一个 location 中。地区背景留在 description 或独立场次。
 9. content.type 只能是 action、dialogue、voiceover。dialogue 仅用于角色明确说出口的直接引语：引号内台词，或紧跟在“说、问、答、安慰、劝、回应、开口”等说话行为之后的无引号原句。例如“韩宇反而安慰父亲，只要坚持，终有一天能让轻视他们的人闭嘴”中，“只要坚持，终有一天能让轻视他们的人闭嘴”必须成为韩宇的 dialogue，不能整句留作 action。
 10. 原文明示某角色清晰、完整的内心话时，使用 voiceover 并将 character 标为该角色。叙述层的世界背景、人物前史或因果说明如果无法自然视觉化且删去会损害理解，可使用 character=null 的旁白 voiceover；text 必须是原文连续精确摘录。不得把可见动作、环境描写、表情或已经作为 action 覆盖的句子临时改念成旁白，同一原文事件不得同时作为 action 和 voiceover 重复覆盖。voiceover 中画面人物都不张嘴、不做口型。
 11. coverage 必须逐一覆盖给定 source events，eventId 与 evidence 原样返回。modes 可为 visual、dialogue、voiceover；只有确实不可影视化时才用 omitted，并给出 reason。不得漏项或重复。

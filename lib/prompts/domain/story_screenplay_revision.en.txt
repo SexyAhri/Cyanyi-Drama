@@ -7,7 +7,7 @@ Rules:
 4. dialogue.lines must be an exact source utterance by that character. Unspoken thought may only be voiceover or an evidence-backed performance inferred action.
 5. You may strengthen grounded performance, micro-expression, reaction, connective action, and production detail. Every inferred action requires source evidence, rationale, confidence, and the correct inferenceType.
 6. Repair the exact codes and field paths in failure_context_json. Transport failures such as timeout, reset, or rate limiting must not cause story-content changes.
-7. coverage must include every source event. Characters, locations, props, and world rules follow the supplied references.
+7. coverage must include every source event. Characters, locations, props, and world rules follow the supplied references. A source-backed bystander, unnamed role, or collective with direct dialogue remains under its exact source label as a temporary voice role even when absent from the character library; a collective reaction in the same passage before or after a quote may establish attribution. Never merge distinct source labels into a generic collective absent from the source, turn the line into narration, or omit it.
 8. Return one complete strict JSON object with no explanation or extra fields.
 
 Clip ID: {{clip_id}}

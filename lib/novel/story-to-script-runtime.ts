@@ -11,6 +11,7 @@ import {
 } from "@/lib/prompts/schemas";
 import {
   buildSourceEvents,
+  normalizeScreenplaySourceContract,
   validateClipSegmentation,
   validateScreenplayConversion,
 } from "@/lib/prompts/validators";
@@ -409,6 +410,13 @@ export async function convertEpisodeClipsToScreenplays(
           where: { id: clip.id },
           data: { status: "screenplay_running" },
         });
+        const sourceEvents = buildSourceEvents(clip.content);
+        const sourceContract = {
+          clipId: clip.id,
+          clipText: clip.content,
+          sourceEvents,
+          knowledgeText: context.worldBibleText,
+        };
         const result = await requestOpenAiStructured({
           ...context.provider,
           prompt: renderPrompt({
@@ -417,7 +425,7 @@ export async function convertEpisodeClipsToScreenplays(
             variables: {
               clip_id: clip.id,
               clip_text: clip.content,
-              source_events_json: JSON.stringify(buildSourceEvents(clip.content)),
+              source_events_json: JSON.stringify(sourceEvents),
               character_library: JSON.stringify(context.characters),
               location_library: JSON.stringify(context.locations),
               prop_library: JSON.stringify(context.props),
@@ -426,20 +434,25 @@ export async function convertEpisodeClipsToScreenplays(
           }),
           schema: screenplayConversionSchema,
           validate: (data) =>
-            validateScreenplayConversion(data, {
-              clipId: clip.id,
-              clipText: clip.content,
-              canonical: context.canonical,
-              sourceEvents: buildSourceEvents(clip.content),
-              knowledgeText: context.worldBibleText,
-            }),
+            validateScreenplayConversion(
+              normalizeScreenplaySourceContract(data, sourceContract),
+              {
+                clipId: clip.id,
+                clipText: clip.content,
+                canonical: context.canonical,
+                sourceEvents,
+                knowledgeText: context.worldBibleText,
+              },
+            ),
         });
-        const screenplay = normalizeScreenplayDialogue(result.data);
+        const screenplay = normalizeScreenplayDialogue(
+          normalizeScreenplaySourceContract(result.data, sourceContract),
+        );
         const normalizationIssues = validateScreenplayConversion(screenplay, {
           clipId: clip.id,
           clipText: clip.content,
           canonical: context.canonical,
-          sourceEvents: buildSourceEvents(clip.content),
+          sourceEvents,
           knowledgeText: context.worldBibleText,
         });
         if (normalizationIssues.length)
@@ -593,12 +606,20 @@ function parseReusableScreenplay(
   try {
     const parsed = screenplayConversionSchema.safeParse(JSON.parse(value));
     if (!parsed.success) return null;
-    const screenplay = normalizeScreenplayDialogue(parsed.data);
+    const sourceEvents = buildSourceEvents(clipText);
+    const screenplay = normalizeScreenplayDialogue(
+      normalizeScreenplaySourceContract(parsed.data, {
+        clipId,
+        clipText,
+        sourceEvents,
+        knowledgeText,
+      }),
+    );
     return validateScreenplayConversion(screenplay, {
       clipId,
       clipText,
       canonical,
-      sourceEvents: buildSourceEvents(clipText),
+      sourceEvents,
       knowledgeText,
     }).length
       ? null

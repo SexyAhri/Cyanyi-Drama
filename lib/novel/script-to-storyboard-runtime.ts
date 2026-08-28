@@ -20,6 +20,7 @@ import {
 import {
   buildSourceEvents,
   estimateSpeechDurationSeconds,
+  normalizeScreenplaySourceContract,
   validateActingCoverage,
   validateCinematographyCoverage,
   validateContinuityReview,
@@ -680,17 +681,47 @@ function buildClipContext(clip: ProductionClip, context: LoadedContext) {
     context.canonical,
     context.worldBibleText,
   );
-  const characterNames = new Set(clip.characters);
+  const screenplayCharacterNames = Array.from(
+    new Set(
+      screenplay.scenes.flatMap((scene) => [
+        ...scene.characters,
+        ...scene.content.flatMap((content) =>
+          content.type !== "action" && content.character
+            ? [content.character]
+            : [],
+        ),
+      ]),
+    ),
+  );
+  const characterNames = new Set([
+    ...clip.characters,
+    ...screenplayCharacterNames,
+  ]);
   const locationNames = new Set(clip.locations);
   const propNames = new Set(clip.props);
+  const characters = context.characters.filter(
+    (item) => !characterNames.size || characterNames.has(item.name),
+  );
+  const knownCharacterNames = new Set(characters.map((item) => item.name));
+  const temporaryCharacters = screenplayCharacterNames
+    .filter((name) => !knownCharacterNames.has(name))
+    .map((name) => ({
+      name,
+      aliases: [],
+      profile: {},
+      introduction: null,
+    }));
   return {
     clip,
     screenplay,
     sourceText: JSON.stringify(screenplay, null, 2),
-    canonical: context.canonical,
-    characters: context.characters.filter(
-      (item) => !characterNames.size || characterNames.has(item.name),
-    ),
+    canonical: {
+      ...context.canonical,
+      characters: Array.from(
+        new Set([...context.canonical.characters, ...screenplayCharacterNames]),
+      ),
+    },
+    characters: [...characters, ...temporaryCharacters],
     locations: context.locations.filter(
       (item) => !locationNames.size || locationNames.has(item.name),
     ),
@@ -1156,18 +1187,25 @@ function parseScreenplay(
     const parsed = screenplayConversionSchema.safeParse(
       JSON.parse(clip.screenplay),
     );
+    if (!parsed.success) throw new Error("invalid screenplay");
+    const sourceEvents = buildSourceEvents(clip.content);
+    const screenplay = normalizeScreenplaySourceContract(parsed.data, {
+      clipId: clip.id,
+      clipText: clip.content,
+      sourceEvents,
+      knowledgeText,
+    });
     if (
-      !parsed.success ||
-      validateScreenplayConversion(parsed.data, {
+      validateScreenplayConversion(screenplay, {
         clipId: clip.id,
         clipText: clip.content,
         canonical,
-        sourceEvents: buildSourceEvents(clip.content),
+        sourceEvents,
         knowledgeText,
       }).length
     )
       throw new Error("invalid screenplay");
-    return parsed.data;
+    return screenplay;
   } catch {
     throw new Error(`STORYBOARD_SCREENPLAY_INVALID:${clip.id}`);
   }

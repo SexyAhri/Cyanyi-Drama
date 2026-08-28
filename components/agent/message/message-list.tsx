@@ -51,9 +51,9 @@ export function MessageList({
     : undefined;
 
   return (
-    <div className="flex flex-col gap-5 pt-0">
+    <div className="flex min-w-0 max-w-full flex-col gap-5 pt-0">
       {groupedMessages.map((group) => (
-        <div className="space-y-3" key={group.id}>
+        <div className="min-w-0 max-w-full space-y-3" key={group.id}>
           {group.message ? (
             <MessageBubble
               message={group.message}

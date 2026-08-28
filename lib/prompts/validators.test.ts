@@ -8,6 +8,8 @@ import {
   validateContinuityReview,
   isDirectSpeechExcerpt,
   isImplicitVisualBridgeAction,
+  isSourceBackedTemporarySpeaker,
+  normalizeScreenplaySourceContract,
   validateLocationPropAnalysis,
   validateScreenplayConversion,
   validateStoryboardPlanning,
@@ -230,6 +232,311 @@ describe("domain semantic validators", () => {
         "SCENE_NUMBER_NOT_SEQUENTIAL",
       ]),
     );
+  });
+
+  it("keeps source-backed collective speakers through screenplay, storyboard, and voice", () => {
+    const source = "附近修者纷纷惊呼：“海氏宗族的人来了！”";
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: source,
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "书房", time: "日" },
+          description: "",
+          characters: ["附近修者"],
+          content: [
+            {
+              type: "dialogue" as const,
+              character: "附近修者",
+              parenthetical: "惊呼",
+              lines: "海氏宗族的人来了！",
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(
+      validateScreenplayConversion(screenplay, {
+        clipId: "clip-1",
+        clipText: source,
+        canonical,
+      }),
+    ).toEqual([]);
+
+    const screenplayText = JSON.stringify(screenplay);
+    expect(
+      validateStoryboardPlanning(
+        {
+          panels: [
+            {
+              panelIndex: 0,
+              sceneNumber: 0,
+              shotType: "中景",
+              cameraMove: "稳定推近",
+              durationSeconds: 7,
+              speakingCharacter: "附近修者",
+              lipSyncText: "海氏宗族的人来了！",
+              voiceoverText: null,
+              startState: {
+                body: "附近修者站立",
+                hands: "自然垂下",
+                gaze: "看向海氏宗族",
+                screenDirection: "面向画面左侧",
+                props: "无",
+              },
+              endState: {
+                body: "附近修者站立惊呼",
+                hands: "自然垂下",
+                gaze: "看向海氏宗族",
+                screenDirection: "面向画面左侧",
+                props: "无",
+              },
+              motionTimeline: [
+                {
+                  startSecond: 0,
+                  endSecond: 7,
+                  action: "附近修者惊呼",
+                  camera: "稳定推近",
+                },
+              ],
+              vfxCues: [],
+              sfxCues: [],
+              description: "附近修者惊呼",
+              locationName: "书房",
+              characters: ["附近修者"],
+              props: [],
+              imagePrompt: "附近修者惊呼",
+              videoPrompt: "附近修者惊呼，仅动作与环境声",
+              sourceEvidence: ["附近修者"],
+            },
+          ],
+        },
+        { sourceText: screenplayText, canonical, screenplay },
+      ),
+    ).toEqual([]);
+
+    expect(
+      validateVoiceAnalysis(
+        {
+          lines: [
+            {
+              speaker: "附近修者",
+              content: "海氏宗族的人来了！",
+              delivery: "dialogue",
+              emotionPrompt: "惊讶",
+              emotionStrength: 0.7,
+              matchedPanelIndex: 0,
+            },
+          ],
+        },
+        {
+          sourceText: source,
+          characters: canonical.characters,
+          temporarySpeakers: ["附近修者"],
+          panelIndices: [0],
+        },
+      ),
+    ).toEqual([]);
+  });
+
+  it("still rejects an invented collective speaker for quoted dialogue", () => {
+    const source = "附近修者纷纷惊呼：“海氏宗族的人来了！”";
+    const issues = validateScreenplayConversion(
+      {
+        clipId: "clip-1",
+        originalText: source,
+        scenes: [
+          {
+            sceneNumber: 0,
+            heading: { intExt: "INT", location: "书房", time: "日" },
+            description: "",
+            characters: ["各方势力的修者"],
+            content: [
+              {
+                type: "dialogue",
+                character: "各方势力的修者",
+                parenthetical: null,
+                lines: "海氏宗族的人来了！",
+              },
+            ],
+          },
+        ],
+      },
+      { clipId: "clip-1", clipText: source, canonical },
+    );
+
+    expect(issues.map((item) => item.code)).toEqual(
+      expect.arrayContaining(["UNKNOWN_CANONICAL_NAME", "UNKNOWN_SPEAKER"]),
+    );
+  });
+
+  it("attributes nearby quoted lines to exact collective source labels", () => {
+    expect(
+      isSourceBackedTemporarySpeaker(
+        "这就是奥义境修者的神通么……",
+        "下面的修者",
+        "“这就是奥义境修者的神通么……”瞧得虚空中的海潮，下面的修者都是满脸不可思议。",
+      ),
+    ).toBe(true);
+    expect(
+      isSourceBackedTemporarySpeaker(
+        "若是，能踏入这等境界那该多好啊！",
+        "几大千古世家大族的半步奥义修者",
+        "几大千古世家大族的半步奥义修者，不由咽了咽口水，“若是，能踏入这等境界那该多好啊！”",
+      ),
+    ).toBe(true);
+    expect(
+      isSourceBackedTemporarySpeaker(
+        "好恐怖的火炎！",
+        "虚空下的修者",
+        "“好恐怖的火炎！”\n虚空下的修者眼角一阵抽搐。",
+      ),
+    ).toBe(true);
+    expect(
+      isSourceBackedTemporarySpeaker(
+        "好恐怖的火炎！",
+        "众人",
+        "“好恐怖的火炎！”\n虚空下的修者眼角一阵抽搐。",
+      ),
+    ).toBe(false);
+    expect(
+      isSourceBackedTemporarySpeaker(
+        "抵挡下来了，那龙莫非堪比奥义境？",
+        "无数人",
+        "“抵挡下来了，那龙莫非堪比奥义境？”无数人望着虚空中的巨龙。",
+      ),
+    ).toBe(true);
+    expect(
+      isSourceBackedTemporarySpeaker(
+        "海氏宗族，此次定然不会罢休啊！",
+        "一些人",
+        "“海氏宗族，此次定然不会罢休啊！”一些人不由舔了舔舌头。",
+      ),
+    ).toBe(true);
+    expect(
+      isSourceBackedTemporarySpeaker(
+        "海氏宗族，此次定然不会罢休啊！",
+        "海氏宗族的修者",
+        "“海氏宗族，此次定然不会罢休啊！”一些人不由舔了舔舌头。海氏宗族的修者眸光瞧向虚空。",
+      ),
+    ).toBe(false);
+  });
+
+  it("restores deterministic source fields and drops ungrounded production terms", () => {
+    const source = "林澈以筑基境施展青霄剑诀，剑光击中石壁。";
+    const normalized = normalizeScreenplaySourceContract(
+      {
+        clipId: "changed",
+        originalText: "normalized whitespace",
+        coverage: [
+          {
+            eventId: "E001",
+            evidence: "rewritten evidence",
+            modes: ["visual"],
+            reason: null,
+          },
+        ],
+        scenes: [
+          {
+            sceneNumber: 0,
+            heading: { intExt: "INT", location: "书房", time: "夜" },
+            description: "",
+            characters: ["林澈"],
+            content: [
+              {
+                type: "action",
+                text: source,
+                origin: "source",
+                actionDesign: {
+                  kind: "skill",
+                  performer: "林澈",
+                  target: "石壁",
+                  realm: "模型扩写的更高境界",
+                  technique: "青霄剑诀",
+                  choreography: ["林澈挥剑"],
+                  impact: "剑光击中石壁",
+                  environmentResponse: null,
+                  vfxPlan: [],
+                  sfxPlan: [],
+                  evidence: [source],
+                },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        clipId: "clip-1",
+        clipText: source,
+        sourceEvents: [{ eventId: "E001", evidence: source }],
+      },
+    );
+
+    expect(normalized.clipId).toBe("clip-1");
+    expect(normalized.originalText).toBe(source);
+    expect(normalized.coverage?.[0].evidence).toBe(source);
+    const action = normalized.scenes[0].content[0];
+    expect(action.type).toBe("action");
+    if (action.type !== "action") throw new Error("Expected action");
+    expect(action.actionDesign?.realm).toBeNull();
+    expect(action.actionDesign?.technique).toBe("青霄剑诀");
+    expect(
+      validateScreenplayConversion(normalized, {
+        clipId: "clip-1",
+        clipText: source,
+        canonical,
+        sourceEvents: [{ eventId: "E001", evidence: source }],
+      }),
+    ).toEqual([]);
+  });
+
+  it("downgrades or removes ungrounded inferred actions deterministically", () => {
+    const source = "林澈看向虚空，握紧了剑柄。";
+    const normalized = normalizeScreenplaySourceContract(
+      {
+        clipId: "changed",
+        originalText: "changed",
+        scenes: [
+          {
+            sceneNumber: 0,
+            heading: { intExt: "INT", location: "书房", time: "日" },
+            description: "",
+            characters: ["林澈"],
+            content: [
+              {
+                type: "action",
+                text: "林澈喊道：“接招！”",
+                origin: "inferred",
+                inferenceType: "performance",
+                evidence: [source],
+                rationale: "模型推演",
+                confidence: 0.8,
+              },
+              {
+                type: "action",
+                text: "林澈凭空消失。",
+                origin: "bridge",
+                evidence: ["不存在的依据"],
+              },
+            ],
+          },
+        ],
+      },
+      { clipId: "clip-1", clipText: source },
+    );
+
+    expect(normalized.scenes[0].content).toEqual([
+      { type: "action", text: source, origin: "source" },
+    ]);
+    expect(
+      validateScreenplayConversion(normalized, {
+        clipId: "clip-1",
+        clipText: source,
+        canonical,
+      }),
+    ).toEqual([]);
   });
 
   it("accepts an exact source location that is not yet canonical", () => {

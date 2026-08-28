@@ -118,6 +118,27 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
     profile: parseStoredJson(character.profileJson, {}),
     introduction: character.introduction,
   }));
+  const knownCharacterNames = new Set(
+    characterContext.map((character) => character.name),
+  );
+  const temporarySpeakerContext = Array.from(
+    new Set(
+      panelContext.flatMap((panel) =>
+        panel.speakingCharacter ? [panel.speakingCharacter] : [],
+      ),
+    ),
+  )
+    .filter((name) => !knownCharacterNames.has(name))
+    .map((name) => ({
+      name,
+      aliases: [],
+      profile: {},
+      introduction: null,
+    }));
+  const voiceCharacterContext = [
+    ...characterContext,
+    ...temporarySpeakerContext,
+  ];
   const screenplayLines = buildScreenplayVoiceAnalysis({
     clips: episode.clips ?? [],
     panels: panelContext,
@@ -132,6 +153,9 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
     const issues = validateVoiceAnalysis(analyzedData, {
       sourceText: episode.novelText,
       characters: characters.map((character) => character.name),
+      temporarySpeakers: temporarySpeakerContext.map(
+        (character) => character.name,
+      ),
       panelIndices: panelContext.map((panel) => panel.panelIndex),
     });
     if (issues.length)
@@ -145,7 +169,7 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
       model: input.model,
       locale: input.locale ?? "zh",
       sourceText: episode.novelText,
-      characters: characterContext,
+      characters: voiceCharacterContext,
       panels: panelContext,
       structuredOutputMode: supportsStoredStructuredOutputs(
         model.capabilitiesJson,
@@ -160,7 +184,7 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
     if (isRetryableStructuredProviderError(error)) {
       analyzedData = buildDeterministicVoiceAnalysis({
         sourceText: episode.novelText,
-        characters: characterContext,
+        characters: voiceCharacterContext,
         panels: panelContext,
       });
       fallbackReason = structuredProviderFailureCode(error);
@@ -512,6 +536,16 @@ function requestVoiceAnalysis(input: {
           typeof value === "object" &&
           typeof (value as { name?: unknown }).name === "string"
             ? [(value as { name: string }).name]
+            : [],
+        ),
+        temporarySpeakers: input.panels.flatMap((value) =>
+          value &&
+          typeof value === "object" &&
+          typeof (value as { speakingCharacter?: unknown })
+            .speakingCharacter === "string"
+            ? [
+                (value as { speakingCharacter: string }).speakingCharacter,
+              ]
             : [],
         ),
         panelIndices: input.panels.flatMap((value) =>

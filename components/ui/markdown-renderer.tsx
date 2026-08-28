@@ -11,7 +11,7 @@ type MarkdownRendererProps = {
 
 export function MarkdownRenderer({ children }: MarkdownRendererProps) {
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 max-w-full space-y-3 [overflow-wrap:anywhere]">
       <Markdown remarkPlugins={[remarkGfm]} components={components}>
         {children}
       </Markdown>
@@ -30,7 +30,7 @@ function Code({
     return (
       <code
         className={cn(
-          "font-mono [:not(pre)>&]:rounded-md [:not(pre)>&]:bg-background/50 [:not(pre)>&]:px-1 [:not(pre)>&]:py-0.5",
+          "font-mono [:not(pre)>&]:break-all [:not(pre)>&]:rounded-md [:not(pre)>&]:bg-background/50 [:not(pre)>&]:px-1 [:not(pre)>&]:py-0.5",
           className,
         )}
         {...props}
@@ -43,8 +43,8 @@ function Code({
   const code = takeStringContents(children);
 
   return (
-    <div className="group/code relative mb-4">
-      <pre className="overflow-x-auto rounded-md border bg-background/50 p-4 font-mono text-sm [scrollbar-width:none]">
+    <div className="group/code relative mb-4 min-w-0 max-w-full">
+      <pre className="max-w-full overflow-x-auto rounded-md border bg-background/50 p-4 font-mono text-sm [scrollbar-width:none]">
         <code className={className} {...props}>
           {children}
         </code>
@@ -87,7 +87,10 @@ function withClass<Tag extends keyof React.JSX.IntrinsicElements>(
 }
 
 const components = {
-  a: withClass("a", "text-primary underline underline-offset-2"),
+  a: withClass(
+    "a",
+    "break-all text-primary underline underline-offset-2",
+  ),
   blockquote: withClass("blockquote", "border-l-2 border-primary pl-4"),
   code: Code,
   h1: withClass("h1", "text-2xl font-semibold"),
@@ -98,7 +101,7 @@ const components = {
   hr: withClass("hr", "border-foreground/20"),
   li: withClass("li", "my-1.5"),
   ol: withClass("ol", "list-decimal space-y-2 pl-6"),
-  p: withClass("p", "whitespace-pre-wrap"),
+  p: withClass("p", "max-w-full whitespace-pre-wrap [overflow-wrap:anywhere]"),
   pre: ({ children }: { children?: ReactNode }) => children,
   strong: withClass("strong", "font-semibold"),
   table: withClass(

@@ -186,7 +186,7 @@ export function AgentPanel({
         aria-label={text.messages}
         aria-live="polite"
         aria-relevant="additions text"
-        className="min-h-0 flex-1 overflow-y-auto px-3 py-4"
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 py-4"
         role="log"
       >
         {agent.isLoading || agent.isStreaming ? (

@@ -2,7 +2,7 @@
 
 规则：
 1. 覆盖每个剧本事件和 coverage 中非 omitted 的原文事件。source、bridge、inferred 动作都必须保留其事实边界与证据，不得新增剧情或台词。
-2. 每个镜头只能有一名正在开口的角色。说话人变化时必须切镜；speakingCharacter 填规范角色名，lipSyncText 只放该角色本镜头实际说出的原文片段。voiceoverText 只能来自剧本中 type=voiceover 的内容，绝对不能把 action、description 或 coverage 临时改成旁白。画外音镜头中人物不做口型；同一镜头不得同时有 lipSyncText 和 voiceoverText。
+2. 每个镜头只能有一名正在开口的角色。说话人变化时必须切镜；speakingCharacter 填规范角色名，或剧本中已有的原文临时/群体说话者称谓，lipSyncText 只放该角色本镜头实际说出的原文片段。群体发声作为一个配音角色处理，不擅自拆成个人。voiceoverText 只能来自剧本中 type=voiceover 的内容，绝对不能把 action、description 或 coverage 临时改成旁白。画外音镜头中人物不做口型；同一镜头不得同时有 lipSyncText 和 voiceoverText。
 3. 规划镜头前先在内部建立按剧本顺序排列的 spoken checklist，逐项列出每句 dialogue/voiceover 的类型、说话人和完整原文；输出完成后再逐项核对。每项必须按原顺序、原字句恰好覆盖一次，不得新增、漏掉、换序或重复。长台词允许在自然标点处分到相邻镜头，但相邻片段拼接后必须与该项原文完全一致。
 4. durationSeconds 为 1 到 15 的整数。每个有声音文本的镜头必须先计算 minimumSeconds=ceil(中文字数/4.2 + 英文词数/2.6 + 逗号句号问号感叹号分号冒号及省略号数量*0.18)，再令 durationSeconds 不小于 minimumSeconds。若 minimumSeconds>15，或动作和台词无法自然同镜完成，必须先按自然标点拆成多个相邻镜头再分别计算，绝对不得加速硬塞。
 5. sceneNumber 必须对应剧本场次。场景或时间变化必须切镜，不能用连续动作伪装成一个跨场景长镜头。

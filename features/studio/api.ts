@@ -60,9 +60,13 @@ export async function loadWorkspaceSnapshot(
 ): Promise<WorkspaceSnapshot> {
   const encodedProjectId = encodeURIComponent(projectId);
   const touch = options?.touch ? "1" : "0";
+  const timeoutSignal = AbortSignal.timeout(15_000);
+  const signal = options?.signal
+    ? AbortSignal.any([options.signal, timeoutSignal])
+    : timeoutSignal;
   return request<WorkspaceSnapshot>(
     `/api/projects/${encodedProjectId}/data?touch=${touch}`,
-    { signal: options?.signal },
+    { signal },
   );
 }
 

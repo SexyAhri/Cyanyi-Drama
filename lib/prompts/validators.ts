@@ -31,6 +31,13 @@ type CanonicalContext = {
   props: readonly string[];
 };
 
+type ScreenplaySourceContract = {
+  clipId: string;
+  clipText: string;
+  sourceEvents?: readonly SourceEvent[];
+  knowledgeText?: string;
+};
+
 export function validateCharacterAnalysis(
   data: CharacterAnalysis,
   sourceText: string,
@@ -166,6 +173,24 @@ export function validateScreenplayConversion(
   },
 ) {
   const issues: StructuredValidationIssue[] = [];
+  const sourceBackedSpeakers = nameSet(
+    data.scenes.flatMap((scene) =>
+      scene.content.flatMap((content) =>
+        content.type === "dialogue" &&
+        isSourceBackedTemporarySpeaker(
+          content.lines,
+          content.character,
+          input.clipText,
+        )
+          ? [content.character]
+          : [],
+      ),
+    ),
+  );
+  const allowedCharacters = [
+    ...input.canonical.characters,
+    ...sourceBackedSpeakers,
+  ];
   if (data.clipId !== input.clipId)
     issues.push(issue("clipId", "CLIP_ID_CHANGED", "clipId must be unchanged"));
   if (data.originalText !== input.clipText)
@@ -189,7 +214,7 @@ export function validateScreenplayConversion(
       );
     validateCanonicalNames(
       scene.characters,
-      input.canonical.characters,
+      allowedCharacters,
       `scenes.${sceneIndex}.characters`,
       issues,
     );
@@ -260,8 +285,10 @@ export function validateScreenplayConversion(
       if (
         content.type !== "action" &&
         content.character &&
-        !nameSet(input.canonical.characters).has(
-          normalizeName(content.character),
+        !nameSet(input.canonical.characters).has(normalizeName(content.character)) &&
+        !(
+          content.type === "dialogue" &&
+          sourceBackedSpeakers.has(normalizeName(content.character))
         )
       )
         issues.push(
@@ -274,6 +301,83 @@ export function validateScreenplayConversion(
     });
   });
   return issues;
+}
+
+export function normalizeScreenplaySourceContract(
+  data: ScreenplayConversion,
+  input: ScreenplaySourceContract,
+): ScreenplayConversion {
+  const expectedEvidence = new Map(
+    (input.sourceEvents ?? buildSourceEvents(input.clipText)).map((event) => [
+      event.eventId,
+      event.evidence,
+    ]),
+  );
+  const groundedKnowledge = `${input.clipText}\n${input.knowledgeText ?? ""}`;
+  return {
+    ...data,
+    clipId: input.clipId,
+    originalText: input.clipText,
+    coverage: data.coverage?.map((item) => ({
+      ...item,
+      evidence: expectedEvidence.get(item.eventId) ?? item.evidence,
+    })),
+    scenes: data.scenes.map((scene) => {
+      const content = scene.content.flatMap((item) => {
+        if (
+          item.type === "action" &&
+          (item.origin === "bridge" || item.origin === "inferred") &&
+          !isGroundedInferredAction(item, input.clipText)
+        ) {
+          const sourceEvidence = item.evidence?.find((quote) =>
+            input.clipText.includes(quote),
+          );
+          return sourceEvidence
+            ? [{ type: "action" as const, text: sourceEvidence, origin: "source" as const }]
+            : [];
+        }
+        if (item.type !== "action" || !item.actionDesign) return [item];
+        const actionDesign = item.actionDesign;
+        return [
+          {
+            ...item,
+            actionDesign: {
+              ...actionDesign,
+              realm: isGroundedProductionTerm(
+                actionDesign.realm,
+                groundedKnowledge,
+              )
+                ? actionDesign.realm
+                : null,
+              technique: isGroundedProductionTerm(
+                actionDesign.technique,
+                groundedKnowledge,
+              )
+                ? actionDesign.technique
+                : null,
+            },
+          },
+        ];
+      });
+      return {
+        ...scene,
+        content:
+          content.length > 0
+            ? content
+            : [{ type: "action" as const, text: input.clipText, origin: "source" as const }],
+      };
+    }),
+  };
+}
+
+function isGroundedProductionTerm(
+  value: string | null | undefined,
+  knowledgeText: string,
+) {
+  return (
+    !value ||
+    normalizeActionText(knowledgeText).includes(normalizeActionText(value))
+  );
 }
 
 function isOrderedActionExcerpt(value: string, sourceText: string) {
@@ -488,6 +592,20 @@ export function validateStoryboardPlanning(
   },
 ) {
   const issues = validateSequentialPanelIndices(data.panels, "panels");
+  const screenplayCharacters = nameSet(
+    input.screenplay?.scenes.flatMap((scene) => [
+      ...scene.characters,
+      ...scene.content.flatMap((content) =>
+        content.type !== "action" && content.character
+          ? [content.character]
+          : [],
+      ),
+    ]) ?? [],
+  );
+  const allowedCharacters = [
+    ...input.canonical.characters,
+    ...screenplayCharacters,
+  ];
   const screenplayLocations = nameSet(
     input.screenplay?.scenes.map((scene) => scene.heading.location) ?? [],
   );
@@ -507,7 +625,7 @@ export function validateStoryboardPlanning(
     );
     validateCanonicalNames(
       panel.characters,
-      input.canonical.characters,
+      allowedCharacters,
       `panels.${index}.characters`,
       issues,
     );
@@ -531,9 +649,7 @@ export function validateStoryboardPlanning(
       );
     if (panel.speakingCharacter) {
       if (
-        !nameSet(input.canonical.characters).has(
-          normalizeName(panel.speakingCharacter),
-        )
+        !nameSet(allowedCharacters).has(normalizeName(panel.speakingCharacter))
       )
         issues.push(
           issue(
@@ -1062,11 +1178,17 @@ export function validateVoiceAnalysis(
   input: {
     sourceText: string;
     characters: readonly string[];
+    temporarySpeakers?: readonly string[];
     panelIndices: readonly number[];
   },
 ) {
   const issues: StructuredValidationIssue[] = [];
-  const speakers = nameSet([...input.characters, "旁白", "Narrator"]);
+  const speakers = nameSet([
+    ...input.characters,
+    ...(input.temporarySpeakers ?? []),
+    "旁白",
+    "Narrator",
+  ]);
   const panelIndices = new Set(input.panelIndices);
   let previousPanelIndex = -1;
   data.lines.forEach((line, index) => {
@@ -1145,8 +1267,7 @@ export function isDirectSpeechExcerpt(
 
   const escapedSpeaker = escapeRegex(speaker.trim());
   if (!escapedSpeaker) return false;
-  const speechVerb =
-    "说(?:道)?|问(?:道)?|答(?:道)?|回答|回应|喊(?:道)?|叫(?!(?:进|到|来|住|醒))(?:道)?|喝(?:道)?|叹(?:道)?|笑(?:道)?|开口|低声(?:说)?|轻声(?:说)?|安慰|劝(?:说|慰)?|安抚|鼓励";
+  const speechVerb = SPEECH_VERB_PATTERN;
   if (
     new RegExp(
       `${escapedSpeaker}[^。！？!?“”\\"]{0,32}(?:${speechVerb})[^。！？!?“”\\"]{0,24}?[：:，,]\\s*${escapedContent}`,
@@ -1162,6 +1283,80 @@ export function isDirectSpeechExcerpt(
     ),
   ].some((match) => match[1].includes(content.trim()));
 }
+
+export function isSourceBackedTemporarySpeaker(
+  content: string,
+  speaker: string,
+  sourceText: string,
+) {
+  const trimmedContent = content.trim();
+  const trimmedSpeaker = speaker.trim();
+  if (
+    !trimmedContent ||
+    !trimmedSpeaker ||
+    !sourceText.includes(trimmedContent) ||
+    !sourceText.includes(trimmedSpeaker)
+  )
+    return false;
+
+  const escapedContent = escapeRegex(trimmedContent);
+  const escapedSpeaker = escapeRegex(trimmedSpeaker);
+  const leadingAttribution = new RegExp(
+    `${escapedSpeaker}[^。！？!?“”\"]{0,40}(?:${SPEECH_VERB_PATTERN})[^。！？!?“”\"]{0,24}?[：:，,]?\\s*[“\"]?${escapedContent}[”\"]?`,
+    "iu",
+  );
+  const trailingAttribution = new RegExp(
+    `[“\"]?${escapedContent}[”\"]?[^。！？!?“”\"]{0,24}(?:${SPEECH_VERB_PATTERN})[^。！？!?“”\"]{0,24}${escapedSpeaker}`,
+    "iu",
+  );
+  const labeledAttribution = new RegExp(
+    `${escapedSpeaker}[^。！？!?“”\"]{0,16}[：:]\\s*[“\"]?${escapedContent}[”\"]?`,
+    "iu",
+  );
+  const nearbyCollectiveAttribution =
+    isCollectiveSpeakerLabel(trimmedSpeaker) &&
+    [...sourceText.matchAll(/[“\"]([^”\"\r\n]+)[”\"]/g)].some((match) => {
+      if (!match[1].includes(trimmedContent)) return false;
+      const quoteStart = match.index ?? 0;
+      const quoteEnd = quoteStart + match[0].length;
+      const before = sourceText.slice(Math.max(0, quoteStart - 160), quoteStart);
+      const after = sourceText.slice(quoteEnd, quoteEnd + 160);
+      return (
+        hasUninterruptedSpeakerMention(before, trimmedSpeaker, "before") ||
+        hasUninterruptedSpeakerMention(after, trimmedSpeaker, "after")
+      );
+    });
+  return (
+    leadingAttribution.test(sourceText) ||
+    trailingAttribution.test(sourceText) ||
+    labeledAttribution.test(sourceText) ||
+    nearbyCollectiveAttribution
+  );
+}
+
+function isCollectiveSpeakerLabel(value: string) {
+  return /(?:(?:无数|一些|这些|那些|许多|不少|部分|众多|其他|其余|在场|周围|附近|围观的?)人|众人|众修|人群|修者|弟子|族人|护卫|侍卫|士兵|村民|观众|群众|长老们|人们|crowd|onlookers|cultivators|disciples|guards|soldiers|villagers|audience|members)$/iu.test(
+    value,
+  );
+}
+
+function hasUninterruptedSpeakerMention(
+  value: string,
+  speaker: string,
+  direction: "before" | "after",
+) {
+  const index =
+    direction === "before" ? value.lastIndexOf(speaker) : value.indexOf(speaker);
+  if (index < 0) return false;
+  const between =
+    direction === "before"
+      ? value.slice(index + speaker.length)
+      : value.slice(0, index);
+  return !/[“”"]/.test(between) && !/[。；;]|\n\s*\n/u.test(between);
+}
+
+const SPEECH_VERB_PATTERN =
+  "说(?:道)?|问(?:道)?|答(?:道)?|回答|回应|喊(?:道)?|叫(?!(?:进|到|来|住|醒))(?:道)?|喝(?:道)?|叹(?:道)?|笑(?:道)?|开口|低声(?:说)?|轻声(?:说)?|安慰|劝(?:说|慰)?|安抚|鼓励|齐声|惊呼|高呼|议论|起哄|叫嚷|嘲笑|怒骂|欢呼|哄笑|窃窃私语|附和|says?|said|asks?|asked|answers?|answered|replies?|replied|shouts?|shouted|cries?|cried|calls?|called|yells?|yelled|chants?|chanted|cheers?|cheered|murmurs?|murmured|whispers?|whispered";
 
 export function isImplicitVisualBridgeAction(
   value: string,

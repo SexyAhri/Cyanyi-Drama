@@ -9,6 +9,7 @@ import {
 } from "@/lib/prompts/schemas";
 import {
   buildSourceEvents,
+  normalizeScreenplaySourceContract,
   validateScreenplayConversion,
 } from "@/lib/prompts/validators";
 import { listProductionProps } from "@/lib/production/domain-store";
@@ -99,6 +100,13 @@ export async function reviseScreenplayClip(input: {
     props: (props ?? []).map((prop) => prop.name),
   };
   const worldBibleText = JSON.stringify(worldBible?.payload ?? {});
+  const sourceEvents = buildSourceEvents(clip.content);
+  const sourceContract = {
+    clipId: clip.id,
+    clipText: clip.content,
+    sourceEvents,
+    knowledgeText: worldBibleText,
+  };
   const prompt = renderPrompt({
     id: PROMPT_IDS.STORY_SCREENPLAY_REVISION,
     locale: input.locale,
@@ -121,13 +129,16 @@ export async function reviseScreenplayClip(input: {
     prompt,
     schema: screenplayConversionSchema,
     validate: (data) =>
-      validateScreenplayConversion(data, {
-        clipId: clip.id,
-        clipText: clip.content,
-        canonical,
-        sourceEvents: buildSourceEvents(clip.content),
-        knowledgeText: worldBibleText,
-      }),
+      validateScreenplayConversion(
+        normalizeScreenplaySourceContract(data, sourceContract),
+        {
+          clipId: clip.id,
+          clipText: clip.content,
+          canonical,
+          sourceEvents,
+          knowledgeText: worldBibleText,
+        },
+      ),
     structuredOutputMode: supportsStoredStructuredOutputs(
       configuredModel.capabilitiesJson,
     )
@@ -136,12 +147,14 @@ export async function reviseScreenplayClip(input: {
     temperature: 0.15,
     ...structuredRequestOptions(runtimeSettings),
   });
-  const revised = normalizeScreenplayDialogue(result.data);
+  const revised = normalizeScreenplayDialogue(
+    normalizeScreenplaySourceContract(result.data, sourceContract),
+  );
   const normalizationIssues = validateScreenplayConversion(revised, {
     clipId: clip.id,
     clipText: clip.content,
     canonical,
-    sourceEvents: buildSourceEvents(clip.content),
+    sourceEvents,
     knowledgeText: worldBibleText,
   });
   if (normalizationIssues.length)

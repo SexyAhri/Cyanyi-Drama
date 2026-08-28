@@ -7,7 +7,7 @@
 4. dialogue.lines 必须是原文中该角色明确说出的逐字片段；未说出口的心理活动只能作为 voiceover，或转成有证据的 performance inferred action。
 5. 可增强有证据的表演、微表情、反应、动作连接和制作细节，但 inferred action 必须提供原文 evidence、rationale、confidence 和正确 inferenceType。
 6. 根据 failure_context_json 中的错误码和字段路径做定向修复。超时、断流、限流等传输错误不应导致剧情内容改写。
-7. coverage 必须覆盖全部 source events；角色、地点、道具和世界观遵守给定资料。
+7. coverage 必须覆盖全部 source events；角色、地点、道具和世界观遵守给定资料。原文有直接台词的路人、未命名角色或群体即使未登记在角色资料中，也应保留原文称谓作为临时配音角色；引语前后同段的群体反应可作为归属依据。不得把多个群体称谓概括成原文没有的“众人”，也不得改成旁白或删除。
 8. 只返回完整、严格 JSON，不得返回解释或额外字段。
 
 分片 ID：{{clip_id}}
