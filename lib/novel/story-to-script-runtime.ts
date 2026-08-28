@@ -3,6 +3,7 @@ import {
   requestOpenAiStructured,
   type PromptExecutionTrace,
 } from "@/lib/llm/openai-structured";
+import { StructuredOutputError } from "@/lib/llm/structured-output";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import {
   clipSegmentationSchema,
@@ -74,6 +75,19 @@ type SegmentedClip = {
   props: string[];
 };
 
+type SourceUnit = {
+  id: string;
+  text: string;
+};
+
+type ModelSegmentedClip = {
+  endUnitId: string;
+  summary: string;
+  location: string | null;
+  characters: string[];
+  props: string[];
+};
+
 export const MAX_SCREENPLAY_CLIP_CHARS = 1_600;
 
 export class ScreenplayBatchError extends Error {
@@ -117,31 +131,55 @@ export async function splitEpisodeIntoClips(
     return { clipCount: existing.length, ...payload };
   }
 
-  const result = await requestOpenAiStructured({
-    ...context.provider,
-    prompt: renderPrompt({
-      id: PROMPT_IDS.STORY_CLIP_SEGMENTATION,
-      locale: input.locale ?? "zh",
-      variables: {
-        source_text: context.sourceText,
-        character_library: JSON.stringify(context.characters),
-        location_library: JSON.stringify(context.locations),
-        prop_library: JSON.stringify(context.props),
-      },
-    }),
-    schema: clipSegmentationSchema,
-    validate: (data) =>
-      validateClipSegmentation(data, {
-        sourceText: context.sourceText,
-        canonical: context.canonical,
+  const sourceUnits = buildSourceUnits(context.sourceText);
+  let segmentedClips: SegmentedClip[];
+  let degraded = false;
+  let fallbackReason: string | undefined;
+  const promptTraces: PromptExecutionTrace[] = [];
+  try {
+    const result = await requestOpenAiStructured({
+      ...context.provider,
+      prompt: renderPrompt({
+        id: PROMPT_IDS.STORY_CLIP_SEGMENTATION,
+        locale: input.locale ?? "zh",
+        variables: {
+          source_units_json: JSON.stringify(sourceUnits),
+          character_library: JSON.stringify(context.characters),
+          location_library: JSON.stringify(context.locations),
+          prop_library: JSON.stringify(context.props),
+        },
       }),
-  });
-  const segmentedClips = normalizeScreenplayClipSizes(
-    result.data.clips,
+      schema: clipSegmentationSchema,
+      validate: (data) =>
+        validateClipSegmentation(data, {
+          sourceUnits,
+          canonical: context.canonical,
+        }),
+    });
+    segmentedClips = restoreSourceBackedClips(
+      result.data.clips,
+      sourceUnits,
+    );
+    promptTraces.push(result.trace);
+  } catch (error) {
+    if (!isSegmentationContractFailure(error)) throw error;
+    segmentedClips = buildDeterministicClipSegmentation(
+      context.sourceText,
+      context.canonical,
+      context.screenplayClipMaxChars,
+    );
+    degraded = true;
+    fallbackReason = error instanceof Error ? error.message : String(error);
+  }
+  segmentedClips = normalizeScreenplayClipSizes(
+    segmentedClips,
     context.canonical,
     context.screenplayClipMaxChars,
   );
-  const promptTraces = [result.trace];
+  if (
+    segmentedClips.map((clip) => clip.text).join("") !== context.sourceText
+  )
+    throw new Error("SOURCE_BACKFILL_COVERAGE_MISMATCH");
 
   await hooks.assertActive();
   const saved = await saveProductionClips(
@@ -163,8 +201,8 @@ export async function splitEpisodeIntoClips(
 
   const payload = {
     clips: saved,
-    degraded: false,
-    fallbackReason: undefined,
+    degraded,
+    fallbackReason,
     reused: false,
     promptTraces,
   };
@@ -203,6 +241,89 @@ export function buildDeterministicClipSegmentation(
       props,
     };
   });
+}
+
+export function buildSourceUnits(
+  sourceText: string,
+  maxUnitChars = 400,
+): SourceUnit[] {
+  const limit = Math.max(100, Math.floor(maxUnitChars));
+  const units: string[] = [];
+  let start = 0;
+  let cursor = 0;
+  while (cursor < sourceText.length) {
+    const current = sourceText[cursor];
+    const atNarrativeBoundary = /[。！？!?；;\n]/u.test(current);
+    const atLengthLimit = cursor - start + 1 >= limit;
+    if (!atNarrativeBoundary && !atLengthLimit) {
+      cursor += 1;
+      continue;
+    }
+    let end = cursor + 1;
+    if (atNarrativeBoundary) {
+      while (
+        end < sourceText.length &&
+        /[。！？!?；;\r\n]/u.test(sourceText[end])
+      )
+        end += 1;
+      while (end < sourceText.length && /\s/u.test(sourceText[end])) end += 1;
+    }
+    units.push(sourceText.slice(start, end));
+    start = end;
+    cursor = end;
+  }
+  if (start < sourceText.length) units.push(sourceText.slice(start));
+  return units.map((text, index) => ({
+    id: `U${String(index + 1).padStart(4, "0")}`,
+    text,
+  }));
+}
+
+export function restoreSourceBackedClips(
+  modelClips: readonly ModelSegmentedClip[],
+  sourceUnits: readonly SourceUnit[],
+): SegmentedClip[] {
+  const unitIndexes = new Map(
+    sourceUnits.map((unit, index) => [unit.id, index]),
+  );
+  let startUnitIndex = 0;
+  const clips = modelClips.map((clip) => {
+    const endUnitIndex = unitIndexes.get(clip.endUnitId);
+    if (endUnitIndex === undefined || endUnitIndex < startUnitIndex)
+      throw new ClipSegmentationBoundaryError(
+        `CLIP_BOUNDARY_INVALID:${clip.endUnitId}`,
+      );
+    const text = sourceUnits
+      .slice(startUnitIndex, endUnitIndex + 1)
+      .map((unit) => unit.text)
+      .join("");
+    startUnitIndex = endUnitIndex + 1;
+    return {
+      start: text.slice(0, Math.min(40, text.length)),
+      end: text.slice(Math.max(0, text.length - 40)),
+      text,
+      summary: clip.summary,
+      location: clip.location,
+      characters: clip.characters,
+      props: clip.props,
+    };
+  });
+  if (startUnitIndex !== sourceUnits.length)
+    throw new ClipSegmentationBoundaryError(
+      "CLIP_BOUNDARY_INCOMPLETE_SOURCE_COVERAGE",
+    );
+  return clips;
+}
+
+class ClipSegmentationBoundaryError extends Error {}
+
+function isSegmentationContractFailure(error: unknown) {
+  return (
+    error instanceof StructuredOutputError ||
+    error instanceof ClipSegmentationBoundaryError ||
+    (error instanceof Error &&
+      /^STRUCTURED_(?:JSON|SCHEMA|SEMANTIC)_INVALID:/.test(error.message))
+  );
 }
 
 export function normalizeScreenplayClipSizes(

@@ -144,10 +144,10 @@ function expectedVersion(id: PromptId) {
     id === PROMPT_IDS.STUDIO_WORKFLOW_AGENT
   )
     return 1;
+  if (id === PROMPT_IDS.STORY_CLIP_SEGMENTATION) return 4;
   if (
     id === PROMPT_IDS.STORY_CHARACTER_ANALYSIS ||
     id === PROMPT_IDS.STORY_LOCATION_PROP_ANALYSIS ||
-    id === PROMPT_IDS.STORY_CLIP_SEGMENTATION ||
     id === PROMPT_IDS.STORY_CINEMATOGRAPHY
   )
     return 3;

@@ -26,9 +26,9 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_CLIP_SEGMENTATION]: {
     pathStem: "domain/story_clip_segmentation",
-    version: 3,
+    version: 4,
     variables: [
-      "source_text",
+      "source_units_json",
       "character_library",
       "location_library",
       "prop_library",

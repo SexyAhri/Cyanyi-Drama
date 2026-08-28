@@ -69,9 +69,7 @@ describe("domain semantic validators", () => {
       {
         clips: [
           {
-            start: "甲",
-            end: "甲",
-            text: "甲",
+            endUnitId: "U0001",
             summary: "第一段",
             location: "书房",
             characters: ["林澈"],
@@ -79,7 +77,13 @@ describe("domain semantic validators", () => {
           },
         ],
       },
-      { sourceText: "甲乙", canonical },
+      {
+        sourceUnits: [
+          { id: "U0001", text: "甲" },
+          { id: "U0002", text: "乙" },
+        ],
+        canonical,
+      },
     );
 
     expect(issues.map((item) => item.code)).toContain(
@@ -87,13 +91,11 @@ describe("domain semantic validators", () => {
     );
   });
 
-  it("does not trim exact source segments during schema parsing", () => {
+  it("accepts source-unit boundaries without copied source text", () => {
     const parsed = clipSegmentationSchema.parse({
       clips: [
         {
-          start: " 甲",
-          end: "甲\n",
-          text: " 甲\n",
+          endUnitId: "U0002",
           summary: "片段",
           location: null,
           characters: [],
@@ -102,7 +104,10 @@ describe("domain semantic validators", () => {
       ],
     });
 
-    expect(parsed.clips[0].text).toBe(" 甲\n");
+    expect(parsed.clips[0]).toEqual(
+      expect.objectContaining({ endUnitId: "U0002" }),
+    );
+    expect(parsed.clips[0]).not.toHaveProperty("text");
   });
 
   it("rejects nonsequential panels and unknown canonical entities", () => {

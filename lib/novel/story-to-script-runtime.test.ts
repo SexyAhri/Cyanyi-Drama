@@ -51,11 +51,13 @@ vi.mock("@/lib/server/prisma", () => ({
 import {
   buildDeterministicClipSegmentation,
   buildDeterministicScreenplay,
+  buildSourceUnits,
   convertEpisodeClipsToScreenplays,
   hasCompleteClipCoverage,
   mapWithConcurrency,
   MAX_SCREENPLAY_CLIP_CHARS,
   normalizeScreenplayClipSizes,
+  restoreSourceBackedClips,
   ScreenplayBatchError,
   splitEpisodeIntoClips,
 } from "./story-to-script-runtime";
@@ -140,18 +142,14 @@ describe("story-to-script runtime", () => {
       data: {
         clips: [
           {
-            start: " 甲",
-            end: "甲\n",
-            text: " 甲\n",
+            endUnitId: "U0001",
             summary: "第一段",
             location: null,
             characters: ["甲"],
             props: [],
           },
           {
-            start: "乙",
-            end: "乙 ",
-            text: "乙 ",
+            endUnitId: "U0002",
             summary: "第二段",
             location: null,
             characters: ["乙"],
@@ -185,6 +183,69 @@ describe("story-to-script runtime", () => {
       "clips.split",
       "episode-1",
       expect.objectContaining({ clips: saved }),
+    );
+  });
+
+  it("restores model-selected boundaries from immutable source units", () => {
+    const sourceText = " 甲说完。\r\n\r\n乙回答！ ";
+    const sourceUnits = buildSourceUnits(sourceText);
+    const clips = restoreSourceBackedClips(
+      [
+        {
+          endUnitId: sourceUnits[0].id,
+          summary: "甲说话",
+          location: null,
+          characters: ["甲"],
+          props: [],
+        },
+        {
+          endUnitId: sourceUnits.at(-1)!.id,
+          summary: "乙回答",
+          location: null,
+          characters: ["乙"],
+          props: [],
+        },
+      ],
+      sourceUnits,
+    );
+
+    expect(sourceUnits.map((unit) => unit.text).join("")).toBe(sourceText);
+    expect(clips.map((clip) => clip.text).join("")).toBe(sourceText);
+    expect(clips[0].text).toContain("\r\n\r\n");
+  });
+
+  it("falls back to deterministic slicing after semantic rejection", async () => {
+    const sourceText = `${"甲在练武场挥剑。".repeat(120)}\n\n乙回到书房。`;
+    episodeFindFirst.mockResolvedValue({ novelText: sourceText });
+    listProductionClips.mockResolvedValue([]);
+    requestOpenAiStructured.mockRejectedValue(
+      new Error(
+        "STRUCTURED_SEMANTIC_INVALID:clips.last.endUnitId: [SOURCE_COVERAGE_MISMATCH]",
+      ),
+    );
+    saveProductionClips.mockImplementation(
+      async (_userId, _projectId, _episodeId, clips) =>
+        clips.map((item: { content: string }, index: number) => ({
+          id: `clip-${index}`,
+          clipIndex: index,
+          content: item.content,
+        })),
+    );
+    const hooks = runtimeHooks();
+
+    const result = await splitEpisodeIntoClips(
+      "user-1",
+      runtimeInput,
+      hooks,
+    );
+
+    expect(result.degraded).toBe(true);
+    expect(result.fallbackReason).toContain("STRUCTURED_SEMANTIC_INVALID");
+    expect(result.clips.map((clip) => clip.content).join("")).toBe(sourceText);
+    expect(hooks.persistArtifact).toHaveBeenCalledWith(
+      "clips.split",
+      "episode-1",
+      expect.objectContaining({ degraded: true }),
     );
   });
 
@@ -226,9 +287,7 @@ describe("story-to-script runtime", () => {
       data: {
         clips: [
           {
-            start: sourceText.slice(0, 20),
-            end: sourceText.slice(-20),
-            text: sourceText,
+            endUnitId: buildSourceUnits(sourceText).at(-1)!.id,
             summary: "重试后拆分",
             location: null,
             characters: [],

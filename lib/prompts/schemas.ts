@@ -95,9 +95,7 @@ export const clipSegmentationSchema = z
     clips: z.array(
       z
         .object({
-          start: exactText,
-          end: exactText,
-          text: exactText,
+          endUnitId: z.string().regex(/^U\d{4,}$/),
           summary: text,
           location: z.string().trim().nullable(),
           characters: stringList,

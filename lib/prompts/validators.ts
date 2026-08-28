@@ -88,34 +88,46 @@ export function validateLocationPropAnalysis(
 
 export function validateClipSegmentation(
   data: ClipSegmentation,
-  input: { sourceText: string; canonical: CanonicalContext },
+  input: {
+    sourceUnits: readonly { id: string; text: string }[];
+    canonical: CanonicalContext;
+  },
 ) {
   const issues: StructuredValidationIssue[] = [];
-  if (data.clips.map((clip) => clip.text).join("") !== input.sourceText)
+  const unitIndexes = new Map(
+    input.sourceUnits.map((unit, index) => [unit.id, index]),
+  );
+  let previousEndIndex = -1;
+  data.clips.forEach((clip, index) => {
+    const endIndex = unitIndexes.get(clip.endUnitId);
+    if (endIndex === undefined)
+      issues.push(
+        issue(
+          `clips.${index}.endUnitId`,
+          "CLIP_BOUNDARY_UNKNOWN",
+          `Unknown source unit boundary: ${clip.endUnitId}`,
+        ),
+      );
+    else if (endIndex <= previousEndIndex)
+      issues.push(
+        issue(
+          `clips.${index}.endUnitId`,
+          "CLIP_BOUNDARY_NOT_SEQUENTIAL",
+          "Clip boundaries must advance through source units in order",
+        ),
+      );
+    else previousEndIndex = endIndex;
+  });
+  const expectedLastUnitId = input.sourceUnits.at(-1)?.id;
+  if (data.clips.at(-1)?.endUnitId !== expectedLastUnitId)
     issues.push(
       issue(
-        "clips",
+        "clips.last.endUnitId",
         "SOURCE_COVERAGE_MISMATCH",
-        "Concatenated clip text must reproduce the complete source exactly",
+        "The final clip boundary must include the final source unit",
       ),
     );
   data.clips.forEach((clip, index) => {
-    if (!clip.text.startsWith(clip.start))
-      issues.push(
-        issue(
-          `clips.${index}.start`,
-          "CLIP_START_MISMATCH",
-          "start must be the exact opening excerpt of text",
-        ),
-      );
-    if (!clip.text.endsWith(clip.end))
-      issues.push(
-        issue(
-          `clips.${index}.end`,
-          "CLIP_END_MISMATCH",
-          "end must be the exact closing excerpt of text",
-        ),
-      );
     validateCanonicalNames(
       clip.characters,
       input.canonical.characters,
