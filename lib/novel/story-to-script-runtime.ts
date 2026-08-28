@@ -27,6 +27,7 @@ import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { listNovelCharacters, listNovelLocations } from "./domain-store";
 import { normalizeScreenplayDialogue } from "./screenplay-dialogue";
+import { normalizeScreenplayProviderPayload } from "./screenplay-provider-normalization";
 
 export type StoryToScriptStepInput = {
   projectId: string;
@@ -433,9 +434,16 @@ export async function convertEpisodeClipsToScreenplays(
             },
           }),
           schema: screenplayConversionSchema,
+          normalizeRaw: (value) =>
+            normalizeScreenplayProviderPayload(value, {
+              clipText: clip.content,
+              characters: context.canonical.characters,
+            }),
           validate: (data) =>
             validateScreenplayConversion(
-              normalizeScreenplaySourceContract(data, sourceContract),
+              normalizeScreenplayDialogue(
+                normalizeScreenplaySourceContract(data, sourceContract),
+              ),
               {
                 clipId: clip.id,
                 clipText: clip.content,

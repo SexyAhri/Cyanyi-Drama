@@ -187,9 +187,18 @@ export function validateScreenplayConversion(
       ),
     ),
   );
+  const sourceBackedSceneRoles = nameSet(
+    data.scenes.flatMap((scene) =>
+      scene.characters.filter(
+        (name) =>
+          input.clipText.includes(name) && isCollectiveSpeakerLabel(name),
+      ),
+    ),
+  );
   const allowedCharacters = [
     ...input.canonical.characters,
     ...sourceBackedSpeakers,
+    ...sourceBackedSceneRoles,
   ];
   if (data.clipId !== input.clipId)
     issues.push(issue("clipId", "CLIP_ID_CHANGED", "clipId must be unchanged"));

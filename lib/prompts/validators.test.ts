@@ -424,6 +424,36 @@ describe("domain semantic validators", () => {
     ).toBe(false);
   });
 
+  it("allows an exact source-backed collective role in the scene cast", () => {
+    const source =
+      "“这就是奥义境修者的神通么……”瞧得虚空中的海潮，下面的修者都是满脸不可思议。";
+    expect(
+      validateScreenplayConversion(
+        {
+          clipId: "clip-1",
+          originalText: source,
+          scenes: [
+            {
+              sceneNumber: 0,
+              heading: { intExt: "EXT", location: "书房", time: "日" },
+              description: "",
+              characters: ["下面的修者"],
+              content: [
+                {
+                  type: "dialogue",
+                  character: "下面的修者",
+                  parenthetical: null,
+                  lines: "这就是奥义境修者的神通么……",
+                },
+              ],
+            },
+          ],
+        },
+        { clipId: "clip-1", clipText: source, canonical },
+      ),
+    ).toEqual([]);
+  });
+
   it("restores deterministic source fields and drops ungrounded production terms", () => {
     const source = "林澈以筑基境施展青霄剑诀，剑光击中石壁。";
     const normalized = normalizeScreenplaySourceContract(

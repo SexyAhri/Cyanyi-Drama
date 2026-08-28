@@ -39,6 +39,7 @@ export async function requestOpenAiStructured<T>(input: {
   prompt: RenderedPrompt;
   schema: z.ZodType<T>;
   validate?: (data: T) => StructuredValidationIssue[];
+  normalizeRaw?: (value: unknown) => unknown;
   structuredOutputMode?: StructuredOutputMode;
   imageUrls?: string[];
   temperature?: number;
@@ -59,6 +60,7 @@ export async function requestOpenAiStructured<T>(input: {
     prompt: input.prompt.text,
     systemPrompt: input.prompt.systemText,
     validate: input.validate,
+    normalizeRaw: input.normalizeRaw,
     maxCorrectionAttempts: input.prompt.maxSemanticCorrections,
     request: async (messages) => {
       let lastError: unknown;

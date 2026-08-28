@@ -21,6 +21,7 @@ import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 
 import { listNovelCharacters, listNovelLocations } from "./domain-store";
 import { normalizeScreenplayDialogue } from "./screenplay-dialogue";
+import { normalizeScreenplayProviderPayload } from "./screenplay-provider-normalization";
 
 export async function reviseScreenplayClip(input: {
   userId: string;
@@ -128,9 +129,16 @@ export async function reviseScreenplayClip(input: {
     model: input.model,
     prompt,
     schema: screenplayConversionSchema,
+    normalizeRaw: (value) =>
+      normalizeScreenplayProviderPayload(value, {
+        clipText: clip.content,
+        characters: canonical.characters,
+      }),
     validate: (data) =>
       validateScreenplayConversion(
-        normalizeScreenplaySourceContract(data, sourceContract),
+        normalizeScreenplayDialogue(
+          normalizeScreenplaySourceContract(data, sourceContract),
+        ),
         {
           clipId: clip.id,
           clipText: clip.content,

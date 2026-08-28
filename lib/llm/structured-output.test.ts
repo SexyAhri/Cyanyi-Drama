@@ -30,6 +30,18 @@ describe("structured output", () => {
     });
   });
 
+  it("normalizes known provider deviations before schema validation", () => {
+    expect(
+      parseStructuredOutput(
+        '{"value":"4","extra":true}',
+        schema,
+        (value) => ({
+          value: Number((value as { value: string }).value),
+        }),
+      ),
+    ).toEqual({ data: { value: 4 }, repaired: false });
+  });
+
   it("requests one correction after semantic validation fails", async () => {
     const request = vi
       .fn()

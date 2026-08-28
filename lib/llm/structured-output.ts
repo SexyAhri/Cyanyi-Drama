@@ -25,7 +25,11 @@ export class StructuredOutputError extends Error {
   }
 }
 
-export function parseStructuredOutput<T>(text: string, schema: z.ZodType<T>) {
+export function parseStructuredOutput<T>(
+  text: string,
+  schema: z.ZodType<T>,
+  normalizeRaw?: (value: unknown) => unknown,
+) {
   const extracted = extractJson(stripMarkdownFence(text));
   let value: unknown;
   let repaired = false;
@@ -43,7 +47,7 @@ export function parseStructuredOutput<T>(text: string, schema: z.ZodType<T>) {
       );
     }
   }
-  const result = schema.safeParse(value);
+  const result = schema.safeParse(normalizeRaw ? normalizeRaw(value) : value);
   if (!result.success)
     throw new StructuredOutputError(
       "STRUCTURED_SCHEMA_INVALID",
@@ -62,6 +66,7 @@ export async function generateStructuredOutput<T>(input: {
   prompt: string;
   systemPrompt?: string;
   validate?: (data: T) => StructuredValidationIssue[];
+  normalizeRaw?: (value: unknown) => unknown;
   maxCorrectionAttempts?: number;
 }) {
   const maxCorrectionAttempts = Math.max(
@@ -76,7 +81,11 @@ export async function generateStructuredOutput<T>(input: {
   while (true) {
     const outputText = await input.request(messages.slice());
     try {
-      const parsed = parseStructuredOutput(outputText, input.schema);
+      const parsed = parseStructuredOutput(
+        outputText,
+        input.schema,
+        input.normalizeRaw,
+      );
       const semanticIssues = input.validate?.(parsed.data) ?? [];
       if (semanticIssues.length)
         throw new StructuredOutputError(
