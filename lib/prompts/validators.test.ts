@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  normalizeCharacterAnalysisEvidence,
+  normalizeLocationPropAnalysisEvidence,
   validateActingCoverage,
   validateCharacterAnalysis,
   validateCinematographyCoverage,
@@ -25,6 +27,63 @@ const canonical = {
 };
 
 describe("domain semantic validators", () => {
+  it("keeps only source-backed analysis evidence with a deterministic fallback", () => {
+    const source = "海宏赡站在太炎镇上空，手持裂海之矛。";
+    expect(
+      normalizeCharacterAnalysisEvidence(
+        {
+          characters: [
+            {
+              name: "海宏赡",
+              aliases: [],
+              profile: {},
+              introduction: null,
+              evidence: ["模型改写的角色证据"],
+            },
+            {
+              name: "不存在的人物",
+              aliases: [],
+              profile: {},
+              introduction: null,
+              evidence: ["另一条改写证据"],
+            },
+          ],
+        },
+        source,
+      ).characters,
+    ).toEqual([
+      expect.objectContaining({ name: "海宏赡", evidence: ["海宏赡"] }),
+    ]);
+    expect(
+      normalizeLocationPropAnalysisEvidence(
+        {
+          locations: [
+            {
+              name: "太炎镇",
+              summary: null,
+              evidence: ["太炎镇", "模型改写的地点证据"],
+            },
+          ],
+          props: [
+            {
+              name: "裂海之矛",
+              summary: null,
+              evidence: ["模型改写的道具证据"],
+            },
+          ],
+        },
+        source,
+      ),
+    ).toEqual({
+      locations: [
+        { name: "太炎镇", summary: null, evidence: ["太炎镇"] },
+      ],
+      props: [
+        { name: "裂海之矛", summary: null, evidence: ["裂海之矛"] },
+      ],
+    });
+  });
+
   it("rejects analysis evidence that is not an exact source excerpt", () => {
     const issues = validateCharacterAnalysis(
       {

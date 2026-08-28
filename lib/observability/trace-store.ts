@@ -36,7 +36,7 @@ export async function resolveWorkflowTraceParent(input: {
 export async function getExecutionTrace(userId: string, traceId: string) {
   const normalized = traceId.trim();
   if (!normalized || normalized.length > 64) return null;
-  const [run, tasks] = await Promise.all([
+  const [run, tasks, channels] = await Promise.all([
     prisma.workflowRun.findFirst({
       where: { traceId: normalized, userId },
       include: {
@@ -58,10 +58,18 @@ export async function getExecutionTrace(userId: string, traceId: string) {
       },
       take: 500,
     }),
+    prisma.channel.findMany({
+      where: { userId },
+      select: { id: true, name: true },
+      take: 500,
+    }),
   ]);
   if (!run && !tasks.length) return null;
 
   const spans: ExecutionSpan[] = [];
+  const channelNames = new Map(
+    channels.map((channel) => [channel.id, channel.name]),
+  );
   if (run) {
     spans.push({
       spanId: run.spanId,
@@ -77,6 +85,7 @@ export async function getExecutionTrace(userId: string, traceId: string) {
         targetType: run.targetType,
         targetId: run.targetId,
         workflowVersion: run.workflowVersion,
+        ...traceErrorAttributes(run.error),
       },
     });
     for (const step of run.steps)
@@ -94,10 +103,13 @@ export async function getExecutionTrace(userId: string, traceId: string) {
           stepIndex: step.stepIndex,
           attempt: step.attempt,
           maxAttempts: step.maxAttempts,
+          ...traceErrorAttributes(step.error),
         },
       });
     for (const attempt of run.stepAttempts) {
       const parent = run.steps.find((step) => step.id === attempt.stepId);
+      const executionInput = workflowAttemptExecutionInput(attempt.input);
+      const channelId = stringField(executionInput.channelId);
       spans.push({
         spanId: stableSpanId("workflow-attempt", attempt.id),
         parentSpanId: parent?.spanId,
@@ -108,11 +120,15 @@ export async function getExecutionTrace(userId: string, traceId: string) {
         completedAt: optionalIso(attempt.finishedAt),
         attributes: {
           attemptId: attempt.id,
-          provider: attempt.provider,
-          model: attempt.modelKey,
+          provider:
+            channelNames.get(attempt.provider ?? channelId) ??
+            attempt.provider ??
+            channelId,
+          model: attempt.modelKey ?? stringField(executionInput.model),
           inputHash: attempt.inputHash,
           usage: attempt.usageJson,
           errorCode: attempt.errorCode,
+          error: attempt.errorMessage,
         },
       });
     }
@@ -250,6 +266,22 @@ function promptTraces(value: Prisma.JsonValue | null) {
   );
 }
 
+function workflowAttemptExecutionInput(value: Prisma.JsonValue | null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const record = value as Record<string, Prisma.JsonValue>;
+  const run =
+    record.run && typeof record.run === "object" && !Array.isArray(record.run)
+      ? record.run
+      : {};
+  const step =
+    record.step &&
+    typeof record.step === "object" &&
+    !Array.isArray(record.step)
+      ? record.step
+      : {};
+  return { ...run, ...step };
+}
+
 function traceableArtifactSummary(value: Prisma.JsonValue | null) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, Prisma.JsonValue>;
@@ -308,6 +340,15 @@ function workflowEventDisplayStatus(
 
 function stringField(value: unknown) {
   return typeof value === "string" ? value : "";
+}
+
+function traceErrorAttributes(value: Prisma.JsonValue | null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const record = value as Record<string, Prisma.JsonValue>;
+  return {
+    errorCode: stringField(record.code),
+    error: stringField(record.message),
+  };
 }
 
 function requiredIso(value: Date) {

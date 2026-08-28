@@ -133,6 +133,7 @@ async function processClaimedWorkflowJob(
     run: run.input ?? null,
     step: step.input ?? null,
   };
+  const executionInput = mergedStepInput(run.input, step.input);
   const attemptStartedAt = new Date();
   await prisma.$transaction([
     prisma.workflowStep.update({
@@ -151,6 +152,8 @@ async function processClaimedWorkflowJob(
         stepId: step.id,
         attempt: attemptNumber,
         status: "running",
+        provider: getString(executionInput.channelId),
+        modelKey: getString(executionInput.model),
         inputHash: hashJson(attemptInput),
         input: attemptInput,
         startedAt: attemptStartedAt,

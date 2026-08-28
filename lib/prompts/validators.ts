@@ -38,6 +38,27 @@ type ScreenplaySourceContract = {
   knowledgeText?: string;
 };
 
+export function normalizeCharacterAnalysisEvidence(
+  data: CharacterAnalysis,
+  sourceText: string,
+): CharacterAnalysis {
+  return {
+    ...data,
+    characters: normalizeAnalysisEntities(data.characters, sourceText),
+  };
+}
+
+export function normalizeLocationPropAnalysisEvidence(
+  data: LocationPropAnalysis,
+  sourceText: string,
+): LocationPropAnalysis {
+  return {
+    ...data,
+    locations: normalizeAnalysisEntities(data.locations, sourceText),
+    props: normalizeAnalysisEntities(data.props, sourceText),
+  };
+}
+
 export function validateCharacterAnalysis(
   data: CharacterAnalysis,
   sourceText: string,
@@ -310,6 +331,19 @@ export function validateScreenplayConversion(
     });
   });
   return issues;
+}
+
+function normalizeAnalysisEntities<
+  T extends { name: string; evidence: string[] },
+>(entities: readonly T[], sourceText: string) {
+  return entities.flatMap((entity) => {
+    const evidence = entity.evidence.filter((quote) =>
+      sourceText.includes(quote),
+    );
+    if (!evidence.length && sourceText.includes(entity.name))
+      evidence.push(entity.name);
+    return evidence.length ? [{ ...entity, evidence }] : [];
+  });
 }
 
 export function normalizeScreenplaySourceContract(

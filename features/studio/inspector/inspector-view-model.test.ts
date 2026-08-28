@@ -224,6 +224,7 @@ describe("studio inspector view model", () => {
         artifactType: "screenplay.clip",
         clipIndex: 0,
         success: false,
+        provider: null,
         error: "STRUCTURED_SCHEMA_INVALID:scenes.0.content.17",
       },
     } satisfies StudioExecutionSpan;
@@ -239,5 +240,8 @@ describe("studio inspector view model", () => {
       "是否成功": false,
       "错误详情": "STRUCTURED_SCHEMA_INVALID:scenes.0.content.17",
     });
+    expect(localizedTraceAttributes(artifact.attributes, "zh-CN")).not.toHaveProperty(
+      "模型渠道",
+    );
   });
 });

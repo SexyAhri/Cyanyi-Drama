@@ -15,6 +15,8 @@ import {
   locationPropAnalysisSchema,
 } from "@/lib/prompts/schemas";
 import {
+  normalizeCharacterAnalysisEvidence,
+  normalizeLocationPropAnalysisEvidence,
   validateCharacterAnalysis,
   validateLocationPropAnalysis,
 } from "@/lib/prompts/validators";
@@ -237,10 +239,15 @@ async function requestNovelParse(
         },
       }),
       schema: characterAnalysisSchema,
-      validate: (data) => validateCharacterAnalysis(data, sourceText),
+      validate: (data) =>
+        validateCharacterAnalysis(
+          normalizeCharacterAnalysisEvidence(data, sourceText),
+          sourceText,
+        ),
     }).then(async (result) => {
-      await callbacks?.onCharacters(result.data.characters, result.trace);
-      return result;
+      const data = normalizeCharacterAnalysisEvidence(result.data, sourceText);
+      await callbacks?.onCharacters(data.characters, result.trace);
+      return { ...result, data };
     }),
     requestOpenAiStructured({
       ...provider,
@@ -254,10 +261,18 @@ async function requestNovelParse(
         },
       }),
       schema: locationPropAnalysisSchema,
-      validate: (data) => validateLocationPropAnalysis(data, sourceText),
+      validate: (data) =>
+        validateLocationPropAnalysis(
+          normalizeLocationPropAnalysisEvidence(data, sourceText),
+          sourceText,
+        ),
     }).then(async (result) => {
-      await callbacks?.onAssets(result.data, result.trace);
-      return result;
+      const data = normalizeLocationPropAnalysisEvidence(
+        result.data,
+        sourceText,
+      );
+      await callbacks?.onAssets(data, result.trace);
+      return { ...result, data };
     }),
   ]);
   const failed = analysis.find(

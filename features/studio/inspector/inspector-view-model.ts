@@ -372,6 +372,7 @@ export function localizedTraceAttributes(
     inputHash: "输入摘要",
     usage: "Token 用量",
     errorCode: "错误代码",
+    errorMessage: "错误详情",
     artifactId: "结果 ID",
     artifactType: "结果类型",
     refId: "关联对象 ID",
@@ -395,7 +396,9 @@ export function localizedTraceAttributes(
     outputHash: "输出摘要",
   };
   return Object.fromEntries(
-    Object.entries(attributes).map(([key, value]) => [labels[key] ?? key, value]),
+    Object.entries(attributes)
+      .filter(([, value]) => value !== null && value !== undefined)
+      .map(([key, value]) => [labels[key] ?? key, value]),
   );
 }
 
