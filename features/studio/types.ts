@@ -377,6 +377,7 @@ export type StudioExecutionSpan = {
     | "workflow_run"
     | "workflow_step"
     | "workflow_attempt"
+    | "workflow_artifact"
     | "prompt"
     | "media_task";
   name: string;

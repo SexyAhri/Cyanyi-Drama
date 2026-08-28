@@ -44,7 +44,6 @@ export async function getExecutionTrace(userId: string, traceId: string) {
         events: { orderBy: { createdAt: "asc" }, take: 500 },
         stepAttempts: { orderBy: { createdAt: "asc" }, take: 500 },
         artifacts: {
-          where: { artifactType: "prompt.trace" },
           orderBy: { createdAt: "asc" },
           take: 500,
         },
@@ -130,6 +129,23 @@ export async function getExecutionTrace(userId: string, traceId: string) {
           completedAt: requiredIso(artifact.createdAt),
           attributes: prompt,
         });
+      const artifactSummary = traceableArtifactSummary(artifact.payload);
+      if (artifactSummary)
+        spans.push({
+          spanId: stableSpanId("workflow-artifact", artifact.id),
+          parentSpanId: parent?.spanId,
+          kind: "workflow_artifact",
+          name: artifactSpanName(artifact.artifactType, artifactSummary),
+          status: artifactSummary.success ? "succeeded" : "failed",
+          startedAt: requiredIso(artifact.createdAt),
+          completedAt: requiredIso(artifact.createdAt),
+          attributes: {
+            artifactId: artifact.id,
+            artifactType: artifact.artifactType,
+            refId: artifact.refId,
+            ...artifactSummary,
+          },
+        });
     }
   }
   for (const task of tasks)
@@ -155,20 +171,43 @@ export async function getExecutionTrace(userId: string, traceId: string) {
       },
     });
 
+  const latestRunStartEventId = run?.events
+    .filter((event) => event.type === "running")
+    .at(-1)?.id;
+  const latestStepStartEventIds = new Map<string, string>();
+  for (const event of run?.events ?? [])
+    if (event.type === "step_running" && event.stepId)
+      latestStepStartEventIds.set(event.stepId, event.id);
+
   return {
     traceId: normalized,
     rootSpanId: run?.spanId ?? tasks.find((task) => !task.parentSpanId)?.spanId ?? tasks[0]?.spanId,
     spans: spans.sort((a, b) => a.startedAt.localeCompare(b.startedAt)),
     events: [
-      ...(run?.events.map((event) => ({
-        source: "workflow" as const,
-        id: event.id,
-        spanId: run.steps.find((step) => step.id === event.stepId)?.spanId ?? run.spanId,
-        type: event.type,
-        status: event.status,
-        message: event.message,
-        createdAt: event.createdAt.toISOString(),
-      })) ?? []),
+      ...(run?.events.map((event) => {
+        const step = run.steps.find((item) => item.id === event.stepId);
+        const isCurrentStart =
+          (event.type === "running" &&
+            event.id === latestRunStartEventId &&
+            run.status === "running") ||
+          (event.type === "step_running" &&
+            !!event.stepId &&
+            event.id === latestStepStartEventIds.get(event.stepId) &&
+            step?.status === "running");
+        return {
+          source: "workflow" as const,
+          id: event.id,
+          spanId: step?.spanId ?? run.spanId,
+          type: event.type,
+          status: workflowEventDisplayStatus(
+            event.type,
+            event.status,
+            isCurrentStart,
+          ),
+          message: event.message,
+          createdAt: event.createdAt.toISOString(),
+        };
+      }) ?? []),
       ...tasks.flatMap((task) =>
         task.events.map((event) => ({
           source: "media_task" as const,
@@ -187,7 +226,13 @@ export async function getExecutionTrace(userId: string, traceId: string) {
 type ExecutionSpan = {
   spanId: string;
   parentSpanId?: string;
-  kind: "workflow_run" | "workflow_step" | "workflow_attempt" | "prompt" | "media_task";
+  kind:
+    | "workflow_run"
+    | "workflow_step"
+    | "workflow_attempt"
+    | "workflow_artifact"
+    | "prompt"
+    | "media_task";
   name: string;
   status: string;
   startedAt: string;
@@ -203,6 +248,62 @@ function promptTraces(value: Prisma.JsonValue | null) {
     (item): item is Prisma.JsonObject =>
       !!item && typeof item === "object" && !Array.isArray(item) && "promptId" in item,
   );
+}
+
+function traceableArtifactSummary(value: Prisma.JsonValue | null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, Prisma.JsonValue>;
+  if (typeof record.success !== "boolean") return null;
+  const summary: Record<string, string | number | boolean | null> = {
+    success: record.success,
+  };
+  for (const key of [
+    "clipId",
+    "clipIndex",
+    "sceneCount",
+    "reused",
+    "degraded",
+    "error",
+    "fallbackReason",
+    "inputHash",
+  ]) {
+    const field = record[key];
+    if (
+      typeof field === "string" ||
+      typeof field === "number" ||
+      typeof field === "boolean" ||
+      field === null
+    )
+      summary[key] = field;
+  }
+  return summary;
+}
+
+function artifactSpanName(
+  artifactType: string,
+  summary: Record<string, string | number | boolean | null>,
+) {
+  return typeof summary.clipIndex === "number"
+    ? `${artifactType} #${summary.clipIndex + 1}`
+    : artifactType;
+}
+
+function workflowEventDisplayStatus(
+  type: string,
+  status: string | null,
+  isCurrentStart: boolean,
+) {
+  if (type === "running" || type === "step_running")
+    return isCurrentStart ? "running" : "succeeded";
+  return [
+    "created",
+    "artifact_committed",
+    "retry_requested",
+    "step_retry_requested",
+    "cancel_requested",
+  ].includes(type)
+    ? "succeeded"
+    : status;
 }
 
 function stringField(value: unknown) {

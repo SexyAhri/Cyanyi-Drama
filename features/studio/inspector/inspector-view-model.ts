@@ -182,3 +182,232 @@ export function buildTraceRows(spans: StudioExecutionSpan[]) {
   for (const root of roots) visit(root, 0);
   return rows;
 }
+
+const traceNameCopy: Record<StudioLocale, Record<string, string>> = {
+  "zh-CN": {
+    "story-to-script": "小说转剧本",
+    "script-to-storyboard": "剧本转分镜",
+    analyze_novel: "小说分析",
+    parse: "小说分析",
+    parse_novel: "小说分析",
+    split: "剧情分片",
+    split_clips: "剧情分片",
+    screenplay: "剧本生成",
+    convert_screenplay: "剧本生成",
+    storyboard: "分镜生成",
+    build_storyboard: "分镜生成",
+    voice: "配音分析",
+    voice_analyze: "配音分析",
+    story_character_analysis: "角色分析",
+    story_location_prop_analysis: "场景与道具分析",
+    story_clip_segmentation: "剧情分片",
+    story_screenplay_conversion: "剧本转换",
+    story_screenplay_revision: "剧本修订",
+    story_storyboard_planning: "分镜规划",
+    story_cinematography: "摄影设计",
+    story_acting_direction: "表演设计",
+    story_storyboard_refinement: "分镜细化",
+    story_voice_analysis: "配音分析",
+    story_continuity_review: "连续性检查",
+  },
+  en: {
+    "story-to-script": "Story to screenplay",
+    "script-to-storyboard": "Screenplay to storyboard",
+    analyze_novel: "Novel analysis",
+    parse: "Novel analysis",
+    parse_novel: "Novel analysis",
+    split: "Story segmentation",
+    split_clips: "Story segmentation",
+    screenplay: "Screenplay generation",
+    convert_screenplay: "Screenplay generation",
+    storyboard: "Storyboard generation",
+    build_storyboard: "Storyboard generation",
+    voice: "Voice analysis",
+    voice_analyze: "Voice analysis",
+    story_character_analysis: "Character analysis",
+    story_location_prop_analysis: "Location and prop analysis",
+    story_clip_segmentation: "Story segmentation",
+    story_screenplay_conversion: "Screenplay conversion",
+    story_screenplay_revision: "Screenplay revision",
+    story_storyboard_planning: "Storyboard planning",
+    story_cinematography: "Cinematography design",
+    story_acting_direction: "Acting direction",
+    story_storyboard_refinement: "Storyboard refinement",
+    story_voice_analysis: "Voice analysis",
+    story_continuity_review: "Continuity review",
+  },
+};
+
+const artifactNameCopy: Record<StudioLocale, Record<string, string>> = {
+  "zh-CN": {
+    "screenplay.clip": "剧本片段",
+    "storyboard.clip.fallback": "分镜片段（降级结果）",
+    "storyboard.clip.phase1": "分镜规划",
+    "storyboard.clip.phase2.cine": "摄影设计",
+    "storyboard.clip.phase2.acting": "表演设计",
+    "storyboard.clip.phase3": "分镜细化",
+    "storyboard.clip.continuity": "连续性检查",
+  },
+  en: {
+    "screenplay.clip": "Screenplay clip",
+    "storyboard.clip.fallback": "Storyboard clip (fallback)",
+    "storyboard.clip.phase1": "Storyboard planning",
+    "storyboard.clip.phase2.cine": "Cinematography design",
+    "storyboard.clip.phase2.acting": "Acting direction",
+    "storyboard.clip.phase3": "Storyboard refinement",
+    "storyboard.clip.continuity": "Continuity review",
+  },
+};
+
+export function traceSpanLabel(
+  span: StudioExecutionSpan,
+  locale: StudioLocale,
+) {
+  if (span.kind === "workflow_attempt") {
+    const attempt = span.name.match(/attempt-(\d+)/)?.[1] ?? span.name;
+    return locale === "zh-CN" ? `第 ${attempt} 次尝试` : `Attempt ${attempt}`;
+  }
+  if (span.kind === "workflow_artifact") {
+    const artifactType = stringAttribute(span.attributes.artifactType);
+    const label = artifactNameCopy[locale][artifactType] ?? artifactType ?? span.name;
+    const clipIndex = numberAttribute(span.attributes.clipIndex);
+    return clipIndex === undefined
+      ? label
+      : locale === "zh-CN"
+        ? `${label} ${clipIndex + 1}`
+        : `${label} ${clipIndex + 1}`;
+  }
+  return traceNameCopy[locale][span.name] ?? humanizeIdentifier(span.name);
+}
+
+export function traceSpanKindLabel(
+  kind: StudioExecutionSpan["kind"],
+  locale: StudioLocale,
+) {
+  const labels = {
+    "zh-CN": {
+      workflow_run: "工作流",
+      workflow_step: "工作流步骤",
+      workflow_attempt: "执行尝试",
+      workflow_artifact: "中间结果",
+      prompt: "模型调用",
+      media_task: "媒体任务",
+    },
+    en: {
+      workflow_run: "Workflow",
+      workflow_step: "Workflow step",
+      workflow_attempt: "Execution attempt",
+      workflow_artifact: "Intermediate result",
+      prompt: "Model call",
+      media_task: "Media task",
+    },
+  } as const;
+  return labels[locale][kind];
+}
+
+export function traceEventLabel(type: string, locale: StudioLocale) {
+  const labels: Record<StudioLocale, Record<string, string>> = {
+    "zh-CN": {
+      created: "工作流已创建",
+      running: "工作流已开始",
+      step_running: "步骤已开始",
+      artifact_committed: "中间结果已保存",
+      step_succeeded: "步骤已完成",
+      succeeded: "工作流已完成",
+      failed: "执行失败",
+      blocked: "等待人工确认",
+      manual_gate: "进入人工确认",
+      cancel_requested: "已请求取消",
+      canceled: "已取消",
+      retry_requested: "已请求重试工作流",
+      step_retry_requested: "已请求重试步骤",
+    },
+    en: {
+      created: "Workflow created",
+      running: "Workflow started",
+      step_running: "Step started",
+      artifact_committed: "Intermediate result saved",
+      step_succeeded: "Step completed",
+      succeeded: "Workflow completed",
+      failed: "Execution failed",
+      blocked: "Awaiting approval",
+      manual_gate: "Approval requested",
+      cancel_requested: "Cancellation requested",
+      canceled: "Canceled",
+      retry_requested: "Workflow retry requested",
+      step_retry_requested: "Step retry requested",
+    },
+  };
+  return labels[locale][type] ?? humanizeIdentifier(type);
+}
+
+export function traceEventSourceLabel(
+  source: "media_task" | "workflow",
+  locale: StudioLocale,
+) {
+  if (locale === "zh-CN") return source === "workflow" ? "工作流" : "媒体任务";
+  return source === "workflow" ? "Workflow" : "Media task";
+}
+
+export function localizedTraceAttributes(
+  attributes: Record<string, unknown>,
+  locale: StudioLocale,
+) {
+  if (locale !== "zh-CN") return attributes;
+  const labels: Record<string, string> = {
+    runId: "运行 ID",
+    projectId: "项目 ID",
+    episodeId: "剧集 ID",
+    targetType: "目标类型",
+    targetId: "目标 ID",
+    workflowVersion: "工作流版本",
+    stepId: "步骤 ID",
+    stepType: "步骤类型",
+    stepIndex: "步骤序号",
+    attempt: "当前尝试",
+    maxAttempts: "最大尝试次数",
+    attemptId: "尝试 ID",
+    provider: "模型渠道",
+    model: "模型",
+    inputHash: "输入摘要",
+    usage: "Token 用量",
+    errorCode: "错误代码",
+    artifactId: "结果 ID",
+    artifactType: "结果类型",
+    refId: "关联对象 ID",
+    clipId: "片段 ID",
+    clipIndex: "片段序号",
+    sceneCount: "场景数",
+    reused: "复用已有结果",
+    degraded: "使用降级结果",
+    success: "是否成功",
+    error: "错误详情",
+    fallbackReason: "降级原因",
+    promptId: "提示词 ID",
+    agentId: "Agent ID",
+    promptVersion: "提示词版本",
+    promptVersionHash: "提示词版本摘要",
+    systemHash: "系统提示词摘要",
+    structuredOutputMode: "结构化输出模式",
+    repaired: "JSON 已修复",
+    correctionAttempts: "纠正次数",
+    tokenUsage: "Token 用量",
+    outputHash: "输出摘要",
+  };
+  return Object.fromEntries(
+    Object.entries(attributes).map(([key, value]) => [labels[key] ?? key, value]),
+  );
+}
+
+function humanizeIdentifier(value: string) {
+  const spaced = value.replace(/[_-]+/g, " ").trim();
+  return spaced ? spaced.charAt(0).toUpperCase() + spaced.slice(1) : value;
+}
+
+function stringAttribute(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function numberAttribute(value: unknown) {
+  return typeof value === "number" ? value : undefined;
+}

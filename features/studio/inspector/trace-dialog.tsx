@@ -28,27 +28,42 @@ import type {
   StudioLocale,
 } from "../types";
 import { StatusIndicator } from "../components/status-indicator";
-import { buildTraceRows } from "./inspector-view-model";
+import {
+  buildTraceRows,
+  localizedTraceAttributes,
+  traceEventLabel,
+  traceEventSourceLabel,
+  traceSpanKindLabel,
+  traceSpanLabel,
+} from "./inspector-view-model";
 
 const copy = {
   "zh-CN": {
     attributes: "属性",
+    completed: "完成时间",
     events: "事件",
+    kind: "类型",
     loadFailed: "Trace 载入失败",
     loading: "正在载入 Trace",
     noEvents: "没有事件记录",
     noSpans: "没有 Span 记录",
+    parent: "上级节点",
     spans: "调用链",
+    started: "开始时间",
     title: "执行 Trace",
   },
   en: {
     attributes: "Attributes",
+    completed: "Completed",
     events: "Events",
+    kind: "Kind",
     loadFailed: "Unable to load trace",
     loading: "Loading trace",
     noEvents: "No events",
     noSpans: "No spans",
+    parent: "Parent",
     spans: "Spans",
+    started: "Started",
     title: "Execution trace",
   },
 } as const;
@@ -70,25 +85,40 @@ export function TraceDialog({
   useEffect(() => {
     if (!traceId) return;
     const controller = new AbortController();
+    let loading = false;
     setTrace(null);
     setError("");
     setSelectedSpanId("");
-    void loadStudioTrace(traceId, controller.signal)
-      .then((result) => {
-        if (!controller.signal.aborted) {
-          setTrace(result);
-          setSelectedSpanId(result.rootSpanId ?? result.spans[0]?.spanId ?? "");
-        }
-      })
-      .catch((requestError) => {
+    const refresh = async () => {
+      if (loading) return;
+      loading = true;
+      try {
+        const result = await loadStudioTrace(traceId, controller.signal);
+        if (controller.signal.aborted) return;
+        setTrace(result);
+        setError("");
+        setSelectedSpanId((current) =>
+          current && result.spans.some((span) => span.spanId === current)
+            ? current
+            : (result.rootSpanId ?? result.spans[0]?.spanId ?? ""),
+        );
+      } catch (requestError) {
         if (!controller.signal.aborted)
           setError(
             requestError instanceof Error
               ? requestError.message
               : text.loadFailed,
           );
-      });
-    return () => controller.abort();
+      } finally {
+        loading = false;
+      }
+    };
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 5_000);
+    return () => {
+      window.clearInterval(interval);
+      controller.abort();
+    };
   }, [text.loadFailed, traceId]);
 
   const rows = useMemo(
@@ -159,10 +189,10 @@ export function TraceDialog({
                         <SpanIcon span={span} />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-xs font-medium">
-                            {span.name}
+                            {traceSpanLabel(span, locale)}
                           </span>
                           <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground">
-                            {span.kind}
+                            {traceSpanKindLabel(span.kind, locale)}
                           </span>
                         </span>
                         <StatusIndicator
@@ -175,8 +205,11 @@ export function TraceDialog({
                   </div>
                   <SpanDetails
                     locale={locale}
+                    parent={trace?.spans.find(
+                      (span) => span.spanId === selectedSpan?.parentSpanId,
+                    )}
                     span={selectedSpan}
-                    text={text.attributes}
+                    text={text}
                   />
                 </div>
               ) : (
@@ -196,7 +229,7 @@ export function TraceDialog({
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start gap-2">
                             <p className="min-w-0 flex-1 truncate text-xs font-medium">
-                              {event.type}
+                              {traceEventLabel(event.type, locale)}
                             </p>
                             {event.status ? (
                               <StatusIndicator
@@ -214,7 +247,7 @@ export function TraceDialog({
                             </p>
                           ) : null}
                           <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground/75">
-                            {event.source} ·{" "}
+                            {traceEventSourceLabel(event.source, locale)} ·{" "}
                             {formatStudioDate(locale, event.createdAt)} ·{" "}
                             {event.spanId}
                           </p>
@@ -236,12 +269,14 @@ export function TraceDialog({
 
 function SpanDetails({
   locale,
+  parent,
   span,
   text,
 }: {
   locale: StudioLocale;
+  parent?: StudioExecutionSpan;
   span?: StudioExecutionSpan;
-  text: string;
+  text: (typeof copy)[StudioLocale];
 }) {
   if (!span) return <div />;
   return (
@@ -249,7 +284,9 @@ function SpanDetails({
       <div className="flex items-start gap-3 border-b pb-4">
         <SpanIcon span={span} />
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-semibold">{span.name}</h3>
+          <h3 className="truncate text-sm font-semibold">
+            {traceSpanLabel(span, locale)}
+          </h3>
           <p className="mt-1 font-mono text-[10px] text-muted-foreground">
             {span.spanId}
           </p>
@@ -260,22 +297,25 @@ function SpanDetails({
         />
       </div>
       <dl className="grid gap-x-6 gap-y-3 border-b py-4 text-xs sm:grid-cols-2">
-        <Detail label="Kind" value={span.kind} />
+        <Detail label={text.kind} value={traceSpanKindLabel(span.kind, locale)} />
         <Detail
-          label="Started"
+          label={text.started}
           value={formatStudioDate(locale, span.startedAt)}
         />
-        <Detail label="Parent" value={span.parentSpanId ?? "-"} />
         <Detail
-          label="Completed"
+          label={text.parent}
+          value={parent ? traceSpanLabel(parent, locale) : "-"}
+        />
+        <Detail
+          label={text.completed}
           value={
             span.completedAt ? formatStudioDate(locale, span.completedAt) : "-"
           }
         />
       </dl>
-      <h4 className="mt-4 text-xs font-semibold">{text}</h4>
+      <h4 className="mt-4 text-xs font-semibold">{text.attributes}</h4>
       <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap wrap-break-word rounded-md bg-muted/50 p-3 font-mono text-[11px] leading-5">
-        {JSON.stringify(span.attributes, null, 2)}
+        {JSON.stringify(localizedTraceAttributes(span.attributes, locale), null, 2)}
       </pre>
     </div>
   );

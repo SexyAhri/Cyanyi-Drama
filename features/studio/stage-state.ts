@@ -160,6 +160,7 @@ export function runtimeStatusToStageStatus(
   if (status === "succeeded") return "completed";
   if (status === "canceled") return "canceled";
   if (status === "paused") return "paused";
+  if (status === "blocked") return "blocked";
   if (FAILED_STATUSES.has(status)) return "failed";
   if (ACTIVE_STATUSES.has(status)) return "running";
   return "not_started";

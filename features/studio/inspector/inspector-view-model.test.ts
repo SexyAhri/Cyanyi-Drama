@@ -12,6 +12,11 @@ import {
   isOperationDeletable,
   isOperationRetryable,
   operationErrorMessage,
+  localizedTraceAttributes,
+  traceEventLabel,
+  traceEventSourceLabel,
+  traceSpanKindLabel,
+  traceSpanLabel,
   type OperationItem,
   summarizeUsageCosts,
   workflowAttemptLabel,
@@ -206,5 +211,33 @@ describe("studio inspector view model", () => {
       ["step", 1],
       ["task", 2],
     ]);
+  });
+
+  it("localizes trace labels without hiding diagnostic values", () => {
+    const artifact = {
+      spanId: "artifact-1",
+      kind: "workflow_artifact",
+      name: "screenplay.clip #1",
+      status: "failed",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      attributes: {
+        artifactType: "screenplay.clip",
+        clipIndex: 0,
+        success: false,
+        error: "STRUCTURED_SCHEMA_INVALID:scenes.0.content.17",
+      },
+    } satisfies StudioExecutionSpan;
+
+    expect(traceSpanLabel(artifact, "zh-CN")).toBe("剧本片段 1");
+    expect(traceSpanKindLabel(artifact.kind, "zh-CN")).toBe("中间结果");
+    expect(traceEventLabel("artifact_committed", "zh-CN")).toBe(
+      "中间结果已保存",
+    );
+    expect(traceEventSourceLabel("workflow", "zh-CN")).toBe("工作流");
+    expect(localizedTraceAttributes(artifact.attributes, "zh-CN")).toMatchObject({
+      "片段序号": 0,
+      "是否成功": false,
+      "错误详情": "STRUCTURED_SCHEMA_INVALID:scenes.0.content.17",
+    });
   });
 });
