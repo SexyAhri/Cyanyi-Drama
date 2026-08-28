@@ -52,7 +52,7 @@ export function normalizeScreenplayDialogue(
         const actorHint = /^(?:若|如果)(?:自己|我)/.test(
           resolvedContent.text,
         )
-          ? mostRecentActor ?? explicitlyMentionedActor
+          ? mostRecentActor
           : explicitlyMentionedActor ??
             mostRecentActor ??
             (unspokenDialogue && content.type === "dialogue"

@@ -33,15 +33,19 @@ import {
   controlStudioMediaTask,
   controlStudioWorkflow,
   deleteStudioMediaTask,
-  deleteStudioWorkflow,
+  retryStudioWorkflowStep,
 } from "../api";
 import { formatStudioDate } from "../i18n";
 import { runtimeStatusToStageStatus } from "../stage-state";
 import type { StudioLocale, WorkspaceSnapshot } from "../types";
-import { mediaTaskLabel, workflowLabel } from "../workflow-labels";
+import {
+  mediaTaskOperationLabel,
+  workflowStepOperationLabel,
+} from "../workflow-labels";
 import { StatusIndicator } from "../components/status-indicator";
 import {
   buildOperationItems,
+  isOperationRetryable,
   type OperationItem,
 } from "./inspector-view-model";
 
@@ -102,7 +106,7 @@ export function OperationsPanel({
     [episodeId, snapshot],
   );
   const statuses = items.map((item) =>
-    item.kind === "task" ? item.task.status : item.workflow.status,
+    item.kind === "task" ? item.task.status : item.step.status,
   );
   const active = statuses.filter((status) =>
     ["canceling", "queued", "running"].includes(status),
@@ -116,13 +120,14 @@ export function OperationsPanel({
     try {
       if (action === "delete") {
         if (item.kind === "task") await deleteStudioMediaTask(item.id);
-        else await deleteStudioWorkflow(item.id);
       } else if (item.kind === "task") {
         await controlStudioMediaTask(item.id, action as "cancel" | "retry");
+      } else if (action === "retry") {
+        await retryStudioWorkflowStep(item.workflow.id, item.step.key);
       } else {
         await controlStudioWorkflow(
-          item.id,
-          action as "cancel" | "pause" | "resume" | "retry",
+          item.workflow.id,
+          action as "cancel" | "pause" | "resume",
         );
       }
       await onRefresh();
@@ -223,19 +228,22 @@ function OperationRow({
   onTrace: () => void;
   text: (typeof copy)[StudioLocale];
 }) {
-  const status = item.kind === "task" ? item.task.status : item.workflow.status;
+  const status = item.kind === "task" ? item.task.status : item.step.status;
   const label =
     item.kind === "task"
-      ? mediaTaskLabel(locale, item.task.targetType, item.task.kind)
-      : workflowLabel(locale, item.workflow.workflowType);
+      ? mediaTaskOperationLabel(locale, item.task)
+      : workflowStepOperationLabel(
+          locale,
+          item.workflow.workflowType,
+          item.step,
+        );
   const errorMessage = operationErrorMessage(
-    item.kind === "task" ? item.task.error : item.workflow.error,
+    item.kind === "task" ? item.task.error : item.step.error,
     locale,
   );
   const canDelete =
-    item.kind === "task"
-      ? ["canceled", "failed"].includes(status)
-      : ["blocked", "canceled", "failed", "succeeded"].includes(status);
+    item.kind === "task" && ["canceled", "failed"].includes(status);
+  const canRetry = isOperationRetryable(item);
   return (
     <div className="px-3 py-3">
       <div className="flex items-start gap-2">
@@ -273,7 +281,7 @@ function OperationRow({
             onClick={() => onAction("cancel")}
           />
         ) : null}
-        {item.kind === "task" && status === "failed" ? (
+        {item.kind === "task" && canRetry ? (
           <Action
             disabled={busy}
             icon={RotateCcw}
@@ -281,7 +289,9 @@ function OperationRow({
             onClick={() => onAction("retry")}
           />
         ) : null}
-        {item.kind === "workflow" && status === "running" ? (
+        {item.kind === "workflow-step" &&
+        status === "running" &&
+        item.workflow.status === "running" ? (
           <Action
             disabled={busy}
             icon={CirclePause}
@@ -289,7 +299,8 @@ function OperationRow({
             onClick={() => onAction("pause")}
           />
         ) : null}
-        {item.kind === "workflow" && status === "paused" ? (
+        {item.kind === "workflow-step" &&
+        item.workflow.status === "paused" ? (
           <Action
             disabled={busy}
             icon={CirclePlay}
@@ -297,8 +308,10 @@ function OperationRow({
             onClick={() => onAction("resume")}
           />
         ) : null}
-        {item.kind === "workflow" &&
-        ["queued", "running", "paused", "canceling"].includes(status) ? (
+        {item.kind === "workflow-step" &&
+        ["queued", "running", "paused", "canceling"].includes(
+          item.workflow.status,
+        ) && ["pending", "queued", "running"].includes(status) ? (
           <Action
             disabled={busy}
             icon={Ban}
@@ -306,7 +319,7 @@ function OperationRow({
             onClick={() => onAction("cancel")}
           />
         ) : null}
-        {item.kind === "workflow" && ["blocked", "failed"].includes(status) ? (
+        {item.kind === "workflow-step" && canRetry ? (
           <Action
             disabled={busy}
             icon={RotateCcw}

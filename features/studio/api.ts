@@ -179,6 +179,13 @@ export async function controlStudioWorkflow(
   );
 }
 
+export async function retryStudioWorkflowStep(runId: string, stepKey: string) {
+  return request<{ workflow: WorkflowRunSummary }>(
+    `/api/workflows/${encodeURIComponent(runId)}/steps/${encodeURIComponent(stepKey)}/retry`,
+    { method: "POST" },
+  );
+}
+
 export async function deleteStudioWorkflow(runId: string) {
   return request<{ ok: true }>(
     `/api/workflows/${encodeURIComponent(runId)}`,

@@ -32,9 +32,16 @@ export type WorkflowStepSummary = {
   status: string;
   attempt: number;
   maxAttempts: number;
+  retryable: boolean;
   error?: Record<string, unknown>;
   startedAt?: string;
   completedAt?: string;
+};
+
+export type StudioMediaTask = MediaTask & {
+  displayName?: string;
+  displayIndex?: number;
+  displaySummary?: string;
 };
 
 export type WorkflowRunSummary = {
@@ -54,7 +61,7 @@ export type WorkflowRunSummary = {
 
 export type WorkspaceSnapshot = {
   project: ProjectWithEpisodes;
-  tasks: MediaTask[];
+  tasks: StudioMediaTask[];
   workflows: WorkflowRunSummary[];
 };
 

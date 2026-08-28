@@ -333,8 +333,8 @@ export function ShotsWorkspace({
     panels.length > 0 && checkedPanelIds.length === panels.length;
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-7 sm:py-7">
-      <header className="flex flex-col gap-4 border-b pb-5 lg:flex-row lg:items-end lg:justify-between">
+    <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-7 sm:py-7 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:overflow-hidden">
+      <header className="shrink-0 flex flex-col gap-4 border-b pb-5 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
           <p className="truncate text-xs text-muted-foreground">
             {String(episode.episodeNumber).padStart(2, "0")} · {episode.name}
@@ -410,7 +410,7 @@ export function ShotsWorkspace({
         </div>
       ) : (
         <Tabs
-          className="min-w-0 py-5"
+          className="min-w-0 py-5 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col"
           onValueChange={(value) => {
             setTab(value as ShotMediaKind | "vfx");
             if (value === "image" || value === "video") setKind(value);
@@ -433,9 +433,13 @@ export function ShotsWorkspace({
           </TabsList>
 
           {(["image", "video"] as const).map((mediaKind) => (
-            <TabsContent className="mt-4" key={mediaKind} value={mediaKind}>
-              <div className="grid min-h-[34rem] border-y lg:grid-cols-[17rem_minmax(0,1fr)]">
-                <aside className="border-b lg:border-r lg:border-b-0">
+            <TabsContent
+              className="mt-4 xl:min-h-0 xl:flex-1"
+              key={mediaKind}
+              value={mediaKind}
+            >
+              <div className="grid min-h-[34rem] border-y lg:grid-cols-[17rem_minmax(0,1fr)] xl:h-full xl:min-h-0">
+                <aside className="border-b lg:border-r lg:border-b-0 xl:flex xl:min-h-0 xl:flex-col">
                   <label className="flex h-10 items-center gap-2 border-b px-3 text-xs text-muted-foreground">
                     <Checkbox
                       aria-label={copy.selectedCount}
@@ -448,7 +452,7 @@ export function ShotsWorkspace({
                     />
                     {copy.selectedCount} · {checkedPanelIds.length}
                   </label>
-                  <div className="max-h-72 overflow-y-auto p-1.5 lg:max-h-[calc(100dvh-18rem)]">
+                  <div className="max-h-72 overflow-y-auto p-1.5 lg:max-h-[calc(100dvh-18rem)] xl:min-h-0 xl:flex-1 xl:max-h-none">
                     {panels.map((panel) => (
                       <PanelRow
                         checked={checkedPanelIds.includes(panel.id)}
@@ -472,7 +476,7 @@ export function ShotsWorkspace({
                 </aside>
 
                 {selectedPanel ? (
-                  <section className="min-w-0 p-4 sm:p-5">
+                  <section className="min-w-0 p-4 sm:p-5 xl:overflow-y-auto">
                     <header className="flex flex-col gap-3 border-b pb-4">
                       <div className="min-w-0">
                         <h2 className="truncate text-base font-semibold">
@@ -574,7 +578,10 @@ export function ShotsWorkspace({
               </div>
             </TabsContent>
           ))}
-          <TabsContent className="mt-4" value="vfx">
+          <TabsContent
+            className="mt-4 xl:min-h-0 xl:flex-1 xl:overflow-y-auto"
+            value="vfx"
+          >
             {tab === "vfx" && catalog ? (
               <VfxWorkspace
                 assets={assets}

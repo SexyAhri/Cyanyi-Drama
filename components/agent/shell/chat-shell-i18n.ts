@@ -16,6 +16,7 @@ export type ShellCopy = {
   connectionLoading: string;
   connectionSuccess: string;
   currentModel: string;
+  dramaStudio: string;
   english: string;
   explore: string;
   exploreDescription: string;
@@ -152,6 +153,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     connectionLoading: "Connecting...",
     connectionSuccess: "Connected",
     currentModel: "Current model",
+    dramaStudio: "Drama Studio",
     english: "English",
     explore: "Explore",
     exploreDescription: "Jump between available runtime demos.",
@@ -294,6 +296,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     connectionLoading: "连接中...",
     connectionSuccess: "连接成功",
     currentModel: "当前模型",
+    dramaStudio: "漫剧创作",
     english: "English",
     explore: "探索",
     exploreDescription: "在可用的运行时示例之间快速切换。",

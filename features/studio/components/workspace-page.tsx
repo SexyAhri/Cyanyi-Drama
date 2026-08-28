@@ -74,9 +74,13 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
     requestedStage && STUDIO_STAGE_IDS.includes(requestedStage)
       ? requestedStage
       : "writing";
-  const fixedHeightWorkspace = ["writing", "assets", "storyboard", "audio"].includes(
-    activeStage,
-  );
+  const fixedHeightWorkspace = [
+    "writing",
+    "assets",
+    "storyboard",
+    "shots",
+    "audio",
+  ].includes(activeStage);
   const selectedEpisode = snapshot
     ? getSelectedEpisode(snapshot.project.episodes, requestedEpisodeId)
     : undefined;

@@ -1,10 +1,12 @@
 "use client";
 
-import { Pencil } from "lucide-react";
+import { Clapperboard, Pencil } from "lucide-react";
+import Link from "next/link";
 
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { cn } from "@/lib/utils";
 
 import type { ShellCopy } from "./chat-shell-i18n";
 
@@ -41,7 +43,19 @@ export function ChatTopbar({
           <div className="flex min-w-0 items-center gap-2">{topbarActions}</div>
         ) : null}
       </div>
-      <ThemeToggle label={copy.switchTheme} />
+      <div className="flex shrink-0 items-center gap-1">
+        <Link
+          aria-label={copy.dramaStudio}
+          className={cn(
+            buttonVariants({ size: "icon-sm", variant: "ghost" }),
+            "md:hidden",
+          )}
+          href="/projects"
+        >
+          <Clapperboard className="size-4" />
+        </Link>
+        <ThemeToggle label={copy.switchTheme} />
+      </div>
     </header>
   );
 }

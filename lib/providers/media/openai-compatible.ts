@@ -41,11 +41,13 @@ export const openAiCompatibleMediaProvider: MediaProviderAdapter = {
 async function generateImage(
   input: GenerateProviderMediaInput,
 ): Promise<MediaAsset[]> {
-  const endpoint =
-    process.env.OPENAI_COMPATIBLE_IMAGE_GENERATION_PATH || "images/generations";
   const references = await referencesAsDataUrls(
     input.request.referenceImages ?? [],
   );
+  const endpoint = references.length
+    ? process.env.OPENAI_COMPATIBLE_IMAGE_EDIT_PATH || "images/edits"
+    : process.env.OPENAI_COMPATIBLE_IMAGE_GENERATION_PATH ||
+      "images/generations";
   const size = resolveImageSize(input.request.ratio, input.request.resolution);
   const response = await requestImage(input, endpoint, references, size);
   const payload = await readProviderJson(response);
@@ -67,6 +69,26 @@ function requestImage(
   references: string[],
   size?: string,
 ) {
+  if (references.length) {
+    const form = new FormData();
+    form.append("model", input.model);
+    form.append("prompt", input.request.prompt ?? "");
+    form.append("n", "1");
+    form.append("response_format", "url");
+    if (size) form.append("size", size);
+    const fileField =
+      process.env.OPENAI_COMPATIBLE_IMAGE_EDIT_FILE_FIELD || "image[]";
+    references.forEach((reference, index) => {
+      const { blob, extension } = imageDataUrlBlob(reference);
+      form.append(fileField, blob, `reference-${index + 1}.${extension}`);
+    });
+    return fetchWithProviderRetry(joinUrl(input.baseUrl, endpoint), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${input.apiKey}` },
+      body: form,
+      cache: "no-store",
+    });
+  }
   return fetchWithProviderRetry(joinUrl(input.baseUrl, endpoint), {
     method: "POST",
     headers: bearerJsonHeaders(input.apiKey),
@@ -74,7 +96,6 @@ function requestImage(
       model: input.model,
       prompt: input.request.prompt ?? "",
       ...(size ? { size } : {}),
-      ...(references.length ? { image: references } : {}),
       response_format: "url",
     }),
     cache: "no-store",
@@ -251,9 +272,30 @@ function extractImageUrls(payload: unknown) {
   const data = record(payload).data;
   if (!Array.isArray(data)) return [];
   return data.flatMap((item) => {
-    const url = record(item).url;
-    return typeof url === "string" ? [url] : [];
+    const value = record(item);
+    const url = value.url;
+    if (typeof url === "string") return [url];
+    const base64 = value.b64_json;
+    return typeof base64 === "string"
+      ? [`data:image/png;base64,${base64}`]
+      : [];
   });
+}
+
+function imageDataUrlBlob(value: string) {
+  const match = value.match(/^data:([^;,]+);base64,([\s\S]+)$/);
+  if (!match) throw new Error("REFERENCE_IMAGE_DATA_URL_INVALID");
+  const mimeType = match[1];
+  const extension =
+    mimeType === "image/jpeg"
+      ? "jpg"
+      : mimeType === "image/webp"
+        ? "webp"
+        : "png";
+  return {
+    blob: new Blob([Buffer.from(match[2], "base64")], { type: mimeType }),
+    extension,
+  };
 }
 
 function extractAudioUrl(payload: unknown) {

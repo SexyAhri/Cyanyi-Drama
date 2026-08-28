@@ -49,10 +49,13 @@ describe("OpenAI-compatible media provider", () => {
       "http://localhost:3000/api/files/reference.png",
       { cache: "no-store" },
     );
-    const requestBody = JSON.parse(
-      fetchWithProviderRetry.mock.calls[0][1].body,
+    expect(fetchWithProviderRetry.mock.calls[0][0]).toBe(
+      "https://provider.test/v1/images/edits",
     );
-    expect(requestBody.image).toEqual(["data:image/png;base64,iVBORw=="]);
+    const requestBody = fetchWithProviderRetry.mock.calls[0][1].body as FormData;
+    expect(requestBody).toBeInstanceOf(FormData);
+    expect(requestBody.get("model")).toBe("gpt-image-2");
+    expect(requestBody.getAll("image[]")).toHaveLength(1);
   });
 
   it("does not silently discard references when the provider rejects them", async () => {

@@ -1,4 +1,5 @@
 import {
+  Clapperboard,
   Compass,
   MessageSquare,
   Search,
@@ -9,6 +10,12 @@ import {
 import type { ShellNavItem, ShellThread } from "./chat-shell-types";
 
 export const primaryNavItems: ShellNavItem[] = [
+  {
+    id: "drama-studio",
+    href: "/projects",
+    label: "Drama Studio",
+    icon: Clapperboard,
+  },
   {
     id: "search",
     label: "Search",

@@ -332,6 +332,10 @@ function getThreadActionCopy(locale: AgentLocale) {
 }
 
 function getPrimaryLabel(itemId: string, copy: ShellCopy) {
+  if (itemId === "drama-studio") {
+    return copy.dramaStudio;
+  }
+
   if (itemId === "search") {
     return copy.search;
   }

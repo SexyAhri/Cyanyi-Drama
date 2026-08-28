@@ -3,6 +3,7 @@
 import {
   ArrowLeft,
   BellDot,
+  Bot,
   Clapperboard,
   Languages,
   LayoutDashboard,
@@ -93,6 +94,20 @@ export function WorkspaceTopbar({
       </div>
 
       <div className="flex shrink-0 items-center gap-0.5">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Link
+                aria-label={copy.backToChat}
+                className={buttonVariants({ size: "icon", variant: "ghost" })}
+                href="/chat"
+              />
+            }
+          >
+            <Bot className="size-4" />
+          </TooltipTrigger>
+          <TooltipContent>{copy.backToChat}</TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger
             render={

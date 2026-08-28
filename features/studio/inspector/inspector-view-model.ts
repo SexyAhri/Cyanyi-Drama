@@ -1,20 +1,21 @@
-import type { MediaTask } from "@/lib/media/task-contract";
-
 import type {
+  StudioMediaTask,
   StudioExecutionSpan,
   StudioUsageCost,
   WorkflowRunSummary,
+  WorkflowStepSummary,
   WorkspaceSnapshot,
 } from "../types";
 
 export type OperationItem =
   | {
       id: string;
-      kind: "workflow";
+      kind: "workflow-step";
       updatedAt: string;
       workflow: WorkflowRunSummary;
+      step: WorkflowStepSummary;
     }
-  | { id: string; kind: "task"; updatedAt: string; task: MediaTask };
+  | { id: string; kind: "task"; updatedAt: string; task: StudioMediaTask };
 
 export function buildOperationItems(
   snapshot: WorkspaceSnapshot,
@@ -23,13 +24,17 @@ export function buildOperationItems(
   return [
     ...snapshot.workflows
       .filter((workflow) => !episodeId || workflow.episodeId === episodeId)
-      .map(
-        (workflow): OperationItem => ({
-          id: workflow.id,
-          kind: "workflow",
-          updatedAt: workflow.updatedAt,
-          workflow,
-        }),
+      .flatMap((workflow) =>
+        workflow.steps.map(
+          (step): OperationItem => ({
+            id: step.id,
+            kind: "workflow-step",
+            updatedAt:
+              step.completedAt ?? step.startedAt ?? workflow.updatedAt,
+            workflow,
+            step,
+          }),
+        ),
       ),
     ...snapshot.tasks
       .filter((task) => !episodeId || task.episodeId === episodeId)
@@ -42,6 +47,19 @@ export function buildOperationItems(
         }),
       ),
   ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export function isOperationRetryable(item: OperationItem) {
+  if (item.kind === "task")
+    return (
+      item.task.status === "failed" &&
+      item.task.retryCount < item.task.maxRetries
+    );
+  return (
+    ["blocked", "failed"].includes(item.step.status) &&
+    item.step.retryable &&
+    item.step.attempt < item.step.maxAttempts
+  );
 }
 
 export function summarizeUsageCosts(costs: StudioUsageCost[]) {
