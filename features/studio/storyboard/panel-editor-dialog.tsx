@@ -62,6 +62,7 @@ export function PanelEditorDialog({
       await onSave({
         ...panel,
         description: nullable(draft.description),
+        sceneNumber: nonnegativeIntegerOrNull(draft.sceneNumber),
         shotType: nullable(draft.shotType),
         cameraMove: nullable(draft.cameraMove),
         locationName: nullable(draft.locationName),
@@ -71,6 +72,33 @@ export function PanelEditorDialog({
         videoPrompt: nullable(draft.videoPrompt),
         durationSeconds: numberOrNull(draft.durationSeconds),
         subtitleText: nullable(draft.subtitleText),
+        speakingCharacter: nullable(draft.speakingCharacter),
+        lipSyncText: nullable(draft.lipSyncText),
+        voiceoverText: nullable(draft.voiceoverText),
+        startState: {
+          body: draft.startBody,
+          hands: draft.startHands,
+          gaze: draft.startGaze,
+          screenDirection: draft.startScreenDirection,
+          props: draft.startProps,
+        },
+        endState: {
+          body: draft.endBody,
+          hands: draft.endHands,
+          gaze: draft.endGaze,
+          screenDirection: draft.endScreenDirection,
+          props: draft.endProps,
+        },
+        motionBeats: parseMotionBeats(draft.motionBeats, panel.motionBeats),
+        worldContext: {
+          realm: nullable(draft.worldRealm),
+          technique: nullable(draft.worldTechnique),
+          powerRule: nullable(draft.worldPowerRule),
+          environmentScale: nullable(draft.environmentScale),
+          evidence: parseList(draft.worldEvidence),
+        },
+        vfxCues: parseObjectArray(draft.vfxCues, panel.vfxCues),
+        sfxCues: parseObjectArray(draft.sfxCues, panel.sfxCues),
         linkedToNextPanel: draft.linkedToNextPanel,
         photographyRules: serializePhotographyRules({
           camera: draft.cameraAngle,
@@ -166,6 +194,18 @@ export function PanelEditorDialog({
                     step="0.1"
                     type="number"
                     value={draft.durationSeconds}
+                  />
+                </Field>
+                <Field label={locale === "zh-CN" ? "场次（从 1 开始）" : "Scene (from 1)"}>
+                  <Input
+                    disabled={isSaving}
+                    inputMode="numeric"
+                    min="1"
+                    onChange={(event) =>
+                      setDraft({ ...draft, sceneNumber: event.target.value })
+                    }
+                    type="number"
+                    value={draft.sceneNumber}
                   />
                 </Field>
                 <Field label={copy.cast}>
@@ -272,6 +312,38 @@ export function PanelEditorDialog({
                     value={draft.subtitleText}
                   />
                 </Field>
+                <Field label={locale === "zh-CN" ? "口型角色" : "Lip-sync speaker"}>
+                  <Input
+                    disabled={isSaving}
+                    maxLength={160}
+                    onChange={(event) =>
+                      setDraft({ ...draft, speakingCharacter: event.target.value })
+                    }
+                    value={draft.speakingCharacter}
+                  />
+                </Field>
+                <Field label={locale === "zh-CN" ? "口型文本" : "Lip-sync text"}>
+                  <Textarea
+                    className="h-20 resize-y overflow-y-auto field-sizing-fixed"
+                    disabled={isSaving}
+                    maxLength={2_000}
+                    onChange={(event) =>
+                      setDraft({ ...draft, lipSyncText: event.target.value })
+                    }
+                    value={draft.lipSyncText}
+                  />
+                </Field>
+                <Field label={locale === "zh-CN" ? "画外音" : "Voice-over"}>
+                  <Textarea
+                    className="h-20 resize-y overflow-y-auto field-sizing-fixed"
+                    disabled={isSaving}
+                    maxLength={2_000}
+                    onChange={(event) =>
+                      setDraft({ ...draft, voiceoverText: event.target.value })
+                    }
+                    value={draft.voiceoverText}
+                  />
+                </Field>
                 <label className="flex items-center justify-between gap-4 border-y py-3 text-sm font-medium">
                   {copy.linkedShot}
                   <Switch
@@ -282,6 +354,136 @@ export function PanelEditorDialog({
                     }
                   />
                 </label>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="continuity">
+              <AccordionTrigger className="py-2">
+                <SectionTitle
+                  description={
+                    locale === "zh-CN"
+                      ? "校对首尾姿态、手部、视线、运动方向和关键动作节拍"
+                      : "Review start/end blocking and key motion beats"
+                  }
+                  title={locale === "zh-CN" ? "连续状态" : "Continuity states"}
+                />
+              </AccordionTrigger>
+              <AccordionContent className="grid gap-3 px-1 sm:grid-cols-2">
+                {(
+                  [
+                    ["startBody", locale === "zh-CN" ? "开始 · 姿态" : "Start · Body"],
+                    ["startHands", locale === "zh-CN" ? "开始 · 手部" : "Start · Hands"],
+                    ["startGaze", locale === "zh-CN" ? "开始 · 视线" : "Start · Gaze"],
+                    ["startScreenDirection", locale === "zh-CN" ? "开始 · 画面方向" : "Start · Screen direction"],
+                    ["startProps", locale === "zh-CN" ? "开始 · 道具状态" : "Start · Props"],
+                    ["endBody", locale === "zh-CN" ? "结束 · 姿态" : "End · Body"],
+                    ["endHands", locale === "zh-CN" ? "结束 · 手部" : "End · Hands"],
+                    ["endGaze", locale === "zh-CN" ? "结束 · 视线" : "End · Gaze"],
+                    ["endScreenDirection", locale === "zh-CN" ? "结束 · 画面方向" : "End · Screen direction"],
+                    ["endProps", locale === "zh-CN" ? "结束 · 道具状态" : "End · Props"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <Field key={key} label={label}>
+                    <Input
+                      disabled={isSaving}
+                      maxLength={500}
+                      onChange={(event) =>
+                        setDraft({ ...draft, [key]: event.target.value })
+                      }
+                      value={draft[key]}
+                    />
+                  </Field>
+                ))}
+                <Field
+                  className="sm:col-span-2"
+                  label={locale === "zh-CN" ? "关键动作节拍（JSON）" : "Key motion beats (JSON)"}
+                >
+                  <Textarea
+                    className="h-32 resize-y overflow-y-auto font-mono text-xs field-sizing-fixed"
+                    disabled={isSaving}
+                    maxLength={8_000}
+                    onChange={(event) =>
+                      setDraft({ ...draft, motionBeats: event.target.value })
+                    }
+                    value={draft.motionBeats}
+                  />
+                </Field>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="action-cues">
+              <AccordionTrigger className="py-2">
+                <SectionTitle
+                  description={
+                    locale === "zh-CN"
+                      ? "境界与功法约束、技能特效和动作音效时间点"
+                      : "Realm and technique constraints with timed VFX and action sound"
+                  }
+                  title={locale === "zh-CN" ? "世界观与动作特效" : "World and action effects"}
+                />
+              </AccordionTrigger>
+              <AccordionContent className="grid gap-3 px-1 sm:grid-cols-2">
+                {(
+                  [
+                    ["worldRealm", locale === "zh-CN" ? "当前境界" : "Current realm"],
+                    ["worldTechnique", locale === "zh-CN" ? "功法 / 招式" : "Technique / skill"],
+                    ["worldPowerRule", locale === "zh-CN" ? "威力与限制" : "Power rule and limit"],
+                    ["environmentScale", locale === "zh-CN" ? "场景尺度" : "Environment scale"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <Field key={key} label={label}>
+                    <Input
+                      disabled={isSaving}
+                      maxLength={1_000}
+                      onChange={(event) =>
+                        setDraft({ ...draft, [key]: event.target.value })
+                      }
+                      value={draft[key]}
+                    />
+                  </Field>
+                ))}
+                <Field
+                  className="sm:col-span-2"
+                  label={locale === "zh-CN" ? "设定依据" : "World-rule evidence"}
+                >
+                  <Textarea
+                    className="h-20 resize-y overflow-y-auto field-sizing-fixed"
+                    disabled={isSaving}
+                    maxLength={4_000}
+                    onChange={(event) =>
+                      setDraft({ ...draft, worldEvidence: event.target.value })
+                    }
+                    value={draft.worldEvidence}
+                  />
+                </Field>
+                <Field
+                  className="sm:col-span-2"
+                  label={locale === "zh-CN" ? "VFX 时间点（JSON）" : "Timed VFX cues (JSON)"}
+                >
+                  <Textarea
+                    className="h-36 resize-y overflow-y-auto font-mono text-xs field-sizing-fixed"
+                    disabled={isSaving}
+                    maxLength={12_000}
+                    onChange={(event) =>
+                      setDraft({ ...draft, vfxCues: event.target.value })
+                    }
+                    value={draft.vfxCues}
+                  />
+                </Field>
+                <Field
+                  className="sm:col-span-2"
+                  label={locale === "zh-CN" ? "SFX / Foley 时间点（JSON）" : "Timed SFX / Foley cues (JSON)"}
+                >
+                  <Textarea
+                    className="h-36 resize-y overflow-y-auto font-mono text-xs field-sizing-fixed"
+                    disabled={isSaving}
+                    maxLength={12_000}
+                    onChange={(event) =>
+                      setDraft({ ...draft, sfxCues: event.target.value })
+                    }
+                    value={draft.sfxCues}
+                  />
+                </Field>
               </AccordionContent>
             </AccordionItem>
 
@@ -415,6 +617,8 @@ function toDraft(panel: StudioStoryboardPanel) {
   );
   return {
     description: panel.description ?? "",
+    sceneNumber:
+      panel.sceneNumber === null ? "" : String(panel.sceneNumber + 1),
     shotType: panel.shotType ?? "",
     cameraMove: panel.cameraMove ?? "",
     locationName: panel.locationName ?? "",
@@ -424,6 +628,27 @@ function toDraft(panel: StudioStoryboardPanel) {
     videoPrompt: panel.videoPrompt ?? "",
     durationSeconds: panel.durationSeconds?.toString() ?? "",
     subtitleText: panel.subtitleText ?? "",
+    speakingCharacter: panel.speakingCharacter ?? "",
+    lipSyncText: panel.lipSyncText ?? "",
+    voiceoverText: panel.voiceoverText ?? "",
+    startBody: stringField(panel.startState.body),
+    startHands: stringField(panel.startState.hands),
+    startGaze: stringField(panel.startState.gaze),
+    startScreenDirection: stringField(panel.startState.screenDirection),
+    startProps: stringField(panel.startState.props),
+    endBody: stringField(panel.endState.body),
+    endHands: stringField(panel.endState.hands),
+    endGaze: stringField(panel.endState.gaze),
+    endScreenDirection: stringField(panel.endState.screenDirection),
+    endProps: stringField(panel.endState.props),
+    motionBeats: JSON.stringify(panel.motionBeats, null, 2),
+    worldRealm: stringField(panel.worldContext.realm),
+    worldTechnique: stringField(panel.worldContext.technique),
+    worldPowerRule: stringField(panel.worldContext.powerRule),
+    environmentScale: stringField(panel.worldContext.environmentScale),
+    worldEvidence: stringArray(panel.worldContext.evidence).join("\n"),
+    vfxCues: JSON.stringify(panel.vfxCues, null, 2),
+    sfxCues: JSON.stringify(panel.sfxCues, null, 2),
     linkedToNextPanel: panel.linkedToNextPanel ?? false,
     cameraAngle: photography.camera,
     cameraPosition: photography.cameraPosition,
@@ -455,6 +680,55 @@ function nullable(value: string) {
 function numberOrNull(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function nonnegativeIntegerOrNull(value: string) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed - 1 : null;
+}
+
+function stringField(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function parseMotionBeats(
+  value: string,
+  fallback: Array<Record<string, unknown>>,
+) {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every(
+      (item) => Boolean(item) && typeof item === "object" && !Array.isArray(item),
+    )
+      ? (parsed as Array<Record<string, unknown>>)
+      : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function parseObjectArray(
+  value: string,
+  fallback: Array<Record<string, unknown>>,
+) {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) &&
+      parsed.every(
+        (item) =>
+          Boolean(item) && typeof item === "object" && !Array.isArray(item),
+      )
+      ? (parsed as Array<Record<string, unknown>>)
+      : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 function parseList(value: string) {

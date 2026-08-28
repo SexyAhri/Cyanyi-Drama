@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ACTION_PHASES } from "./action-cues";
 
 export const POST_QC_STATUSES = ["pending", "pass", "fail"] as const;
 export const ADR_STATUSES = [
@@ -61,6 +62,8 @@ export const soundPostPackageSchema = z
         z
           .object({
             id: z.string().trim().min(1).max(191),
+            panelId: z.string().trim().min(1).max(191).optional(),
+            phase: z.enum(ACTION_PHASES).optional(),
             type: z.enum(["sfx", "foley"]),
             description: z.string().trim().min(1).max(2_000),
             inMs: z.number().finite().min(0),

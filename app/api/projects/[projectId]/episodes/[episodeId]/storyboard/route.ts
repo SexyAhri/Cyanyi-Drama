@@ -1,6 +1,8 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { getStoryboard, saveStoryboard } from "@/lib/novel/domain-store";
 import { listLatestStoryboardContinuityIssues } from "@/lib/novel/continuity-store";
+import { buildStoryboardContentReview } from "@/lib/novel/storyboard-review";
+import { listProductionClips } from "@/lib/production/domain-store";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import { createOrReuseWorkflowRun } from "@/lib/workflow/store";
 
@@ -9,12 +11,23 @@ type Context = { params: Promise<{ projectId: string; episodeId: string }> };
 export async function GET(_request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { projectId, episodeId } = await context.params;
-  const [storyboard, continuityIssues] = await Promise.all([
+  const [storyboard, continuityIssues, clips] = await Promise.all([
     getStoryboard(user.id, projectId, episodeId),
     listLatestStoryboardContinuityIssues(user.id, projectId, episodeId),
+    listProductionClips(user.id, projectId, episodeId),
   ]);
   return attachSessionCookie(
-    Response.json({ storyboard, continuityIssues }),
+    Response.json({
+      storyboard,
+      continuityIssues,
+      contentReview: buildStoryboardContentReview(
+        storyboard,
+        (clips ?? []).map((clip) => ({
+          id: clip.id,
+          screenplay: clip.screenplay,
+        })),
+      ),
+    }),
     sessionId,
   );
 }
@@ -118,7 +131,9 @@ export async function PUT(request: Request, context: Context) {
 }
 
 function isPanelInput(value: unknown): value is {
+  id?: string;
   panelIndex: number;
+  sceneNumber?: number | null;
   clipId?: string | null;
   clipPanelIndex?: number | null;
   shotType?: string | null;
@@ -135,6 +150,15 @@ function isPanelInput(value: unknown): value is {
   srtEnd?: number | null;
   durationSeconds?: number | null;
   subtitleText?: string | null;
+  speakingCharacter?: string | null;
+  lipSyncText?: string | null;
+  voiceoverText?: string | null;
+  startState?: Record<string, unknown>;
+  endState?: Record<string, unknown>;
+  motionBeats?: Array<Record<string, unknown>>;
+  worldContext?: Record<string, unknown>;
+  vfxCues?: Array<Record<string, unknown>>;
+  sfxCues?: Array<Record<string, unknown>>;
   actingNotes?: Record<string, unknown>;
   photographyRules?: string | null;
   firstLastFramePrompt?: string | null;

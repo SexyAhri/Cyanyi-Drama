@@ -114,6 +114,8 @@ describe("domain semantic validators", () => {
             shotType: "中景",
             cameraMove: "固定镜头",
             durationSeconds: 1,
+            vfxCues: [],
+            sfxCues: [],
             motionTimeline: [
               {
                 startSecond: 0,
@@ -144,7 +146,7 @@ describe("domain semantic validators", () => {
     );
   });
 
-  it("requires one continuous motion beat for every shot second", () => {
+  it("requires continuous key motion beats without forcing one beat per second", () => {
     const issues = validateStoryboardPlanning(
       {
         panels: [
@@ -153,6 +155,8 @@ describe("domain semantic validators", () => {
             shotType: "中景",
             cameraMove: "缓慢推近",
             durationSeconds: 3,
+            vfxCues: [],
+            sfxCues: [],
             motionTimeline: [
               {
                 startSecond: 0,
@@ -181,10 +185,7 @@ describe("domain semantic validators", () => {
     );
 
     expect(issues.map((item) => item.code)).toEqual(
-      expect.arrayContaining([
-        "MOTION_TIMELINE_SECOND_COUNT_MISMATCH",
-        "MOTION_TIMELINE_NOT_CONTIGUOUS",
-      ]),
+      expect.arrayContaining(["MOTION_TIMELINE_NOT_CONTIGUOUS"]),
     );
   });
 
@@ -224,6 +225,159 @@ describe("domain semantic validators", () => {
         "SCENE_NUMBER_NOT_SEQUENTIAL",
       ]),
     );
+  });
+
+  it("accepts an exact source location that is not yet canonical", () => {
+    const source = "太炎镇坐落于大秦王朝西部边陲。";
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: source,
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "EXT" as const, location: "太炎镇", time: "夜" },
+          description: "",
+          characters: [],
+          content: [{ type: "action" as const, text: source }],
+        },
+      ],
+    };
+
+    expect(
+      validateScreenplayConversion(screenplay, {
+        clipId: "clip-1",
+        clipText: source,
+        canonical,
+      }),
+    ).toEqual([]);
+
+    const sourceText = JSON.stringify(screenplay);
+    const storyboardIssues = validateStoryboardPlanning(
+      {
+        panels: [
+          {
+            panelIndex: 0,
+            sceneNumber: 0,
+            shotType: "全景",
+            cameraMove: "固定镜头",
+            durationSeconds: 2,
+            startState: {
+              body: "无人物",
+              hands: "无",
+              gaze: "无",
+              screenDirection: "无",
+              props: "无",
+            },
+            endState: {
+              body: "无人物",
+              hands: "无",
+              gaze: "无",
+              screenDirection: "无",
+              props: "无",
+            },
+            motionTimeline: [
+              {
+                startSecond: 0,
+                endSecond: 2,
+                action: "建立太炎镇地理环境",
+                camera: "固定全景",
+              },
+            ],
+            vfxCues: [],
+            sfxCues: [],
+            description: source,
+            locationName: "太炎镇",
+            characters: [],
+            props: [],
+            imagePrompt: source,
+            videoPrompt: "太炎镇全景，仅环境声",
+            sourceEvidence: [source],
+          },
+        ],
+      },
+      { sourceText, canonical, screenplay },
+    );
+    expect(storyboardIssues).toEqual([]);
+  });
+
+  it("allows adjacent lines by one speaker to share a shot", () => {
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: "林澈说：你好。回来。",
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "书房", time: "夜" },
+          description: "",
+          characters: ["林澈"],
+          content: [
+            {
+              type: "dialogue" as const,
+              character: "林澈",
+              parenthetical: null,
+              lines: "你好。",
+            },
+            {
+              type: "dialogue" as const,
+              character: "林澈",
+              parenthetical: null,
+              lines: "回来。",
+            },
+          ],
+        },
+      ],
+    };
+    const sourceText = JSON.stringify(screenplay);
+    const issues = validateStoryboardPlanning(
+      {
+        panels: [
+          {
+            panelIndex: 0,
+            sceneNumber: 0,
+            shotType: "中景",
+            cameraMove: "固定镜头",
+            durationSeconds: 3,
+            startState: {
+              body: "林澈站立",
+              hands: "双手自然垂下",
+              gaze: "看向前方",
+              screenDirection: "面向画面左侧",
+              props: "无",
+            },
+            endState: {
+              body: "林澈站立",
+              hands: "双手自然垂下",
+              gaze: "看向前方",
+              screenDirection: "面向画面左侧",
+              props: "无",
+            },
+            speakingCharacter: "林澈",
+            lipSyncText: "你好。回来。",
+            voiceoverText: null,
+            motionTimeline: [
+              {
+                startSecond: 0,
+                endSecond: 3,
+                action: "林澈连续说完两句",
+                camera: "固定中景",
+              },
+            ],
+            vfxCues: [],
+            sfxCues: [],
+            description: "林澈说话",
+            locationName: "书房",
+            characters: ["林澈"],
+            props: [],
+            imagePrompt: "林澈在书房",
+            videoPrompt: "林澈连续说话，只保留环境声",
+            sourceEvidence: ["你好。"],
+          },
+        ],
+      },
+      { sourceText, canonical, screenplay },
+    );
+
+    expect(issues).toEqual([]);
   });
 
   it("accepts punctuation-aligned and ordered source actions", () => {
@@ -314,7 +468,202 @@ describe("domain semantic validators", () => {
         },
         input,
       ).map((item) => item.code),
-    ).toContain("BRIDGE_ACTION_NOT_GROUNDED");
+    ).toContain("INFERRED_ACTION_NOT_GROUNDED");
+  });
+
+  it("allows evidence-grounded performance inference with complete provenance", () => {
+    const source = "林澈听见父亲病情加重，强忍着没有落泪。";
+    const issues = validateScreenplayConversion(
+      {
+        clipId: "clip-1",
+        originalText: source,
+        coverage: [
+          {
+            eventId: "E001",
+            evidence: source,
+            modes: ["visual"],
+            reason: null,
+          },
+        ],
+        scenes: [
+          {
+            sceneNumber: 0,
+            heading: { intExt: "INT", location: "书房", time: "夜" },
+            description: "",
+            characters: ["林澈"],
+            content: [
+              {
+                type: "action",
+                text: "林澈攥紧衣角，眼眶泛红却没有落泪。",
+                origin: "inferred",
+                inferenceType: "performance",
+                evidence: [source],
+                rationale: "把明确的克制悲伤转成可见表演，不改变事件。",
+                confidence: 0.85,
+              },
+            ],
+          },
+        ],
+      },
+      {
+        clipId: "clip-1",
+        clipText: source,
+        canonical,
+        sourceEvents: [{ eventId: "E001", evidence: source }],
+      },
+    );
+
+    expect(issues).toEqual([]);
+  });
+
+  it("keeps realm-specific fight design grounded and requires timed VFX/SFX cues", () => {
+    const source = "林澈以筑基境施展青霄剑诀，剑光击中石壁，碎石迸裂。";
+    const action = {
+      type: "action" as const,
+      text: source,
+      origin: "source" as const,
+      actionDesign: {
+        kind: "skill" as const,
+        performer: "林澈",
+        target: "石壁",
+        realm: "筑基境",
+        technique: "青霄剑诀",
+        choreography: ["沉肩起剑蓄力", "剑光释放并命中石壁"],
+        impact: "碎石迸裂",
+        environmentResponse: "石壁碎石迸裂",
+        vfxPlan: [
+          {
+            phase: "release" as const,
+            category: "weapon_trail" as const,
+            description: "剑光沿挥剑方向形成连续轨迹",
+          },
+        ],
+        sfxPlan: [
+          {
+            phase: "impact" as const,
+            type: "destruction" as const,
+            description: "剑光命中与碎石爆裂",
+          },
+        ],
+        evidence: [source],
+      },
+    };
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: source,
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "书房", time: "夜" },
+          description: "",
+          characters: ["林澈"],
+          content: [action],
+        },
+      ],
+    };
+    expect(
+      validateScreenplayConversion(screenplay, {
+        clipId: "clip-1",
+        clipText: source,
+        canonical,
+      }),
+    ).toEqual([]);
+
+    const sourceText = JSON.stringify(screenplay);
+    const issues = validateStoryboardPlanning(
+      {
+        panels: [
+          {
+            panelIndex: 0,
+            sceneNumber: 0,
+            shotType: "全景",
+            cameraMove: "跟随剑光快速横移",
+            durationSeconds: 3,
+            startState: {
+              body: "林澈沉肩持剑",
+              hands: "双手握剑",
+              gaze: "锁定石壁",
+              screenDirection: "面向画面右侧",
+              props: "青霄剑保持完整",
+            },
+            endState: {
+              body: "林澈完成挥剑后收势",
+              hands: "双手仍握剑",
+              gaze: "看向命中点",
+              screenDirection: "面向画面右侧",
+              props: "青霄剑保持完整",
+            },
+            worldContext: {
+              realm: "筑基境",
+              technique: "青霄剑诀",
+              powerRule: "剑光可击裂石壁",
+              environmentScale: "人物与石壁同框建立破坏尺度",
+              evidence: [source],
+            },
+            motionTimeline: [
+              {
+                startSecond: 0,
+                endSecond: 1,
+                action: "沉肩起剑",
+                camera: "全景锁定轴线",
+                phase: "anticipation",
+              },
+              {
+                startSecond: 1,
+                endSecond: 2,
+                action: "挥剑释放剑光",
+                camera: "跟随剑光横移",
+                phase: "release",
+              },
+              {
+                startSecond: 2,
+                endSecond: 3,
+                action: "石壁碎裂，林澈收势",
+                camera: "停在命中点后回收",
+                phase: "aftermath",
+              },
+            ],
+            vfxCues: [
+              {
+                atSecond: 1,
+                phase: "release",
+                category: "weapon_trail",
+                description: "剑光沿挥剑方向延伸并命中石壁",
+                evidence: [source],
+              },
+            ],
+            sfxCues: [
+              {
+                startSecond: 2,
+                endSecond: 3,
+                type: "destruction",
+                description: "命中冲击、碎石爆裂与室内回声",
+                evidence: [source],
+              },
+            ],
+            description: source,
+            locationName: "书房",
+            characters: ["林澈"],
+            props: [],
+            imagePrompt: source,
+            videoPrompt: source,
+            sourceEvidence: [source],
+          },
+        ],
+      },
+      { sourceText, canonical, screenplay },
+    );
+    expect(issues).toEqual([]);
+
+    const invented = structuredClone(screenplay);
+    invented.scenes[0].content[0].actionDesign.technique = "万雷灭世诀";
+    expect(
+      validateScreenplayConversion(invented, {
+        clipId: "clip-1",
+        clipText: source,
+        canonical,
+      }).map((item) => item.code),
+    ).toContain("ACTION_DESIGN_TERM_NOT_GROUNDED");
   });
 
   it("rejects narration and accepts an explicitly introduced unquoted line", () => {
@@ -424,6 +773,8 @@ describe("domain semantic validators", () => {
       shotType: "中景",
       cameraMove: "缓慢推近",
       durationSeconds: 2,
+      vfxCues: [],
+      sfxCues: [],
       motionTimeline: [
         {
           startSecond: 0,

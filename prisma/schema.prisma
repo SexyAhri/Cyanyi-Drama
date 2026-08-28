@@ -370,6 +370,7 @@ model StoryboardPanel {
   clipId               String?     @map("clip_id")
   clipPanelIndex       Int?        @map("clip_panel_index")
   panelIndex           Int         @map("panel_index")
+  sceneNumber          Int?        @map("scene_number")
   shotType             String?     @map("shot_type")
   cameraMove           String?     @map("camera_move") @db.Text
   description          String?     @db.Text
@@ -384,6 +385,15 @@ model StoryboardPanel {
   srtEnd               Float?      @map("srt_end")
   durationSeconds      Float?      @map("duration_seconds")
   subtitleText         String?     @map("subtitle_text") @db.Text
+  speakingCharacter    String?     @map("speaking_character")
+  lipSyncText          String?     @map("lip_sync_text") @db.Text
+  voiceoverText        String?     @map("voiceover_text") @db.Text
+  startStateJson       String?     @map("start_state_json") @db.Text
+  endStateJson         String?     @map("end_state_json") @db.Text
+  motionBeatsJson      String?     @map("motion_beats_json") @db.Text
+  worldContextJson     String?     @map("world_context_json") @db.Text
+  vfxCuesJson          String?     @map("vfx_cues_json") @db.Text
+  sfxCuesJson          String?     @map("sfx_cues_json") @db.Text
   actingNotesJson      String?     @map("acting_notes_json") @db.Text
   photographyRules     String?     @map("photography_rules") @db.Text
   firstLastFramePrompt String?     @map("first_last_frame_prompt") @db.Text

@@ -42,7 +42,8 @@ export function normalizeScreenplayDialogue(
             : candidate;
         if (
           resolvedContent.type !== "action" ||
-          resolvedContent.origin === "bridge"
+          resolvedContent.origin === "bridge" ||
+          resolvedContent.origin === "inferred"
         )
           return [resolvedContent];
         const explicitlyMentionedActor = firstMentionedCharacter(

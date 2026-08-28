@@ -82,7 +82,7 @@ export function VfxShotPackageDialog({
   const copy = getProductionCopy(locale);
   const studioCopy = getStudioCopy(locale);
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(() => toDraft(current?.package));
+  const [draft, setDraft] = useState(() => toDraft(current?.package, panel));
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function submit() {
@@ -142,7 +142,7 @@ export function VfxShotPackageDialog({
     <Dialog
       onOpenChange={(next) => {
         setOpen(next);
-        if (next) setDraft(toDraft(current?.package));
+        if (next) setDraft(toDraft(current?.package, panel));
       }}
       open={open}
     >
@@ -485,21 +485,56 @@ function AssetRoleCheckbox({
   );
 }
 
-function toDraft(value: VfxShotPackage | null | undefined): Draft {
+function toDraft(
+  value: VfxShotPackage | null | undefined,
+  panel: StudioStoryboardPanel,
+): Draft {
+  const cues = panel.vfxCues;
+  const cueCategory = cues.find((cue) =>
+    VFX_CATEGORIES.includes(cue.category as VfxShotPackage["category"]),
+  )?.category as VfxShotPackage["category"] | undefined;
+  const cueLines = cues.map(
+    (cue) =>
+      `${String(cue.atSecond ?? "?")}s · ${String(cue.phase ?? "-")} · ${String(cue.description ?? "-")}`,
+  );
+  const worldLines = [
+    textField(panel.worldContext.realm, "境界"),
+    textField(panel.worldContext.technique, "功法/招式"),
+    textField(panel.worldContext.powerRule, "能力限制"),
+    textField(panel.worldContext.environmentScale, "场景尺度"),
+  ].filter(Boolean);
   return {
-    category: value?.category ?? "cleanup",
+    category: value?.category ?? cueCategory ?? "environment",
     complexity: value?.complexity ?? "medium",
-    summary: value?.summary ?? "",
+    summary:
+      value?.summary ??
+      [...worldLines, panel.description, ...cueLines].filter(Boolean).join("\n"),
     colorSpace: value?.colorSpace ?? "ACEScg",
     plateRequirements: value?.plate.requirements.join("\n") ?? "",
-    plateAssetIds: value?.plate.assetIds ?? [],
-    elementRequirements: value?.elements.requirements.join("\n") ?? "",
+    plateAssetIds:
+      value?.plate.assetIds ?? (panel.imageAssetId ? [panel.imageAssetId] : []),
+    elementRequirements:
+      value?.elements.requirements.join("\n") ?? cueLines.join("\n"),
     elementAssetIds: value?.elements.assetIds ?? [],
     trackingRequirements: value?.trackingRequirements.join("\n") ?? "",
     matteRequirements: value?.matteRequirements.join("\n") ?? "",
-    compositeNotes: value?.compositeNotes.join("\n") ?? "",
+    compositeNotes:
+      value?.compositeNotes.join("\n") ??
+      [
+        ...worldLines,
+        ...cues.map(
+          (cue) =>
+            `${String(cue.atSecond ?? "?")}s 合成 ${String(cue.category ?? "VFX")}；保持技能形态、范围、运动方向及环境受力连续。`,
+        ),
+      ].join("\n"),
     qc: value?.qc ?? emptyVfxQc(),
   };
+}
+
+function textField(value: unknown, label: string) {
+  return typeof value === "string" && value.trim()
+    ? `${label}：${value.trim()}`
+    : "";
 }
 
 function defaultDependencies(

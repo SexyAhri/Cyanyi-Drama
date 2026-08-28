@@ -149,6 +149,8 @@ export function validateScreenplayConversion(
     clipId: string;
     clipText: string;
     canonical: CanonicalContext;
+    sourceEvents?: readonly SourceEvent[];
+    knowledgeText?: string;
   },
 ) {
   const issues: StructuredValidationIssue[] = [];
@@ -162,6 +164,8 @@ export function validateScreenplayConversion(
         "originalText must exactly equal the complete clip source",
       ),
     );
+  if (input.sourceEvents)
+    validateSourceEventCoverage(data, input.sourceEvents, issues);
   data.scenes.forEach((scene, sceneIndex) => {
     if (scene.sceneNumber !== sceneIndex)
       issues.push(
@@ -179,7 +183,10 @@ export function validateScreenplayConversion(
     );
     if (
       input.canonical.locations.length &&
-      !nameSet(input.canonical.locations).has(normalizeName(scene.heading.location))
+      !nameSet(input.canonical.locations).has(
+        normalizeName(scene.heading.location),
+      ) &&
+      !input.clipText.includes(scene.heading.location)
     )
       issues.push(
         issue(
@@ -189,12 +196,11 @@ export function validateScreenplayConversion(
         ),
       );
     scene.content.forEach((content, contentIndex) => {
-      const value =
-        content.type === "dialogue" ? content.lines : content.text;
+      const value = content.type === "dialogue" ? content.lines : content.text;
       const isGrounded =
         content.type === "action"
-          ? content.origin === "bridge"
-            ? isGroundedBridgeAction(content, input.clipText)
+          ? content.origin === "bridge" || content.origin === "inferred"
+            ? isGroundedInferredAction(content, input.clipText)
             : isOrderedActionExcerpt(value, input.clipText) ||
               isImplicitVisualBridgeAction(value, input.clipText)
           : !value || input.clipText.includes(value);
@@ -203,16 +209,30 @@ export function validateScreenplayConversion(
           issue(
             `scenes.${sceneIndex}.content.${contentIndex}`,
             content.type === "action"
-              ? content.origin === "bridge"
-                ? "BRIDGE_ACTION_NOT_GROUNDED"
+              ? content.origin === "bridge" || content.origin === "inferred"
+                ? "INFERRED_ACTION_NOT_GROUNDED"
                 : "ACTION_NOT_IN_SOURCE"
               : "SPOKEN_TEXT_NOT_IN_SOURCE",
             content.type === "action"
-              ? content.origin === "bridge"
-                ? "Bridge action must cite exact source evidence and cannot introduce spoken dialogue"
+              ? content.origin === "bridge" || content.origin === "inferred"
+                ? "A bridge or inferred action must cite exact source evidence and cannot introduce spoken dialogue"
                 : "Action must consist of ordered source excerpts; punctuation may differ"
               : "Spoken content must be an exact source excerpt",
           ),
+        );
+      if (content.type === "action")
+        validateActionProvenance(
+          content,
+          input.clipText,
+          `scenes.${sceneIndex}.content.${contentIndex}`,
+          issues,
+        );
+      if (content.type === "action" && content.actionDesign)
+        validateActionDesign(
+          content.actionDesign,
+          `${input.clipText}\n${input.knowledgeText ?? ""}`,
+          `scenes.${sceneIndex}.content.${contentIndex}.actionDesign`,
+          issues,
         );
       if (
         content.type === "dialogue" &&
@@ -261,7 +281,7 @@ function isOrderedActionExcerpt(value: string, sourceText: string) {
   return true;
 }
 
-function isGroundedBridgeAction(
+function isGroundedInferredAction(
   content: Extract<
     ScreenplayConversion["scenes"][number]["content"][number],
     { type: "action" }
@@ -269,11 +289,177 @@ function isGroundedBridgeAction(
   sourceText: string,
 ) {
   const evidence = content.evidence ?? [];
-  if (!evidence.length || !evidence.every((quote) => sourceText.includes(quote)))
+  if (
+    !evidence.length ||
+    !evidence.every((quote) => sourceText.includes(quote))
+  )
     return false;
   // Connecting actions are visual only. Dialogue belongs to the source as dialogue/voiceover.
-  return !/[“”"][^“”"]+[“”"]/.test(content.text) &&
-    !/(?:说|问|答|回应|喊|叫|开口|低声|轻声)[：:]/.test(content.text);
+  return (
+    !/[“”"][^“”"]+[“”"]/.test(content.text) &&
+    !/(?:说|问|答|回应|喊|叫|开口|低声|轻声)[：:]/.test(content.text)
+  );
+}
+
+function validateActionProvenance(
+  content: Extract<
+    ScreenplayConversion["scenes"][number]["content"][number],
+    { type: "action" }
+  >,
+  sourceText: string,
+  path: string,
+  issues: StructuredValidationIssue[],
+) {
+  const hasInferenceMetadata =
+    content.inferenceType !== undefined ||
+    content.rationale !== undefined ||
+    content.confidence !== undefined;
+  if (content.origin === "inferred") {
+    if (
+      !content.inferenceType ||
+      !content.rationale ||
+      content.confidence === undefined ||
+      !content.evidence?.length
+    )
+      issues.push(
+        issue(
+          path,
+          "INFERENCE_PROVENANCE_INCOMPLETE",
+          "Inferred actions require inferenceType, exact evidence, rationale, and confidence",
+        ),
+      );
+    if (
+      content.inferenceType === "production_detail" &&
+      (content.confidence ?? 0) > 0.75
+    )
+      issues.push(
+        issue(
+          `${path}.confidence`,
+          "PRODUCTION_DETAIL_CONFIDENCE_TOO_HIGH",
+          "Implied set or wardrobe details must remain explicitly lower-confidence",
+        ),
+      );
+  } else if (hasInferenceMetadata) {
+    issues.push(
+      issue(
+        path,
+        "INFERENCE_METADATA_ON_NON_INFERRED_ACTION",
+        "Inference metadata is only valid when origin is inferred",
+      ),
+    );
+  }
+  if (content.evidence)
+    validateEvidence(content.evidence, sourceText, `${path}.evidence`, issues);
+}
+
+function validateActionDesign(
+  design: NonNullable<
+    Extract<
+      ScreenplayConversion["scenes"][number]["content"][number],
+      { type: "action" }
+    >["actionDesign"]
+  >,
+  knowledgeText: string,
+  path: string,
+  issues: StructuredValidationIssue[],
+) {
+  validateEvidence(design.evidence, knowledgeText, `${path}.evidence`, issues);
+  for (const [key, value] of [
+    ["realm", design.realm],
+    ["technique", design.technique],
+  ] as const) {
+    if (
+      value &&
+      !normalizeActionText(knowledgeText).includes(normalizeActionText(value))
+    )
+      issues.push(
+        issue(
+          `${path}.${key}`,
+          "ACTION_DESIGN_TERM_NOT_GROUNDED",
+          `${key} must appear in the source or approved world/power-system reference`,
+        ),
+      );
+  }
+}
+
+export type SourceEvent = { eventId: string; evidence: string };
+
+export function buildSourceEvents(sourceText: string): SourceEvent[] {
+  const fragments = sourceText
+    .split(/(?<=[。！？!?；;\n])/u)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return (fragments.length ? fragments : [sourceText]).map(
+    (evidence, index) => ({
+      eventId: `E${String(index + 1).padStart(3, "0")}`,
+      evidence,
+    }),
+  );
+}
+
+function validateSourceEventCoverage(
+  data: ScreenplayConversion,
+  sourceEvents: readonly SourceEvent[],
+  issues: StructuredValidationIssue[],
+) {
+  const coverage = data.coverage ?? [];
+  const byId = new Map(coverage.map((item) => [item.eventId, item]));
+  for (const event of sourceEvents) {
+    const item = byId.get(event.eventId);
+    if (!item) {
+      issues.push(
+        issue(
+          "coverage",
+          "SOURCE_EVENT_MISSING",
+          `Source event ${event.eventId} is not accounted for`,
+        ),
+      );
+      continue;
+    }
+    if (item.evidence !== event.evidence)
+      issues.push(
+        issue(
+          `coverage.${event.eventId}.evidence`,
+          "SOURCE_EVENT_EVIDENCE_CHANGED",
+          `Coverage evidence for ${event.eventId} must remain exact`,
+        ),
+      );
+    if (item.modes.includes("omitted") && !item.reason)
+      issues.push(
+        issue(
+          `coverage.${event.eventId}.reason`,
+          "OMISSION_REASON_REQUIRED",
+          "An omitted source event requires a reason",
+        ),
+      );
+    if (item.modes.includes("omitted") && item.modes.length > 1)
+      issues.push(
+        issue(
+          `coverage.${event.eventId}.modes`,
+          "OMISSION_MODE_CONFLICT",
+          "omitted cannot be combined with a covered mode",
+        ),
+      );
+  }
+  const expected = new Set(sourceEvents.map((event) => event.eventId));
+  coverage.forEach((item, index) => {
+    if (!expected.has(item.eventId))
+      issues.push(
+        issue(
+          `coverage.${index}.eventId`,
+          "UNKNOWN_SOURCE_EVENT",
+          `Unknown source event ${item.eventId}`,
+        ),
+      );
+    if (coverage.findIndex((value) => value.eventId === item.eventId) !== index)
+      issues.push(
+        issue(
+          `coverage.${index}.eventId`,
+          "DUPLICATE_SOURCE_EVENT",
+          `Source event ${item.eventId} appears more than once`,
+        ),
+      );
+  });
 }
 
 function normalizeActionText(value: string) {
@@ -282,11 +468,25 @@ function normalizeActionText(value: string) {
 
 export function validateStoryboardPlanning(
   data: StoryboardPlanning,
-  input: { sourceText: string; canonical: CanonicalContext },
+  input: {
+    sourceText: string;
+    canonical: CanonicalContext;
+    screenplay?: ScreenplayConversion;
+    productionContextText?: string;
+  },
 ) {
   const issues = validateSequentialPanelIndices(data.panels, "panels");
+  const screenplayLocations = nameSet(
+    input.screenplay?.scenes.map((scene) => scene.heading.location) ?? [],
+  );
   data.panels.forEach((panel, index) => {
     validateMotionTimeline(panel, `panels.${index}`, issues);
+    validateProductionCues(
+      panel,
+      `${input.sourceText}\n${input.productionContextText ?? ""}`,
+      `panels.${index}`,
+      issues,
+    );
     validateEvidence(
       panel.sourceEvidence,
       input.sourceText,
@@ -307,7 +507,8 @@ export function validateStoryboardPlanning(
     );
     if (
       panel.locationName &&
-      !nameSet(input.canonical.locations).has(normalizeName(panel.locationName))
+      !nameSet(input.canonical.locations).has(normalizeName(panel.locationName)) &&
+      !screenplayLocations.has(normalizeName(panel.locationName))
     )
       issues.push(
         issue(
@@ -316,7 +517,69 @@ export function validateStoryboardPlanning(
           `Unknown canonical location: ${panel.locationName}`,
         ),
       );
+    if (panel.speakingCharacter) {
+      if (
+        !nameSet(input.canonical.characters).has(
+          normalizeName(panel.speakingCharacter),
+        )
+      )
+        issues.push(
+          issue(
+            `panels.${index}.speakingCharacter`,
+            "UNKNOWN_SPEAKING_CHARACTER",
+            `Unknown canonical speaking character: ${panel.speakingCharacter}`,
+          ),
+        );
+      if (
+        !nameSet(panel.characters).has(normalizeName(panel.speakingCharacter))
+      )
+        issues.push(
+          issue(
+            `panels.${index}.speakingCharacter`,
+            "SPEAKER_NOT_IN_SHOT",
+            "The active speaking character must appear in the shot",
+          ),
+        );
+    }
+    if (panel.lipSyncText && !panel.speakingCharacter)
+      issues.push(
+        issue(
+          `panels.${index}.lipSyncText`,
+          "LIP_SYNC_SPEAKER_REQUIRED",
+          "Lip-sync text requires exactly one active speaking character",
+        ),
+      );
+    if (panel.speakingCharacter && !panel.lipSyncText)
+      issues.push(
+        issue(
+          `panels.${index}.speakingCharacter`,
+          "SPEAKER_TEXT_REQUIRED",
+          "An active speaking character requires lip-sync text",
+        ),
+      );
+    if (panel.lipSyncText && panel.voiceoverText)
+      issues.push(
+        issue(
+          `panels.${index}`,
+          "MULTIPLE_VOICE_PERFORMANCES_IN_SHOT",
+          "A shot may contain one lip-sync performance or one voice-over, not both",
+        ),
+      );
+    const spokenText = panel.lipSyncText ?? panel.voiceoverText;
+    if (
+      spokenText &&
+      panel.durationSeconds < estimateSpeechDurationSeconds(spokenText)
+    )
+      issues.push(
+        issue(
+          `panels.${index}.durationSeconds`,
+          "DIALOGUE_DURATION_OVERFLOW",
+          `Shot needs at least ${estimateSpeechDurationSeconds(spokenText)} seconds for its spoken text`,
+        ),
+      );
   });
+  if (input.screenplay)
+    validateStoryboardScreenplayContract(data, input.screenplay, issues);
   return issues;
 }
 
@@ -371,11 +634,7 @@ export function validateStoryboardRefinement(
   for (const base of basePanels) {
     const refined = refinedByIndex.get(base.panelIndex);
     if (!refined) continue;
-    validateMotionTimeline(
-      refined,
-      `panels.panel_${base.panelIndex}`,
-      issues,
-    );
+    validateMotionTimeline(refined, `panels.panel_${base.panelIndex}`, issues);
     if (refined.shotType !== base.shotType)
       issues.push(
         issue(
@@ -400,6 +659,45 @@ export function validateStoryboardRefinement(
           "Refinement must preserve the planned shot duration",
         ),
       );
+    for (const field of [
+      "sceneNumber",
+      "speakingCharacter",
+      "lipSyncText",
+      "voiceoverText",
+    ] as const)
+      if (refined[field] !== base[field])
+        issues.push(
+          issue(
+            `panels.panel_${base.panelIndex}.${field}`,
+            "PLANNED_FIELD_CHANGED",
+            `Refinement must preserve ${field}`,
+          ),
+        );
+    if (JSON.stringify(refined.startState) !== JSON.stringify(base.startState))
+      issues.push(
+        issue(
+          `panels.panel_${base.panelIndex}.startState`,
+          "START_STATE_CHANGED",
+          "Refinement must preserve the planned start state",
+        ),
+      );
+    if (JSON.stringify(refined.endState) !== JSON.stringify(base.endState))
+      issues.push(
+        issue(
+          `panels.panel_${base.panelIndex}.endState`,
+          "END_STATE_CHANGED",
+          "Refinement must preserve the planned end state",
+        ),
+      );
+    for (const field of ["worldContext", "vfxCues", "sfxCues"] as const)
+      if (JSON.stringify(refined[field]) !== JSON.stringify(base[field]))
+        issues.push(
+          issue(
+            `panels.panel_${base.panelIndex}.${field}`,
+            "PRODUCTION_CUES_CHANGED",
+            `Refinement must preserve ${field}`,
+          ),
+        );
     if (!sameTimelineBoundaries(refined.motionTimeline, base.motionTimeline))
       issues.push(
         issue(
@@ -443,21 +741,18 @@ function validateMotionTimeline(
   path: string,
   issues: StructuredValidationIssue[],
 ) {
-  if (panel.motionTimeline.length !== panel.durationSeconds)
-    issues.push(
-      issue(
-        `${path}.motionTimeline`,
-        "MOTION_TIMELINE_SECOND_COUNT_MISMATCH",
-        "motionTimeline must contain exactly one beat for every second of the shot",
-      ),
-    );
   panel.motionTimeline.forEach((beat, beatIndex) => {
-    if (beat.startSecond !== beatIndex || beat.endSecond !== beatIndex + 1)
+    const expectedStart = panel.motionTimeline[beatIndex - 1]?.endSecond ?? 0;
+    if (
+      beat.startSecond !== expectedStart ||
+      beat.endSecond <= beat.startSecond ||
+      beat.endSecond > panel.durationSeconds
+    )
       issues.push(
         issue(
           `${path}.motionTimeline.${beatIndex}`,
           "MOTION_TIMELINE_NOT_CONTIGUOUS",
-          `Expected a continuous ${beatIndex}-${beatIndex + 1}s beat`,
+          `Expected a positive, continuous beat beginning at ${expectedStart}s`,
         ),
       );
   });
@@ -468,6 +763,270 @@ function validateMotionTimeline(
         `${path}.motionTimeline`,
         "MOTION_TIMELINE_DURATION_MISMATCH",
         "The final motion beat must end at durationSeconds",
+      ),
+    );
+}
+
+function validateProductionCues(
+  panel: StoryboardPlanning["panels"][number],
+  knowledgeText: string,
+  path: string,
+  issues: StructuredValidationIssue[],
+) {
+  const worldEvidence = panel.worldContext?.evidence;
+  if (
+    panel.worldContext &&
+    Object.entries(panel.worldContext).some(
+      ([key, value]) => key !== "evidence" && Boolean(value),
+    ) &&
+    !worldEvidence?.length
+  )
+    issues.push(
+      issue(
+        `${path}.worldContext.evidence`,
+        "WORLD_CONTEXT_EVIDENCE_REQUIRED",
+        "Realm, technique, power rules, and world-scale details require exact evidence from the screenplay or approved world reference",
+      ),
+    );
+  if (worldEvidence)
+    validateEvidence(
+      worldEvidence,
+      knowledgeText,
+      `${path}.worldContext.evidence`,
+      issues,
+    );
+
+  panel.vfxCues.forEach((cue, cueIndex) => {
+    if (cue.atSecond > panel.durationSeconds)
+      issues.push(
+        issue(
+          `${path}.vfxCues.${cueIndex}.atSecond`,
+          "VFX_CUE_OUTSIDE_SHOT",
+          "VFX cue time must fall within the shot duration",
+        ),
+      );
+    validateEvidence(
+      cue.evidence,
+      knowledgeText,
+      `${path}.vfxCues.${cueIndex}.evidence`,
+      issues,
+    );
+  });
+  panel.sfxCues.forEach((cue, cueIndex) => {
+    if (
+      cue.endSecond < cue.startSecond ||
+      cue.endSecond > panel.durationSeconds
+    )
+      issues.push(
+        issue(
+          `${path}.sfxCues.${cueIndex}`,
+          "SFX_CUE_OUTSIDE_SHOT",
+          "SFX cue range must be ordered and remain within the shot duration",
+        ),
+      );
+    validateEvidence(
+      cue.evidence,
+      knowledgeText,
+      `${path}.sfxCues.${cueIndex}.evidence`,
+      issues,
+    );
+  });
+}
+
+export function estimateSpeechDurationSeconds(value: string) {
+  const cjk = Array.from(value).filter((character) =>
+    /[\u3400-\u9fff\uf900-\ufaff]/u.test(character),
+  ).length;
+  const words = value
+    .replace(/[\u3400-\u9fff\uf900-\ufaff]/gu, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+  const punctuationPauses = (value.match(/[，,。.!！？?；;：:…]/g) ?? [])
+    .length;
+  return Math.max(
+    1,
+    Math.ceil(cjk / 4.2 + words / 2.6 + punctuationPauses * 0.18),
+  );
+}
+
+function validateStoryboardScreenplayContract(
+  data: StoryboardPlanning,
+  screenplay: ScreenplayConversion,
+  issues: StructuredValidationIssue[],
+) {
+  const sceneNumbers = new Set(
+    screenplay.scenes.map((scene) => scene.sceneNumber),
+  );
+  data.panels.forEach((panel, index) => {
+    if (panel.sceneNumber === undefined || !sceneNumbers.has(panel.sceneNumber))
+      issues.push(
+        issue(
+          `panels.${index}.sceneNumber`,
+          "SCENE_NUMBER_REQUIRED",
+          "Every generated panel must reference its screenplay scene",
+        ),
+      );
+    if (!panel.startState || !panel.endState)
+      issues.push(
+        issue(
+          `panels.${index}`,
+          "CONTINUITY_STATE_REQUIRED",
+          "Every generated panel requires explicit startState and endState",
+        ),
+      );
+    const previous = data.panels[index - 1];
+    if (
+      previous?.sceneNumber === panel.sceneNumber &&
+      previous.endState &&
+      panel.startState &&
+      (previous.endState.hands !== panel.startState.hands ||
+        previous.endState.screenDirection !==
+          panel.startState.screenDirection ||
+        previous.endState.props !== panel.startState.props)
+    )
+      issues.push(
+        issue(
+          `panels.${index}.startState`,
+          "ADJACENT_STATE_DISCONTINUITY",
+          "Within one scene, hand occupancy, prop state, and screen direction must inherit the prior shot end state exactly",
+        ),
+      );
+    if (
+      previous?.sceneNumber !== undefined &&
+      panel.sceneNumber !== undefined &&
+      panel.sceneNumber < previous.sceneNumber
+    )
+      issues.push(
+        issue(
+          `panels.${index}.sceneNumber`,
+          "SCENE_ORDER_REGRESSION",
+          "Panel scene numbers must follow screenplay order",
+        ),
+      );
+  });
+
+  type SpokenItem = {
+    delivery: "dialogue" | "voiceover";
+    speaker: string;
+    text: string;
+  };
+  const expected: SpokenItem[] = [];
+  for (const scene of screenplay.scenes)
+    for (const content of scene.content) {
+      if (content.type === "dialogue")
+        expected.push({
+          delivery: "dialogue",
+          speaker: content.character,
+          text: content.lines,
+        });
+      else if (content.type === "voiceover")
+        expected.push({
+          delivery: "voiceover",
+          speaker: content.character ?? "旁白",
+          text: content.text,
+        });
+    }
+  const actual: SpokenItem[] = [];
+  for (const panel of data.panels) {
+    if (panel.lipSyncText)
+      actual.push({
+        delivery: "dialogue",
+        speaker: panel.speakingCharacter ?? "",
+        text: panel.lipSyncText,
+      });
+    else if (panel.voiceoverText)
+      actual.push({
+        delivery: "voiceover",
+        speaker: "旁白",
+        text: panel.voiceoverText,
+      });
+  }
+  validateSpokenCoverage(expected, actual, issues);
+  for (const scene of screenplay.scenes)
+    for (const content of scene.content) {
+      if (content.type !== "action" || !content.actionDesign) continue;
+      const evidence = new Set([
+        content.text,
+        ...content.actionDesign.evidence,
+      ]);
+      const matchingPanels = data.panels.filter((panel) =>
+        panel.sourceEvidence.some((value) => evidence.has(value)),
+      );
+      if (
+        !matchingPanels.length ||
+        !matchingPanels.some(
+          (panel) => panel.vfxCues.length || panel.sfxCues.length,
+        )
+      )
+        issues.push(
+          issue(
+            "panels",
+            "ACTION_CUES_MISSING",
+            "Every evidence-backed fight or skill design must reach at least one storyboard panel with VFX or SFX cues",
+          ),
+        );
+    }
+}
+
+function validateSpokenCoverage(
+  expected: Array<{
+    delivery: "dialogue" | "voiceover";
+    speaker: string;
+    text: string;
+  }>,
+  actual: Array<{
+    delivery: "dialogue" | "voiceover";
+    speaker: string;
+    text: string;
+  }>,
+  issues: StructuredValidationIssue[],
+) {
+  const expectedGroups = expected.reduce<typeof expected>((groups, item) => {
+    const previous = groups.at(-1);
+    const samePerformance =
+      previous?.delivery === item.delivery &&
+      (item.delivery === "voiceover" || previous.speaker === item.speaker);
+    if (previous && samePerformance) previous.text += item.text;
+    else groups.push({ ...item });
+    return groups;
+  }, []);
+  let actualIndex = 0;
+  for (const line of expectedGroups) {
+    let collected = "";
+    while (actualIndex < actual.length && collected.length < line.text.length) {
+      const segment = actual[actualIndex++];
+      const speakerMatches =
+        line.delivery === "voiceover" || segment.speaker === line.speaker;
+      if (segment.delivery !== line.delivery || !speakerMatches) {
+        issues.push(
+          issue(
+            "panels",
+            "SPOKEN_SEQUENCE_MISMATCH",
+            `Expected ${line.delivery} by ${line.speaker} in screenplay order`,
+          ),
+        );
+        return;
+      }
+      collected += segment.text;
+    }
+    if (collected !== line.text) {
+      issues.push(
+        issue(
+          "panels",
+          "SPOKEN_CONTENT_COVERAGE_MISMATCH",
+          `Spoken text must preserve every screenplay line exactly once: ${line.text}`,
+        ),
+      );
+      return;
+    }
+  }
+  if (actualIndex !== actual.length)
+    issues.push(
+      issue(
+        "panels",
+        "EXTRA_SPOKEN_CONTENT",
+        "Storyboard contains spoken content not present in the screenplay",
       ),
     );
 }
@@ -565,14 +1124,31 @@ export function isDirectSpeechExcerpt(
   if (!escapedContent) return false;
   const quoted = new RegExp(`[“\\"]${escapedContent}[”\\"]`);
   if (quoted.test(sourceText)) return true;
+  if (
+    [...sourceText.matchAll(/[“\"]([^”\"\r\n]+)[”\"]/g)].some((match) =>
+      match[1].includes(content.trim()),
+    )
+  )
+    return true;
 
   const escapedSpeaker = escapeRegex(speaker.trim());
   if (!escapedSpeaker) return false;
   const speechVerb =
     "说(?:道)?|问(?:道)?|答(?:道)?|回答|回应|喊(?:道)?|叫(?!(?:进|到|来|住|醒))(?:道)?|喝(?:道)?|叹(?:道)?|笑(?:道)?|开口|低声(?:说)?|轻声(?:说)?|安慰|劝(?:说|慰)?|安抚|鼓励";
-  return new RegExp(
-    `${escapedSpeaker}[^。！？!?“”\\"]{0,32}(?:${speechVerb})[^。！？!?“”\\"]{0,24}[：:，,]\\s*${escapedContent}`,
-  ).test(sourceText);
+  if (
+    new RegExp(
+      `${escapedSpeaker}[^。！？!?“”\\"]{0,32}(?:${speechVerb})[^。！？!?“”\\"]{0,24}?[：:，,]\\s*${escapedContent}`,
+    ).test(sourceText)
+  )
+    return true;
+  return [
+    ...sourceText.matchAll(
+      new RegExp(
+        `${escapedSpeaker}[^。！？!?“”\\"]{0,32}(?:${speechVerb})[^。！？!?“”\\"]{0,24}?[：:，,]\\s*([^。！？!?“”\\"]+)`,
+        "g",
+      ),
+    ),
+  ].some((match) => match[1].includes(content.trim()));
 }
 
 export function isImplicitVisualBridgeAction(
@@ -585,7 +1161,11 @@ export function isImplicitVisualBridgeAction(
     /(?:说|问|答|回应|喊|叫|开口|低声|轻声)[：:]/.test(value)
   )
     return false;
-  if (!/(?:走到|走向|靠近|伸手|转身|抬手|递向|托在|拿稳|进入|跨进|停在|俯身|起身)/.test(value))
+  if (
+    !/(?:走到|走向|靠近|伸手|转身|抬手|递向|托在|拿稳|进入|跨进|停在|俯身|起身)/.test(
+      value,
+    )
+  )
     return false;
   const sourceBigrams = new Set(chineseBigrams(sourceText));
   const shared = new Set(
@@ -596,7 +1176,9 @@ export function isImplicitVisualBridgeAction(
 
 function chineseBigrams(value: string) {
   const characters = Array.from(value.replace(/[^\u4e00-\u9fff]/g, ""));
-  return characters.slice(1).map((character, index) => `${characters[index]}${character}`);
+  return characters
+    .slice(1)
+    .map((character, index) => `${characters[index]}${character}`);
 }
 
 export function validateContinuityReview(
@@ -711,7 +1293,11 @@ function validateCanonicalNames(
     const normalized = normalizeName(value);
     if (!allowed.has(normalized))
       issues.push(
-        issue(path, "UNKNOWN_CANONICAL_NAME", `Unknown canonical name: ${value}`),
+        issue(
+          path,
+          "UNKNOWN_CANONICAL_NAME",
+          `Unknown canonical name: ${value}`,
+        ),
       );
     if (seen.has(normalized))
       issues.push(issue(path, "DUPLICATE_NAME", `Duplicate name: ${value}`));

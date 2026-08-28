@@ -35,6 +35,7 @@ import type {
 import { getProductionCopy, productionLabel } from "./copy";
 import {
   filterProductionDeliverables,
+  getDeliverableGuidance,
   getDeliverableBlockers,
   getNextPendingGate,
   payloadLines,
@@ -263,14 +264,27 @@ export function DepartmentDeliverablesWorkspace({
           <div className="divide-y">
             {visibleTypes.map((type) => (
               <div
-                className="grid gap-1 py-3 sm:grid-cols-[12rem_minmax(0,1fr)] sm:gap-4"
+                className="grid gap-2 py-3 sm:grid-cols-[13rem_minmax(0,1fr)_minmax(0,0.9fr)] sm:gap-4"
                 key={type}
               >
-                <p className="text-sm font-medium">
-                  {productionLabel(locale, "types", type)}
-                </p>
+                <div>
+                  <p className="text-sm font-medium">
+                    {productionLabel(locale, "types", type)}
+                  </p>
+                  <Badge className="mt-1.5" variant="outline">
+                    {getDeliverableGuidance(locale, type).mode === "automatic"
+                      ? copy.automaticUse
+                      : copy.referenceUse}
+                  </Badge>
+                </div>
                 <p className="text-xs leading-5 text-muted-foreground">
                   {getDeliverableTemplate(locale, type).purpose}
+                </p>
+                <p className="text-xs leading-5 text-muted-foreground">
+                  <strong className="font-medium text-foreground">
+                    {copy.usedBy}：
+                  </strong>
+                  {getDeliverableGuidance(locale, type).usedBy}
                 </p>
               </div>
             ))}
@@ -347,6 +361,10 @@ function DeliverableDetail({
 }) {
   const copy = getProductionCopy(locale);
   const blockers = getDeliverableBlockers(deliverable);
+  const guidance = getDeliverableGuidance(
+    locale,
+    deliverable.deliverableType,
+  );
   const nextGate = getNextPendingGate(deliverable);
   const summary =
     typeof deliverable.payload.summary === "string"
@@ -412,6 +430,22 @@ function DeliverableDetail({
         />
         <Metric label={copy.cost} value={deliverable.cost} />
       </div>
+
+      <section className="grid gap-4 border-b py-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-start">
+        <div>
+          <p className="text-[11px] text-muted-foreground">{copy.summary}</p>
+          <p className="mt-1 text-sm leading-6">{guidance.purpose}</p>
+        </div>
+        <div>
+          <p className="text-[11px] text-muted-foreground">{copy.usedBy}</p>
+          <p className="mt-1 text-sm leading-6">{guidance.usedBy}</p>
+        </div>
+        <Badge variant="outline">
+          {guidance.mode === "automatic"
+            ? copy.automaticUse
+            : copy.referenceUse}
+        </Badge>
+      </section>
 
       {linkedSourceAssets.length ? (
         <section className="border-b py-4">

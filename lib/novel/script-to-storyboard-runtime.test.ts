@@ -126,6 +126,8 @@ describe("script-to-storyboard runtime", () => {
             videoPrompt: expect.stringContaining(
               "0-1s | 动作：甲开始说你好",
             ),
+            vfxCues: [],
+            sfxCues: [],
             sourceEvidence: ["你好"],
           }),
         ],
@@ -293,7 +295,8 @@ describe("script-to-storyboard runtime", () => {
         (panel) =>
           panel.durationSeconds >= 1 &&
           panel.durationSeconds <= 15 &&
-          panel.motionTimeline.length === panel.durationSeconds,
+          panel.motionTimeline[0]?.startSecond === 0 &&
+          panel.motionTimeline.at(-1)?.endSecond === panel.durationSeconds,
       ),
     ).toBe(true);
     expect(
@@ -422,9 +425,27 @@ function planning() {
     panels: [
       {
         panelIndex: 0,
+        sceneNumber: 0,
         shotType: "中景",
         cameraMove: "缓慢推近",
         durationSeconds: 3,
+        startState: {
+          body: "甲站在书房",
+          hands: "双手自然垂下",
+          gaze: "看向前方",
+          screenDirection: "面向画面左侧",
+          props: "无关键道具变化",
+        },
+        endState: {
+          body: "甲站在书房",
+          hands: "双手自然垂下",
+          gaze: "看向前方",
+          screenDirection: "面向画面左侧",
+          props: "无关键道具变化",
+        },
+        speakingCharacter: "甲",
+        lipSyncText: "你好",
+        voiceoverText: null,
         motionTimeline: [
           {
             startSecond: 0,
@@ -497,6 +518,14 @@ function clip() {
     screenplay: JSON.stringify({
       clipId: "clip-1",
       originalText: "甲说：你好。",
+      coverage: [
+        {
+          eventId: "E001",
+          evidence: "甲说：你好。",
+          modes: ["dialogue"],
+          reason: null,
+        },
+      ],
       scenes: [
         {
           sceneNumber: 0,

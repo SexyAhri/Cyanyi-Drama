@@ -79,7 +79,7 @@ async function generateVideo(input: GenerateProviderMediaInput) {
         ratio: input.request.ratio?.trim() || "16:9",
         resolution: arkResolution(input.request.resolution),
         duration: durationSeconds(input.request.duration),
-        generate_audio: true,
+        generate_audio: input.request.audioMode !== "none",
         watermark: false,
       }),
     },

@@ -146,5 +146,15 @@ function storyboardPanel(
     createdAt: "2026-08-27T00:00:00.000Z",
     updatedAt: "2026-08-27T00:00:00.000Z",
     ...overrides,
+    sceneNumber: overrides.sceneNumber ?? null,
+    speakingCharacter: overrides.speakingCharacter ?? null,
+    lipSyncText: overrides.lipSyncText ?? null,
+    voiceoverText: overrides.voiceoverText ?? null,
+    startState: overrides.startState ?? {},
+    endState: overrides.endState ?? {},
+    motionBeats: overrides.motionBeats ?? [],
+    worldContext: overrides.worldContext ?? {},
+    vfxCues: overrides.vfxCues ?? [],
+    sfxCues: overrides.sfxCues ?? [],
   };
 }

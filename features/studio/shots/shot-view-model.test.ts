@@ -141,6 +141,16 @@ function createPanel(
     createdAt: "2026-08-26T00:00:00Z",
     updatedAt: "2026-08-26T00:00:00Z",
     ...input,
+    sceneNumber: input.sceneNumber ?? null,
+    speakingCharacter: input.speakingCharacter ?? null,
+    lipSyncText: input.lipSyncText ?? null,
+    voiceoverText: input.voiceoverText ?? null,
+    startState: input.startState ?? {},
+    endState: input.endState ?? {},
+    motionBeats: input.motionBeats ?? [],
+    worldContext: input.worldContext ?? {},
+    vfxCues: input.vfxCues ?? [],
+    sfxCues: input.sfxCues ?? [],
     lipSyncAssetId: input.lipSyncAssetId ?? null,
   };
 }

@@ -4,7 +4,7 @@ import type { AgentContract, PromptCatalogEntry } from "./types";
 export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   [PROMPT_IDS.STORY_CHARACTER_ANALYSIS]: {
     pathStem: "domain/story_character_analysis",
-    version: 2,
+    version: 3,
     variables: ["source_text", "character_library"],
     agent: defineAgent({
       id: "casting_director",
@@ -15,7 +15,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_LOCATION_PROP_ANALYSIS]: {
     pathStem: "domain/story_location_prop_analysis",
-    version: 2,
+    version: 3,
     variables: ["source_text", "location_library", "prop_library"],
     agent: defineAgent({
       id: "production_designer",
@@ -46,13 +46,15 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_SCREENPLAY_CONVERSION]: {
     pathStem: "domain/story_screenplay_conversion",
-    version: 6,
+    version: 8,
     variables: [
       "clip_id",
       "clip_text",
+      "source_events_json",
       "character_library",
       "location_library",
       "prop_library",
+      "world_bible_json",
     ],
     agent: defineAgent({
       id: "screenwriter",
@@ -60,7 +62,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
         "Convert one clip into screenplay structure while preserving source facts.",
       prohibited: [
         "expanding the story",
-        "inventing action",
+        "ungrounded inference",
         "changing dialogue",
       ],
       contextPolicy: { scope: "clip", trust: "untrusted" },
@@ -68,17 +70,18 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_STORYBOARD_PLANNING]: {
     pathStem: "domain/story_storyboard_planning",
-    version: 4,
+    version: 6,
     variables: [
       "source_text",
       "characters_json",
       "locations_json",
       "props_json",
+      "world_bible_json",
     ],
     agent: defineAgent({
       id: "storyboard_director",
       responsibility:
-        "Plan ordered shots with complete one-second motion beats that cover the source narrative.",
+        "Plan speaker-focused shots with exact dialogue coverage, grounded action choreography, production VFX/SFX cues, and explicit continuity states.",
       prohibited: ["cinematography rules", "acting notes", "new plot"],
     }),
   },
@@ -97,7 +100,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_ACTING_DIRECTION]: {
     pathStem: "domain/story_acting_direction",
-    version: 2,
+    version: 4,
     variables: ["panels_json", "characters_json"],
     agent: defineAgent({
       id: "acting_director",
@@ -110,7 +113,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_STORYBOARD_REFINEMENT]: {
     pathStem: "domain/story_storyboard_refinement",
-    version: 3,
+    version: 5,
     variables: [
       "source_text",
       "panels_json",

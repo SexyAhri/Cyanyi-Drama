@@ -398,6 +398,15 @@ function structuredScreenplay(clipId: string, originalText: string) {
     data: {
       clipId,
       originalText,
+      coverage: originalText
+        .split(/(?<=[。！？!?；;\n])/u)
+        .filter((value) => Boolean(value.trim()))
+        .map((evidence, index) => ({
+          eventId: `E${String(index + 1).padStart(3, "0")}`,
+          evidence,
+          modes: [originalText.includes("你好") ? ("dialogue" as const) : ("visual" as const)],
+          reason: null,
+        })),
       scenes: [
         {
           sceneNumber: 0,

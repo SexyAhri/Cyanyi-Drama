@@ -28,6 +28,7 @@ import {
 import { QcReportEditor, VersionHistory } from "../post/post-ui";
 import type {
   ProductionDeliverableCatalog,
+  StudioStoryboardPanel,
   StudioLocale,
   VoiceLineRecord,
 } from "../types";
@@ -35,6 +36,7 @@ import {
   buildSoundPostPackage,
   getCurrentSoundPostVersion,
   getSoundPostVersions,
+  mergeStoryboardSoundCues,
   getSoundQcReadiness,
 } from "./audio-view-model";
 
@@ -120,6 +122,7 @@ export function SoundPostPanel({
   catalog,
   episodeId,
   lines,
+  panels,
   locale,
   onCompleted,
   projectId,
@@ -127,6 +130,7 @@ export function SoundPostPanel({
   catalog: ProductionDeliverableCatalog;
   episodeId: string;
   lines: VoiceLineRecord[];
+  panels: StudioStoryboardPanel[];
   locale: StudioLocale;
   onCompleted: () => Promise<unknown> | void;
   projectId: string;
@@ -138,13 +142,19 @@ export function SoundPostPanel({
   );
   const current = getCurrentSoundPostVersion(versions);
   const [draft, setDraft] = useState<SoundPostPackage>(() =>
-    current?.package ?? buildSoundPostPackage(episodeId, lines),
+    current?.package
+      ? mergeStoryboardSoundCues(current.package, panels)
+      : buildSoundPostPackage(episodeId, lines, panels),
   );
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    setDraft(current?.package ?? buildSoundPostPackage(episodeId, lines));
-  }, [current?.deliverable.id, current?.package, episodeId, lines]);
+    setDraft(
+      current?.package
+        ? mergeStoryboardSoundCues(current.package, panels)
+        : buildSoundPostPackage(episodeId, lines, panels),
+    );
+  }, [current?.deliverable.id, current?.package, episodeId, lines, panels]);
 
   const readiness = getSoundQcReadiness(draft);
 

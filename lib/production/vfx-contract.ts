@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { VFX_CUE_CATEGORIES } from "./action-cues";
 
 export const VFX_CATEGORIES = [
   "cleanup",
@@ -8,6 +9,7 @@ export const VFX_CATEGORIES = [
   "simulation",
   "creature",
   "environment",
+  ...VFX_CUE_CATEGORIES,
 ] as const;
 
 export const VFX_COMPLEXITIES = ["low", "medium", "high"] as const;

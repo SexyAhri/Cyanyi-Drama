@@ -5,18 +5,14 @@ import { createMediaTask } from "./task-contract";
 import { createDatabaseMediaTaskStore } from "./task-store";
 import { enqueuePersistedMediaTask } from "./task-submit";
 import { BillingError } from "@/lib/billing/service";
-import { resolveStoredMediaUrl, storeMediaBytes } from "@/lib/storage";
+import { resolveStoredMediaUrl } from "@/lib/storage";
 import {
   linkSourceAssets,
   listOwnedProjectMediaAssets,
 } from "@/lib/assets/project-store";
 import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
-import {
-  mergeAudioUrls,
-  probeAudioUrlDuration,
-} from "@/lib/providers/local/ffmpeg-audio";
+import { probeAudioUrlDuration } from "@/lib/providers/local/ffmpeg-audio";
 import { planPanelDialogue } from "@/lib/media/dialogue-timeline";
-import { getAutoDlWorkflow } from "@/lib/providers/media/autodl-comfyui-workflows";
 
 export type ProjectAssetTarget = "character" | "location" | "prop";
 
@@ -269,10 +265,6 @@ export async function createStoryboardPanelVideoTask(input: {
   if (!selectedModel) {
     throw new ProjectAssetTaskError("视频模型未在该渠道中配置或未选中", 400);
   }
-  const generatesNativeAudio =
-    channel.protocol === "autodl-comfyui" &&
-    Boolean(getAutoDlWorkflow(input.model)?.generatesNativeAudio);
-
   const panel = await prisma.storyboardPanel.findFirst({
     where: {
       id: input.panelId,
@@ -366,18 +358,14 @@ export async function createStoryboardPanelVideoTask(input: {
     panelId: panel.id,
     requestedDurationSeconds:
       parseDurationSeconds(input.duration) ?? panel.durationSeconds ?? 5,
-    useNativeAudio: generatesNativeAudio,
   });
-  const dialoguePrompt = dialogue.lines.length
-    ? dialogueVideoPrompt({
-        description: panel.description ?? basePrompt,
-        durationSeconds: dialogue.durationSeconds,
-        lines: dialogue.lines,
-        playbackRate: dialogue.playbackRate,
-        timings: dialogue.timings,
-        nativeAudio: generatesNativeAudio,
-      })
-    : basePrompt;
+  const dialoguePrompt = dialogueVideoPrompt({
+    description: panel.description ?? basePrompt,
+    durationSeconds: dialogue.durationSeconds,
+    lines: dialogue.lines,
+    playbackRate: dialogue.playbackRate,
+    timings: dialogue.timings,
+  });
   const prompt = withStoryboardVideoContinuityRequirements({
     prompt: dialoguePrompt,
     characters: parseStringArray(panel.charactersJson),
@@ -402,11 +390,9 @@ export async function createStoryboardPanelVideoTask(input: {
       resolution: input.resolution ?? "720p",
       duration: `${dialogue.durationSeconds}s`,
       format: "mp4",
+      audioMode: "ambient_only",
       videoMode: input.mode ?? "reference",
       ...(referenceImages.length ? { referenceImages: referenceImages.slice(0, 9) } : {}),
-      ...(dialogue.references.length
-        ? { referenceAudios: dialogue.references }
-        : {}),
     },
   });
   const store = createDatabaseMediaTaskStore(input.userId);
@@ -417,7 +403,7 @@ export async function createStoryboardPanelVideoTask(input: {
     panel: {
       id: panel.id,
       referenceCount: referenceImages.length,
-      referenceAudioCount: dialogue.references.length,
+      referenceAudioCount: 0,
     },
   };
 }
@@ -427,14 +413,12 @@ async function prepareStoryboardDialogue(input: {
   episodeId: string;
   panelId: string;
   requestedDurationSeconds: number;
-  useNativeAudio: boolean;
 }) {
   const lines = await prisma.voiceLine.findMany({
     where: {
       episodeId: input.episodeId,
       matchedPanelId: input.panelId,
       episode: { projectId: input.projectId },
-      ...(!input.useNativeAudio ? { audioAsset: { isNot: null } } : {}),
     },
     orderBy: { lineIndex: "asc" },
     select: {
@@ -458,7 +442,11 @@ async function prepareStoryboardDialogue(input: {
   }> = [];
   for (const line of lines) {
     const url = await mediaAssetUrl(line.audioAsset);
-    if (!input.useNativeAudio && !url) continue;
+    if (!url)
+      throw new ProjectAssetTaskError(
+        `镜头对白“${line.content}”尚未生成配音，请先用声音模型生成后再制作视频`,
+        409,
+      );
     const durationSeconds =
       line.durationSeconds ??
       (url ? await probeAudioUrlDuration(url) : estimateSpokenDuration(line.content));
@@ -493,47 +481,27 @@ async function prepareStoryboardDialogue(input: {
     where: { id: input.panelId },
     data: { durationSeconds: plan.durationSeconds },
   });
-  if (input.useNativeAudio)
-    return {
-      durationSeconds: plan.durationSeconds,
-      lines: resolved,
-      playbackRate: plan.playbackRate,
-      references: [] as Array<{ url: string; mimeType?: string }>,
-      timings: plan.timings,
-    };
-  const mergedUrl = await mergeAudioUrls(
-    resolved.map((line) => line.url),
-    { playbackRate: plan.playbackRate },
-  );
-  const mergedBytes = dataUrlBytes(mergedUrl, "audio/mpeg");
-  const storageKey = await storeMediaBytes(
-    mergedBytes,
-    `projects/${input.projectId}/storyboard/dialogue/${input.panelId}-${randomUUID()}.mp3`,
-    "audio/mpeg",
-  );
-  const referenceUrl = await resolveStoredMediaUrl(storageKey);
   return {
     durationSeconds: plan.durationSeconds,
     lines: resolved,
     playbackRate: plan.playbackRate,
-    references: [{ url: referenceUrl, mimeType: "audio/mpeg" }],
+    references: [] as Array<{ url: string; mimeType?: string }>,
     timings: plan.timings,
   };
 }
 
-function dialogueVideoPrompt(input: {
+export function dialogueVideoPrompt(input: {
   description: string;
   durationSeconds: number;
   lines: Array<{ speaker: string; content: string; delivery: string }>;
   playbackRate: number;
   timings: Array<{ lineIndex: number; startSeconds: number; endSeconds: number }>;
-  nativeAudio: boolean;
 }) {
   const timingLines = input.timings.map((timing) => {
     const line = input.lines[timing.lineIndex];
     return line.delivery === "dialogue"
-      ? `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}s | ${line.speaker}说：“${line.content}” | 仅说话角色自然口型，其他角色保持倾听和细微反应`
-      : `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}s | ${line.speaker}内心独白：“${line.content}” | 声音属于${line.speaker}，画面中所有人物保持闭口，不做口型，只保留自然呼吸、目光和反应`;
+      ? `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}s | ${line.speaker}按已生成配音的时长做无声自然口型 | 其他角色闭口并保持倾听反应`
+      : `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}s | 画外音时段 | 画面中所有人物保持闭口，不做口型，只保留自然呼吸、目光和反应`;
   });
   const secondBeats = Array.from(
     { length: input.durationSeconds },
@@ -552,14 +520,15 @@ function dialogueVideoPrompt(input: {
   return [
     `总时长：${input.durationSeconds}s`,
     `场景与动作：${input.description}`,
-    input.nativeAudio
-      ? "原生声音：生成自然的中文角色对白、内心独白、呼吸和匹配场景的环境声。必须完整使用以下台词顺序，不得重排、截断或新增台词；内心独白没有任何人物口型；不要生成画面内字幕、文字或水印。"
-      : `对白音频：已按台词顺序合成${input.playbackRate > 1 ? `，整体语速调整为 ${input.playbackRate.toFixed(2)} 倍` : ""}，必须完整使用且不得重排、截断或新增台词。`,
-    "对白时序：",
+    "声音硬约束：只生成与场景匹配的环境声和动作音效。禁止生成任何角色声音、对白、旁白、内心独白、吟唱或其他可辨识人声。角色配音已由独立声音模型生成，将在口型与成片阶段另行合成；本视频不得代替、复述或混入角色配音。不要生成画面内字幕、文字或水印。",
+    input.playbackRate > 1
+      ? `口型时序已按正式配音调整为 ${input.playbackRate.toFixed(2)} 倍语速，仅用于无声表演同步。`
+      : "口型时序来自正式配音，仅用于无声表演同步。",
+    "无声口型与画外音时序：",
     ...timingLines,
     "逐秒表演与运镜：",
     ...secondBeats,
-    "连续性：角色身份、服装、站位、视线、光向和空间轴线前后一致；口型只跟随当前说话者，避免多人同时开口、跳帧、瞬移或动作重置。",
+    "连续性：角色身份、服装、站位、视线、光向和空间轴线前后一致；口型只跟随当前说话者，避免多人同时开口、跳帧、瞬移或动作重置；音轨始终只有环境声与动作音效。",
   ].join("\n");
 }
 
@@ -572,13 +541,6 @@ function parseDurationSeconds(value?: string) {
 function estimateSpokenDuration(content: string) {
   const characters = content.replace(/\s/g, "").length;
   return Math.max(1, Math.ceil(characters / 4.5));
-}
-
-function dataUrlBytes(value: string, expectedMimeType: string) {
-  const match = value.match(/^data:([^;,]+);base64,([\s\S]+)$/);
-  if (!match || match[1] !== expectedMimeType)
-    throw new Error("DIALOGUE_AUDIO_DATA_URL_INVALID");
-  return Buffer.from(match[2], "base64");
 }
 
 async function findLastFramePanel(input: {

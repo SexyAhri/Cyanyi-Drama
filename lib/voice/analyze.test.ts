@@ -165,6 +165,8 @@ describe("voice analysis", () => {
           panelIndex: 2,
           description: "韩宇安慰父亲。",
           subtitleText: "",
+          speakingCharacter: "韩宇",
+          lipSyncText: "只要坚持，终有一天能让轻视他们的人闭嘴。",
         },
       ],
     });
@@ -174,6 +176,56 @@ describe("voice analysis", () => {
         speaker: "韩宇",
         content: "只要坚持，终有一天能让轻视他们的人闭嘴。",
         matchedPanelIndex: 2,
+      }),
+    ]);
+  });
+
+  it("does not silently drop a clip whose screenplay is missing", () => {
+    const data = buildScreenplayVoiceAnalysis({
+      clips: [
+        {
+          id: "clip-1",
+          screenplay: JSON.stringify({
+            clipId: "clip-1",
+            originalText: "甲说：你好。",
+            scenes: [
+              {
+                sceneNumber: 0,
+                heading: { intExt: "INT", location: "书房", time: "日" },
+                description: "",
+                characters: ["甲"],
+                content: [
+                  {
+                    type: "dialogue",
+                    character: "甲",
+                    parenthetical: null,
+                    lines: "你好",
+                  },
+                ],
+              },
+            ],
+          }),
+        },
+        { id: "clip-2", screenplay: null },
+      ],
+      panels: [],
+    });
+
+    expect(data).toBeNull();
+  });
+
+  it("extracts explicitly attributed unquoted direct speech", () => {
+    const sourceText = "韩宇安慰父亲，只要坚持，终有一天会好起来。";
+    const data = buildDeterministicVoiceAnalysis({
+      sourceText,
+      characters: [{ name: "韩宇", aliases: [] }],
+      panels: [],
+    });
+
+    expect(data.lines).toEqual([
+      expect.objectContaining({
+        speaker: "韩宇",
+        content: "只要坚持，终有一天会好起来。",
       }),
     ]);
   });

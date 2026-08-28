@@ -9,6 +9,7 @@ import {
 import type {
   ProductionDeliverableRecord,
   ProjectMediaAsset,
+  StudioStoryboardPanel,
   VoiceLineRecord,
 } from "../types";
 
@@ -57,6 +58,7 @@ export function latestFailedVoiceTasks(lineIds: string[], tasks: MediaTask[]) {
 export function buildSoundPostPackage(
   episodeId: string,
   lines: VoiceLineRecord[],
+  panels: StudioStoryboardPanel[] = [],
 ): SoundPostPackage {
   const qc = emptyPostQc(SOUND_QC_KEYS);
   qc.dialogue_sync = {
@@ -77,7 +79,7 @@ export function buildSoundPostPackage(
       reason: "",
       syncOffsetMs: 0,
     })),
-    effects: [],
+    effects: storyboardSoundCues(panels),
     music: [],
     mix: {
       format: "5.1 + stereo",
@@ -88,6 +90,65 @@ export function buildSoundPostPackage(
     },
     qc,
   };
+}
+
+export function mergeStoryboardSoundCues(
+  soundPackage: SoundPostPackage,
+  panels: StudioStoryboardPanel[],
+): SoundPostPackage {
+  const generated = storyboardSoundCues(panels);
+  const existingIds = new Set(soundPackage.effects.map((cue) => cue.id));
+  return {
+    ...soundPackage,
+    effects: [
+      ...soundPackage.effects,
+      ...generated.filter((cue) => !existingIds.has(cue.id)),
+    ].sort((left, right) => left.inMs - right.inMs),
+  };
+}
+
+function storyboardSoundCues(panels: StudioStoryboardPanel[]) {
+  let offsetMs = 0;
+  return panels.flatMap((panel) => {
+    const panelOffsetMs = offsetMs;
+    offsetMs += Math.max(0, panel.durationSeconds ?? 0) * 1_000;
+    return panel.sfxCues.flatMap((cue, index) => {
+      const startSecond = finiteCueNumber(cue.startSecond);
+      const endSecond = finiteCueNumber(cue.endSecond);
+      const description = textCueField(cue.description);
+      if (
+        startSecond === null ||
+        endSecond === null ||
+        endSecond < startSecond ||
+        !description
+      )
+        return [];
+      const sourceType = textCueField(cue.type);
+      const phase = textCueField(cue.phase);
+      return [
+        {
+          id: `${panel.id}:sfx:${index}`,
+          panelId: panel.id,
+          ...(phase ? { phase: phase as SoundPostPackage["effects"][number]["phase"] } : {}),
+          type: sourceType === "foley" ? ("foley" as const) : ("sfx" as const),
+          description: `${String(panel.panelIndex + 1).padStart(3, "0")} · ${description}`,
+          inMs: panelOffsetMs + startSecond * 1_000,
+          outMs: panelOffsetMs + endSecond * 1_000,
+          status: "planned" as const,
+        },
+      ];
+    });
+  });
+}
+
+function finiteCueNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
+}
+
+function textCueField(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 export function getSoundPostVersions(

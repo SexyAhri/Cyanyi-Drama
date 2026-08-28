@@ -6,6 +6,7 @@ import type {
   StoryboardRecord,
 } from "@/lib/novel/domain-types";
 import type { StoryboardContinuityIssue } from "@/lib/novel/continuity-store";
+import type { StoryboardContentReview } from "@/lib/novel/storyboard-review";
 import type { EpisodeRecord, ProjectRecord } from "@/lib/projects/types";
 
 export type StudioLocale = "en" | "zh-CN";
@@ -297,6 +298,7 @@ export type StudioStoryboardPanel = StoryboardPanelRecord;
 export type StudioStoryboardData = {
   storyboard: StoryboardRecord | null;
   continuityIssues: StoryboardContinuityIssue[];
+  contentReview: StoryboardContentReview;
 };
 
 export type StudioStageId =

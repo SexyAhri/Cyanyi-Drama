@@ -35,6 +35,7 @@ export type MediaProviderRequest = {
   emotionStrength?: number;
   operation?: string;
   audioAssetId?: string;
+  audioMode?: "ambient_only" | "none";
   panelId?: string;
 };
 

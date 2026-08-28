@@ -64,6 +64,7 @@ export type StoryboardPanelRecord = {
   clipId: string | null;
   clipPanelIndex: number | null;
   panelIndex: number;
+  sceneNumber: number | null;
   shotType: string | null;
   cameraMove: string | null;
   description: string | null;
@@ -78,6 +79,15 @@ export type StoryboardPanelRecord = {
   srtEnd?: number | null;
   durationSeconds?: number | null;
   subtitleText?: string | null;
+  speakingCharacter: string | null;
+  lipSyncText: string | null;
+  voiceoverText: string | null;
+  startState: Record<string, unknown>;
+  endState: Record<string, unknown>;
+  motionBeats: Array<Record<string, unknown>>;
+  worldContext: Record<string, unknown>;
+  vfxCues: Array<Record<string, unknown>>;
+  sfxCues: Array<Record<string, unknown>>;
   actingNotes?: Record<string, unknown>;
   photographyRules?: string | null;
   firstLastFramePrompt?: string | null;

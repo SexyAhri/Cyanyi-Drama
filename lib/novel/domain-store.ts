@@ -126,7 +126,9 @@ export async function saveStoryboard(
     status?: string;
     sourceHash?: string | null;
     panels: Array<{
+      id?: string;
       panelIndex: number;
+      sceneNumber?: number | null;
       clipId?: string | null;
       clipPanelIndex?: number | null;
       shotType?: string | null;
@@ -143,6 +145,15 @@ export async function saveStoryboard(
       srtEnd?: number | null;
       durationSeconds?: number | null;
       subtitleText?: string | null;
+      speakingCharacter?: string | null;
+      lipSyncText?: string | null;
+      voiceoverText?: string | null;
+      startState?: Record<string, unknown>;
+      endState?: Record<string, unknown>;
+      motionBeats?: Array<Record<string, unknown>>;
+      worldContext?: Record<string, unknown>;
+      vfxCues?: Array<Record<string, unknown>>;
+      sfxCues?: Array<Record<string, unknown>>;
       actingNotes?: Record<string, unknown>;
       photographyRules?: string | null;
       firstLastFramePrompt?: string | null;
@@ -207,6 +218,9 @@ export async function saveStoryboard(
     const existingByIdentity = new Map(
       existingPanels.map((panel) => [panelIdentity(panel), panel]),
     );
+    const existingById = new Map(
+      existingPanels.map((panel) => [panel.id, panel]),
+    );
     if (existingPanels.length) {
       const largestIndex = existingPanels.reduce(
         (largest, panel) => Math.max(largest, panel.panelIndex),
@@ -224,12 +238,17 @@ export async function saveStoryboard(
         clipPanelIndex: panel.clipPanelIndex ?? null,
         panelIndex: panel.panelIndex ?? index,
       });
-      const id = existingByIdentity.get(identity)?.id ?? randomUUID();
+      const id =
+        (panel.id ? existingById.get(panel.id)?.id : undefined) ??
+        (!panel.id ? existingByIdentity.get(identity)?.id : undefined) ??
+        randomUUID();
       retainedIds.push(id);
       const data = {
         clipId: panel.clipId ?? null,
         clipPanelIndex: panel.clipPanelIndex ?? null,
         panelIndex: panel.panelIndex ?? index,
+        sceneNumber:
+          typeof panel.sceneNumber === "number" ? panel.sceneNumber : null,
         shotType: panel.shotType?.trim() || null,
         cameraMove: panel.cameraMove?.trim() || null,
         description: panel.description?.trim() || null,
@@ -244,6 +263,15 @@ export async function saveStoryboard(
         srtEnd: finiteNumber(panel.srtEnd),
         durationSeconds: finiteNumber(panel.durationSeconds),
         subtitleText: panel.subtitleText?.trim() || null,
+        speakingCharacter: panel.speakingCharacter?.trim() || null,
+        lipSyncText: panel.lipSyncText?.trim() || null,
+        voiceoverText: panel.voiceoverText?.trim() || null,
+        startStateJson: stringifyObject(panel.startState),
+        endStateJson: stringifyObject(panel.endState),
+        motionBeatsJson: stringifyObjectArray(panel.motionBeats),
+        worldContextJson: stringifyObject(panel.worldContext),
+        vfxCuesJson: stringifyObjectArray(panel.vfxCues),
+        sfxCuesJson: stringifyObjectArray(panel.sfxCues),
         actingNotesJson: stringifyObject(panel.actingNotes),
         photographyRules: panel.photographyRules?.trim() || null,
         firstLastFramePrompt: panel.firstLastFramePrompt?.trim() || null,
@@ -280,6 +308,9 @@ function stringifyArray(value?: string[]) {
 function stringifyObject(value?: Record<string, unknown>) {
   return value && Object.keys(value).length ? JSON.stringify(value) : null;
 }
+function stringifyObjectArray(value?: Array<Record<string, unknown>>) {
+  return value?.length ? JSON.stringify(value) : null;
+}
 function finiteNumber(value?: number | null) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -310,6 +341,19 @@ function parseObject(value: string | null) {
       : {};
   } catch {
     return {};
+  }
+}
+function parseObjectArray(value: string | null) {
+  try {
+    const parsed = value ? JSON.parse(value) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter(
+          (item): item is Record<string, unknown> =>
+            Boolean(item) && typeof item === "object" && !Array.isArray(item),
+        )
+      : [];
+  } catch {
+    return [];
   }
 }
 
@@ -397,6 +441,7 @@ function toPanel(
     clipId: row.clipId,
     clipPanelIndex: row.clipPanelIndex,
     panelIndex: row.panelIndex,
+    sceneNumber: row.sceneNumber,
     shotType: row.shotType,
     cameraMove: row.cameraMove,
     description: row.description,
@@ -411,6 +456,15 @@ function toPanel(
     srtEnd: row.srtEnd,
     durationSeconds: row.durationSeconds,
     subtitleText: row.subtitleText,
+    speakingCharacter: row.speakingCharacter,
+    lipSyncText: row.lipSyncText,
+    voiceoverText: row.voiceoverText,
+    startState: parseObject(row.startStateJson),
+    endState: parseObject(row.endStateJson),
+    motionBeats: parseObjectArray(row.motionBeatsJson),
+    worldContext: parseObject(row.worldContextJson),
+    vfxCues: parseObjectArray(row.vfxCuesJson),
+    sfxCues: parseObjectArray(row.sfxCuesJson),
     actingNotes: parseObject(row.actingNotesJson),
     photographyRules: row.photographyRules,
     firstLastFramePrompt: row.firstLastFramePrompt,

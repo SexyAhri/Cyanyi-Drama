@@ -1,6 +1,12 @@
 import { z } from "zod";
 
 import { PROMPT_IDS, type PromptId } from "./ids";
+import {
+  ACTION_DESIGN_KINDS,
+  ACTION_PHASES,
+  SFX_CUE_TYPES,
+  VFX_CUE_CATEGORIES,
+} from "@/lib/production/action-cues";
 
 const text = z.string().trim().min(1);
 const exactText = z
@@ -10,6 +16,42 @@ const exactText = z
 const optionalText = z.string().trim().min(1).nullish();
 const stringList = z.array(text).max(100).default([]);
 const evidenceQuotes = z.array(exactText).min(1).max(12);
+
+const actionDesignSchema = z
+  .object({
+    kind: z.enum(ACTION_DESIGN_KINDS),
+    performer: text,
+    target: optionalText,
+    realm: optionalText,
+    technique: optionalText,
+    choreography: z.array(text).min(1).max(12),
+    impact: optionalText,
+    environmentResponse: optionalText,
+    vfxPlan: z
+      .array(
+        z
+          .object({
+            phase: z.enum(ACTION_PHASES),
+            category: z.enum(VFX_CUE_CATEGORIES),
+            description: text,
+          })
+          .strict(),
+      )
+      .max(12),
+    sfxPlan: z
+      .array(
+        z
+          .object({
+            phase: z.enum(ACTION_PHASES),
+            type: z.enum(SFX_CUE_TYPES),
+            description: text,
+          })
+          .strict(),
+      )
+      .max(12),
+    evidence: evidenceQuotes,
+  })
+  .strict();
 
 const characterSchema = z
   .object({
@@ -71,9 +113,15 @@ const screenplayContentSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("action"),
       text: exactText,
-      // A bridge is a bounded, filmable connective action inferred from source evidence.
-      origin: z.enum(["source", "bridge"]).optional(),
+      // Bridges complete an explicit event; inferred actions enrich performance or continuity.
+      origin: z.enum(["source", "bridge", "inferred"]).optional(),
       evidence: evidenceQuotes.optional(),
+      inferenceType: z
+        .enum(["performance", "continuity", "production_detail"])
+        .optional(),
+      rationale: optionalText,
+      confidence: z.number().min(0).max(1).optional(),
+      actionDesign: actionDesignSchema.optional(),
     })
     .strict(),
   z
@@ -97,6 +145,22 @@ export const screenplayConversionSchema = z
   .object({
     clipId: text,
     originalText: exactText,
+    coverage: z
+      .array(
+        z
+          .object({
+            eventId: z.string().regex(/^E\d{3,}$/),
+            evidence: exactText,
+            modes: z
+              .array(z.enum(["visual", "dialogue", "voiceover", "omitted"]))
+              .min(1)
+              .max(4),
+            reason: optionalText,
+          })
+          .strict(),
+      )
+      .max(500)
+      .optional(),
     scenes: z.array(
       z
         .object({
@@ -119,9 +183,50 @@ export const screenplayConversionSchema = z
 
 export type ScreenplayConversion = z.infer<typeof screenplayConversionSchema>;
 
+const continuityStateSchema = z
+  .object({
+    body: text,
+    hands: text,
+    gaze: text,
+    screenDirection: text,
+    props: text,
+  })
+  .strict();
+
+const worldContextSchema = z
+  .object({
+    realm: optionalText,
+    technique: optionalText,
+    powerRule: optionalText,
+    environmentScale: optionalText,
+    evidence: evidenceQuotes.optional(),
+  })
+  .strict();
+
+const vfxCueSchema = z
+  .object({
+    atSecond: z.number().int().min(0).max(15),
+    phase: z.enum(ACTION_PHASES),
+    category: z.enum(VFX_CUE_CATEGORIES),
+    description: text,
+    evidence: evidenceQuotes,
+  })
+  .strict();
+
+const sfxCueSchema = z
+  .object({
+    startSecond: z.number().int().min(0).max(15),
+    endSecond: z.number().int().min(0).max(15),
+    type: z.enum(SFX_CUE_TYPES),
+    description: text,
+    evidence: evidenceQuotes,
+  })
+  .strict();
+
 export const storyboardPanelSchema = z
   .object({
     panelIndex: z.number().int().nonnegative(),
+    sceneNumber: z.number().int().nonnegative().optional(),
     shotType: text,
     cameraMove: text,
     durationSeconds: z.number().int().min(1).max(15),
@@ -133,11 +238,20 @@ export const storyboardPanelSchema = z
             endSecond: z.number().int().min(1).max(15),
             action: text,
             camera: text,
+            phase: z.enum(ACTION_PHASES).optional(),
           })
           .strict(),
       )
       .min(1)
       .max(15),
+    startState: continuityStateSchema.optional(),
+    endState: continuityStateSchema.optional(),
+    worldContext: worldContextSchema.optional(),
+    vfxCues: z.array(vfxCueSchema).max(24).default([]),
+    sfxCues: z.array(sfxCueSchema).max(24).default([]),
+    speakingCharacter: optionalText,
+    lipSyncText: optionalText,
+    voiceoverText: optionalText,
     description: text,
     locationName: optionalText,
     characters: stringList,

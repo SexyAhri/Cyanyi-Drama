@@ -51,12 +51,15 @@ export async function renderTimelineVideo(opts: RenderTimelineOptions) {
         `${String(index).padStart(4, "0")}.normalized.mp4`,
       );
       await writeFile(sourcePath, Buffer.from(await response.arrayBuffer()));
+      const hasSourceAudio =
+        seg.kind !== "image" && (await hasAudioStream(sourcePath));
       await executeFfmpeg(
         buildNormalizeSegmentArgs(
           sourcePath,
           normalizedPath,
           seg,
           specification,
+          hasSourceAudio,
         ),
       );
       inputPaths.push(normalizedPath);
@@ -105,12 +108,20 @@ export function buildNormalizeSegmentArgs(
   outputPath: string,
   segment: TimelineSegment,
   specification: RenderSpecification,
+  hasSourceAudio = segment.kind !== "image",
 ) {
   const duration = segment.durationSeconds ?? specification.imageDurationSeconds;
   const args = ["-hide_banner", "-loglevel", "error", "-y"];
   if (segment.kind === "image")
     args.push("-loop", "1", "-framerate", String(specification.fps));
   args.push("-i", inputPath);
+  if (!hasSourceAudio)
+    args.push(
+      "-f",
+      "lavfi",
+      "-i",
+      `anullsrc=channel_layout=stereo:sample_rate=${specification.audioSampleRate}`,
+    );
   if (segment.kind === "image" || segment.durationSeconds)
     args.push("-t", String(duration));
   const filters = [
@@ -124,7 +135,8 @@ export function buildNormalizeSegmentArgs(
   args.push(
     "-map",
     "0:v:0",
-    "-an",
+    "-map",
+    `${hasSourceAudio ? 0 : 1}:a:0`,
     "-vf",
     filters.join(","),
     "-c:v",
@@ -139,6 +151,17 @@ export function buildNormalizeSegmentArgs(
     String(Math.max(1, Math.round(specification.fps * 2))),
     "-video_track_timescale",
     "90000",
+    "-c:a",
+    specification.audioCodec,
+    "-b:a",
+    "192k",
+    "-ar",
+    String(specification.audioSampleRate),
+    "-ac",
+    String(specification.audioChannels),
+    "-af",
+    "apad",
+    "-shortest",
     "-movflags",
     "+faststart",
     outputPath,
@@ -167,6 +190,8 @@ export function buildConcatFfmpegArgs(
   if (audioPath) {
     base.push("-i", audioPath);
     base.push(
+      "-filter_complex",
+      "[0:a:0][1:a:0]amix=inputs=2:duration=first:dropout_transition=0:weights=0.5 1:normalize=0[mixed]",
       "-c:v",
       "copy",
       "-c:a",
@@ -177,13 +202,10 @@ export function buildConcatFfmpegArgs(
       String(specification.audioSampleRate),
       "-ac",
       String(specification.audioChannels),
-      "-af",
-      "apad",
       "-map",
       "0:v:0",
       "-map",
-      "1:a:0",
-      "-shortest",
+      "[mixed]",
       "-movflags",
       "+faststart",
     );
@@ -191,13 +213,40 @@ export function buildConcatFfmpegArgs(
     base.push(
       "-c:v",
       "copy",
-      "-an",
+      "-c:a",
+      "copy",
+      "-map",
+      "0:v:0",
+      "-map",
+      "0:a:0",
       "-movflags",
       "+faststart",
     );
   }
   base.push(outputPath);
   return base;
+}
+
+async function hasAudioStream(inputPath: string) {
+  try {
+    await executeFfmpeg([
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      inputPath,
+      "-map",
+      "0:a:0",
+      "-frames:a",
+      "1",
+      "-f",
+      "null",
+      "-",
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function guessMediaExt(url: string, kind?: "image" | "video") {

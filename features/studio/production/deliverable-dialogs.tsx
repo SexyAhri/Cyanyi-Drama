@@ -44,6 +44,21 @@ import type {
   StudioLocale,
 } from "../types";
 import { getProductionCopy, productionLabel } from "./copy";
+import {
+  getDeliverableGuidance,
+  suggestedDependencyIds,
+} from "./deliverable-view-model";
+
+const PROJECT_SCOPED_TYPES = new Set([
+  "creative_brief",
+  "production_bible",
+  "production_control",
+  "story_bible",
+  "visual_bible",
+  "character_design",
+  "environment_design",
+  "prop_costume_design",
+]);
 
 export function DeliverableCreateDialog({
   catalog,
@@ -117,13 +132,14 @@ export function DeliverableCreateDialog({
       return;
     setIsSubmitting(true);
     try {
+      const projectScoped = PROJECT_SCOPED_TYPES.has(deliverableType);
       await createStudioDeliverable(projectId, {
         department: department.id,
         deliverableType,
         title: title.trim(),
-        scopeType: episodeId ? "episode" : "project",
-        scopeId: episodeId ?? projectId,
-        episodeId,
+        scopeType: projectScoped || !episodeId ? "project" : "episode",
+        scopeId: projectScoped || !episodeId ? projectId : episodeId,
+        episodeId: projectScoped ? undefined : episodeId,
         payload: {
           summary: summary.trim(),
           directives: toLines(directives),
@@ -151,7 +167,9 @@ export function DeliverableCreateDialog({
     setDirectives(template.directives.join("\n"));
     setConstraints(template.constraints.join("\n"));
     setSourceIds(suggestedSourceIds(type, sourceAssets));
-    setDependencyIds([]);
+    setDependencyIds(
+      suggestedDependencyIds(type, catalog.deliverables),
+    );
   }
 
   return (
@@ -196,6 +214,9 @@ export function DeliverableCreateDialog({
             </Select>
             <span className="text-xs leading-5 font-normal text-muted-foreground">
               {getDeliverableTemplate(locale, deliverableType).purpose}
+            </span>
+            <span className="text-xs leading-5 font-normal text-muted-foreground">
+              {copy.usedBy}：{getDeliverableGuidance(locale, deliverableType).usedBy}
             </span>
           </label>
           <label className="grid gap-1.5 text-sm font-medium">
@@ -245,6 +266,11 @@ export function DeliverableCreateDialog({
           {catalog.deliverables.length ? (
             <fieldset>
               <legend className="text-sm font-medium">{copy.upstream}</legend>
+              {dependencyIds.length ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {copy.dependencyRecommended}
+                </p>
+              ) : null}
               <div className="mt-2 max-h-40 divide-y overflow-y-auto border-y">
                 {catalog.deliverables
                   .filter((item) => item.status !== "superseded")
@@ -523,6 +549,37 @@ export function getDeliverableTemplate(locale: StudioLocale, type: string) {
       constraints: string[];
     }
   > = {
+    story_bible: {
+      title: zh ? "世界观与战力规则" : "World and power-system rules",
+      purpose: getDeliverableGuidance(locale, "story_bible").purpose,
+      summary: zh
+        ? "整理世界层级、势力与地理尺度，并锁定境界顺序、每个境界的能力边界、功法招式、视觉母题和代价。"
+        : "Define world scale, factions, geography, realm order, per-realm capability limits, techniques, visual motifs, and costs.",
+      directives: zh
+        ? [
+            "境界与功法沿用原文名称并附原文依据",
+            "逐境界说明速度、范围、破坏力、限制和可见特征",
+            "技能特效说明能量形态、元素、颜色、运动和环境反馈",
+            "宏大场景用人物、建筑与地貌建立稳定尺度",
+          ]
+        : [
+            "Preserve source names and evidence for every realm and technique",
+            "Define speed, range, force, limits, and visible traits per realm",
+            "Define energy form, element, color, motion, and environment response",
+            "Establish stable scale with characters, architecture, and terrain",
+          ],
+      constraints: zh
+        ? [
+            "不得新增原文未出现的境界、功法、能力和因果规则",
+            "角色只能使用当前剧情已掌握且境界允许的能力",
+            "视觉放大不得改变胜负、伤害和剧情结果",
+          ]
+        : [
+            "Do not invent realms, techniques, abilities, or causal rules",
+            "Characters may use only acquired abilities allowed by their current realm",
+            "Visual scale must not change winners, injuries, or story outcomes",
+          ],
+    },
     visual_bible: {
       title: zh ? "项目视觉规范" : "Project visual guidelines",
       purpose: zh
@@ -599,13 +656,15 @@ export function getDeliverableTemplate(locale: StudioLocale, type: string) {
         : ["Keep key prop form and wear continuous", "Wardrobe layers must fit character identity and scene"],
     },
   };
-  return (
-    templates[type] ?? {
+  const selected = templates[type] ?? {
       title: productionLabel(locale, "types", type),
-      purpose: zh ? "记录可审核、可追踪的制作方案。" : "Record an auditable and traceable production package.",
+      purpose: getDeliverableGuidance(locale, type).purpose,
       summary: zh ? "整理当前制作范围、执行要求和验收标准。" : "Define the current production scope, execution requirements, and acceptance criteria.",
       directives: [],
       constraints: [],
-    }
-  );
+    };
+  return {
+    ...selected,
+    purpose: getDeliverableGuidance(locale, type).purpose,
+  };
 }

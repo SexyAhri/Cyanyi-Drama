@@ -9,6 +9,7 @@ import {
   screenplayConversionSchema,
 } from "@/lib/prompts/schemas";
 import {
+  buildSourceEvents,
   validateClipSegmentation,
   validateScreenplayConversion,
 } from "@/lib/prompts/validators";
@@ -17,6 +18,7 @@ import {
   listProductionProps,
   saveProductionClips,
 } from "@/lib/production/domain-store";
+import { loadApprovedWorldBible } from "@/lib/production/world-bible";
 import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
 import { listNovelCharacters, listNovelLocations } from "./domain-store";
@@ -243,6 +245,7 @@ export async function convertEpisodeClipsToScreenplays(
         clip.id,
         clip.content,
         context.canonical,
+        context.worldBibleText,
       );
       if (stored) {
         await prisma.storyClip.update({
@@ -275,9 +278,11 @@ export async function convertEpisodeClipsToScreenplays(
             variables: {
               clip_id: clip.id,
               clip_text: clip.content,
+              source_events_json: JSON.stringify(buildSourceEvents(clip.content)),
               character_library: JSON.stringify(context.characters),
               location_library: JSON.stringify(context.locations),
               prop_library: JSON.stringify(context.props),
+              world_bible_json: context.worldBibleText,
             },
           }),
           schema: screenplayConversionSchema,
@@ -286,6 +291,8 @@ export async function convertEpisodeClipsToScreenplays(
               clipId: clip.id,
               clipText: clip.content,
               canonical: context.canonical,
+              sourceEvents: buildSourceEvents(clip.content),
+              knowledgeText: context.worldBibleText,
             }),
         });
         const screenplay = normalizeScreenplayDialogue(result.data);
@@ -293,6 +300,8 @@ export async function convertEpisodeClipsToScreenplays(
           clipId: clip.id,
           clipText: clip.content,
           canonical: context.canonical,
+          sourceEvents: buildSourceEvents(clip.content),
+          knowledgeText: context.worldBibleText,
         });
         if (normalizationIssues.length)
           throw new Error(
@@ -370,6 +379,11 @@ export function buildDeterministicScreenplay(
   return {
     clipId,
     originalText: clipText,
+    coverage: buildSourceEvents(clipText).map((event) => ({
+      ...event,
+      modes: ["visual" as const],
+      reason: null,
+    })),
     scenes: [
       {
         sceneNumber: 0,
@@ -434,6 +448,7 @@ function parseReusableScreenplay(
   clipId: string,
   clipText: string,
   canonical: CanonicalContext,
+  knowledgeText: string,
 ) {
   if (!value) return null;
   try {
@@ -444,6 +459,8 @@ function parseReusableScreenplay(
       clipId,
       clipText,
       canonical,
+      sourceEvents: buildSourceEvents(clipText),
+      knowledgeText,
     }).length
       ? null
       : screenplay;
@@ -453,7 +470,15 @@ function parseReusableScreenplay(
 }
 
 async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
-  const [episode, channel, configuredModel, characters, locations, props] =
+  const [
+    episode,
+    channel,
+    configuredModel,
+    characters,
+    locations,
+    props,
+    worldBible,
+  ] =
     await Promise.all([
       prisma.episode.findFirst({
         where: {
@@ -476,6 +501,7 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
       listNovelCharacters(userId, input.projectId),
       listNovelLocations(userId, input.projectId),
       listProductionProps(userId, input.projectId),
+      loadApprovedWorldBible(userId, input.projectId),
     ]);
   if (!episode) throw new Error("STORY_EPISODE_NOT_FOUND");
   if (!channel) throw new Error("STORY_CHANNEL_NOT_FOUND");
@@ -501,6 +527,8 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
       locations: locations.map((location) => location.name),
       props: props.map((prop) => prop.name),
     },
+    worldBible,
+    worldBibleText: JSON.stringify(worldBible?.payload ?? {}),
     provider: {
       baseUrl: channel.baseUrl,
       apiKeys,

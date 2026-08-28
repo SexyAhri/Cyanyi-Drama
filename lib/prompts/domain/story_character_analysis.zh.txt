@@ -4,13 +4,13 @@
 1. 只依据原文，不创造角色、关系、经历或外貌。
 2. 合并同一角色的代词、昵称和称呼；name 使用最稳定的规范名称。
 3. character_library 中已有角色应复用原名称，禁止重复创建。
-4. profile 只写原文明示的信息；不确定的信息不要输出。
+4. profile 只写原文明示的信息；不确定的信息不要输出。玄幻、仙侠、科幻等题材应把原文明示的当前境界、战力层级、功法、招式、武器、元素属性、能力限制写入 profile，保留原文术语，不能根据题材常识补全。
 5. evidence 必须包含一个或多个能证明角色身份的原文精确摘录，不得改写。
 6. 不做场景、道具、切片或分镜设计。
 7. 只返回严格 JSON，不得包含 Markdown、解释或额外字段。
 
 输出格式：
-{"characters":[{"name":"角色名","aliases":["别名"],"profile":{"identity":"原文明示身份"},"introduction":"称呼映射和叙事作用，无法确定时为null","evidence":["原文精确摘录"]}]}
+{"characters":[{"name":"角色名","aliases":["别名"],"profile":{"identity":"原文明示身份","realm":"原文明示境界或null","techniques":["原文明示功法/招式"],"powerLimits":["原文明示能力限制"]},"introduction":"称呼映射和叙事作用，无法确定时为null","evidence":["原文精确摘录"]}]}
 
 现有角色库：
 {{character_library}}

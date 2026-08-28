@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import type { ProductionDeliverableRecord } from "../types";
 import {
   filterProductionDeliverables,
+  getDeliverableGuidance,
   getDeliverableBlockers,
   getNextPendingGate,
   payloadLines,
+  suggestedDependencyIds,
 } from "./deliverable-view-model";
 
 describe("production deliverable view model", () => {
@@ -40,6 +42,33 @@ describe("production deliverable view model", () => {
     });
     expect(getNextPendingGate(value)?.key).toBe("art");
     expect(payloadLines("one\n\ntwo")).toEqual(["one", "two"]);
+  });
+
+  it("explains downstream use and recommends only approved current upstream types", () => {
+    expect(getDeliverableGuidance("zh-CN", "story_bible")).toMatchObject({
+      mode: "automatic",
+      usedBy: expect.stringContaining("剧本"),
+    });
+    const ids = suggestedDependencyIds("blocking", [
+      deliverable({
+        id: "screenplay-v1",
+        deliverableType: "screenplay_lock",
+        status: "approved",
+        version: 1,
+      }),
+      deliverable({
+        id: "screenplay-v2",
+        deliverableType: "screenplay_lock",
+        status: "locked",
+        version: 2,
+      }),
+      deliverable({
+        id: "continuity-draft",
+        deliverableType: "continuity_bible",
+        status: "draft",
+      }),
+    ]);
+    expect(ids).toEqual(["screenplay-v2"]);
   });
 });
 

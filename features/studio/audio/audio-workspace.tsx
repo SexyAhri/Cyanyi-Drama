@@ -656,6 +656,7 @@ export function AudioWorkspace({
               catalog={data.deliverables}
               episodeId={episode.id}
               lines={lines}
+              panels={panels}
               locale={locale}
               onCompleted={refreshAll}
               projectId={projectId}

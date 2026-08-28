@@ -18,6 +18,8 @@ import {
   storyboardRefinementSchema,
 } from "@/lib/prompts/schemas";
 import {
+  buildSourceEvents,
+  estimateSpeechDurationSeconds,
   validateActingCoverage,
   validateCinematographyCoverage,
   validateContinuityReview,
@@ -29,6 +31,7 @@ import {
   listProductionClips,
   listProductionProps,
 } from "@/lib/production/domain-store";
+import { loadApprovedWorldBible } from "@/lib/production/world-bible";
 import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
 import {
@@ -289,7 +292,7 @@ export async function buildEpisodeStoryboard(
     const actingByPanel = new Map(
       acting.directions.map((direction) => [direction.panelIndex, direction]),
     );
-    return refinement.panels.map((panel) => ({
+    return refinement.panels.map((panel, panelOffset) => ({
       clipId: result.clipId,
       clipPanelIndex: panel.panelIndex,
       panelIndex: globalPanelIndex++,
@@ -302,6 +305,16 @@ export async function buildEpisodeStoryboard(
       imagePrompt: panel.imagePrompt,
       videoPrompt: formatMotionTimelinePrompt(panel),
       durationSeconds: panel.durationSeconds,
+      sceneNumber: panel.sceneNumber ?? null,
+      speakingCharacter: panel.speakingCharacter ?? null,
+      lipSyncText: panel.lipSyncText ?? null,
+      voiceoverText: panel.voiceoverText ?? null,
+      startState: panel.startState,
+      endState: panel.endState,
+      motionBeats: panel.motionTimeline,
+      worldContext: panel.worldContext ?? {},
+      vfxCues: panel.vfxCues ?? [],
+      sfxCues: panel.sfxCues ?? [],
       phase: "continuity",
       status: continuity.passed ? "ready" : "continuity_warning",
       actingNotes: {
@@ -310,7 +323,8 @@ export async function buildEpisodeStoryboard(
       photographyRules: JSON.stringify(
         photographyByPanel.get(panel.panelIndex) ?? {},
       ),
-      linkedToNextPanel: panel.panelIndex < refinement.panels.length - 1,
+      linkedToNextPanel:
+        refinement.panels[panelOffset + 1]?.sceneNumber === panel.sceneNumber,
       sourceEvidence: panel.sourceEvidence,
     }));
   });
@@ -323,11 +337,18 @@ export async function buildEpisodeStoryboard(
       panels,
     }),
   );
+  const reviewRequired =
+    results.some((result) => (result.continuity?.issues.length ?? 0) > 0) ||
+    context.clips.some((clip) => hasReviewableInference(clip.screenplay));
   const storyboard = await saveStoryboard(
     userId,
     input.projectId,
     input.episodeId,
-    { status: "ready", sourceHash, panels },
+    {
+      status: reviewRequired ? "review_required" : "ready",
+      sourceHash,
+      panels,
+    },
   );
   if (!storyboard) throw new Error("STORYBOARD_PERSIST_FAILED");
   const promptTraces = results.flatMap((result) => result.traces ?? []);
@@ -350,6 +371,7 @@ export async function buildEpisodeStoryboard(
       0,
     ),
     storyboardId: storyboard.id,
+    reviewRequired,
     results: publicResults,
     promptTraces,
   };
@@ -368,8 +390,10 @@ async function runPlanningPhase(
       characters_json: JSON.stringify(context.characters),
       locations_json: JSON.stringify(context.locations),
       props_json: JSON.stringify(context.props),
+      world_bible_json: context.worldBibleText,
     },
   });
+  const productionContextText = storyboardProductionContextText(context);
   return resolvePhase({
     artifactType: "storyboard.clip.phase1",
     traceRefId: `${context.clip.id}:phase1`,
@@ -377,12 +401,18 @@ async function runPlanningPhase(
     inputHash: hashJson({
       prompt: prompt.versionHash,
       text: context.sourceText,
+      characters: context.characters,
+      locations: context.locations,
+      props: context.props,
+      worldBible: context.worldBibleText,
     }),
     schema: storyboardPlanningSchema,
     validate: (data) =>
       validateStoryboardPlanning(data, {
         sourceText: context.sourceText,
         canonical: context.canonical,
+        screenplay: context.screenplay,
+        productionContextText,
       }),
     hooks,
     request: () =>
@@ -394,9 +424,20 @@ async function runPlanningPhase(
           validateStoryboardPlanning(data, {
             sourceText: context.sourceText,
             canonical: context.canonical,
+            screenplay: context.screenplay,
+            productionContextText,
           }),
       }),
   });
+}
+
+function storyboardProductionContextText(context: ClipContext) {
+  return [
+    context.worldBibleText,
+    JSON.stringify(context.characters),
+    JSON.stringify(context.locations),
+    JSON.stringify(context.props),
+  ].join("\n");
 }
 
 async function runCinematographyPhase(
@@ -575,17 +616,18 @@ async function resolvePhase<T>(input: {
     await input.hooks.assertActive();
     const result = await input.request();
     await input.hooks.assertActive();
+    const data = input.schema.parse(result.data);
     await input.hooks.persistArtifact(input.artifactType, input.refId, {
       success: true,
       inputHash: input.inputHash,
-      data: result.data,
+      data,
     });
     await input.hooks.persistArtifact(
       "prompt.trace",
       input.traceRefId,
       result.trace,
     );
-    return { data: result.data, reused: false, trace: result.trace };
+    return { data, reused: false, trace: result.trace };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await input.hooks.persistArtifact(input.artifactType, input.refId, {
@@ -618,7 +660,11 @@ type LoadedContext = Awaited<ReturnType<typeof loadStoryboardContext>>;
 type ClipContext = ReturnType<typeof buildClipContext>;
 
 function buildClipContext(clip: ProductionClip, context: LoadedContext) {
-  const screenplay = parseScreenplay(clip, context.canonical);
+  const screenplay = parseScreenplay(
+    clip,
+    context.canonical,
+    context.worldBibleText,
+  );
   const characterNames = new Set(clip.characters);
   const locationNames = new Set(clip.locations);
   const propNames = new Set(clip.props);
@@ -637,6 +683,7 @@ function buildClipContext(clip: ProductionClip, context: LoadedContext) {
       (item) => !propNames.size || propNames.has(item.name),
     ),
     provider: context.provider,
+    worldBibleText: context.worldBibleText,
   };
 }
 
@@ -698,21 +745,37 @@ export function buildDeterministicStoryboardPhases(
       ].find((value) => Boolean(value) && context.sourceText.includes(value));
       const description = compactShotDescription(segment.text);
       const characterLabel = characters.join("、") || "环境";
-      const durationSeconds = fallbackShotDuration(description);
+      const spokenText =
+        segment.kind === "dialogue" || segment.kind === "voiceover"
+          ? segment.text
+          : null;
+      const durationSeconds = spokenText
+        ? Math.min(15, estimateSpeechDurationSeconds(spokenText))
+        : fallbackShotDuration(description);
       const cameraMove =
         segment.kind === "dialogue" || segment.kind === "voiceover"
           ? "从稳定中景缓慢推近，保持人物视线方向连续"
           : "稳定跟随主体动作，沿动作方向轻缓移动";
       return {
         panelIndex,
+        sceneNumber: scene.sceneNumber,
         shotType: characters.length > 1 ? "全景" : "中景",
         cameraMove,
         durationSeconds,
+        startState: fallbackContinuityState(characters, props),
+        endState: fallbackContinuityState(characters, props),
+        speakingCharacter:
+          segment.kind === "dialogue" ? characters[0] ?? null : null,
+        lipSyncText: segment.kind === "dialogue" ? segment.text : null,
+        voiceoverText: segment.kind === "voiceover" ? segment.text : null,
         motionTimeline: buildFallbackMotionTimeline(
           description,
           durationSeconds,
           cameraMove,
         ),
+        worldContext: undefined,
+        vfxCues: [],
+        sfxCues: [],
         description,
         locationName: scene.heading.location,
         characters: [...characters],
@@ -723,6 +786,20 @@ export function buildDeterministicStoryboardPhases(
       };
     },
   );
+  panels.forEach((panel, index) => {
+    const previous = panels[index - 1];
+    if (
+      previous?.sceneNumber === panel.sceneNumber &&
+      previous.endState &&
+      panel.startState
+    )
+      panel.startState = {
+        ...panel.startState,
+        hands: previous.endState.hands,
+        screenDirection: previous.endState.screenDirection,
+        props: previous.endState.props,
+      };
+  });
   const planning: StoryboardPlanning = { panels };
   const cinematography: Cinematography = {
     rules: panels.map((panel) => ({
@@ -761,13 +838,39 @@ function formatMotionTimelinePrompt(
     (beat) =>
       `${beat.startSecond}-${beat.endSecond}s | 动作：${beat.action} | 镜头：${beat.camera}`,
   );
+  const world = panel.worldContext
+    ? [
+        panel.worldContext.realm ? `境界：${panel.worldContext.realm}` : "",
+        panel.worldContext.technique
+          ? `功法/招式：${panel.worldContext.technique}`
+          : "",
+        panel.worldContext.powerRule
+          ? `能力规则：${panel.worldContext.powerRule}`
+          : "",
+        panel.worldContext.environmentScale
+          ? `场景尺度：${panel.worldContext.environmentScale}`
+          : "",
+      ].filter(Boolean)
+    : [];
+  const vfx = (panel.vfxCues ?? []).map(
+    (cue) =>
+      `${cue.atSecond}s | ${cue.phase} | ${cue.category} | ${cue.description}`,
+  );
+  const sfx = (panel.sfxCues ?? []).map(
+    (cue) =>
+      `${cue.startSecond}-${cue.endSecond}s | ${cue.type} | ${cue.description}`,
+  );
   return [
     `总时长：${panel.durationSeconds}s`,
     `整体运镜：${panel.cameraMove}`,
     `连续动作：${panel.videoPrompt}`,
-    "逐秒节拍：",
+    "关键动作节拍：",
     ...beats,
+    ...(world.length ? ["世界观与战力约束：", ...world] : []),
+    ...(vfx.length ? ["VFX 时间点：", ...vfx] : []),
+    ...(sfx.length ? ["环境声与动作音效时间点：", ...sfx] : []),
     "连续性：保持角色身份、服装、姿态、视线、运动方向、速度、场景空间和镜头轨迹前后连贯，无跳帧、瞬移或动作重置。",
+    "音频边界：视频只生成环境声和动作音效，禁止角色对白、旁白、喊叫、吟唱或其他可辨识人声；角色配音由独立声音模型生成后合成。",
   ].join("\n");
 }
 
@@ -776,33 +879,45 @@ function buildFallbackMotionTimeline(
   durationSeconds: number,
   cameraMove: string,
 ) {
-  return Array.from({ length: durationSeconds }, (_, second) => ({
-    startSecond: second,
-    endSecond: second + 1,
-    action:
-      second === 0
-        ? `建立主体、环境和初始姿态，开始表现：${description}`
-        : second === 1
-          ? `主体从上一秒姿态自然启动动作：${description}`
-        : second === durationSeconds - 1
-          ? `完成并收束动作：${description}，保持姿态与视线连续`
-          : `动作按上一秒的方向和速度连续推进：${description}`,
-    camera:
-      second === durationSeconds - 1
-        ? "保持构图连续并自然停稳"
-        : `${cameraMove}，承接上一秒机位与运动速度`,
-  }));
+  const beatCount = durationSeconds <= 4 ? 1 : durationSeconds <= 9 ? 2 : 3;
+  return Array.from({ length: beatCount }, (_, index) => {
+    const startSecond = Math.floor((durationSeconds * index) / beatCount);
+    const endSecond = Math.floor((durationSeconds * (index + 1)) / beatCount);
+    return {
+      startSecond,
+      endSecond,
+      action:
+        index === 0
+          ? `从已建立的姿态开始表现：${description}`
+          : index === beatCount - 1
+            ? `连续完成并收束：${description}`
+            : `沿上一节拍的姿态与方向推进：${description}`,
+      camera:
+        index === beatCount - 1
+          ? "保持轴线与构图连续并自然停稳"
+          : `${cameraMove}，承接上一节拍的机位与速度`,
+    };
+  });
+}
+
+function fallbackContinuityState(characters: string[], props: string[]) {
+  return {
+    body: characters.length ? `${characters.join("、")}保持当前站位` : "环境空镜",
+    hands: "手部占用保持与剧本动作一致",
+    gaze: "视线沿当前叙事对象保持",
+    screenDirection: "保持当前画面运动方向与轴线",
+    props: props.length ? `${props.join("、")}状态保持` : "无关键道具变化",
+  };
 }
 
 function fallbackShotDuration(description: string) {
   return Math.max(3, Math.min(15, Math.ceil(description.length / 12)));
 }
 
-function splitFallbackShotText(value: string, maxLength = 96) {
+function splitFallbackShotText(value: string, maxLength = 48) {
   const sentences = value
     .split(/(?<=[。！？!?；;\n])/u)
-    .map((sentence) => sentence.trim())
-    .filter(Boolean);
+    .filter((sentence) => Boolean(sentence.trim()));
   const chunks: string[] = [];
   let current = "";
   for (const sentence of sentences) {
@@ -921,6 +1036,7 @@ async function loadStoryboardContext(
     locations,
     props,
     clips,
+    worldBible,
   ] = await Promise.all([
     prisma.episode.findFirst({
       where: {
@@ -944,6 +1060,7 @@ async function loadStoryboardContext(
     listNovelLocations(userId, input.projectId),
     listProductionProps(userId, input.projectId),
     listProductionClips(userId, input.projectId, input.episodeId),
+    loadApprovedWorldBible(userId, input.projectId),
   ]);
   if (!episode) throw new Error("STORYBOARD_EPISODE_NOT_FOUND");
   if (!channel) throw new Error("STORYBOARD_CHANNEL_NOT_FOUND");
@@ -974,6 +1091,8 @@ async function loadStoryboardContext(
       summary: prop.summary,
       metadata: prop.metadata,
     })),
+    worldBible,
+    worldBibleText: JSON.stringify(worldBible?.payload ?? {}),
     clips,
     canonical: {
       characters: characters.map((character) => character.name),
@@ -994,7 +1113,11 @@ async function loadStoryboardContext(
   };
 }
 
-function parseScreenplay(clip: ProductionClip, canonical: CanonicalContext) {
+function parseScreenplay(
+  clip: ProductionClip,
+  canonical: CanonicalContext,
+  knowledgeText: string,
+) {
   if (!clip.screenplay)
     throw new Error(`STORYBOARD_SCREENPLAY_REQUIRED:${clip.id}`);
   try {
@@ -1007,6 +1130,8 @@ function parseScreenplay(clip: ProductionClip, canonical: CanonicalContext) {
         clipId: clip.id,
         clipText: clip.content,
         canonical,
+        sourceEvents: buildSourceEvents(clip.content),
+        knowledgeText,
       }).length
     )
       throw new Error("invalid screenplay");
@@ -1057,7 +1182,17 @@ function normalizeConcurrency(value?: number) {
 }
 
 function hashJson(value: unknown) {
-  return sha256(JSON.stringify(value));
+  return sha256(JSON.stringify(stableJsonValue(value)));
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, stableJsonValue(value[key])]),
+  );
 }
 
 function sha256(value: string) {
@@ -1066,4 +1201,18 @@ function sha256(value: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasReviewableInference(value: string | null) {
+  if (!value) return false;
+  try {
+    const parsed = screenplayConversionSchema.safeParse(JSON.parse(value));
+    return parsed.success && parsed.data.scenes.some((scene) =>
+      scene.content.some(
+        (content) => content.type === "action" && content.origin === "inferred",
+      ),
+    );
+  } catch {
+    return false;
+  }
 }

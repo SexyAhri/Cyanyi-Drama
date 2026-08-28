@@ -65,6 +65,54 @@ describe("audio view model", () => {
     });
   });
 
+  it("converts panel-relative action sound cues into an episode timeline", () => {
+    const result = buildSoundPostPackage("episode-1", [], [
+      {
+        id: "panel-1",
+        panelIndex: 0,
+        durationSeconds: 4,
+        sfxCues: [
+          {
+            startSecond: 1,
+            endSecond: 2,
+            type: "energy",
+            phase: "release",
+            description: "灵力释放与空间回响",
+          },
+        ],
+      } as never,
+      {
+        id: "panel-2",
+        panelIndex: 1,
+        durationSeconds: 3,
+        sfxCues: [
+          {
+            startSecond: 0,
+            endSecond: 1,
+            type: "foley",
+            description: "落地与衣摆摩擦",
+          },
+        ],
+      } as never,
+    ]);
+
+    expect(result.effects).toEqual([
+      expect.objectContaining({
+        panelId: "panel-1",
+        phase: "release",
+        type: "sfx",
+        inMs: 1_000,
+        outMs: 2_000,
+      }),
+      expect.objectContaining({
+        panelId: "panel-2",
+        type: "foley",
+        inMs: 4_000,
+        outMs: 5_000,
+      }),
+    ]);
+  });
+
   it("parses versioned sound packages and ignores superseded current rows", () => {
     const payload = buildSoundPostPackage("episode-1", []);
     const versions = getSoundPostVersions(

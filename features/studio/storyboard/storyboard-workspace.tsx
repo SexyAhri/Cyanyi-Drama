@@ -12,6 +12,8 @@ import {
   Pause,
   Play,
   RotateCcw,
+  Scissors,
+  Merge,
   TriangleAlert,
   Video,
 } from "lucide-react";
@@ -51,7 +53,9 @@ import type {
 import { PanelEditorDialog } from "./panel-editor-dialog";
 import {
   getPanelContinuityIssues,
+  mergeStoryboardPanelWithNext,
   replaceStoryboardPanel,
+  splitStoryboardPanel,
 } from "./storyboard-view-model";
 import {
   getPrevisReadiness,
@@ -221,11 +225,22 @@ export function StoryboardWorkspace({
 
   async function savePanel(nextPanel: StudioStoryboardPanel) {
     if (!data?.storyboard) return;
+    return savePanels(
+      replaceStoryboardPanel(data.storyboard.panels, nextPanel),
+      data.storyboard.status,
+    );
+  }
+
+  async function savePanels(
+    nextPanels: StudioStoryboardPanel[],
+    status: string,
+  ) {
+    if (!data?.storyboard) return;
     try {
       const result = await saveStudioStoryboard(projectId, episode.id, {
-        status: data.storyboard.status,
+        status,
         sourceHash: data.storyboard.sourceHash,
-        panels: replaceStoryboardPanel(data.storyboard.panels, nextPanel),
+        panels: nextPanels,
       });
       setData((current) =>
         current ? { ...current, storyboard: result.storyboard } : current,
@@ -240,6 +255,28 @@ export function StoryboardWorkspace({
       );
       throw requestError;
     }
+  }
+
+  async function splitPanel(panelId: string) {
+    if (!data?.storyboard) return;
+    const panels = splitStoryboardPanel(data.storyboard.panels, panelId);
+    if (!panels) return;
+    await savePanels(panels, "review_required");
+  }
+
+  async function mergePanel(panelId: string) {
+    if (!data?.storyboard) return;
+    const panels = mergeStoryboardPanelWithNext(
+      data.storyboard.panels,
+      panelId,
+    );
+    if (!panels) return;
+    await savePanels(panels, "review_required");
+  }
+
+  async function approveReview() {
+    if (!data?.storyboard || data.contentReview.blockingIssueCount) return;
+    await savePanels(data.storyboard.panels, "ready");
   }
 
   const workflowActive = workflow
@@ -342,6 +379,15 @@ export function StoryboardWorkspace({
             </div>
           ) : null}
 
+          {data?.storyboard ? (
+            <ContentReviewOverview
+              data={data}
+              isActing={isActing}
+              locale={locale}
+              onApprove={approveReview}
+            />
+          ) : null}
+
           {data?.continuityIssues.length ? (
             <ContinuityOverview data={data} locale={locale} />
           ) : data?.storyboard ? (
@@ -416,12 +462,18 @@ export function StoryboardWorkspace({
 
               {selectedPanel ? (
                 <PanelDetails
+                  canMerge={Boolean(
+                    mergeStoryboardPanelWithNext(panels, selectedPanel.id),
+                  )}
+                  canSplit={(selectedPanel.durationSeconds ?? 0) >= 2}
                   issues={getPanelContinuityIssues(
                     selectedPanel,
                     data?.continuityIssues ?? [],
                   )}
                   locale={locale}
+                  onMerge={mergePanel}
                   onSave={savePanel}
+                  onSplit={splitPanel}
                   panel={selectedPanel}
                 />
               ) : null}
@@ -429,7 +481,10 @@ export function StoryboardWorkspace({
           )}
         </TabsContent>
 
-        <TabsContent className="mt-4 xl:min-h-0 xl:overflow-y-auto" value="previs">
+        <TabsContent
+          className="mt-4 xl:min-h-0 xl:overflow-y-auto"
+          value="previs"
+        >
           {tab === "previs" ? (
             <DepartmentDeliverablesWorkspace
               defaultType="directors_treatment"
@@ -442,7 +497,10 @@ export function StoryboardWorkspace({
             />
           ) : null}
         </TabsContent>
-        <TabsContent className="mt-4 xl:min-h-0 xl:overflow-y-auto" value="shot_list">
+        <TabsContent
+          className="mt-4 xl:min-h-0 xl:overflow-y-auto"
+          value="shot_list"
+        >
           {tab === "shot_list" ? (
             <DepartmentDeliverablesWorkspace
               defaultType="shot_list"
@@ -462,7 +520,10 @@ export function StoryboardWorkspace({
             />
           ) : null}
         </TabsContent>
-        <TabsContent className="mt-4 xl:min-h-0 xl:overflow-y-auto" value="animatic">
+        <TabsContent
+          className="mt-4 xl:min-h-0 xl:overflow-y-auto"
+          value="animatic"
+        >
           {tab === "animatic" ? (
             <DepartmentDeliverablesWorkspace
               defaultType="animatic"
@@ -485,23 +546,29 @@ function panelListMetadata(panel: StudioStoryboardPanel, secondsLabel: string) {
   return [
     panel.locationName,
     panel.cameraMove,
-    panel.durationSeconds
-      ? `${panel.durationSeconds} ${secondsLabel}`
-      : null,
+    panel.durationSeconds ? `${panel.durationSeconds} ${secondsLabel}` : null,
   ]
     .filter((value): value is string => Boolean(value))
     .join(" · ");
 }
 
 function PanelDetails({
+  canMerge,
+  canSplit,
   issues,
   locale,
+  onMerge,
   onSave,
+  onSplit,
   panel,
 }: {
+  canMerge: boolean;
+  canSplit: boolean;
   issues: StudioStoryboardData["continuityIssues"];
   locale: StudioLocale;
+  onMerge: (panelId: string) => Promise<unknown> | void;
   onSave: (panel: StudioStoryboardPanel) => Promise<unknown> | void;
+  onSplit: (panelId: string) => Promise<unknown> | void;
   panel: StudioStoryboardPanel;
 }) {
   const copy = getStudioCopy(locale);
@@ -511,6 +578,44 @@ function PanelDetails({
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const description = panel.description || copy.panelDescription;
   const canExpandDescription = description.length > 180;
+  const tools =
+    locale === "zh-CN"
+      ? {
+          split: "拆分镜头",
+          merge: "与下一镜合并",
+          scene: "场次",
+          speaker: "口型角色",
+          lipSync: "口型文本",
+          voiceover: "画外音",
+          startState: "镜头开始状态",
+          endState: "镜头结束状态",
+          motionBeats: "关键动作节拍",
+          worldContext: "世界观与战力约束",
+          realm: "当前境界",
+          technique: "功法 / 招式",
+          powerRule: "威力与限制",
+          environmentScale: "场景尺度",
+          vfxCues: "VFX 时间点",
+          sfxCues: "SFX / Foley 时间点",
+        }
+      : {
+          split: "Split shot",
+          merge: "Merge with next",
+          scene: "Scene",
+          speaker: "Lip-sync speaker",
+          lipSync: "Lip-sync text",
+          voiceover: "Voice-over",
+          startState: "Start state",
+          endState: "End state",
+          motionBeats: "Key motion beats",
+          worldContext: "World and power constraints",
+          realm: "Current realm",
+          technique: "Technique / skill",
+          powerRule: "Power rule and limit",
+          environmentScale: "Environment scale",
+          vfxCues: "Timed VFX cues",
+          sfxCues: "Timed SFX / Foley cues",
+        };
 
   useEffect(() => {
     setDescriptionExpanded(false);
@@ -540,7 +645,31 @@ function PanelDetails({
                 )}
           </p>
         </div>
-        <PanelEditorDialog locale={locale} onSave={onSave} panel={panel} />
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            disabled={!canSplit}
+            onClick={() => void onSplit(panel.id)}
+            size="sm"
+            title={tools.split}
+            type="button"
+            variant="outline"
+          >
+            <Scissors className="size-4" />
+            <span className="hidden sm:inline">{tools.split}</span>
+          </Button>
+          <Button
+            disabled={!canMerge}
+            onClick={() => void onMerge(panel.id)}
+            size="sm"
+            title={tools.merge}
+            type="button"
+            variant="outline"
+          >
+            <Merge className="size-4" />
+            <span className="hidden sm:inline">{tools.merge}</span>
+          </Button>
+          <PanelEditorDialog locale={locale} onSave={onSave} panel={panel} />
+        </div>
       </header>
 
       <div className="max-w-4xl border-b py-4">
@@ -612,6 +741,12 @@ function PanelDetails({
       </div>
 
       <dl className="grid gap-x-6 gap-y-4 border-b py-5 sm:grid-cols-2 xl:grid-cols-3">
+        <PanelSpec
+          label={tools.scene}
+          value={
+            panel.sceneNumber === null ? null : String(panel.sceneNumber + 1)
+          }
+        />
         <PanelSpec label={copy.location} value={panel.locationName} />
         <PanelSpec label={copy.composition} value={photography.composition} />
         <PanelSpec label={copy.focalLength} value={photography.focalLength} />
@@ -635,7 +770,69 @@ function PanelDetails({
         <PanelSpec label={copy.cast} value={panel.characters.join(" · ")} />
         <PanelSpec label={copy.propAssets} value={panel.props.join(" · ")} />
         <PanelSpec label={copy.subtitle} value={panel.subtitleText} />
+        <PanelSpec label={tools.speaker} value={panel.speakingCharacter} />
+        <PanelSpec label={tools.lipSync} value={panel.lipSyncText} />
+        <PanelSpec label={tools.voiceover} value={panel.voiceoverText} />
       </dl>
+
+      <section className="grid gap-5 border-b py-5 md:grid-cols-2">
+        <StateDetails label={tools.startState} state={panel.startState} />
+        <StateDetails label={tools.endState} state={panel.endState} />
+      </section>
+
+      {panel.motionBeats.length ? (
+        <section className="border-b py-5">
+          <h3 className="text-sm font-semibold">{tools.motionBeats}</h3>
+          <ol className="mt-3 divide-y border-y">
+            {panel.motionBeats.map((beat, index) => (
+              <li
+                className="grid gap-2 py-3 text-sm sm:grid-cols-[5rem_minmax(0,1fr)]"
+                key={`${String(beat.startSecond)}-${String(beat.endSecond)}-${index}`}
+              >
+                <span className="font-mono text-xs text-muted-foreground">
+                  {String(beat.startSecond ?? "?")}-
+                  {String(beat.endSecond ?? "?")}s
+                </span>
+                <span className="space-y-1">
+                  <span className="block">{String(beat.action ?? "-")}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {String(beat.camera ?? "-")}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
+
+      {Object.keys(panel.worldContext).length ? (
+        <section className="border-b py-5">
+          <h3 className="text-sm font-semibold">{tools.worldContext}</h3>
+          <dl className="mt-3 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <PanelSpec label={tools.realm} value={recordText(panel.worldContext.realm)} />
+            <PanelSpec label={tools.technique} value={recordText(panel.worldContext.technique)} />
+            <PanelSpec label={tools.powerRule} value={recordText(panel.worldContext.powerRule)} />
+            <PanelSpec label={tools.environmentScale} value={recordText(panel.worldContext.environmentScale)} />
+          </dl>
+        </section>
+      ) : null}
+
+      {panel.vfxCues.length || panel.sfxCues.length ? (
+        <section className="grid gap-6 border-b py-5 lg:grid-cols-2">
+          <CueList
+            cues={panel.vfxCues}
+            label={tools.vfxCues}
+            locale={locale}
+            time={(cue) => `${String(cue.atSecond ?? "?")}s`}
+          />
+          <CueList
+            cues={panel.sfxCues}
+            label={tools.sfxCues}
+            locale={locale}
+            time={(cue) => `${String(cue.startSecond ?? "?")}-${String(cue.endSecond ?? "?")}s`}
+          />
+        </section>
+      ) : null}
 
       {panel.characters.length ? (
         <section className="border-b py-5">
@@ -719,6 +916,106 @@ function PanelSpec({
   );
 }
 
+function StateDetails({
+  label,
+  state,
+}: {
+  label: string;
+  state: Record<string, unknown>;
+}) {
+  return (
+    <div>
+      <h3 className="text-sm font-semibold">{label}</h3>
+      <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+        {Object.entries(state).map(([key, value]) => (
+          <PanelSpec key={key} label={key} value={String(value)} />
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+function CueList({
+  cues,
+  label,
+  locale,
+  time,
+}: {
+  cues: Array<Record<string, unknown>>;
+  label: string;
+  locale: StudioLocale;
+  time: (cue: Record<string, unknown>) => string;
+}) {
+  return (
+    <div>
+      <h3 className="text-sm font-semibold">{label}</h3>
+      {cues.length ? (
+        <ol className="mt-3 divide-y border-y">
+          {cues.map((cue, index) => (
+            <li
+              className="grid gap-2 py-3 sm:grid-cols-[5rem_minmax(0,1fr)]"
+              key={`${time(cue)}-${index}`}
+            >
+              <span className="font-mono text-xs text-muted-foreground">
+                {time(cue)}
+              </span>
+              <span className="min-w-0">
+                <span className="flex flex-wrap items-center gap-1.5">
+                  <Badge variant="outline">
+                    {cueLabel(locale, recordText(cue.phase) || recordText(cue.type) || recordText(cue.category))}
+                  </Badge>
+                  {cue.category ? (
+                    <span className="text-xs text-muted-foreground">
+                      {cueLabel(locale, recordText(cue.category))}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="mt-1 block text-sm">
+                  {recordText(cue.description) || "-"}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="mt-3 text-sm text-muted-foreground">-</p>
+      )}
+    </div>
+  );
+}
+
+function recordText(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function cueLabel(locale: StudioLocale, value?: string) {
+  if (!value) return "-";
+  const labels: Record<string, readonly [string, string]> = {
+    anticipation: ["起手", "Anticipation"],
+    charge: ["蓄力", "Charge"],
+    release: ["释放", "Release"],
+    travel: ["传播 / 交锋", "Travel / exchange"],
+    impact: ["命中", "Impact"],
+    aftermath: ["受力 / 收势", "Aftermath"],
+    skill_energy: ["技能能量", "Skill energy"],
+    weapon_trail: ["武器轨迹", "Weapon trail"],
+    shockwave: ["冲击波", "Shockwave"],
+    explosion_debris: ["爆炸 / 破碎", "Explosion / debris"],
+    elemental_spell: ["元素法术", "Elemental spell"],
+    speed_afterimage: ["速度线 / 残影", "Speed / afterimage"],
+    shield_barrier: ["护盾 / 结界", "Shield / barrier"],
+    transformation_summon: ["变身 / 召唤", "Transformation / summon"],
+    environment_interaction: ["环境交互", "Environment interaction"],
+    foley: ["拟音", "Foley"],
+    weapon: ["武器", "Weapon"],
+    energy: ["能量", "Energy"],
+    environment: ["环境", "Environment"],
+    destruction: ["破坏", "Destruction"],
+  };
+  const label = labels[value];
+  return label?.[locale === "en" ? 1 : 0] ?? value.replaceAll("_", " ");
+}
+
 function previsSpecLabel(
   copy: ReturnType<typeof getStudioCopy>,
   key: PrevisSpecKey,
@@ -726,6 +1023,149 @@ function previsSpecLabel(
   if (key === "cameraMovement") return copy.cameraMove;
   if (key === "performance") return copy.actingDirection;
   return copy[key];
+}
+
+function ContentReviewOverview({
+  data,
+  isActing,
+  locale,
+  onApprove,
+}: {
+  data: StudioStoryboardData;
+  isActing: boolean;
+  locale: StudioLocale;
+  onApprove: () => Promise<unknown> | void;
+}) {
+  const review = data.contentReview;
+  const approved = data.storyboard?.status === "ready";
+  const text =
+    locale === "zh-CN"
+      ? {
+          title: "内容审核",
+          clear: "原文事件、台词、时长与连续状态检查通过",
+          approved: "推演内容已人工确认",
+          coverage: "原文事件覆盖",
+          issues: "待修复",
+          inferences: "有依据的合理推演",
+          approve: "确认推演并通过",
+          blocked: "修复阻断项后才能通过",
+          evidence: "依据",
+          rationale: "理由",
+          performance: "表演细节",
+          continuity: "连续性姿态",
+          production_detail: "制作细节",
+        }
+      : {
+          title: "Content review",
+          clear:
+            "Source events, dialogue, timing, and continuity checks passed",
+          approved: "Inferred details approved",
+          coverage: "Source event coverage",
+          issues: "Needs correction",
+          inferences: "Grounded inferences",
+          approve: "Approve inferences",
+          blocked: "Resolve blocking items before approval",
+          evidence: "Evidence",
+          rationale: "Rationale",
+          performance: "Performance detail",
+          continuity: "Continuity blocking",
+          production_detail: "Production detail",
+        };
+  const hasDetails = review.issues.length > 0 || review.inferences.length > 0;
+
+  return (
+    <details className="border-b py-3" open={review.blockingIssueCount > 0}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+        <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
+          {review.blockingIssueCount ? (
+            <TriangleAlert className="size-4 shrink-0 text-status-warning" />
+          ) : (
+            <FileCheck2 className="size-4 shrink-0 text-status-success" />
+          )}
+          <span className="truncate">
+            {text.title} ·{" "}
+            {approved && review.inferences.length ? text.approved : text.clear}
+          </span>
+        </span>
+        <span className="shrink-0 font-mono text-xs text-muted-foreground">
+          {text.coverage} {review.coverage.covered}/{review.coverage.total}
+        </span>
+      </summary>
+      {hasDetails ? (
+        <div className="mt-4 space-y-5 pl-6">
+          {review.issues.length ? (
+            <section>
+              <h3 className="text-xs font-semibold">
+                {text.issues} · {review.issues.length}
+              </h3>
+              <div className="mt-2 divide-y border-y">
+                {review.issues.map((issue, index) => (
+                  <p
+                    className="py-2 text-xs leading-5 text-muted-foreground"
+                    key={`${issue.clipId}-${issue.code}-${index}`}
+                  >
+                    <strong className="mr-2 font-medium text-foreground">
+                      {issue.panelIndex === null
+                        ? issue.code
+                        : `${issue.code} · ${String(issue.panelIndex + 1).padStart(2, "0")}`}
+                    </strong>
+                    {issue.message}
+                  </p>
+                ))}
+              </div>
+            </section>
+          ) : null}
+          {review.inferences.length ? (
+            <section>
+              <h3 className="text-xs font-semibold">
+                {text.inferences} · {review.inferences.length}
+              </h3>
+              <div className="mt-2 divide-y border-y">
+                {review.inferences.map((inference, index) => (
+                  <div
+                    className="py-3 text-xs leading-5"
+                    key={`${inference.clipId}-${inference.sceneNumber}-${index}`}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline">
+                        {text[inference.inferenceType]}
+                      </Badge>
+                      <span className="font-mono text-muted-foreground">
+                        {Math.round(inference.confidence * 100)}%
+                      </span>
+                    </div>
+                    <p className="mt-1.5 text-sm">{inference.text}</p>
+                    <p className="mt-1 text-muted-foreground">
+                      {text.rationale}：{inference.rationale}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {text.evidence}：{inference.evidence.join(" · ")}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+          {data.storyboard?.status === "review_required" ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                disabled={isActing || review.blockingIssueCount > 0}
+                onClick={() => void onApprove()}
+                size="sm"
+                type="button"
+              >
+                <FileCheck2 className="size-4" />
+                {text.approve}
+              </Button>
+              {review.blockingIssueCount ? (
+                <p className="text-xs text-status-warning">{text.blocked}</p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </details>
+  );
 }
 
 function ContinuityOverview({

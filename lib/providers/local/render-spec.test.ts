@@ -61,6 +61,7 @@ describe("render specification", () => {
     expect(video.join(" ")).toContain("scale=1280:720");
     expect(video.join(" ")).toContain("fps=25");
     expect(image).toEqual(expect.arrayContaining(["-loop", "1", "-t", "4"]));
+    expect(image.join(" ")).toContain("anullsrc");
     expect(
       buildConcatFfmpegArgs("inputs.txt", "audio.wav", "output.mp4", specification),
     ).toEqual(
@@ -71,8 +72,8 @@ describe("render specification", () => {
         "48000",
         "-ac",
         "2",
-        "-af",
-        "apad",
+        "-filter_complex",
+        "[0:a:0][1:a:0]amix=inputs=2:duration=first:dropout_transition=0:weights=0.5 1:normalize=0[mixed]",
       ]),
     );
   });

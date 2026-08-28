@@ -51,6 +51,9 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
               panelIndex: true,
               description: true,
               subtitleText: true,
+              speakingCharacter: true,
+              lipSyncText: true,
+              voiceoverText: true,
               sourceEvidenceJson: true,
             },
           },
@@ -101,6 +104,9 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
     panelIndex: panel.panelIndex,
     description: panel.description ?? "",
     subtitleText: panel.subtitleText ?? "",
+    speakingCharacter: panel.speakingCharacter,
+    lipSyncText: panel.lipSyncText,
+    voiceoverText: panel.voiceoverText,
     sourceEvidence: stringArray(parseStoredJson(panel.sourceEvidenceJson, [])),
   }));
   const characterContext = characters.map((character) => ({
@@ -226,17 +232,14 @@ export function buildDeterministicVoiceAnalysis(input: {
       canonicalName: character.name,
     })),
   ]);
-  const matches = [...input.sourceText.matchAll(/[“\"]([^”\"\r\n]+)[”\"]/g)].slice(
-    0,
-    500,
-  );
+  const matches = extractDirectSpeech(input.sourceText, speakers).slice(0, 500);
   const lines = matches.map((match) => {
-    const content = match[1];
-    const start = match.index ?? 0;
-    const end = start + match[0].length;
+    const content = match.content;
+    const start = match.index;
+    const end = match.end;
     const before = input.sourceText.slice(Math.max(0, start - 240), start);
     const after = input.sourceText.slice(end, end + 160);
-    const speaker = inferDialogueSpeaker(speakers, before, after);
+    const speaker = match.speaker ?? inferDialogueSpeaker(speakers, before, after);
     const matchedPanelIndex = input.panels.find((panel) =>
       `${panel.description}\n${panel.subtitleText}\n${panel.sourceEvidence?.join("\n") ?? ""}`.includes(content),
     )?.panelIndex;
@@ -259,12 +262,20 @@ export function buildScreenplayVoiceAnalysis(input: {
     panelIndex: number;
     description: string;
     subtitleText: string;
+    speakingCharacter?: string | null;
+    lipSyncText?: string | null;
+    voiceoverText?: string | null;
     sourceEvidence?: string[];
   }>;
 }) {
-  const lines = input.clips.flatMap((clip) => {
-    const parsed = parseScreenplay(clip.screenplay);
-    if (!parsed) return [];
+  if (!input.clips.length) return null;
+  const parsedClips = input.clips.map((clip) => ({
+    clip,
+    screenplay: parseScreenplay(clip.screenplay),
+  }));
+  if (parsedClips.some((item) => !item.screenplay)) return null;
+  const lines = parsedClips.flatMap(({ clip, screenplay }) => {
+    const parsed = screenplay!;
     const clipPanels = input.panels.filter((panel) => panel.clipId === clip.id);
     return normalizeScreenplayDialogue(parsed).scenes.flatMap((scene) =>
       scene.content.flatMap((content) => {
@@ -275,29 +286,68 @@ export function buildScreenplayVoiceAnalysis(input: {
           content.type === "dialogue"
             ? content.character
             : content.character ?? "旁白";
-        const matchedPanelIndex = findDialoguePanel(
+        const delivery =
+          content.type === "dialogue"
+            ? ("dialogue" as const)
+            : content.character
+              ? ("inner_monologue" as const)
+              : ("voiceover" as const);
+        const performedSegments = findPerformedSegments(
           spokenContent,
           clipPanels.length ? clipPanels : input.panels,
+          content.type === "dialogue" ? content.character : null,
+          content.type,
         );
-        return [
-          {
-            speaker,
-            content: spokenContent,
-            delivery:
-              content.type === "dialogue"
-                ? ("dialogue" as const)
-                : content.character
-                  ? ("inner_monologue" as const)
-                  : ("voiceover" as const),
-            emotionPrompt: content.type === "dialogue" ? content.parenthetical : null,
-            emotionStrength: 0.5,
-            matchedPanelIndex,
-          },
-        ];
+        const segments = performedSegments.length
+          ? performedSegments
+          : [{
+              content: spokenContent,
+              panelIndex: findDialoguePanel(
+                spokenContent,
+                clipPanels.length ? clipPanels : input.panels,
+              ),
+            }];
+        return segments.map((segment) => ({
+          speaker,
+          content: segment.content,
+          delivery,
+          emotionPrompt:
+            content.type === "dialogue" ? content.parenthetical : null,
+          emotionStrength: 0.5,
+          matchedPanelIndex: segment.panelIndex,
+        }));
       }),
     );
   });
   return lines.length ? voiceAnalysisSchema.parse({ lines }) : null;
+}
+
+function findPerformedSegments(
+  content: string,
+  panels: Array<{
+    panelIndex: number;
+    speakingCharacter?: string | null;
+    lipSyncText?: string | null;
+    voiceoverText?: string | null;
+  }>,
+  speaker: string | null,
+  type: "dialogue" | "voiceover",
+) {
+  let consumed = "";
+  const segments: Array<{ content: string; panelIndex: number }> = [];
+  for (const panel of panels) {
+    const value =
+      type === "dialogue"
+        ? panel.speakingCharacter === speaker
+          ? panel.lipSyncText
+          : null
+        : panel.voiceoverText;
+    if (!value || !content.startsWith(consumed + value)) continue;
+    consumed += value;
+    segments.push({ content: value, panelIndex: panel.panelIndex });
+    if (consumed === content) return segments;
+  }
+  return [];
 }
 
 function parseScreenplay(value: string | null) {
@@ -316,14 +366,64 @@ function findDialoguePanel(
     panelIndex: number;
     description: string;
     subtitleText: string;
+    speakingCharacter?: string | null;
+    lipSyncText?: string | null;
+    voiceoverText?: string | null;
     sourceEvidence?: string[];
   }>,
 ) {
-  return (
-    panels.find((panel) =>
-      `${panel.description}\n${panel.subtitleText}\n${panel.sourceEvidence?.join("\n") ?? ""}`.includes(content),
-    )?.panelIndex ?? panels[0]?.panelIndex ?? null
+  return panels.find((panel) => {
+    const performed = panel.lipSyncText ?? panel.voiceoverText;
+    return (
+      performed === content ||
+      (performed ? content.startsWith(performed) : false) ||
+      `${panel.description}\n${panel.subtitleText}\n${panel.sourceEvidence?.join("\n") ?? ""}`.includes(content)
+    );
+  })?.panelIndex ?? null;
+}
+
+function extractDirectSpeech(
+  sourceText: string,
+  speakers: Array<{ spokenName: string; canonicalName: string }>,
+) {
+  const matches: Array<{
+    content: string;
+    index: number;
+    end: number;
+    speaker?: string;
+  }> = [...sourceText.matchAll(/[“\"]([^”\"\r\n]+)[”\"]/g)].map(
+    (match) => ({
+      content: match[1],
+      index: match.index ?? 0,
+      end: (match.index ?? 0) + match[0].length,
+    }),
   );
+  const speechVerb =
+    "说(?:道)?|问(?:道)?|答(?:道)?|回答|回应|喊(?:道)?|喝(?:道)?|叹(?:道)?|开口|低声(?:说)?|轻声(?:说)?|安慰|劝(?:说|慰)?|安抚|鼓励";
+  for (const candidate of speakers) {
+    const pattern = new RegExp(
+      `${escapeRegex(candidate.spokenName)}[^。！？!?“”\"]{0,32}(?:${speechVerb})[^。！？!?“”\"]{0,24}?[：:，,]\\s*([^。！？!?“”\"]+[。！？!?]?)`,
+      "g",
+    );
+    for (const match of sourceText.matchAll(pattern)) {
+      const content = match[1].trim();
+      const contentOffset = match[0].lastIndexOf(match[1]);
+      const index = (match.index ?? 0) + contentOffset;
+      if (
+        content &&
+        !matches.some(
+          (existing) => index >= existing.index && index < existing.end,
+        )
+      )
+        matches.push({
+          content,
+          index,
+          end: index + content.length,
+          speaker: candidate.canonicalName,
+        });
+    }
+  }
+  return matches.sort((left, right) => left.index - right.index);
 }
 
 function inferDialogueSpeaker(

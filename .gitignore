@@ -20,6 +20,8 @@
 # production
 /build
 /.media/
+/docs/benchmarks/
+/scripts/prompt-benchmark.ts
 
 # misc
 .DS_Store
