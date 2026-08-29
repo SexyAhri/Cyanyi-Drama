@@ -777,6 +777,36 @@ export async function previewStudioPanelPrompt(
   );
 }
 
+export async function designStudioPanelPrompt(
+  projectId: string,
+  episodeId: string,
+  panelId: string,
+  input: {
+    channelId: string;
+    model: string;
+    kind: "image" | "video";
+    mode?: "reference" | "first-last";
+    currentPrompt?: string;
+    locale: "en" | "zh";
+  },
+) {
+  return request<{
+    design: {
+      prompt: string;
+      designNotes: string[];
+      continuitySafeguards: string[];
+    };
+    trace: Record<string, unknown>;
+  }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard/${encodeURIComponent(panelId)}/prompt-design`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
 export async function generateStudioPanelVideo(
   projectId: string,
   episodeId: string,

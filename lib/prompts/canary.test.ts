@@ -9,7 +9,7 @@ import {
 describe("prompt canary", () => {
   it("pins every bilingual prompt and its behavior contract", () => {
     expect(assertPromptCanaries()).toEqual({
-      checked: 34,
+      checked: 36,
       passed: true,
       issues: [],
     });

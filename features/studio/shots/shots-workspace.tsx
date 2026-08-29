@@ -28,6 +28,7 @@ import {
   loadStudioProjectAssets,
   loadStudioDeliverables,
   loadStudioStoryboard,
+  saveStudioStoryboard,
   selectStudioPanelMedia,
   uploadStudioPanelMedia,
 } from "../api";
@@ -49,6 +50,7 @@ import type {
 } from "../types";
 import { BatchGenerationDialog, PanelGenerationDialog } from "./generation-dialogs";
 import { ShotCandidateGrid } from "./shot-candidates";
+import { ShotPromptDesignPanel } from "./shot-prompt-design-panel";
 import { VfxWorkspace } from "./vfx-workspace";
 import {
   buildShotMediaCandidates,
@@ -58,6 +60,7 @@ import {
 } from "./shot-view-model";
 
 export function ShotsWorkspace({
+  analysisModels,
   episode,
   imageModels,
   locale,
@@ -66,6 +69,7 @@ export function ShotsWorkspace({
   snapshot,
   videoModels,
 }: {
+  analysisModels: StudioModelOption[];
   episode: WorkspaceSnapshot["project"]["episodes"][number];
   imageModels: StudioModelOption[];
   locale: StudioLocale;
@@ -249,6 +253,31 @@ export function ShotsWorkspace({
     } finally {
       setIsSelecting(false);
     }
+  }
+
+  async function savePromptDesign(mediaKind: ShotMediaKind, input: {
+    mode: "reference" | "first-last";
+    prompt: string;
+  }) {
+    if (!storyboardData?.storyboard || !selectedPanel) return;
+    const nextPanels = panels.map((panel) =>
+      panel.id === selectedPanel.id
+        ? {
+            ...panel,
+            ...(mediaKind === "image"
+              ? { imagePrompt: input.prompt }
+              : input.mode === "first-last"
+                ? { firstLastFramePrompt: input.prompt }
+                : { videoPrompt: input.prompt }),
+          }
+        : panel,
+    );
+    await saveStudioStoryboard(projectId, episode.id, {
+      status: storyboardData.storyboard.status,
+      sourceHash: storyboardData.storyboard.sourceHash,
+      panels: nextPanels,
+    });
+    await refreshAll();
   }
 
   async function controlTask(task: MediaTask, action: "cancel" | "retry") {
@@ -478,7 +507,7 @@ export function ShotsWorkspace({
 
                 {selectedPanel ? (
                   <section className="min-w-0 p-4 sm:p-5 xl:overflow-y-auto">
-                    <header className="flex flex-col gap-3 border-b pb-4">
+                    <header className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-start sm:justify-between">
                       <div className="min-w-0">
                         <h2 className="truncate text-base font-semibold">
                           {copy.panel} {String(selectedPanel.panelIndex + 1).padStart(2, "0")}
@@ -498,7 +527,7 @@ export function ShotsWorkspace({
                           </p>
                         ) : null}
                       </div>
-                      <div className="flex shrink-0 flex-wrap gap-2">
+                      <div className="flex shrink-0 gap-2">
                         <input
                           accept={mediaKind === "image" ? "image/*" : "video/*"}
                           className="sr-only"
@@ -556,6 +585,16 @@ export function ShotsWorkspace({
                         />
                       </div>
                     </header>
+                    <ShotPromptDesignPanel
+                      analysisModels={analysisModels}
+                      episodeId={episode.id}
+                      kind={mediaKind}
+                      locale={locale}
+                      onSave={(input) => savePromptDesign(mediaKind, input)}
+                      panel={selectedPanel}
+                      panels={panels}
+                      projectId={projectId}
+                    />
                     <div className="pt-5">
                       <div className="mb-3 flex items-center gap-2">
                         <h3 className="text-sm font-semibold">{copy.candidates}</h3>

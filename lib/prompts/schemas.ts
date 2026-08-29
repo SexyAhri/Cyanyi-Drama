@@ -629,6 +629,17 @@ export const assetVisualDesignSchema = z
   })
   .strict();
 
+export const storyboardMediaPromptDesignSchema = z
+  .object({
+    prompt: z.string().trim().min(20).max(12_000),
+    designNotes: z.array(z.string().trim().min(1).max(600)).min(1).max(12),
+    continuitySafeguards: z
+      .array(z.string().trim().min(1).max(600))
+      .min(1)
+      .max(16),
+  })
+  .strict();
+
 export const studioWorkflowAgentSchema = z
   .object({
     reply: z.string().trim().min(1).max(4_000),
@@ -661,6 +672,7 @@ export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
   [PROMPT_IDS.STORY_CONTINUITY_REVIEW]: continuityReviewSchema,
   [PROMPT_IDS.ASSET_VISUAL_EXTRACTION]: visualAssetExtractionSchema,
   [PROMPT_IDS.ASSET_VISUAL_DESIGN]: assetVisualDesignSchema,
+  [PROMPT_IDS.STORYBOARD_MEDIA_PROMPT_DESIGN]: storyboardMediaPromptDesignSchema,
   [PROMPT_IDS.CHARACTER_REFERENCE_DESCRIPTION]: characterReferenceDescriptionSchema,
   [PROMPT_IDS.EPISODE_SPLIT]: episodeSplitSchema,
   [PROMPT_IDS.EPISODE_ADAPTATION]: episodeAdaptationSchema,

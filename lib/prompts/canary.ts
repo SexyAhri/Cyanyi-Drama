@@ -32,6 +32,8 @@ export const PROMPT_CANARY_MANIFEST = {
   "asset_visual_extraction:en": "5c1acc32f9496f0f6f0c9932546a1c21eb5b11b3ed3432a60f31d524b61dd8c7",
   "asset_visual_design:zh": "25750145e05401ad34045ef243ad46b886ad16c46df33087d12052abff563e10",
   "asset_visual_design:en": "b24cbba2ca983fba34c1a64d9251d05f269578a9b1b0c19cdd2b0495408eb4da",
+  "storyboard_media_prompt_design:zh": "31c5adaca571cf8c1972ef5e806b5fcc5ff0be67b1761ffb6f3cf09a3f1623da",
+  "storyboard_media_prompt_design:en": "91e641fea977394943792760f5da85ed907b4701a3106286f2637dc287b4fded",
   "character_reference_description:zh": "2efa65b79f552d35990d93fc149d95ef08ac3a3b3df2adc7c5f83624dc4400a3",
   "character_reference_description:en": "e61b5baa74900ff2db4e36ad88b0881a22af43dbc11d33a6bf87d1e6b46addcc",
   "episode_split:zh": "e2bf3baa71ee40d2355bb973aec8b919be3c8ec01ab682f96c8dad4265e13124",

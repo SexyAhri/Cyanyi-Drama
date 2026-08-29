@@ -533,8 +533,8 @@ function PanelDetails({
         };
 
   return (
-    <section className="min-w-0 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col">
-      <header className="flex shrink-0 flex-col gap-3 border-b px-1 pb-4 lg:flex-row lg:items-start lg:justify-between">
+    <section className="min-w-0 p-4 sm:p-5 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col">
+      <header className="flex shrink-0 flex-col gap-3 border-b pb-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="flex min-w-0 items-baseline gap-3">
             <span className="font-mono text-sm text-muted-foreground">

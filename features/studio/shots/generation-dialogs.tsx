@@ -24,7 +24,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Textarea } from "@/components/ui/textarea";
 import type { MediaTask } from "@/lib/media/task-contract";
 import type { StoryboardPromptPreview } from "@/lib/media/project-asset-tasks";
 
@@ -50,7 +49,6 @@ type VideoMode = "reference" | "first-last";
 
 const promptCopy = {
   "zh-CN": {
-    override: "镜头覆盖提示词",
     finalPrompt: "最终提交提示词",
     compiling: "正在按项目画风和资产参考编译",
     previewFailed: "提示词预览载入失败",
@@ -64,7 +62,6 @@ const promptCopy = {
     incomplete: "缺少条件",
   },
   en: {
-    override: "Shot prompt override",
     finalPrompt: "Final provider prompt",
     compiling: "Compiling project style and asset references",
     previewFailed: "Unable to load prompt preview",
@@ -210,7 +207,7 @@ export function PanelGenerationDialog({
   return (
     <Dialog onOpenChange={setOpen} open={open}>
       <DialogTrigger render={trigger} />
-      <DialogContent className="max-h-[min(90dvh,52rem)] overflow-y-auto rounded-lg sm:max-w-2xl">
+      <DialogContent className="max-h-[min(90dvh,44rem)] overflow-y-auto overflow-x-hidden rounded-lg sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
             {kind === "image" ? copy.generateImage : copy.generateVideo}
@@ -243,15 +240,6 @@ export function PanelGenerationDialog({
               onChange={setMode}
             />
           ) : null}
-          <label className="grid gap-1.5 text-sm font-medium">
-            {promptText.override}
-            <Textarea
-              disabled={isSubmitting}
-              onChange={(event) => setPrompt(event.target.value)}
-              rows={4}
-              value={prompt}
-            />
-          </label>
           <PromptPreview
             error={previewError}
             loading={previewLoading}
@@ -561,7 +549,7 @@ function PromptPreview({
 }) {
   const text = promptCopy[locale];
   return (
-    <details className="border-y py-3" open>
+    <details className="min-w-0 border-y py-3">
       <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium">
         <Eye className="size-4" />
         {text.finalPrompt}
@@ -575,8 +563,15 @@ function PromptPreview({
         <div className="mt-3 space-y-3">
           <div className="flex flex-wrap gap-1.5">
             {preview.sources.map((source) => (
-              <Badge key={source.key} title={source.value} variant="outline">
-                {source.label} · {source.value}
+              <Badge
+                className="max-w-full"
+                key={source.key}
+                title={source.value}
+                variant="outline"
+              >
+                <span className="max-w-48 truncate">
+                  {source.label} · {source.value}
+                </span>
               </Badge>
             ))}
           </div>
@@ -598,7 +593,7 @@ function PromptPreview({
               {text.ready}
             </p>
           )}
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap bg-muted/35 p-3 text-xs leading-5">
+          <pre className="max-h-64 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words bg-muted/35 p-3 text-xs leading-5">
             {preview.finalPrompt}
           </pre>
           {preview.safetyRewrites.length ? (

@@ -330,6 +330,49 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       evidencePolicy: { required: true, mode: "input_references" },
     }),
   },
+  [PROMPT_IDS.STORYBOARD_MEDIA_PROMPT_DESIGN]: {
+    pathStem: "domain/storyboard_media_prompt_design",
+    version: 1,
+    variables: [
+      "media_kind",
+      "generation_mode",
+      "project_style",
+      "current_shot_json",
+      "adjacent_shots_json",
+      "asset_profiles_json",
+      "current_prompt",
+    ],
+    agent: defineAgent({
+      id: "storyboard_media_prompt_designer",
+      responsibility:
+        "Design one production-ready image or video prompt for an approved storyboard shot while preserving story facts and cross-shot continuity.",
+      prohibited: [
+        "inventing plot events, characters, props, dialogue, powers, injuries, or outcomes",
+        "changing approved character, location, prop, performance, camera, timing, VFX, or SFX facts",
+        "replacing the project art style",
+        "describing invisible motion in an image prompt",
+        "omitting interaction beats, performance changes, timed effects, or boundary states from a video prompt",
+      ],
+      successCriteria: [
+        "The prompt can be submitted directly to the selected image or video generator",
+        "Visible composition, performance, interaction, spatial, and continuity constraints are concrete",
+        "Video prompts express a chronological action timeline with start and end states",
+      ],
+      qualityGates: [
+        "schema_valid",
+        "source_facts_preserved",
+        "asset_identity_preserved",
+        "adjacent_shot_continuity",
+        "media_specific_prompt_complete",
+      ],
+      stopRules: [
+        "Return one prompt for the requested media kind only",
+        "Prefer explicit constraints over unsupported invention",
+      ],
+      contextPolicy: { scope: "episode", trust: "untrusted" },
+      evidencePolicy: { required: true, mode: "input_references" },
+    }),
+  },
   [PROMPT_IDS.STORY_SCREENPLAY_REVISION]: {
     pathStem: "domain/story_screenplay_revision",
     version: 4,

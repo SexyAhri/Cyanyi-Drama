@@ -317,6 +317,7 @@ export function WorkspacePage({
               />
             ) : selectedStage?.id === "shots" && selectedEpisode ? (
               <ShotsWorkspace
+                analysisModels={analysisModels}
                 episode={selectedEpisode}
                 imageModels={imageModels}
                 locale={locale}
