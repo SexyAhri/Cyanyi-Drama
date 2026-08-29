@@ -35,7 +35,8 @@ export function ProjectsPage({ user }: { user: AuthUser }) {
   const copy = getStudioCopy(locale);
   const [search, setSearch] = useState("");
   const [view, setView] = useState<"grid" | "list">("grid");
-  const { createProject, data, error, isLoading, reload } = useProjects(search);
+  const { createProject, data, deleteProject, error, isLoading, reload } =
+    useProjects(search);
   const projects = data?.projects ?? [];
 
   return (
@@ -151,7 +152,7 @@ export function ProjectsPage({ user }: { user: AuthUser }) {
                 className={cn(
                   "mt-6",
                   view === "grid"
-                    ? "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+                    ? "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
                     : "grid gap-3",
                 )}
               >
@@ -159,6 +160,7 @@ export function ProjectsPage({ user }: { user: AuthUser }) {
                   <ProjectItem
                     key={project.id}
                     locale={locale}
+                    onDelete={deleteProject}
                     project={project}
                     view={view}
                   />
@@ -203,28 +205,28 @@ function ProjectSkeletons({ view }: { view: "grid" | "list" }) {
       className={cn(
         "mt-6",
         view === "grid"
-          ? "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+          ? "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
           : "grid gap-3",
       )}
     >
-      {Array.from({ length: view === "grid" ? 8 : 4 }).map((_, index) => (
+      {Array.from({ length: view === "grid" ? 6 : 4 }).map((_, index) => (
         <div
           className={cn(
-            "overflow-hidden rounded-lg border",
-            view === "list" && "flex h-28",
+            "rounded-md border p-4",
+            view === "list" && "h-28",
           )}
           key={index}
         >
-          <Skeleton
-            className={cn(
-              "rounded-none",
-              view === "grid" ? "h-32 w-full" : "h-full w-48",
-            )}
-          />
-          <div className="flex-1 space-y-3 p-4">
-            <Skeleton className="h-4 w-2/3" />
-            <Skeleton className="h-3 w-full" />
-            <Skeleton className="h-3 w-1/2" />
+          <div className="flex items-center gap-3">
+            <Skeleton className="size-10 rounded-md" />
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-4 w-2/3" />
+              <Skeleton className="h-3 w-1/3" />
+            </div>
+          </div>
+          <div className="mt-5 flex gap-5">
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="h-3 w-24" />
           </div>
         </div>
       ))}

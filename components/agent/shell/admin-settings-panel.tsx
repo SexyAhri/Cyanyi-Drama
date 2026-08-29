@@ -137,7 +137,11 @@ export function AdminSettingsPanel({
             provider: channel.providerKey,
             model: model.modelId || model.id,
             capability: model.type === "llm" ? "text" : model.type || "image",
-            label: `${model.name} · ${channel.name}`,
+            label: formatModelLabel(
+              model.name,
+              model.modelId || model.id,
+              channel.name,
+            ),
           })),
       ),
     [channels],
@@ -440,10 +444,12 @@ export function AdminSettingsPanel({
             label="模型"
             onChange={(value) => {
               const option = modelOptions.find((item) => item.key === value);
+              const capability = option?.capability || priceDraft.capability;
               setPriceDraft((current) => ({
                 ...current,
                 modelKey: value,
-                capability: option?.capability || current.capability,
+                capability,
+                unit: defaultUnitForCapability(capability),
               }));
             }}
             options={modelOptions.map((item) => ({ label: item.label, value: item.key }))}
@@ -452,7 +458,13 @@ export function AdminSettingsPanel({
           />
           <SelectField
             label="能力"
-            onChange={(value) => setPriceDraft((current) => ({ ...current, capability: value }))}
+            onChange={(value) =>
+              setPriceDraft((current) => ({
+                ...current,
+                capability: value,
+                unit: defaultUnitForCapability(value),
+              }))
+            }
             options={["text", "image", "video", "audio", "lipsync", "voicedesign"].map((value) => ({ label: value, value }))}
             value={priceDraft.capability}
           />
@@ -667,23 +679,59 @@ function SelectField({
   placeholder?: string;
   value: string;
 }) {
+  const selectedOption = options.find((option) => option.value === value);
+
   return (
     <div className="grid min-w-0 gap-1.5">
       <Label className="text-xs">{label}</Label>
-      <Select onValueChange={(next) => next && onChange(next)} value={value}>
+      <Select
+        onValueChange={(next) => next && onChange(next)}
+        value={value || null}
+      >
         <SelectTrigger className="w-full">
-          <SelectValue placeholder={placeholder} />
+          <SelectValue>
+            <span className="min-w-0 flex-1 truncate">
+              {selectedOption?.label ?? placeholder}
+            </span>
+          </SelectValue>
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent
+          align="start"
+          alignItemWithTrigger={false}
+          className="max-h-60 max-w-[min(28rem,var(--available-width))]"
+        >
           {options.map((option) => (
             <SelectItem key={option.value} value={option.value}>
-              {option.label}
+              <span className="min-w-0 max-w-full truncate">
+                {option.label}
+              </span>
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
     </div>
   );
+}
+
+function formatModelLabel(
+  modelName: string,
+  modelId: string,
+  channelName: string,
+) {
+  const channel = channelName.trim();
+  const suffix = channel ? ` · ${channel}` : "";
+  let name = modelName.trim() || modelId;
+  while (suffix && name.endsWith(suffix)) {
+    name = name.slice(0, -suffix.length).trim();
+  }
+  return suffix ? `${name || modelId}${suffix}` : name || modelId;
+}
+
+function defaultUnitForCapability(capability: string) {
+  if (capability === "image") return "image";
+  if (capability === "video" || capability === "lipsync") return "second";
+  if (capability === "audio") return "minute";
+  return "request";
 }
 
 async function readJson(response: Response) {

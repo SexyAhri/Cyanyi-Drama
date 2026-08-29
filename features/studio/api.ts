@@ -59,6 +59,13 @@ export async function createStudioProject(input: {
   });
 }
 
+export async function deleteStudioProject(projectId: string) {
+  return request<{ ok: true }>(
+    `/api/projects/${encodeURIComponent(projectId)}`,
+    { method: "DELETE" },
+  );
+}
+
 export async function loadWorkspaceSnapshot(
   projectId: string,
   options?: { signal?: AbortSignal; touch?: boolean },

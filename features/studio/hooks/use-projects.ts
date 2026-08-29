@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { createStudioProject, listStudioProjects } from "../api";
+import {
+  createStudioProject,
+  deleteStudioProject,
+  listStudioProjects,
+} from "../api";
 import type { ProjectListResponse } from "../types";
 
 export function useProjects(search: string) {
@@ -49,9 +53,27 @@ export function useProjects(search: string) {
     [reload],
   );
 
+  const deleteProject = useCallback(async (projectId: string) => {
+    await deleteStudioProject(projectId);
+    setData((current) => {
+      if (!current || !current.projects.some((project) => project.id === projectId))
+        return current;
+      const total = Math.max(0, current.pagination.total - 1);
+      return {
+        projects: current.projects.filter((project) => project.id !== projectId),
+        pagination: {
+          ...current.pagination,
+          total,
+          totalPages: Math.ceil(total / current.pagination.pageSize),
+        },
+      };
+    });
+  }, []);
+
   return {
     createProject,
     data,
+    deleteProject,
     error,
     isLoading,
     reload,
