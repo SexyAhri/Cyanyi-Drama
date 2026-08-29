@@ -374,10 +374,23 @@ describe("script-to-storyboard runtime", () => {
     expect(rerun.results[0].reusedPhases).toEqual(["phase2.cine"]);
   });
 
-  it("normalizes continuity prop arrays before planning schema parsing", () => {
+  it("normalizes provider continuity fields before planning schema parsing", () => {
     const raw = planning();
     raw.panels[0].startState.props = ["长剑", "护符"] as unknown as string;
     raw.panels[0].endState.props = [] as unknown as string;
+    const firstPanel = raw.panels[0] as (typeof raw.panels)[number] & {
+      worldContext: Record<string, unknown>;
+    };
+    firstPanel.worldContext = {
+      referenceScopes: [
+        {
+          assetName: "甲",
+          assetVersion: null,
+          inherit: [],
+          exclude: [],
+        },
+      ],
+    };
 
     const normalized = normalizeStoryboardPlanningProviderPayload(raw);
 
@@ -386,6 +399,11 @@ describe("script-to-storyboard runtime", () => {
         expect.objectContaining({
           startState: expect.objectContaining({ props: "长剑、护符" }),
           endState: expect.objectContaining({ props: "无" }),
+          worldContext: expect.objectContaining({
+            referenceScopes: [
+              expect.objectContaining({ inherit: ["视觉身份"] }),
+            ],
+          }),
         }),
       ],
     });
@@ -404,6 +422,27 @@ describe("script-to-storyboard runtime", () => {
       unexpected,
     );
     expect(storyboardRefinementSchema.safeParse(unexpected).success).toBe(false);
+  });
+
+  it("normalizes known provider contact aliases and array refinement roots", () => {
+    const raw = planning();
+    (
+      raw.panels[0].motionTimeline[0] as unknown as Record<string, unknown>
+    ).contact = "impact";
+
+    const normalizedPlanning = normalizeStoryboardPlanningProviderPayload(raw);
+    expect(
+      (normalizedPlanning as typeof raw).panels[0].motionTimeline[0],
+    ).toMatchObject({ contact: "strike" });
+    expect(storyboardPlanningSchema.safeParse(normalizedPlanning).success).toBe(true);
+
+    const panelArray = planning().panels;
+    const normalizedRefinement =
+      normalizeStoryboardRefinementProviderPayload(panelArray);
+    expect(normalizedRefinement).toEqual({ panels: panelArray });
+    expect(storyboardRefinementSchema.safeParse(normalizedRefinement).success).toBe(
+      true,
+    );
   });
 
   it("splits long fallback scenes into video-sized shots with complete beats", () => {
@@ -618,6 +657,87 @@ describe("script-to-storyboard runtime", () => {
 
     expect(result.refinement.panels[0].characters).toEqual(["韩子枫"]);
     expect(result.refinement.panels[1].props).toEqual(["无字古籍"]);
+  });
+
+  it("builds valid fallback interaction beats without leaking prop state", () => {
+    const screenplay = {
+      clipId: "clip-1",
+      originalText:
+        "父子二人相依为命，韩宇疯狂修炼以证明自己。韩子枫将铁盒递给韩宇。盒中古籍散发奇异气息。韩宇如遭铁锤重击。",
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: {
+            intExt: "INT" as const,
+            location: "简陋院落",
+            time: "晚饭后",
+          },
+          description: "父子在简陋院落交谈。",
+          characters: ["韩子枫", "韩宇"],
+          content: [
+            {
+              type: "voiceover" as const,
+              character: null,
+              text: "父子二人相依为命，韩宇疯狂修炼以证明自己。",
+            },
+            {
+              type: "action" as const,
+              text: "韩子枫将铁盒递给韩宇，韩宇接过铁盒。",
+            },
+            {
+              type: "voiceover" as const,
+              character: null,
+              text: "盒中古籍散发奇异气息。",
+            },
+            { type: "action" as const, text: "韩宇如遭铁锤重击。" },
+          ],
+        },
+      ],
+    };
+    const sourceText = JSON.stringify(screenplay, null, 2);
+    const canonical = {
+      characters: ["韩子枫", "韩宇"],
+      locations: ["简陋院落"],
+      props: ["铁盒"],
+    };
+    const result = buildDeterministicStoryboardPhases({
+      canonical,
+      clip: { ...clip(), content: screenplay.originalText },
+      props: [
+        { name: "铁盒", summary: null, metadata: {}, visualProfile: {} },
+      ],
+      screenplay,
+      sourceText,
+    });
+
+    expect(
+      validateStoryboardPlanning(result.planning, {
+        sourceText,
+        canonical,
+        screenplay,
+      }),
+    ).toEqual([]);
+    expect(result.planning.panels[1]?.motionTimeline[0]).toMatchObject({
+      actor: "韩子枫",
+      target: "韩宇",
+      prop: "铁盒",
+      contact: "transfer",
+      trigger: expect.any(String),
+      preparation: expect.any(String),
+      forceSource: expect.any(String),
+      trajectory: expect.any(String),
+      reaction: expect.any(String),
+      result: expect.any(String),
+      settle: expect.any(String),
+    });
+    expect(result.planning.panels[2]?.props).toEqual([]);
+    expect(result.planning.panels[2]?.startState?.propStates).toEqual([]);
+    expect(result.planning.panels[3]?.motionTimeline[0]).toMatchObject({
+      actor: "韩宇",
+      target: null,
+      contact: "none",
+      reaction: null,
+    });
   });
 });
 

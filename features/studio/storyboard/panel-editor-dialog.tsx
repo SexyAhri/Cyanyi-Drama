@@ -122,9 +122,13 @@ export function PanelEditorDialog({
 
   return (
     <Dialog onOpenChange={setOpen} open={open}>
-      <DialogTrigger render={<Button size="sm" variant="outline" />}>
+      <DialogTrigger
+        render={
+          <Button size="icon-sm" title={copy.edit} variant="outline" />
+        }
+      >
         <Pencil className="size-4" />
-        {copy.edit}
+        <span className="sr-only">{copy.edit}</span>
       </DialogTrigger>
       <DialogContent className="max-h-[calc(100dvh-1rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-hidden rounded-lg sm:max-h-[min(92dvh,52rem)] sm:max-w-2xl">
         <DialogHeader>

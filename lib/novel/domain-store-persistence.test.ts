@@ -42,6 +42,8 @@ beforeEach(() => {
       clipId: "clip-1",
       clipPanelIndex: 0,
       panelIndex: 4,
+      imagePrompt: "人工确认的旧图片提示词",
+      imageAssetId: "image-asset-1",
     },
   ]);
   storyboardPanelUpdateMany.mockResolvedValue({ count: 1 });
@@ -81,6 +83,53 @@ describe("storyboard persistence", () => {
           panelIndex: 0,
           sourceEvidenceJson: '["原文"]',
         }),
+      }),
+    );
+  });
+
+  it("preserves an existing image prompt during AI reruns without touching its image binding", async () => {
+    await saveStoryboard("user-1", "project-1", "episode-1", {
+      status: "ready",
+      preserveImagePrompts: true,
+      panels: [
+        {
+          clipId: "clip-1",
+          clipPanelIndex: 0,
+          panelIndex: 0,
+          imagePrompt: "模型新生成但不应覆盖的提示词",
+        },
+      ],
+    });
+
+    expect(storyboardPanelUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "panel-stable" },
+        update: expect.objectContaining({
+          imagePrompt: "人工确认的旧图片提示词",
+        }),
+      }),
+    );
+    expect(storyboardPanelUpsert.mock.calls[0]?.[0]?.update).not.toHaveProperty(
+      "imageAssetId",
+    );
+  });
+
+  it("still allows explicit image prompt edits outside an AI rerun", async () => {
+    await saveStoryboard("user-1", "project-1", "episode-1", {
+      status: "ready",
+      panels: [
+        {
+          clipId: "clip-1",
+          clipPanelIndex: 0,
+          panelIndex: 0,
+          imagePrompt: "人工新提示词",
+        },
+      ],
+    });
+
+    expect(storyboardPanelUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ imagePrompt: "人工新提示词" }),
       }),
     );
   });

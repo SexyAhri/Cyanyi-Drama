@@ -141,6 +141,7 @@ export async function saveStoryboard(
   input: {
     status?: string;
     sourceHash?: string | null;
+    preserveImagePrompts?: boolean;
     panels: Array<{
       id?: string;
       panelIndex: number;
@@ -229,6 +230,8 @@ export async function saveStoryboard(
         clipId: true,
         clipPanelIndex: true,
         panelIndex: true,
+        imagePrompt: true,
+        imageAssetId: true,
       },
     });
     const existingByIdentity = new Map(
@@ -254,10 +257,10 @@ export async function saveStoryboard(
         clipPanelIndex: panel.clipPanelIndex ?? null,
         panelIndex: panel.panelIndex ?? index,
       });
-      const id =
-        (panel.id ? existingById.get(panel.id)?.id : undefined) ??
-        (!panel.id ? existingByIdentity.get(identity)?.id : undefined) ??
-        randomUUID();
+      const existingPanel =
+        (panel.id ? existingById.get(panel.id) : undefined) ??
+        (!panel.id ? existingByIdentity.get(identity) : undefined);
+      const id = existingPanel?.id ?? randomUUID();
       retainedIds.push(id);
       const data = {
         clipId: panel.clipId ?? null,
@@ -271,7 +274,10 @@ export async function saveStoryboard(
         locationName: panel.locationName?.trim() || null,
         charactersJson: stringifyArray(panel.characters),
         propsJson: stringifyArray(panel.props),
-        imagePrompt: panel.imagePrompt?.trim() || null,
+        imagePrompt:
+          input.preserveImagePrompts && existingPanel?.imagePrompt?.trim()
+            ? existingPanel.imagePrompt.trim()
+            : panel.imagePrompt?.trim() || null,
         videoPrompt: panel.videoPrompt?.trim() || null,
         phase: panel.phase?.trim() || "phase1",
         status: panel.status?.trim() || "draft",

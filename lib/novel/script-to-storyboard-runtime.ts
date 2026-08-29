@@ -397,6 +397,7 @@ export async function buildEpisodeStoryboard(
     {
       status: reviewRequired ? "review_required" : "ready",
       sourceHash,
+      preserveImagePrompts: true,
       panels,
     },
   );
@@ -544,13 +545,55 @@ export function normalizeStoryboardPlanningProviderPayload(value: unknown) {
       if (!isRecord(panel)) return panel;
       return {
         ...panel,
+        motionTimeline: Array.isArray(panel.motionTimeline)
+          ? panel.motionTimeline.map(normalizeStoryboardMotionBeatPayload)
+          : panel.motionTimeline,
         startState: normalizeStoryboardContinuityStatePayload(
           panel.startState,
         ),
         endState: normalizeStoryboardContinuityStatePayload(panel.endState),
+        worldContext: normalizeStoryboardWorldContextPayload(
+          panel.worldContext,
+        ),
       };
     }),
   };
+}
+
+function normalizeStoryboardMotionBeatPayload(value: unknown) {
+  if (!isRecord(value) || typeof value.contact !== "string") return value;
+  const contact = value.contact.trim().toLowerCase();
+  const aliases: Record<string, string> = {
+    "no contact": "none",
+    no_contact: "none",
+    无: "none",
+    无接触: "none",
+    contact: "touch",
+    physical_contact: "touch",
+    接触: "touch",
+    hold: "grab",
+    grip: "grab",
+    握住: "grab",
+    抓取: "grab",
+    hit: "strike",
+    impact: "strike",
+    collision: "strike",
+    命中: "strike",
+    撞击: "strike",
+    defend: "block",
+    parry: "block",
+    格挡: "block",
+    handoff: "transfer",
+    pass: "transfer",
+    give: "transfer",
+    receive: "transfer",
+    递交: "transfer",
+    交接: "transfer",
+    support_hold: "support",
+    搀扶: "support",
+  };
+  const normalized = aliases[contact];
+  return normalized ? { ...value, contact: normalized } : value;
 }
 
 function normalizeStoryboardContinuityStatePayload(value: unknown) {
@@ -562,6 +605,23 @@ function normalizeStoryboardContinuityStatePayload(value: unknown) {
     return value;
   const props = value.props.map((item) => item.trim()).filter(Boolean);
   return { ...value, props: props.join("、") || "无" };
+}
+
+function normalizeStoryboardWorldContextPayload(value: unknown) {
+  if (!isRecord(value) || !Array.isArray(value.referenceScopes)) return value;
+  return {
+    ...value,
+    referenceScopes: value.referenceScopes.map((scope) => {
+      if (
+        !isRecord(scope) ||
+        !Array.isArray(scope.inherit) ||
+        !scope.inherit.every((item) => typeof item === "string")
+      )
+        return scope;
+      const inherit = scope.inherit.map((item) => item.trim()).filter(Boolean);
+      return { ...scope, inherit: inherit.length ? inherit : ["视觉身份"] };
+    }),
+  };
 }
 
 function storyboardProductionContextText(context: ClipContext) {
@@ -714,6 +774,7 @@ async function runRefinementPhase(
 }
 
 export function normalizeStoryboardRefinementProviderPayload(value: unknown) {
+  if (Array.isArray(value)) return { panels: value };
   if (!isRecord(value) || !Array.isArray(value.panels)) return value;
   const keys = Object.keys(value);
   if (
@@ -1081,6 +1142,8 @@ export function buildDeterministicStoryboardPhases(
               description,
               durationSeconds,
               cameraMove,
+              characters,
+              props,
             ),
         worldContext: actionDesign
           ? fallbackActionWorldContext(actionDesign)
@@ -1118,9 +1181,13 @@ export function buildDeterministicStoryboardPhases(
         ...panel.startState,
         hands: previous.endState.hands,
         screenDirection: previous.endState.screenDirection,
-        props: previous.endState.props,
         characterStates: previous.endState.characterStates,
-        propStates: previous.endState.propStates,
+        ...(sameStoryboardCharacterSet(previous.props, panel.props)
+          ? {
+              props: previous.endState.props,
+              propStates: previous.endState.propStates,
+            }
+          : {}),
         environmentState: previous.endState.environmentState,
       };
   });
@@ -1296,26 +1363,82 @@ function buildFallbackMotionTimeline(
   description: string,
   durationSeconds: number,
   cameraMove: string,
+  characters: string[],
+  props: string[],
 ) {
   const beatCount = durationSeconds <= 4 ? 1 : durationSeconds <= 9 ? 2 : 3;
   return Array.from({ length: beatCount }, (_, index) => {
     const startSecond = Math.floor((durationSeconds * index) / beatCount);
     const endSecond = Math.floor((durationSeconds * (index + 1)) / beatCount);
+    const action =
+      index === 0
+        ? `从已建立的姿态开始表现：${description}`
+        : index === beatCount - 1
+          ? `连续完成并收束：${description}`
+          : `延续上一节拍的姿态与方向：${description}`;
+    const interaction = fallbackInteractionContract(
+      action,
+      index,
+      characters,
+      props,
+    );
     return {
       startSecond,
       endSecond,
-      action:
-        index === 0
-          ? `从已建立的姿态开始表现：${description}`
-          : index === beatCount - 1
-            ? `连续完成并收束：${description}`
-            : `沿上一节拍的姿态与方向推进：${description}`,
+      action,
       camera:
         index === beatCount - 1
           ? "保持轴线与构图连续并自然停稳"
           : `${cameraMove}，承接上一节拍的机位与速度`,
+      ...interaction,
     };
   });
+}
+
+function fallbackInteractionContract(
+  action: string,
+  index: number,
+  characters: string[],
+  props: string[],
+) {
+  if (
+    !characters.length ||
+    !/(?:抓|握|拉|推|递|接|扶|抱|撞|击|打|踢|踹|刺|劈|砍|斩|挡|格|闪|躲|追|attack|strike|grab|push|pull|hand|block|dodge|chase)/iu.test(
+      action,
+    )
+  )
+    return {};
+  const actor = characters[0];
+  const target = characters[1] ?? props[0] ?? null;
+  const transfer = Boolean(target && /(?:交给|递|接过|handoff|pass|give|receive)/iu.test(action));
+  const physicalContact = Boolean(target && !/(?:如遭|仿佛|犹如)/u.test(action));
+  const contact = transfer ? "transfer" : physicalContact ? "touch" : "none";
+  const beatId = `B${String(index + 1).padStart(3, "0")}`;
+  return {
+    beatId,
+    actor,
+    target,
+    bodyPart: props.length ? "手部与重心动作链" : "完成动作所需的主要肢体动作链",
+    prop: props[0] ?? null,
+    trigger:
+      index > 0
+        ? `承接B${String(index).padStart(3, "0")}的动作结果`
+        : `由起始姿态与表演意图触发：${action}`,
+    preparation: `建立完成动作所需的距离、重心与预备姿态：${action}`,
+    forceSource: `${actor}通过核心重心与主要发力肢体传递力量`,
+    trajectory: `沿既定空间关系连续完成：${action}`,
+    contact,
+    contactPoint: contact === "none" ? null : "既定手部、身体或道具接触区域",
+    contactMaterial:
+      contact === "none"
+        ? null
+        : "按角色身体、服装与道具的既定材质表现接触",
+    reaction:
+      contact === "none" ? null : `${target}产生与动作强度一致的可见反馈`,
+    result: action,
+    settle: `动作结果保持可见，并稳定进入本镜结束状态`,
+    causedBy: index > 0 ? `B${String(index).padStart(3, "0")}` : null,
+  } as const;
 }
 
 function buildFallbackActionTimeline(

@@ -553,6 +553,7 @@ export function normalizeStoryboardPlanningContract(
         previous.characters,
         panel.characters,
       );
+      const sameProps = sameStoryboardCharacterSet(previous.props, panel.props);
       return {
         ...panel,
         startState: {
@@ -560,10 +561,14 @@ export function normalizeStoryboardPlanningContract(
           ...(sameCharacters
             ? {
                 hands: previous.endState.hands,
-                props: previous.endState.props,
                 screenDirection: previous.endState.screenDirection,
                 characterStates: previous.endState.characterStates,
-                propStates: previous.endState.propStates,
+                ...(sameProps
+                  ? {
+                      props: previous.endState.props,
+                      propStates: previous.endState.propStates,
+                    }
+                  : {}),
               }
             : {}),
           environmentState: previous.endState.environmentState,
@@ -2116,7 +2121,8 @@ function validateStoryboardScreenplayContract(
       (previous.endState.hands !== panel.startState.hands ||
         previous.endState.screenDirection !==
           panel.startState.screenDirection ||
-        previous.endState.props !== panel.startState.props)
+        (sameStoryboardCharacterSet(previous.props, panel.props) &&
+          previous.endState.props !== panel.startState.props))
     )
       issues.push(
         issue(
