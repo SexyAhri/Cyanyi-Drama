@@ -36,11 +36,13 @@ export function SplitNovelDialog({
   models,
   onCompleted,
   projectId,
+  trigger,
 }: {
   locale: StudioLocale;
   models: StudioModelOption[];
   onCompleted: () => Promise<unknown> | void;
   projectId: string;
+  trigger?: React.ReactElement;
 }) {
   const copy = getStudioCopy(locale);
   const [open, setOpen] = useState(false);
@@ -86,13 +88,21 @@ export function SplitNovelDialog({
 
   return (
     <Dialog onOpenChange={setOpen} open={open}>
-      <DialogTrigger
-        render={
-          <Button aria-label={copy.splitNovel} size="icon-sm" variant="ghost" />
-        }
-      >
-        <Scissors className="size-4" />
-      </DialogTrigger>
+      {trigger ? (
+        <DialogTrigger render={trigger} />
+      ) : (
+        <DialogTrigger
+          render={
+            <Button
+              aria-label={copy.splitNovel}
+              size="icon-sm"
+              variant="ghost"
+            />
+          }
+        >
+          <Scissors className="size-4" />
+        </DialogTrigger>
+      )}
       <DialogContent className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-lg sm:max-h-[min(90dvh,780px)] sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">

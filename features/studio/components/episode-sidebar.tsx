@@ -1,6 +1,6 @@
 "use client";
 
-import { FilePlus2, ScrollText } from "lucide-react";
+import { FilePlus2, Scissors, ScrollText } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -117,9 +117,9 @@ export function EpisodeSidebar({
           </div>
         </ScrollArea>
       ) : (
-        <Empty className="rounded-none border-0 px-4">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
+        <Empty className="flex-1 justify-start gap-5 rounded-none border-0 px-3 py-6 text-left">
+          <EmptyHeader className="w-full max-w-none flex-row items-center gap-3 border-b pb-5">
+            <EmptyMedia className="mb-0" variant="icon">
               <ScrollText />
             </EmptyMedia>
             <EmptyTitle>{copy.noEpisodes}</EmptyTitle>
@@ -127,13 +127,13 @@ export function EpisodeSidebar({
               {copy.noEpisodes}
             </EmptyDescription>
           </EmptyHeader>
-          <div className="flex flex-col gap-2">
+          <div className="grid w-full gap-2">
             <CreateEpisodeDialog
               createEpisode={createEpisode}
               locale={locale}
               onCreated={onCreated}
               trigger={
-                <Button variant="outline">
+                <Button className="w-full justify-start">
                   <FilePlus2 className="size-4" />
                   {copy.addEpisode}
                 </Button>
@@ -144,6 +144,12 @@ export function EpisodeSidebar({
               models={models}
               onCompleted={onRefresh}
               projectId={snapshot.project.id}
+              trigger={
+                <Button className="w-full justify-start" variant="outline">
+                  <Scissors className="size-4" />
+                  {copy.splitNovel}
+                </Button>
+              }
             />
           </div>
         </Empty>

@@ -35,6 +35,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { getProjectArtStyleLabel } from "@/lib/projects/art-style";
 import type { ProjectRecord } from "@/lib/projects/types";
 import { cn } from "@/lib/utils";
 
@@ -59,6 +60,7 @@ export function ProjectItem({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const href = `/projects/${encodeURIComponent(project.id)}`;
+  const artStyleLabel = getProjectArtStyleLabel(project.config.artStyle, locale);
 
   async function handleDelete() {
     setIsDeleting(true);
@@ -119,12 +121,12 @@ export function ProjectItem({
             )}
           >
             <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">
-              {project.description || project.config.artStyle}
+              {project.description || artStyleLabel}
             </p>
             {project.description ? (
               <p className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground/80">
                 <Palette className="size-3 shrink-0" />
-                <span className="truncate">{project.config.artStyle}</span>
+                <span className="truncate">{artStyleLabel}</span>
               </p>
             ) : null}
           </div>

@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 
 import type { EpisodeRecord } from "@/lib/projects/types";
+import { getProjectArtStyleLabel } from "@/lib/projects/art-style";
 
 import { formatStudioDate, getStageCopy, getStudioCopy } from "../i18n";
 import {
@@ -97,7 +98,10 @@ export function StageOverview({
           />
           <Spec
             label={copy.artStyle}
-            value={snapshot.project.config.artStyle}
+            value={getProjectArtStyleLabel(
+              snapshot.project.config.artStyle,
+              locale,
+            )}
           />
         </dl>
       </section>
