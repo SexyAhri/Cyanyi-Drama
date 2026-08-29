@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import type { AuthUser } from "@/lib/server/auth";
 import {
   Empty,
   EmptyContent,
@@ -49,7 +50,13 @@ import { WorkspaceTopbar } from "./workspace-topbar";
 import { WritingWorkspace } from "../writing/writing-workspace";
 import { updateStudioProjectConfig } from "../api";
 
-export function WorkspacePage({ projectId }: { projectId: string }) {
+export function WorkspacePage({
+  projectId,
+  user,
+}: {
+  projectId: string;
+  user: AuthUser;
+}) {
   const { locale, toggleLocale } = useStudioLocale();
   const wideLayout = useStudioWideLayout();
   const copy = getStudioCopy(locale);
@@ -257,6 +264,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
           projectConfig={snapshot.project.config}
           projectId={projectId}
           projectName={snapshot.project.name}
+          user={user}
         />
 
         <StageNavigation

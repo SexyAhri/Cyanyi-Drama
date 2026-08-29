@@ -21,10 +21,12 @@ import {
   getShellCopy,
   type ShellSettings,
 } from "@/components/agent/shell";
+import { AuthAccountMenu } from "@/components/auth/account-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { useRuntimeConnection } from "@/hooks/use-runtime-connection";
 import type { ProjectConfig } from "@/lib/projects/types";
+import type { AuthUser } from "@/lib/server/auth";
 import {
   Tooltip,
   TooltipContent,
@@ -47,6 +49,7 @@ export function WorkspaceTopbar({
   projectConfig,
   projectId,
   projectName,
+  user,
 }: {
   episodeName?: string;
   isRefreshing: boolean;
@@ -59,6 +62,7 @@ export function WorkspaceTopbar({
   projectConfig: ProjectConfig;
   projectId: string;
   projectName: string;
+  user: AuthUser;
 }) {
   const copy = getStudioCopy(locale);
   const shellCopy = getShellCopy(locale);
@@ -250,6 +254,7 @@ export function WorkspaceTopbar({
           </TooltipTrigger>
           <TooltipContent>{copy.language}</TooltipContent>
         </Tooltip>
+        <AuthAccountMenu compact locale={locale} user={user} />
       </div>
       </header>
 

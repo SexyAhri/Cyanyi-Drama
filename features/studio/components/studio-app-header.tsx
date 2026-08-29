@@ -4,12 +4,14 @@ import { Bot, Clapperboard, Languages } from "lucide-react";
 import Link from "next/link";
 
 import { ThemeToggle } from "@/components/theme-toggle";
+import { AuthAccountMenu } from "@/components/auth/account-menu";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import type { AuthUser } from "@/lib/server/auth";
 
 import { getStudioCopy } from "../i18n";
 import type { StudioLocale } from "../types";
@@ -17,9 +19,11 @@ import type { StudioLocale } from "../types";
 export function StudioAppHeader({
   locale,
   onLocaleChange,
+  user,
 }: {
   locale: StudioLocale;
   onLocaleChange: () => void;
+  user: AuthUser;
 }) {
   const copy = getStudioCopy(locale);
 
@@ -70,6 +74,7 @@ export function StudioAppHeader({
             </TooltipTrigger>
             <TooltipContent>{copy.language}</TooltipContent>
           </Tooltip>
+          <AuthAccountMenu locale={locale} user={user} />
         </div>
       </div>
     </header>

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { FolderOpen, Grid2X2, List, RotateCcw, Search, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import type { AuthUser } from "@/lib/server/auth";
 import {
   Empty,
   EmptyContent,
@@ -29,7 +30,7 @@ import { CreateProjectDialog } from "./create-project-dialog";
 import { ProjectItem } from "./project-item";
 import { StudioAppHeader } from "./studio-app-header";
 
-export function ProjectsPage() {
+export function ProjectsPage({ user }: { user: AuthUser }) {
   const { locale, toggleLocale } = useStudioLocale();
   const copy = getStudioCopy(locale);
   const [search, setSearch] = useState("");
@@ -40,7 +41,11 @@ export function ProjectsPage() {
   return (
     <TooltipProvider>
       <div className="flex h-dvh min-h-0 flex-col bg-background">
-        <StudioAppHeader locale={locale} onLocaleChange={toggleLocale} />
+        <StudioAppHeader
+          locale={locale}
+          onLocaleChange={toggleLocale}
+          user={user}
+        />
 
         <main className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-7xl px-4 py-7 sm:px-6 sm:py-10">

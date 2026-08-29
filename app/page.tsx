@@ -1,5 +1,8 @@
 import { redirect } from "next/navigation";
 
-export default function Home() {
-  redirect("/chat");
+import { getCurrentUser } from "@/lib/server/auth";
+
+export default async function Home() {
+  const user = await getCurrentUser();
+  redirect(user && !user.anonymous ? "/projects" : "/login");
 }
