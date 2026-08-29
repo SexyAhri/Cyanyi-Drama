@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
+import { Prisma } from "@prisma/client";
+
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import { episodeSplitSchema } from "@/lib/prompts/schemas";
@@ -114,7 +116,7 @@ export function detectEpisodeMarkers(content: string): EpisodeMarkerResult {
     };
   best.sort((left, right) => left.index - right.index);
   const episodes = best.map((match, index) => {
-    const startIndex = index === 0 ? 0 : match.index;
+    const startIndex = match.index;
     const endIndex = best[index + 1]?.index ?? content.length;
     const episodeContent = content.slice(startIndex, endIndex);
     const titleSuffix = match.text
@@ -124,7 +126,7 @@ export function detectEpisodeMarkers(content: string): EpisodeMarkerResult {
     return {
       number: match.episodeNumber,
       title: titleSuffix || `第 ${match.episodeNumber} 集`,
-      summary: summarizeEpisodeContent(episodeContent),
+      summary: extractEpisodeExcerpt(episodeContent),
       content: episodeContent,
       wordCount: countWords(episodeContent),
       startIndex,
@@ -235,7 +237,7 @@ export async function persistEpisodeSplits(input: {
     ? resolveManuscriptSlices(input.episodes, manuscript.sourceText)
     : input.episodes.map((episode) => ({
         ...episode,
-        summary: episode.summary || summarizeEpisodeContent(episode.content),
+        summary: episode.summary || extractEpisodeExcerpt(episode.content),
       }));
   const numbers = episodes.map((episode) => episode.number);
   if (new Set(numbers).size !== numbers.length)
@@ -253,7 +255,16 @@ export async function persistEpisodeSplits(input: {
         editorProject: { select: { id: true } },
         sourceVersions: {
           where: { kind: "original" },
-          select: { id: true, version: true, sourceHash: true },
+          select: {
+            id: true,
+            manuscriptId: true,
+            version: true,
+            title: true,
+            summary: true,
+            sourceHash: true,
+            sourceStartIndex: true,
+            sourceEndIndex: true,
+          },
           orderBy: { version: "desc" },
         },
         _count: {
@@ -273,7 +284,9 @@ export async function persistEpisodeSplits(input: {
     const existingByNumber = new Map(
       existing.map((episode) => [episode.episodeNumber, episode]),
     );
-    const records = [];
+    const newEpisodes: Prisma.EpisodeCreateManyInput[] = [];
+    const newSources: Prisma.EpisodeSourceVersionCreateManyInput[] = [];
+    const episodeUpdates: EpisodeBulkUpdate[] = [];
     for (const episode of episodes) {
       const current = existingByNumber.get(episode.number);
       const hasDownstream = current
@@ -290,78 +303,125 @@ export async function persistEpisodeSplits(input: {
       if (!current) {
         const episodeId = randomUUID();
         const sourceId = randomUUID();
-        records.push(
-          await tx.episode.create({
-            data: {
-              id: episodeId,
-              projectId: input.projectId,
-              episodeNumber: episode.number,
-              name: episode.title,
-              description: episode.summary || null,
-              novelText: episode.content,
-              activeSourceId: sourceId,
-              activeSourceKind: "original",
-              sourceVersions: {
-                create: {
-                  id: sourceId,
-                  manuscriptId: manuscript?.id,
-                  kind: "original",
-                  version: 1,
-                  title: episode.title,
-                  summary: episode.summary || null,
-                  content: episode.content,
-                  sourceHash,
-                  sourceStartIndex: episode.startIndex,
-                  sourceEndIndex: episode.endIndex,
-                },
-              },
-            },
-          }),
-        );
+        newEpisodes.push({
+          id: episodeId,
+          projectId: input.projectId,
+          episodeNumber: episode.number,
+          name: episode.title,
+          description: episode.summary || null,
+          novelText: episode.content,
+          activeSourceId: sourceId,
+          activeSourceKind: "original",
+        });
+        newSources.push({
+          id: sourceId,
+          episodeId,
+          manuscriptId: manuscript?.id,
+          kind: "original",
+          version: 1,
+          title: episode.title,
+          summary: episode.summary || null,
+          content: episode.content,
+          sourceHash,
+          sourceStartIndex: episode.startIndex,
+          sourceEndIndex: episode.endIndex,
+        });
         continue;
       }
 
-      let sourceId =
-        current.novelText === episode.content &&
-        current.activeSourceKind === "original" &&
-        current.activeSourceId
-          ? current.activeSourceId
-          : current.sourceVersions.find(
-              (source) => source.sourceHash === sourceHash,
-            )?.id;
+      let sourceId = current.sourceVersions.find(
+        (source) =>
+          source.sourceHash === sourceHash &&
+          source.manuscriptId === (manuscript?.id ?? null) &&
+          source.title === episode.title &&
+          source.summary === (episode.summary || null) &&
+          source.sourceStartIndex === episode.startIndex &&
+          source.sourceEndIndex === episode.endIndex,
+      )?.id;
       if (!sourceId) {
         sourceId = randomUUID();
-        await tx.episodeSourceVersion.create({
-          data: {
-            id: sourceId,
-            episodeId: current.id,
-            manuscriptId: manuscript?.id,
-            kind: "original",
-            version: (current.sourceVersions[0]?.version ?? 0) + 1,
-            title: episode.title,
-            summary: episode.summary || null,
-            content: episode.content,
-            sourceHash,
-            sourceStartIndex: episode.startIndex,
-            sourceEndIndex: episode.endIndex,
-          },
+        newSources.push({
+          id: sourceId,
+          episodeId: current.id,
+          manuscriptId: manuscript?.id,
+          kind: "original",
+          version: (current.sourceVersions[0]?.version ?? 0) + 1,
+          title: episode.title,
+          summary: episode.summary || null,
+          content: episode.content,
+          sourceHash,
+          sourceStartIndex: episode.startIndex,
+          sourceEndIndex: episode.endIndex,
         });
       }
-      records.push(
-        await tx.episode.update({
-          where: { id: current.id },
-          data: {
-            name: episode.title,
-            description: episode.summary || null,
-            novelText: episode.content,
-            activeSourceId: sourceId,
-            activeSourceKind: "original",
-          },
-        }),
-      );
+      episodeUpdates.push({
+        id: current.id,
+        name: episode.title,
+        description: episode.summary || null,
+        novelText: episode.content,
+        activeSourceId: sourceId,
+      });
     }
-    return records;
+
+    if (newEpisodes.length)
+      await tx.episode.createMany({ data: newEpisodes });
+    if (newSources.length)
+      await tx.episodeSourceVersion.createMany({ data: newSources });
+    if (episodeUpdates.length)
+      await updateEpisodesInBulk(tx, episodeUpdates);
+
+    const records = await tx.episode.findMany({
+      where: { projectId: input.projectId, episodeNumber: { in: numbers } },
+    });
+    const recordsByNumber = new Map(
+      records.map((episode) => [episode.episodeNumber, episode]),
+    );
+    return episodes.flatMap((episode) => {
+      const record = recordsByNumber.get(episode.number);
+      return record ? [record] : [];
+    });
   });
+}
+
+type EpisodeBulkUpdate = {
+  id: string;
+  name: string;
+  description: string | null;
+  novelText: string;
+  activeSourceId: string;
+};
+
+async function updateEpisodesInBulk(
+  tx: Prisma.TransactionClient,
+  updates: EpisodeBulkUpdate[],
+) {
+  const values = updates.map(
+    (episode) => Prisma.sql`(
+      ${episode.id},
+      ${episode.name},
+      ${episode.description},
+      ${episode.novelText},
+      ${episode.activeSourceId}
+    )`,
+  );
+  await tx.$executeRaw(Prisma.sql`
+    UPDATE "episodes" AS episode
+    SET
+      "name" = data."name",
+      "description" = data."description",
+      "novel_text" = data."novel_text",
+      "active_source_id" = data."active_source_id",
+      "active_source_kind" = 'original',
+      "updated_at" = CURRENT_TIMESTAMP
+    FROM (VALUES ${Prisma.join(values)}) AS data(
+      "id",
+      "name",
+      "description",
+      "novel_text",
+      "active_source_id"
+    )
+    WHERE episode."id" = data."id"
+  `);
 }
 
 export async function saveManuscript(input: {
@@ -428,7 +488,7 @@ export async function updateManuscriptMetadata(input: {
   );
 }
 
-export function summarizeEpisodeContent(content: string, maxLength = 240) {
+export function extractEpisodeExcerpt(content: string, maxLength = 240) {
   const paragraphs = content
     .replace(/^\uFEFF/u, "")
     .split(/\r?\n/u)
@@ -439,7 +499,8 @@ export function summarizeEpisodeContent(content: string, maxLength = 240) {
         !/^(?:第[零〇一二两三四五六七八九十百千万\d]+[卷章节幕集]|Episode\s*\d+|Chapter\s*\d+)/iu.test(
           line,
         ) &&
-        !/^(?:书名|小说名|作品名|作者|字数|简介)\s*[：:]/u.test(line),
+        !/^(?:书名|小说名|作品名|作者|字数|简介)\s*[：:]/u.test(line) &&
+        !isDecorativeLine(line),
     );
   const paragraph = paragraphs.find((line) => line.length >= 20) ?? paragraphs[0] ?? "";
   const normalized = paragraph.replace(/\s+/gu, " ").trim();
@@ -448,9 +509,13 @@ export function summarizeEpisodeContent(content: string, maxLength = 240) {
     : normalized;
 }
 
+function isDecorativeLine(line: string) {
+  return line.length >= 3 && !/[\p{L}\p{N}]/u.test(line);
+}
+
 function resolveManuscriptSlices(episodes: EpisodeSplitDraft[], source: string) {
   const sorted = [...episodes].sort((left, right) => left.startIndex - right.startIndex);
-  let expectedStart = 0;
+  let expectedStart = sorted[0]?.startIndex ?? 0;
   for (const [index, episode] of sorted.entries()) {
     if (
       episode.startIndex !== expectedStart ||
@@ -461,14 +526,14 @@ function resolveManuscriptSlices(episodes: EpisodeSplitDraft[], source: string) 
     expectedStart = episode.endIndex;
   }
   if (expectedStart !== source.length)
-    throw new EpisodeSplitError("分集边界没有完整覆盖原著");
+    throw new EpisodeSplitError("分集边界没有覆盖到原著结尾");
   return sorted.map((episode) => {
     const content = source.slice(episode.startIndex, episode.endIndex);
     return {
       ...episode,
       content,
       wordCount: countWords(content),
-      summary: episode.summary.trim() || summarizeEpisodeContent(content),
+      summary: episode.summary.trim() || extractEpisodeExcerpt(content),
     };
   });
 }

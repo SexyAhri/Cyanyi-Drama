@@ -135,13 +135,13 @@ function contractError(code: string, id: PromptId, detail: string) {
 }
 
 function expectedVersion(id: PromptId) {
+  if (id === PROMPT_IDS.EPISODE_ADAPTATION) return 2;
   if (
     id === PROMPT_IDS.STORY_CONTINUITY_REVIEW ||
     id === PROMPT_IDS.ASSET_VISUAL_EXTRACTION ||
     id === PROMPT_IDS.ASSET_VISUAL_DESIGN ||
     id === PROMPT_IDS.CHARACTER_REFERENCE_DESCRIPTION ||
     id === PROMPT_IDS.EPISODE_SPLIT ||
-    id === PROMPT_IDS.EPISODE_ADAPTATION ||
     id === PROMPT_IDS.STORY_SCREENPLAY_REVISION ||
     id === PROMPT_IDS.STUDIO_WORKFLOW_AGENT
   )

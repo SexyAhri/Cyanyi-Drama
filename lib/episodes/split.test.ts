@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   detectEpisodeMarkers,
+  extractEpisodeExcerpt,
   resolveAiEpisodeBoundaries,
-  summarizeEpisodeContent,
 } from "./split";
 
 describe("episode splitting", () => {
@@ -20,7 +20,30 @@ describe("episode splitting", () => {
     expect(result.hasMarkers).toBe(true);
     expect(result.markerType).toBe("第X集");
     expect(result.episodes.map((episode) => episode.number)).toEqual([1, 2, 3]);
-    expect(result.episodes.map((episode) => episode.content).join("")).toBe(source);
+    expect(result.episodes[0].content).toMatch(/^第1集/u);
+    expect(result.episodes.map((episode) => episode.content).join("")).toBe(
+      source.slice(result.matches[0].index),
+    );
+  });
+
+  it("keeps download-site metadata out of the first chapter", () => {
+    const frontMatter = [
+      "================================",
+      "更多精校小说尽在知轩藏书下载：http://example.com/",
+      "书名：《玄天战尊》",
+      "作者：妖月夜",
+      "简介：寒门少年踏上修炼之路。",
+      "第一卷",
+    ].join("\n");
+    const source = `${frontMatter}\n第1章 寒门少年\n${"第一章正文。".repeat(30)}\n第2章 强者之心\n${"第二章正文。".repeat(30)}`;
+
+    const result = detectEpisodeMarkers(source);
+
+    expect(result.episodes).toHaveLength(2);
+    expect(result.episodes[0].content).toMatch(/^第1章 寒门少年/u);
+    expect(result.episodes[0].content).not.toContain("知轩藏书");
+    expect(result.episodes[0].content).not.toContain("书名：《玄天战尊》");
+    expect(result.episodes[0].content).not.toContain("简介：");
   });
 
   it("resolves AI markers into exact gap-free source slices", () => {
@@ -75,10 +98,10 @@ describe("episode splitting", () => {
     ).toThrow("endMarker 不在本集范围内");
   });
 
-  it("creates a factual local preview summary without using metadata headings", () => {
+  it("creates a factual chapter excerpt without using metadata headings", () => {
     expect(
-      summarizeEpisodeContent(
-        "第1章 初见\n作者：测试作者\n少年推开院门，看见多年未归的父亲站在雨中。",
+      extractEpisodeExcerpt(
+        "第1章 初见\n作者：测试作者\n================================\n少年推开院门，看见多年未归的父亲站在雨中。",
       ),
     ).toBe("少年推开院门，看见多年未归的父亲站在雨中。");
   });

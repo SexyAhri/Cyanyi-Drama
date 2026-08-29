@@ -510,7 +510,7 @@ export function SplitNovelDialog({
                               />
                             </label>
                             <label className="grid gap-1.5 text-xs font-medium">
-                              {copy.episodeSynopsis}
+                              {copy.episodeExcerpt}
                               <Textarea
                                 className="min-h-24 resize-y field-sizing-fixed"
                                 disabled={isSubmitting}

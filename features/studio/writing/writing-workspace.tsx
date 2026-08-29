@@ -627,7 +627,9 @@ function SourceVersionPane({
           {source.summary ? (
             <div>
               <p className="text-xs font-medium text-muted-foreground">
-                {copy.episodeSynopsis}
+                {kind === "adapted"
+                  ? copy.episodeSynopsis
+                  : copy.episodeExcerpt}
               </p>
               <p className="mt-1 line-clamp-3 leading-6">{source.summary}</p>
             </div>

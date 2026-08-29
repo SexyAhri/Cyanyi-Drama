@@ -72,7 +72,6 @@ export async function adaptEpisodeSource(input: {
       locale: input.locale,
       variables: {
         source_text: original.content,
-        episode_summary: original.summary ?? episode.description ?? "",
         manuscript_context: JSON.stringify({
           title: original.manuscript?.title ?? "",
           author: original.manuscript?.author ?? "",
@@ -87,7 +86,10 @@ export async function adaptEpisodeSource(input: {
       },
     }),
     schema: episodeAdaptationSchema,
-    validate: (data) => validateSourceEvidence(data.sourceEvidence, original.content),
+    validate: (data) => [
+      ...validateSourceEvidence(data.sourceEvidence, original.content),
+      ...validateAdaptationSummary(data.summary, original.content),
+    ],
     temperature: 0.2,
   });
 
@@ -183,6 +185,26 @@ export function validateSourceEvidence(evidence: string[], source: string) {
           },
         ],
   );
+}
+
+export function validateAdaptationSummary(summary: string, source: string) {
+  const normalized = summary.replace(/\s+/gu, "").trim();
+  const sourceLength = source.replace(/\s+/gu, "").length;
+  const minimumLength = Math.min(
+    sourceLength,
+    180,
+    Math.max(30, Math.ceil(sourceLength * 0.03)),
+  );
+  return normalized.length >= minimumLength
+    ? []
+    : [
+        {
+          code: "EPISODE_SUMMARY_TOO_SHALLOW",
+          path: "summary",
+          message:
+            "summary must be regenerated from the complete source and cover setup, conflict, turning point, and ending state",
+        },
+      ];
 }
 
 async function ensureEpisodeSourceVersions(input: {
