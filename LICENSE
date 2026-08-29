@@ -1,0 +1,137 @@
+Cyanyi Drama Personal Use License 1.0
+Cyanyi Drama 个人使用许可证 1.0
+
+Copyright (c) 2026 Cyanyi Drama. All rights reserved.
+
+IMPORTANT: This is a source-available license, not an open-source license as
+defined by the Open Source Initiative. Commercial use requires a separate
+written license from the copyright holder.
+
+重要提示：本许可证属于“源代码可用”许可证，不是开放源代码促进会（OSI）定义的
+开源许可证。任何商业使用均须事先取得版权所有者另行出具的书面商业授权。
+
+1. Personal License Grant / 个人授权
+
+Subject to this License, an individual natural person may access, copy, run,
+and modify the Software solely for personal, non-commercial purposes,
+including learning, research, evaluation, experimentation, and development of
+projects that do not directly or indirectly generate revenue or provide a
+commercial benefit.
+
+在遵守本许可证的前提下，自然人可以仅为个人、非商业目的访问、复制、运行和修改
+本软件，包括学习、研究、评估、实验，以及开发不会直接或间接产生收入或商业利益
+的项目。
+
+2. Commercial Use Requires Authorization / 商业使用须授权
+
+You must obtain a separate written commercial license from the copyright
+holder before using the Software for any commercial purpose. Commercial use
+includes, without limitation:
+
+在将本软件用于任何商业目的前，您必须取得版权所有者另行出具的书面商业授权。
+商业使用包括但不限于：
+
+- use by or on behalf of a company, partnership, organization, government
+  entity, or other legal entity;
+- internal business operations, production workflows, or employee tools;
+- paid work, client projects, consulting, contracting, or commissioned work;
+- offering the Software or its functionality as SaaS, a hosted service, an
+  API, a managed service, or part of a paid product;
+- use connected to subscriptions, sales, fees, advertising, sponsorship,
+  investment, fundraising, cost reduction, or any other commercial benefit;
+- distribution, sublicensing, sale, rental, leasing, or bundling of the
+  Software or a derivative work for commercial purposes.
+
+- 由公司、合伙组织、机构、政府单位或其他法人主体使用，或代表上述主体使用；
+- 用于内部业务运营、生产工作流或员工工具；
+- 用于有偿工作、客户项目、咨询、承包或委托开发；
+- 将本软件或其功能作为 SaaS、托管服务、API、代运营服务或付费产品的一部分提供；
+- 与订阅、销售、收费、广告、赞助、投资、融资、降本增效或其他商业利益相关的使用；
+- 为商业目的分发、再许可、销售、出租、租赁、捆绑本软件或其衍生作品。
+
+Commercial authorization may impose additional terms, fees, usage limits,
+support conditions, or branding requirements. Authorization is valid only
+when granted in writing by the copyright holder.
+
+商业授权可以包含额外条款、费用、使用限制、支持条件或品牌要求。只有版权所有者
+以书面形式授予的授权才有效。
+
+3. Personal Redistribution / 个人非商业分发
+
+An individual may redistribute an unmodified or modified copy solely for
+non-commercial purposes, provided that the complete source code, this License,
+and all copyright and attribution notices are included. The recipient receives
+rights only under this License. You may not remove, obscure, or alter licensing
+or copyright notices.
+
+自然人可以仅为非商业目的分发本软件的原始版本或修改版本，但必须同时提供完整源代码、
+本许可证及全部版权和署名声明。接收方仅依照本许可证取得权利。您不得删除、遮挡或修改
+许可证及版权声明。
+
+4. Restrictions / 限制
+
+Except as expressly permitted by this License or a separate written commercial
+license, you may not use, reproduce, modify, distribute, sublicense, sell,
+rent, lease, host, or otherwise exploit the Software. You may not use the
+Cyanyi Drama name, logo, or trademarks to imply endorsement or an official
+relationship without written permission.
+
+除本许可证或另行签署的书面商业许可证明确允许外，您不得使用、复制、修改、分发、
+再许可、销售、出租、租赁、托管或以其他方式利用本软件。未经书面许可，您不得使用
+Cyanyi Drama 的名称、标志或商标暗示认可、背书或官方关系。
+
+5. Contributions / 贡献
+
+Unless covered by a separate written agreement, any contribution intentionally
+submitted to this project is licensed to the project and its copyright holders
+under terms sufficient to use, modify, sublicense, and relicense that
+contribution as part of the Software. Do not submit a contribution if you do
+not have authority to grant these rights.
+
+除非另有书面协议，任何有意提交到本项目的贡献，均视为向本项目及其版权所有者授予
+足以将该贡献作为本软件一部分进行使用、修改、再许可和重新许可的权利。若您无权授予
+这些权利，请勿提交贡献。
+
+6. Third-Party Components / 第三方组件
+
+Third-party libraries, assets, models, and other components included with or
+used by the Software remain subject to their respective licenses. This License
+does not replace or restrict those third-party licenses.
+
+本软件包含或使用的第三方库、资产、模型及其他组件，继续适用其各自的许可证。本许可证
+不替代或限制任何第三方许可证。
+
+7. Termination / 终止
+
+Your rights under this License terminate automatically when you violate it.
+Upon termination, you must stop using and distributing the Software and delete
+all copies under your control. Sections concerning commercial use,
+restrictions, disclaimer, liability, and governing rights survive termination.
+
+若您违反本许可证，您依据本许可证取得的权利将自动终止。授权终止后，您必须停止使用
+和分发本软件，并删除您控制的全部副本。有关商业使用、限制、免责声明、责任及权利归属
+的条款在终止后继续有效。
+
+8. Disclaimer and Limitation of Liability / 免责声明与责任限制
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. TO THE MAXIMUM EXTENT
+PERMITTED BY LAW, THE COPYRIGHT HOLDERS ARE NOT LIABLE FOR ANY CLAIM, DAMAGES,
+OR OTHER LIABILITY ARISING FROM OR RELATED TO THE SOFTWARE OR ITS USE.
+
+本软件按“现状”提供，不附带任何明示或默示保证，包括但不限于适销性、特定用途适用性、
+权利完整性及不侵权保证。在法律允许的最大范围内，版权所有者不对因本软件或其使用而
+产生或与之相关的任何索赔、损害或其他责任承担责任。
+
+9. Language / 语言
+
+The English and Chinese texts are intended to express the same terms. If an
+interpretation conflict arises, the Chinese text controls.
+
+中英文文本旨在表达相同条款。如两种文本的解释发生冲突，以中文文本为准。
+
+For commercial licensing, contact the copyright holder through the contact
+channel published by the Cyanyi Drama project.
+
+如需商业授权，请通过 Cyanyi Drama 项目公开的联系渠道联系版权所有者。
