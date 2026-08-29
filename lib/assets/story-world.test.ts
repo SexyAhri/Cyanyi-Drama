@@ -4,6 +4,7 @@ import type { AssetVisualProfileSpec } from "./visual-profile";
 import {
   buildAssetStoryWorldContext,
   findStoryWorldTextConflicts,
+  findVisualProfileStoryWorldConflictDetails,
   findVisualProfileStoryWorldConflicts,
   getStoryWorldDirective,
 } from "./story-world";
@@ -42,6 +43,20 @@ describe("asset story world", () => {
         "现代商务服装",
         "现代短发造型",
         "现代建筑或室内",
+      ]),
+    );
+    expect(
+      findVisualProfileStoryWorldConflictDetails(
+        modernSpec,
+        cultivationContext(),
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "shapeAndStructure" }),
+        expect.objectContaining({ path: "surfaceAndStyling" }),
+        expect.objectContaining({ path: "lightingAndPresentation" }),
+        expect.objectContaining({ path: "signatureDetails.0" }),
+        expect.objectContaining({ path: "inferenceNotes.0" }),
       ]),
     );
   });

@@ -68,7 +68,7 @@ const PREMODERN_CONFLICTS = [
   {
     label: "现代商务服装",
     pattern:
-      /西装|西服|衬衫|领带|领结|西裤|商务外套|呢质外套|blazer|business\s+suit|dress\s+shirt|necktie/giu,
+      /西装|西服|衬衫|领带|领结|西裤|商务外套|商务服饰|商务装|商务着装|呢质外套|blazer|business\s+suit|business\s+attire|dress\s+shirt|necktie/giu,
   },
   {
     label: "现代休闲服装",
@@ -219,17 +219,44 @@ export function findVisualProfileStoryWorldConflicts(
   spec: AssetVisualProfileSpec,
   context: AssetStoryWorldContext,
 ) {
-  return findStoryWorldTextConflicts(
-    [
-      spec.visualIdentity,
-      spec.shapeAndStructure,
-      spec.surfaceAndStyling,
-      spec.lightingAndPresentation,
-      ...spec.signatureDetails,
-      ...spec.inferenceNotes,
-    ].join("\n"),
-    context,
-  );
+  return [
+    ...new Set(
+      findVisualProfileStoryWorldConflictDetails(spec, context).flatMap(
+        (detail) => detail.conflicts,
+      ),
+    ),
+  ];
+}
+
+export function findVisualProfileStoryWorldConflictDetails(
+  spec: AssetVisualProfileSpec,
+  context: AssetStoryWorldContext,
+) {
+  const fields = [
+    { path: "visualIdentity", text: spec.visualIdentity },
+    { path: "shapeAndStructure", text: spec.shapeAndStructure },
+    { path: "surfaceAndStyling", text: spec.surfaceAndStyling },
+    {
+      path: "lightingAndPresentation",
+      text: spec.lightingAndPresentation,
+    },
+    ...spec.signatureDetails.map((text, index) => ({
+      path: `signatureDetails.${index}`,
+      text,
+    })),
+    ...spec.consistencyRules.map((text, index) => ({
+      path: `consistencyRules.${index}`,
+      text,
+    })),
+    ...spec.inferenceNotes.map((text, index) => ({
+      path: `inferenceNotes.${index}`,
+      text,
+    })),
+  ];
+  return fields.flatMap(({ path, text }) => {
+    const conflicts = findStoryWorldTextConflicts(text, context);
+    return conflicts.length ? [{ path, conflicts }] : [];
+  });
 }
 
 export function findStoryWorldTextConflicts(

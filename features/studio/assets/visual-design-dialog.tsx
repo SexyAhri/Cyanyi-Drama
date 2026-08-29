@@ -15,6 +15,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { AssetVisualProfileSpec } from "@/lib/assets/visual-profile";
 import { getProjectArtStyleLabel } from "@/lib/projects/art-style";
 
@@ -51,6 +52,9 @@ export function VisualDesignDialog({
   const [spec, setSpec] = useState<AssetVisualProfileSpec>(() => emptySpec());
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [section, setSection] = useState<
+    "appearance" | "rules" | "inference"
+  >("appearance");
 
   useEffect(() => {
     if (!models.some((model) => model.id === modelId))
@@ -58,7 +62,10 @@ export function VisualDesignDialog({
   }, [modelId, models]);
 
   function handleOpenChange(nextOpen: boolean) {
-    if (nextOpen) setSpec(entity.visualProfile?.spec ?? emptySpec());
+    if (nextOpen) {
+      setSpec(entity.visualProfile?.spec ?? emptySpec());
+      setSection("appearance");
+    }
     setOpen(nextOpen);
   }
 
@@ -107,7 +114,7 @@ export function VisualDesignDialog({
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
       <DialogTrigger render={trigger} />
-      <DialogContent className="h-[calc(100dvh-1rem)] max-h-[76rem] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-lg p-0 sm:h-[min(96dvh,76rem)] sm:max-w-3xl">
+      <DialogContent className="h-[calc(100dvh-1rem)] max-h-[54rem] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-lg p-0 sm:h-[min(92dvh,54rem)] sm:max-w-4xl">
         <DialogHeader className="border-b px-5 py-4">
           <DialogTitle>
             {copy.visualDesign} · {entity.name}
@@ -118,7 +125,7 @@ export function VisualDesignDialog({
         </DialogHeader>
 
         <div className="min-h-0 overflow-y-auto overscroll-contain px-5 py-4">
-          <div className="mb-4 flex items-start gap-3 border bg-muted/35 px-3 py-2.5">
+          <div className="flex items-start gap-3 border-b pb-4">
             <LockKeyhole className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <div className="min-w-0">
               <p className="text-sm font-medium">
@@ -129,7 +136,7 @@ export function VisualDesignDialog({
               </p>
             </div>
           </div>
-          <div className="grid gap-3 border-b pb-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+          <div className="grid gap-3 border-b py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
             <label className="grid gap-1.5 text-sm font-medium">
               {copy.analysisModel}
               <ModelSelect
@@ -157,67 +164,114 @@ export function VisualDesignDialog({
             </Button>
           </div>
 
-          <div className="grid gap-4 py-4 sm:grid-cols-2">
-            <SpecField
-              disabled={busy}
-              label={copy.visualIdentity}
-              onChange={(value) => setSpec({ ...spec, visualIdentity: value })}
-              value={spec.visualIdentity}
-            />
-            <SpecField
-              disabled={busy}
-              label={copy.shapeAndStructure}
-              onChange={(value) => setSpec({ ...spec, shapeAndStructure: value })}
-              value={spec.shapeAndStructure}
-            />
-            <SpecField
-              disabled={busy}
-              label={copy.surfaceAndStyling}
-              onChange={(value) => setSpec({ ...spec, surfaceAndStyling: value })}
-              value={spec.surfaceAndStyling}
-            />
-            <SpecField
-              disabled={busy}
-              label={copy.colorPalette}
-              onChange={(value) => setSpec({ ...spec, colorPalette: value })}
-              value={spec.colorPalette}
-            />
-            <SpecField
-              disabled={busy}
-              label={copy.lightingAndPresentation}
-              onChange={(value) =>
-                setSpec({ ...spec, lightingAndPresentation: value })
-              }
-              value={spec.lightingAndPresentation}
-            />
-            <ListField
-              disabled={busy}
-              label={copy.signatureDetails}
-              onChange={(value) => setSpec({ ...spec, signatureDetails: value })}
-              value={spec.signatureDetails}
-            />
-            <ListField
-              className="sm:col-span-2"
-              disabled={busy}
-              label={copy.consistencyRules}
-              onChange={(value) => setSpec({ ...spec, consistencyRules: value })}
-              value={spec.consistencyRules}
-            />
-            <SpecField
-              className="sm:col-span-2"
-              disabled={busy}
-              label={copy.negativePrompt}
-              onChange={(value) => setSpec({ ...spec, negativePrompt: value })}
-              value={spec.negativePrompt}
-            />
-            <ListField
-              className="sm:col-span-2"
-              disabled={busy}
-              label={copy.inferenceNotes}
-              onChange={(value) => setSpec({ ...spec, inferenceNotes: value })}
-              value={spec.inferenceNotes}
-            />
-          </div>
+          <Tabs
+            className="gap-0 pt-2"
+            onValueChange={(value) =>
+              setSection(value as "appearance" | "rules" | "inference")
+            }
+            value={section}
+          >
+            <TabsList
+              className="sticky top-0 z-10 w-full justify-start border-b bg-background pt-2"
+              variant="line"
+            >
+              <TabsTrigger className="flex-none px-3" value="appearance">
+                {copy.visualAppearance}
+              </TabsTrigger>
+              <TabsTrigger className="flex-none px-3" value="rules">
+                {copy.visualGenerationRules}
+              </TabsTrigger>
+              <TabsTrigger className="flex-none px-3" value="inference">
+                {copy.visualInferenceRecord}
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent
+              className="grid gap-4 py-4"
+              value="appearance"
+            >
+              <SpecField
+                disabled={busy}
+                label={copy.visualIdentity}
+                onChange={(value) =>
+                  setSpec({ ...spec, visualIdentity: value })
+                }
+                value={spec.visualIdentity}
+              />
+              <SpecField
+                disabled={busy}
+                label={copy.shapeAndStructure}
+                onChange={(value) =>
+                  setSpec({ ...spec, shapeAndStructure: value })
+                }
+                value={spec.shapeAndStructure}
+              />
+              <SpecField
+                disabled={busy}
+                label={copy.surfaceAndStyling}
+                onChange={(value) =>
+                  setSpec({ ...spec, surfaceAndStyling: value })
+                }
+                value={spec.surfaceAndStyling}
+              />
+              <SpecField
+                disabled={busy}
+                label={copy.colorPalette}
+                onChange={(value) => setSpec({ ...spec, colorPalette: value })}
+                value={spec.colorPalette}
+              />
+            </TabsContent>
+
+            <TabsContent
+              className="grid gap-4 py-4"
+              value="rules"
+            >
+              <SpecField
+                disabled={busy}
+                label={copy.lightingAndPresentation}
+                onChange={(value) =>
+                  setSpec({ ...spec, lightingAndPresentation: value })
+                }
+                value={spec.lightingAndPresentation}
+              />
+              <ListField
+                disabled={busy}
+                label={copy.signatureDetails}
+                onChange={(value) =>
+                  setSpec({ ...spec, signatureDetails: value })
+                }
+                value={spec.signatureDetails}
+              />
+              <ListField
+                disabled={busy}
+                label={copy.consistencyRules}
+                onChange={(value) =>
+                  setSpec({ ...spec, consistencyRules: value })
+                }
+                value={spec.consistencyRules}
+              />
+              <SpecField
+                disabled={busy}
+                label={copy.negativePrompt}
+                onChange={(value) =>
+                  setSpec({ ...spec, negativePrompt: value })
+                }
+                value={spec.negativePrompt}
+              />
+            </TabsContent>
+
+            <TabsContent className="py-4" value="inference">
+              <ListField
+                disabled={busy}
+                label={copy.inferenceNotes}
+                onChange={(value) =>
+                  setSpec({ ...spec, inferenceNotes: value })
+                }
+                textareaClassName="h-64"
+                value={spec.inferenceNotes}
+              />
+            </TabsContent>
+          </Tabs>
         </div>
 
         <DialogFooter className="m-0 rounded-none border-t bg-background px-5 py-3">
@@ -252,19 +306,21 @@ function SpecField({
   disabled,
   label,
   onChange,
+  textareaClassName,
   value,
 }: {
   className?: string;
   disabled: boolean;
   label: string;
   onChange: (value: string) => void;
+  textareaClassName?: string;
   value: string;
 }) {
   return (
     <label className={`grid gap-1.5 text-sm font-medium ${className ?? ""}`}>
       {label}
       <Textarea
-        className="min-h-28 max-h-52 resize-y field-sizing-content"
+        className={`h-36 min-h-28 resize-none field-sizing-fixed ${textareaClassName ?? ""}`}
         disabled={disabled}
         maxLength={2_000}
         onChange={(event) => onChange(event.target.value)}
@@ -279,12 +335,14 @@ function ListField({
   disabled,
   label,
   onChange,
+  textareaClassName,
   value,
 }: {
   className?: string;
   disabled: boolean;
   label: string;
   onChange: (value: string[]) => void;
+  textareaClassName?: string;
   value: string[];
 }) {
   return (
@@ -293,6 +351,7 @@ function ListField({
       disabled={disabled}
       label={label}
       onChange={(text) => onChange(lines(text))}
+      textareaClassName={textareaClassName}
       value={value.join("\n")}
     />
   );

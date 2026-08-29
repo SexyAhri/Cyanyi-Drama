@@ -2,6 +2,10 @@ import { z } from "zod";
 
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
+import {
+  StructuredOutputError,
+  type StructuredValidationIssue,
+} from "@/lib/llm/structured-output";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import { assetVisualDesignSchema } from "@/lib/prompts/schemas";
 import { decryptSecret } from "@/lib/server/crypto";
@@ -17,6 +21,7 @@ import type {
 } from "./visual-profile";
 import {
   findVisualProfileStoryWorldConflicts,
+  findVisualProfileStoryWorldConflictDetails,
   getStoryWorldDirective,
   loadProjectAssetStoryWorldContext,
   storyWorldContextForPrompt,
@@ -66,12 +71,35 @@ export async function generateProjectAssetVisualProfile(input: {
       ),
     },
   });
-  const result = await requestOpenAiStructured({
-    ...provider,
-    prompt,
-    schema: assetVisualDesignSchema,
-    temperature: 0.35,
-  });
+  let result: Awaited<
+    ReturnType<typeof requestOpenAiStructured<VisualDesignResult>>
+  >;
+  try {
+    result = await requestOpenAiStructured({
+      ...provider,
+      prompt,
+      schema: assetVisualDesignSchema,
+      temperature: 0.35,
+      validate: (spec) =>
+        storyWorldValidationIssues(
+          spec,
+          storyWorld,
+          input.locale === "en" ? "en" : "zh",
+        ),
+    });
+  } catch (error) {
+    if (
+      error instanceof StructuredOutputError &&
+      error.code === "STRUCTURED_SEMANTIC_INVALID"
+    )
+      throw new ProjectAssetError(
+        input.locale === "en"
+          ? `The generated visual profile still conflicts with the project story world after targeted correction: ${error.details.join("; ")}`
+          : `模型定向修正后，视觉设定仍与项目故事时代冲突：${error.details.join("；")}`,
+        422,
+      );
+    throw error;
+  }
   assertStoryWorldCompatibility(result.data, storyWorld);
   const profile = await persistVisualProfile({
     ...input,
@@ -228,6 +256,23 @@ function assertStoryWorldCompatibility(
   throw new ProjectAssetError(
     `视觉设定与故事时代冲突：检测到${conflicts.join("、")}。请按项目故事世界重新设计，不能用画风替代时代设定。`,
     422,
+  );
+}
+
+function storyWorldValidationIssues(
+  spec: AssetVisualProfileSpec,
+  storyWorld: AssetStoryWorldContext,
+  locale: "zh" | "en",
+): StructuredValidationIssue[] {
+  return findVisualProfileStoryWorldConflictDetails(spec, storyWorld).map(
+    ({ path, conflicts }) => ({
+      code: "STORY_WORLD_CONFLICT",
+      path,
+      message:
+        locale === "en"
+          ? `This field contains ${conflicts.join(", ")}, which conflicts with the project story world. Correct only the conflicting visual details using the supplied source evidence and story-world directive; preserve all valid source facts and compliant fields.`
+          : `该字段包含${conflicts.join("、")}，与项目故事时代冲突。只修正冲突的视觉细节，严格依据已提供的原文证据和故事世界约束，保留原作事实及其他合规字段。`,
+    }),
   );
 }
 

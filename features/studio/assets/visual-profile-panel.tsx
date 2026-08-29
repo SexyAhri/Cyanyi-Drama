@@ -59,16 +59,19 @@ export function VisualProfilePanel({
       </div>
 
       {profile ? (
-        <div className="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
-          <ProfileValue label={copy.visualIdentity} value={profile.spec.visualIdentity} />
-          <ProfileValue label={copy.colorPalette} value={profile.spec.colorPalette} />
-          <ProfileValue label={copy.shapeAndStructure} value={profile.spec.shapeAndStructure} />
-          <ProfileValue label={copy.surfaceAndStyling} value={profile.spec.surfaceAndStyling} />
+        <div className="mt-4 grid gap-x-8 gap-y-4 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(14rem,0.8fr)]">
           <ProfileValue
-            label={copy.consistencyRules}
-            value={profile.spec.consistencyRules.join("；")}
+            label={copy.visualIdentity}
+            value={profile.spec.visualIdentity}
           />
-          <ProfileValue label={copy.negativePrompt} value={profile.spec.negativePrompt} />
+          <ProfileValue
+            label={copy.surfaceAndStyling}
+            value={profile.spec.surfaceAndStyling}
+          />
+          <ProfileValue
+            label={copy.colorPalette}
+            value={profile.spec.colorPalette}
+          />
         </div>
       ) : (
         <p className="mt-3 text-sm text-muted-foreground">
@@ -83,7 +86,7 @@ function ProfileValue({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <p className="text-[11px] text-muted-foreground">{label}</p>
-      <p className="mt-1 text-sm leading-6">{value}</p>
+      <p className="mt-1 line-clamp-3 text-sm leading-6">{value}</p>
     </div>
   );
 }
