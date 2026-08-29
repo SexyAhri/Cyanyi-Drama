@@ -73,7 +73,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_STORYBOARD_PLANNING]: {
     pathStem: "domain/story_storyboard_planning",
-    version: 10,
+    version: 11,
     variables: [
       "source_text",
       "characters_json",
@@ -93,7 +93,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_CINEMATOGRAPHY]: {
     pathStem: "domain/story_cinematography",
-    version: 6,
+    version: 7,
     variables: [
       "panels_json",
       "locations_json",
@@ -111,7 +111,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_ACTING_DIRECTION]: {
     pathStem: "domain/story_acting_direction",
-    version: 7,
+    version: 8,
     variables: [
       "panels_json",
       "characters_json",
@@ -129,7 +129,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_STORYBOARD_REFINEMENT]: {
     pathStem: "domain/story_storyboard_refinement",
-    version: 8,
+    version: 9,
     variables: [
       "source_text",
       "panels_json",
@@ -166,7 +166,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_CONTINUITY_REVIEW]: {
     pathStem: "domain/story_continuity_review",
-    version: 4,
+    version: 5,
     variables: [
       "panels_json",
       "characters_json",

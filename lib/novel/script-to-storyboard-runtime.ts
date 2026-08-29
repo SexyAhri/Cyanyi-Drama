@@ -25,6 +25,8 @@ import {
 import {
   buildSourceEvents,
   estimateSpeechDurationSeconds,
+  normalizeActingDirectionContract,
+  normalizeCinematographyContract,
   normalizeReusableScreenplaySourceContract,
   normalizeStoryboardPlanningContract,
   normalizeStoryboardRefinementContract,
@@ -591,6 +593,8 @@ async function runCinematographyPhase(
     },
   });
   const expectedIndices = planning.panels.map((panel) => panel.panelIndex);
+  const normalize = (data: Cinematography) =>
+    normalizeCinematographyContract(data, planning.panels);
   return resolvePhase({
     artifactType: "storyboard.clip.phase2.cine",
     traceRefId: `${context.clip.id}:phase2.cine`,
@@ -603,6 +607,7 @@ async function runCinematographyPhase(
       storyWorld: context.storyWorldDirective,
     }),
     schema: cinematographySchema,
+    normalize,
     validate: (data) => validateCinematographyCoverage(data, expectedIndices),
     hooks,
     request: () =>
@@ -611,7 +616,7 @@ async function runCinematographyPhase(
         prompt,
         schema: cinematographySchema,
         validate: (data) =>
-          validateCinematographyCoverage(data, expectedIndices),
+          validateCinematographyCoverage(normalize(data), expectedIndices),
       }),
   });
 }
@@ -632,6 +637,8 @@ async function runActingPhase(
       continuity_anchor_json: context.continuityAnchorText,
     },
   });
+  const normalize = (data: ActingDirection) =>
+    normalizeActingDirectionContract(data, planning.panels);
   return resolvePhase({
     artifactType: "storyboard.clip.phase2.acting",
     traceRefId: `${context.clip.id}:phase2.acting`,
@@ -644,6 +651,7 @@ async function runActingPhase(
       continuityAnchor: context.continuityAnchorText,
     }),
     schema: actingDirectionSchema,
+    normalize,
     validate: (data) => validateActingCoverage(data, planning.panels),
     hooks,
     request: () =>
@@ -651,7 +659,8 @@ async function runActingPhase(
         ...context.provider,
         prompt,
         schema: actingDirectionSchema,
-        validate: (data) => validateActingCoverage(data, planning.panels),
+        validate: (data) =>
+          validateActingCoverage(normalize(data), planning.panels),
       }),
   });
 }
@@ -1112,9 +1121,16 @@ export function buildDeterministicStoryboardPhases(
         props: previous.endState.props,
         characterStates: previous.endState.characterStates,
         propStates: previous.endState.propStates,
+        environmentState: previous.endState.environmentState,
       };
   });
-  const planning = normalizeStoryboardDialogueTiming({ panels });
+  const planning = normalizeStoryboardPlanningContract(
+    normalizeStoryboardDialogueTiming({ panels }),
+    {
+      sourceText: context.sourceText,
+      screenplay: context.screenplay,
+    },
+  );
   const cinematography: Cinematography = {
     rules: planning.panels.map((panel) => ({
       panelIndex: panel.panelIndex,
@@ -1125,6 +1141,31 @@ export function buildDeterministicStoryboardPhases(
       composition: "主体位于视觉重心，预留动作与视线空间",
       depthOfField: panel.shotType === "全景" ? "中等景深" : "浅景深",
       colorTone: "统一场景色温与电影级对比度",
+      cameraStart: {
+        position: "主体正前方并遵守既定轴线",
+        height: "平视高度",
+        angle: "平视",
+        shotSize: panel.shotType ?? "中景",
+        composition: "主体位于视觉重心并保留动作空间",
+        focus: panel.speakingCharacter ?? panel.characters[0] ?? "主要剧情对象",
+      },
+      cameraPath: {
+        primaryMovement:
+          panel.speakingCharacter || panel.voiceoverText
+            ? ("push" as const)
+            : ("track" as const),
+        direction: panel.speakingCharacter ? "缓慢向主体推进" : "沿主体动作方向",
+        speed: "均匀克制",
+        distance: "仅覆盖本镜构图变化所需距离",
+        stabilization: "稳定器，保持画面轴线与地平线",
+        focusChange: "持续锁定当前叙事主体",
+      },
+      cameraEnd: {
+        shotSize: panel.speakingCharacter ? "近景" : panel.shotType ?? "中景",
+        composition: "收住动作结果与角色反应，保持剪辑匹配点",
+        focus: panel.speakingCharacter ?? panel.characters[0] ?? "动作结果",
+        nextCutPoint: panel.worldContext?.shotIntent?.endBeat ?? panel.description,
+      },
     })),
   };
   const acting: ActingDirection = {
@@ -1135,6 +1176,14 @@ export function buildDeterministicStoryboardPhases(
         emotion: "遵循当前剧情情绪",
         action: "按剧本动作自然表演",
         expression: "细腻克制，保持角色连续性",
+        performancePriority:
+          panel.speakingCharacter === name
+            ? ("primary" as const)
+            : panel.motionTimeline.some((beat) => beat.target === name)
+              ? ("reaction" as const)
+              : ("background" as const),
+        allowedMicroMotion:
+          "仅允许与情绪和动作因果一致的呼吸、眨眼、视线、手指和重心微动",
         evidence: [
           panel.sourceEvidence[0] ??
             panel.motionTimeline[0]?.action ??
@@ -1146,6 +1195,13 @@ export function buildDeterministicStoryboardPhases(
             endSecond: panel.durationSeconds,
             objective: "完成本镜已经确定的动作与反应",
             subtext: null,
+            trigger:
+              panel.motionTimeline.find(
+                (beat) => beat.actor === name || beat.target === name,
+              )?.trigger ?? "承接本镜起始状态与上一角色反应",
+            microPause: "在意图形成或受力反馈后保留短暂停顿，不冻结表演",
+            breath: "呼吸节奏随情绪张力和发力阶段连续变化",
+            weightShift: "重心随准备、发力、接触和收势连续转移",
             action:
               panel.motionTimeline
                 .filter(
@@ -1184,7 +1240,7 @@ function formatMotionTimelinePrompt(
 ) {
   const beats = panel.motionTimeline.map(
     (beat) =>
-      `${beat.startSecond}-${beat.endSecond}s | 节拍：${beat.beatId ?? "普通动作"} | 施动者：${beat.actor ?? "未指定"} | 目标：${beat.target ?? "无"} | 肢体/道具：${[beat.bodyPart, beat.prop].filter(Boolean).join("+") || "未指定"} | 动作：${beat.action} | 编舞步骤：${beat.choreographyStep ?? "普通动作"} | 轨迹：${beat.trajectory ?? "按动作描述"} | 接触：${beat.contact ?? "none"}${beat.contactPoint ? `@${beat.contactPoint}` : ""} | 反应：${beat.reaction ?? "无明确接触反应"} | 结果：${beat.result ?? "保持本节拍既定结果"} | 因果前项：${beat.causedBy ?? "无"} | 镜头：${beat.camera}`,
+      `${beat.startSecond}-${beat.endSecond}s | 节拍：${beat.beatId ?? "普通动作"} | 触发：${beat.trigger ?? "承接上一状态"} | 施动者：${beat.actor ?? "未指定"} | 目标：${beat.target ?? "无"} | 准备：${beat.preparation ?? "按动作建立姿态"} | 发力来源：${beat.forceSource ?? "按角色重心与肢体动力链"} | 肢体/道具：${[beat.bodyPart, beat.prop].filter(Boolean).join("+") || "未指定"} | 动作：${beat.action} | 编舞步骤：${beat.choreographyStep ?? "普通动作"} | 轨迹：${beat.trajectory ?? "按动作描述"} | 接触：${beat.contact ?? "none"}${beat.contactPoint ? `@${beat.contactPoint}` : ""} | 接触材质：${beat.contactMaterial ?? "无实体接触"} | 反应：${beat.reaction ?? "无明确接触反应"} | 结果：${beat.result ?? "保持本节拍既定结果"} | 收势：${beat.settle ?? "稳定到结束状态"} | 因果前项：${beat.causedBy ?? "无"} | 镜头：${beat.camera}`,
   );
   const world = panel.worldContext
     ? [
@@ -1213,7 +1269,7 @@ function formatMotionTimelinePrompt(
   );
   const performance = actingDirections.map(
     (direction) =>
-      `${direction.name} | 心理与情绪：${direction.emotion} | 动作与反应：${direction.action} | 表情变化：${direction.expression}${direction.beats?.length ? ` | 分拍表演：${direction.beats.map((beat) => `${beat.startSecond}-${beat.endSecond}s 目标=${beat.objective} 潜台词=${beat.subtext ?? "无"} 动作=${beat.action} 表情=${beat.expression} 视线=${beat.gazeTarget ?? "未指定"} 反应于=${beat.reactionTo ?? "无"}`).join("；")}` : ""}`,
+      `${direction.name} | 表演优先级：${direction.performancePriority ?? "primary"} | 允许微动作：${direction.allowedMicroMotion ?? "仅限剧情支持的呼吸、眨眼、视线和重心变化"} | 心理与情绪：${direction.emotion} | 动作与反应：${direction.action} | 表情变化：${direction.expression}${direction.beats?.length ? ` | 分拍表演：${direction.beats.map((beat) => `${beat.startSecond}-${beat.endSecond}s 触发=${beat.trigger ?? "承接上一状态"} 目标=${beat.objective} 潜台词=${beat.subtext ?? "无"} 微停顿=${beat.microPause ?? "无额外停顿"} 呼吸=${beat.breath ?? "连续自然"} 重心=${beat.weightShift ?? "随动作连续"} 动作=${beat.action} 表情=${beat.expression} 视线=${beat.gazeTarget ?? "未指定"} 反应于=${beat.reactionTo ?? "无"}`).join("；")}` : ""}`,
   );
   return [
     `总时长：${panel.durationSeconds}s`,
@@ -1284,6 +1340,12 @@ function buildFallbackActionTimeline(
     target: design.target ?? null,
     bodyPart: "完成该编舞步骤所需的主要肢体动作链",
     prop: null,
+    trigger:
+      index > 0
+        ? `承接B${String(index).padStart(3, "0")}的动作结果`
+        : `由起始姿态和动作意图触发：${action}`,
+    preparation: `建立完成该编舞步骤所需的距离、重心与预备姿态：${action}`,
+    forceSource: `${design.performer}通过核心重心与主要发力肢体传递力量`,
     trajectory: `沿既定动作方向连续完成：${action}`,
     contact:
       design.target && index === actions.length - 1
@@ -1293,6 +1355,10 @@ function buildFallbackActionTimeline(
       design.target && index === actions.length - 1
         ? "既定命中或接触区域"
         : null,
+    contactMaterial:
+      design.target && index === actions.length - 1
+        ? "按施动肢体、服装、目标身体或道具的既定材质表现接触"
+        : null,
     reaction:
       design.target && index === actions.length - 1
         ? design.impact ?? `${design.target}按既定剧情产生可见受力或防御反馈`
@@ -1301,6 +1367,10 @@ function buildFallbackActionTimeline(
       index === actions.length - 1
         ? design.impact ?? design.environmentResponse ?? action
         : action,
+    settle:
+      index === actions.length - 1
+        ? `在${design.impact ?? design.environmentResponse ?? action}后保持可见余势并稳定到结束状态`
+        : `完成本步骤后保持方向与惯性，连续进入下一动作`,
     causedBy:
       index > 0 ? `B${String(index).padStart(3, "0")}` : null,
     choreographyStep: action,
@@ -1399,6 +1469,15 @@ function fallbackContinuityState(characters: string[], props: string[]) {
       position: "保持本镜已建立的位置",
       state: "保持当前剧情状态",
     })),
+    environmentState: {
+      keyLightSource: "沿用场景已建立的主光源",
+      lightDirection: "保持场景已建立的光线方向",
+      weather: "保持剧本与连续性锚点已建立的天气",
+      windDirection: null,
+      damageState: [],
+      particles: [],
+      ambientAudioKey: "保持本场景已建立的环境底噪",
+    },
   };
 }
 

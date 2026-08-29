@@ -2,7 +2,7 @@
 
 只检查：
 1. 相邻镜头中的角色身份与逐角色状态连续性，包括 position、posture、facing、gazeTarget、左右手占用和身体接触。
-2. 场景、时间、光向、视线、轴线和空间连续性。
+2. 场景、时间、主光源与光向、天气、风向、战损、粒子、环境底噪键、视线、轴线和空间连续性；同一场景承接时，前镜 endState.environmentState 必须先逐字成为后镜 startState.environmentState，再由本镜推进变化。
 3. 道具的出现、唯一实例、holder、position 和 state 连续性；交接必须经历双方接触再完成所有权转移。
 4. 规范实体引用和面板顺序。
 5. 对照 visualProfile 检查角色脸部/发式/服装、场景空间结构/固定地标、道具结构/材质/识别点是否在 description、imagePrompt、videoPrompt 中漂移；同时检查项目画风和故事时代是否被替换。

@@ -180,6 +180,7 @@ export async function createStoryboardPanelImageTask(input: {
   ratio?: string;
   resolution?: string;
   mediaDefaults?: MediaGenerationDefaults;
+  iteration?: GenerationIterationDiagnostics;
 }) {
   const channel = await prisma.channel.findFirst({
     where: accessibleChannelWhere(input.userId, input.channelId),
@@ -280,6 +281,7 @@ export async function createStoryboardPanelImageTask(input: {
     model: input.model,
     request: {
       prompt: compiledPrompt,
+      ...(input.iteration ? { generationIteration: input.iteration } : {}),
       ratio: input.ratio ?? input.mediaDefaults?.imageGenerationRatio ?? "1:1",
       resolution:
         input.resolution ??
@@ -316,6 +318,7 @@ export async function createStoryboardPanelVideoTask(input: {
   mediaDefaults?: MediaGenerationDefaults;
   mode?: "reference" | "first-last";
   lastFramePanelId?: string;
+  iteration?: GenerationIterationDiagnostics;
 }) {
   const channel = await prisma.channel.findFirst({
     where: accessibleChannelWhere(input.userId, input.channelId),
@@ -493,6 +496,7 @@ export async function createStoryboardPanelVideoTask(input: {
     model: input.model,
     request: {
       prompt: compiledPrompt,
+      ...(input.iteration ? { generationIteration: input.iteration } : {}),
       ratio: input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9",
       resolution:
         input.resolution ??
@@ -1209,40 +1213,257 @@ export function compileStoryboardEventBlueprint(
 ) {
   const characters = parseStringArray(panel.charactersJson ?? null);
   const props = parseStringArray(panel.propsJson ?? null);
-  const sourceEvidence = parseStoredJsonValue(panel.sourceEvidenceJson, []);
-  const worldContext = parseStoredJsonValue(panel.worldContextJson, {});
-  const actingNotes = parseStoredJsonValue(panel.actingNotesJson, {});
-  const photographyRules = parseStoredJsonValue(panel.photographyRules, {});
+  const sourceEvidence = parseStoredJsonValue<unknown[]>(
+    panel.sourceEvidenceJson,
+    [],
+  );
+  const worldContext = asBlueprintRecord(
+    parseStoredJsonValue(panel.worldContextJson, {}),
+  );
+  const actingNotes = asBlueprintRecord(
+    parseStoredJsonValue(panel.actingNotesJson, {}),
+  );
+  const photographyRules = asBlueprintRecord(
+    parseStoredJsonValue(panel.photographyRules, {}),
+  );
+  const startState = asBlueprintRecord(
+    parseStoredJsonValue(panel.startStateJson, {}),
+  );
+  const endState = asBlueprintRecord(
+    parseStoredJsonValue(panel.endStateJson, {}),
+  );
+  const shotIntent = asBlueprintRecord(worldContext.shotIntent);
+  const constraints = asBlueprintRecord(worldContext.constraints);
+  const referenceScopes = asBlueprintArray(worldContext.referenceScopes);
+  const environment = asBlueprintRecord(startState.environmentState);
   const sections: string[] = [
     "用户补充提示（只能补充表现方式，不得替换下方剧情事实与状态）：",
     userPrompt,
     "不可省略的结构化镜头制作蓝图：",
+    "1. 镜头意图",
+    `观众应读到：${blueprintText(shotIntent.audienceTakeaway, panel.description?.trim() || "按已批准剧情事件理解")}`,
+    `唯一主要可见事件：${blueprintText(shotIntent.primaryVisibleEvent, panel.description?.trim() || "按已批准分镜执行")}`,
+    `结束节拍：${blueprintText(shotIntent.endBeat, blueprintText(endState.body, "停在已批准结束状态"))}`,
+    "2. 允许出镜的主体与资产",
     `剧情事件：${panel.description?.trim() || "按已批准分镜执行"}`,
     `场景：${panel.locationName?.trim() || "未指定"}`,
     `角色：${characters.length ? characters.join("、") : "无明确出镜角色"}`,
     `道具：${props.length ? props.join("、") : "无关键道具"}`,
-    `世界与特效规则：${JSON.stringify(worldContext)}`,
-    `逐角色分拍表演：${JSON.stringify(actingNotes)}`,
-    `摄影机位与构图规则：${JSON.stringify(photographyRules)}`,
-    `原文事件依据：${JSON.stringify(sourceEvidence)}`,
+    ...formatReferenceScopes(referenceScopes),
+    "3. 世界、空间与开场状态",
+    `世界与能力规则：${formatBlueprintRecord(worldContext, ["shotIntent", "constraints", "riskFocus", "referenceScopes", "evidence"])}`,
+    `环境连续性：${formatBlueprintRecord(environment)}`,
+    `开场人物、道具与空间状态：${formatBlueprintRecord(startState, ["environmentState"])}`,
+    "4. 逐角色分拍表演",
+    ...formatActingBlueprint(actingNotes),
+    "5. 摄影机位与构图规则（完整契约）",
+    ...formatCameraBlueprint(photographyRules),
+    "6. 约束与风险",
+    `必须保持：${formatBlueprintList(constraints.mustHold)}`,
+    `只在本镜变化：${formatBlueprintList(constraints.changesHere)}`,
+    `不得出现：${formatBlueprintList(constraints.mustNotAppear)}`,
+    `最高风险项（最多三项）：${formatBlueprintList(worldContext.riskFocus)}`,
+    `原文事件依据（仅追溯，不代替画面实现）：${formatBlueprintList(sourceEvidence)}`,
   ];
   if (kind === "image") {
-    const staticState = parseStoredJsonValue(panel.startStateJson, {});
     sections.push(
-      `作为后续视频首帧必须成立的静态起始状态：${JSON.stringify(staticState)}`,
+      "7. 静态首帧边界",
+      `作为后续视频首帧必须成立的静态起始状态：${formatBlueprintRecord(startState)}`,
       "只表现这条已批准事件链的起始瞬间，不得提前画出结束结果，也不得省略、改写或新增剧情结果。",
     );
   } else {
+    const motionBeats = asBlueprintArray(
+      parseStoredJsonValue(panel.motionBeatsJson, []),
+    );
+    const vfxCues = asBlueprintArray(
+      parseStoredJsonValue(panel.vfxCuesJson, []),
+    );
+    const sfxCues = asBlueprintArray(
+      parseStoredJsonValue(panel.sfxCuesJson, []),
+    );
     sections.push(
-      `起始状态：${JSON.stringify(parseStoredJsonValue(panel.startStateJson, {}))}`,
-      `结束状态：${JSON.stringify(parseStoredJsonValue(panel.endStateJson, {}))}`,
-      `动作时间线：${JSON.stringify(parseStoredJsonValue(panel.motionBeatsJson, []))}`,
-      `特效执行：${JSON.stringify(parseStoredJsonValue(panel.vfxCuesJson, []))}`,
-      `动作与环境音效：${JSON.stringify(parseStoredJsonValue(panel.sfxCuesJson, []))}`,
+      "7. 动作、互动与表演时间线",
+      ...formatTimelineBlueprint(motionBeats),
+      "8. 光线、特效与声音",
+      `开场光线/天气/粒子/底噪：${formatBlueprintRecord(environment)}`,
+      ...formatCueBlueprint("特效", vfxCues),
+      ...formatCueBlueprint("动作与环境音效", sfxCues),
+      "9. 闭合状态",
+      `结束人物、道具、环境与空间状态：${formatBlueprintRecord(endState)}`,
       "必须按时间线完成起始状态到结束状态的因果动作，不得跳过关键动作、命中反馈、道具状态变化或特效阶段。",
+      "视频只允许环境声、动作声和已列音效，不得自行生成对白、旁白、喊叫、吟唱或其他可辨识人声。",
     );
   }
   return sections.join("\n");
+}
+
+type BlueprintRecord = Record<string, unknown>;
+
+export type GenerationIterationDiagnostics = {
+  failureCode: string;
+  responsibilityLayer:
+    | "storyboard"
+    | "asset_reference"
+    | "camera"
+    | "action_physics"
+    | "acting"
+    | "continuity"
+    | "provider"
+    | "postproduction";
+  changedVariables: string[];
+  hypothesis: string;
+  expectedImprovement: string;
+  mustRemainUnchanged: string[];
+  noImprovementCount: number;
+};
+
+const GENERATION_RESPONSIBILITY_LAYERS = new Set<
+  GenerationIterationDiagnostics["responsibilityLayer"]
+>([
+  "storyboard",
+  "asset_reference",
+  "camera",
+  "action_physics",
+  "acting",
+  "continuity",
+  "provider",
+  "postproduction",
+]);
+
+export function parseGenerationIterationDiagnostics(
+  value: unknown,
+): GenerationIterationDiagnostics | undefined {
+  if (value === undefined || value === null) return undefined;
+  const record = asBlueprintRecord(value);
+  const responsibilityLayer = record.responsibilityLayer;
+  const noImprovementCount = record.noImprovementCount;
+  const changedVariables = stringArrayValue(record.changedVariables);
+  const mustRemainUnchanged = stringArrayValue(record.mustRemainUnchanged);
+  if (
+    !blueprintText(record.failureCode, "") ||
+    typeof responsibilityLayer !== "string" ||
+    !GENERATION_RESPONSIBILITY_LAYERS.has(
+      responsibilityLayer as GenerationIterationDiagnostics["responsibilityLayer"],
+    ) ||
+    !changedVariables.length ||
+    !blueprintText(record.hypothesis, "") ||
+    !blueprintText(record.expectedImprovement, "") ||
+    !mustRemainUnchanged.length ||
+    !Number.isInteger(noImprovementCount) ||
+    Number(noImprovementCount) < 0
+  )
+    throw new ProjectAssetTaskError(
+      "重生成诊断不完整：必须提供 failureCode、有效 responsibilityLayer、changedVariables、hypothesis、expectedImprovement、mustRemainUnchanged 和非负 noImprovementCount",
+      400,
+    );
+  if (Number(noImprovementCount) >= 2)
+    throw new ProjectAssetTaskError(
+      "同一生成假设已连续两轮无改善，必须升级到上游分镜、资产、模型或人工审查，不能继续盲目重试",
+      409,
+    );
+  return {
+    failureCode: blueprintText(record.failureCode),
+    responsibilityLayer:
+      responsibilityLayer as GenerationIterationDiagnostics["responsibilityLayer"],
+    changedVariables,
+    hypothesis: blueprintText(record.hypothesis),
+    expectedImprovement: blueprintText(record.expectedImprovement),
+    mustRemainUnchanged,
+    noImprovementCount: Number(noImprovementCount),
+  };
+}
+
+function stringArrayValue(value: unknown) {
+  return asBlueprintArray(value)
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function asBlueprintRecord(value: unknown): BlueprintRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as BlueprintRecord)
+    : {};
+}
+
+function asBlueprintArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function blueprintText(value: unknown, fallback = "未指定") {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
+  return fallback;
+}
+
+function formatBlueprintList(value: unknown) {
+  const items = asBlueprintArray(value)
+    .map((item) => blueprintText(item, ""))
+    .filter(Boolean);
+  return items.length ? items.join("；") : "无额外项";
+}
+
+function formatBlueprintRecord(
+  value: unknown,
+  excludedKeys: readonly string[] = [],
+) {
+  const excluded = new Set(excludedKeys);
+  const entries = Object.entries(asBlueprintRecord(value))
+    .filter(([key, item]) => !excluded.has(key) && item !== null && item !== undefined)
+    .map(([key, item]) => `${key}=${formatBlueprintValue(item)}`);
+  return entries.length ? entries.join("；") : "无额外规则";
+}
+
+function formatBlueprintValue(value: unknown): string {
+  if (Array.isArray(value))
+    return value.length
+      ? value.map((item) => formatBlueprintValue(item)).join(" / ")
+      : "无";
+  if (value && typeof value === "object")
+    return `{ ${formatBlueprintRecord(value)} }`;
+  return blueprintText(value, "无");
+}
+
+function formatReferenceScopes(scopes: unknown[]) {
+  if (!scopes.length) return ["参考资产继承范围：仅按本镜已批准资产设定继承永久身份，不继承临时姿态与状态"];
+  return scopes.map((value, index) => {
+    const scope = asBlueprintRecord(value);
+    return `参考资产${index + 1}：${blueprintText(scope.assetName)}${scope.assetVersion ? `（版本 ${blueprintText(scope.assetVersion)}）` : ""}；继承=${formatBlueprintList(scope.inherit)}；排除=${formatBlueprintList(scope.exclude)}`;
+  });
+}
+
+function formatActingBlueprint(value: BlueprintRecord) {
+  const characters = asBlueprintArray(value.characters);
+  if (!characters.length) return [formatBlueprintRecord(value)];
+  return characters.map((item, index) => {
+    const character = asBlueprintRecord(item);
+    return `角色${index + 1} ${blueprintText(character.name)}：优先级=${blueprintText(character.performancePriority, "未指定")}；允许微动作=${blueprintText(character.allowedMicroMotion, "仅限有依据的呼吸、眨眼、视线和重心变化")}；情绪=${blueprintText(character.emotion)}；动作=${blueprintText(character.action)}；表情=${blueprintText(character.expression)}；分拍=${formatBlueprintValue(character.beats)}`;
+  });
+}
+
+function formatCameraBlueprint(value: BlueprintRecord) {
+  return [
+    `摄影基础：${formatBlueprintRecord(value, ["cameraStart", "cameraPath", "cameraEnd"])}`,
+    `起始机位：${formatBlueprintRecord(value.cameraStart)}`,
+    `唯一主运镜路径：${formatBlueprintRecord(value.cameraPath)}`,
+    `结束机位与剪辑点：${formatBlueprintRecord(value.cameraEnd)}`,
+  ];
+}
+
+function formatTimelineBlueprint(beats: unknown[]) {
+  if (!beats.length) return ["动作时间线：按已批准的连续动作从开场状态推进到闭合状态"];
+  return beats.map((item, index) => {
+    const beat = asBlueprintRecord(item);
+    return `动作时间线 ${index + 1}：${blueprintText(beat.startSecond, "0")}-${blueprintText(beat.endSecond, "未指定")}秒；${formatBlueprintRecord(beat, ["startSecond", "endSecond"])}`;
+  });
+}
+
+function formatCueBlueprint(label: string, cues: unknown[]) {
+  if (!cues.length) return [`${label}：无`];
+  return cues.map(
+    (cue, index) => `${label}${index + 1}：${formatBlueprintRecord(cue)}`,
+  );
 }
 
 export function assertStoryboardApprovedForMedia(status: string) {

@@ -3,13 +3,13 @@
 规则：
 1. 不改变镜头数量、剧情、角色、对白或动作。
 2. 每个 panelIndex 恰好输出一条规则。
-3. camera、cameraPosition、focalLength、lighting、composition、depthOfField、colorTone 必须具体且相互一致。
+3. camera、cameraPosition、focalLength、lighting、composition、depthOfField、colorTone 必须具体且相互一致；同时明确 cameraStart、cameraPath、cameraEnd。cameraPath.primaryMovement 每镜只能从 locked、pan、tilt、push、pull、track、orbit、crane、handheld 中选择一个，禁止在一个镜头叠加多个主运镜；轻微焦点变化只能写入 focusChange。
 4. 保持相邻镜头轴线、光向、视线和空间连续性。多人互动与打斗镜头必须保证施动者、目标、接触点和目标反应同时可读；不得用遮挡、景深或运镜把关键接触与受力反馈藏掉。
 5. 场景资料中的 visualProfile 是已确认布景结构。机位、构图、景深与光线必须能在其出入口、前中后景、固定地标和主要实际光源中成立；项目画风控制摄影呈现，故事时代规范控制建筑、陈设、材料和光源形态，不得自行改景或换时代。
 6. 只返回严格 JSON，不得包含额外字段。
 
 输出格式：
-{"rules":[{"panelIndex":0,"camera":"摄影机高度与角度","cameraPosition":"相对角色和场景的精确机位","focalLength":"焦段或等效焦距","lighting":"光向与质感","composition":"构图与角色位置","depthOfField":"景深","colorTone":"色调"}]}
+{"rules":[{"panelIndex":0,"camera":"摄影机高度与角度","cameraPosition":"相对角色和场景的精确机位","focalLength":"焦段或等效焦距","lighting":"光向与质感","composition":"构图与角色位置","depthOfField":"景深","colorTone":"色调","cameraStart":{"position":"精确起始机位","height":"摄影机高度","angle":"角度","shotSize":"起始景别","composition":"起始构图","focus":"起始焦点主体"},"cameraPath":{"primaryMovement":"push","direction":"唯一主运镜方向","speed":"速度","distance":"距离","stabilization":"稳定方式","focusChange":"焦点变化或null"},"cameraEnd":{"shotSize":"结束景别","composition":"结束构图","focus":"结束焦点主体","nextCutPoint":"可见动作或构图剪辑点"}}]}
 
 场景资料：{{locations_json}}
 项目统一画风：{{project_style}}

@@ -4,7 +4,7 @@
 1. 保持 panelIndex、sceneNumber、镜头数量和顺序不变。
 2. 保持 shotType、cameraMove、durationSeconds、speakingCharacter、lipSyncText、voiceoverText、startState、endState、worldContext、vfxCues、sfxCues 和 sourceEvidence 完全不变。
 3. 不新增、删除或改写剧情、对白、角色和动作；有依据的 inferred 表演细节可以细化，但不能改变 inferenceType、证据边界或变成剧情事实。
-4. 保持 motionTimeline 的数量、phase、beatId、actor、target、bodyPart、prop、trajectory、contact、contactPoint、reaction、result、causedBy、choreographyStep 和每个关键节拍边界完全不变；每个原 action 必须逐字保留，再追加有证据、可见、可执行的摄影与表演信息。
+4. 保持 motionTimeline 的数量、phase、beatId、actor、target、bodyPart、prop、trigger、preparation、forceSource、trajectory、contact、contactPoint、contactMaterial、reaction、result、settle、causedBy、choreographyStep 和每个关键节拍边界完全不变；每个原 action 必须逐字保留，再追加有证据、可见、可执行的摄影与表演信息。
 5. description、imagePrompt、videoPrompt 必须先逐字保留基础分镜中的原内容，再追加摄影与逐节拍表演信息；imagePrompt 必须表现 startState.characterStates/propStates，videoPrompt 必须覆盖完整互动因果和 endState。
 6. 相邻关键节拍保持姿态、手部、视线、运动方向、速度、轴线和机位连续。
 7. description、imagePrompt、videoPrompt 必须遵循制作设计资料中的项目画风、故事时代、角色/场景/道具 visualProfile 和连续性锚点；只能表现本镜当前状态，不得改写永久资产设定或临时重新设计。

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import {
   createStoryboardPanelVideoTask,
+  parseGenerationIterationDiagnostics,
   ProjectAssetTaskError,
 } from "@/lib/media/project-asset-tasks";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
@@ -13,6 +14,7 @@ type PanelItem = {
   prompt?: string;
   mode?: "reference" | "first-last";
   lastFramePanelId?: string;
+  iteration?: unknown;
 };
 
 export async function POST(request: Request, context: Context) {
@@ -50,6 +52,9 @@ export async function POST(request: Request, context: Context) {
           item.mode ??
           (body.mode === "first-last" ? "first-last" : "reference"),
         lastFramePanelId: item.lastFramePanelId,
+        iteration: parseGenerationIterationDiagnostics(
+          item.iteration ?? body.iteration,
+        ),
       });
       results.push({ item, ...result });
     } catch (error) {

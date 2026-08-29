@@ -2,7 +2,7 @@ Audit the supplied production data for continuity conflicts. Do not rewrite or i
 
 Check only:
 1. Character identity and per-character state continuity across adjacent panels, including position, posture, facing, gazeTarget, left/right hand occupancy, and physical contact.
-2. Location, time, light direction, eyeline, axis, and spatial continuity.
+2. Location, time, key-light source and direction, weather, wind, damage, particles, ambient-audio key, eyeline, axis, and spatial continuity. Within a continuing scene, the prior end environmentState must be copied into the next start environmentState before this shot changes it.
 3. Prop presence, single-instance identity, holder, position, and state continuity. A handoff must pass through shared contact before ownership changes.
 4. Canonical entity references and panel order.
 5. Compare description, imagePrompt, and videoPrompt against visualProfile for drift in character face/hair/wardrobe, location topology/fixed landmarks, and prop construction/material/identifiers. Also detect replacement of the project art style or story era.

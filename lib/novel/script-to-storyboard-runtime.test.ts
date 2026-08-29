@@ -190,7 +190,7 @@ describe("script-to-storyboard runtime", () => {
             phase: "continuity",
             durationSeconds: 3,
             videoPrompt: expect.stringContaining(
-              "0-1s | 节拍：普通动作 | 施动者：未指定 | 目标：无 | 肢体/道具：未指定 | 动作：甲开始说你好",
+              "0-1s | 节拍：普通动作 | 触发：承接上一状态",
             ),
             vfxCues: [],
             sfxCues: [],
@@ -204,8 +204,9 @@ describe("script-to-storyboard runtime", () => {
     };
     expect(savedPanel.videoPrompt).toContain("角色表演与心理外化");
     expect(savedPanel.videoPrompt).toContain(
-      "甲 | 心理与情绪：平静 | 动作与反应：说话 | 表情变化：自然",
+      "甲 | 表演优先级：primary",
     );
+    expect(savedPanel.videoPrompt).toContain("动作与反应：说话");
     expect(savedPanel.videoPrompt).toContain("潜台词=先观察对方是否理解");
     expect(hooks.persistArtifact).toHaveBeenCalledWith(
       "storyboard.clip.phase3",
@@ -517,12 +518,58 @@ describe("script-to-storyboard runtime", () => {
     });
 
     expect(result.planning.panels[0]).toMatchObject({
+      startState: {
+        environmentState: {
+          keyLightSource: expect.any(String),
+          damageState: [],
+          particles: [],
+        },
+      },
       worldContext: {
         technique: "青霄剑诀",
         visualMotif: "青白剑气呈窄长弧线，银色边缘粒子快速收束消散",
+        shotIntent: {
+          primaryVisibleEvent: expect.any(String),
+          endBeat: expect.any(String),
+        },
+        constraints: {
+          mustHold: expect.any(Array),
+          changesHere: expect.any(Array),
+          mustNotAppear: expect.arrayContaining([
+            expect.stringContaining("穿模"),
+          ]),
+        },
+        riskFocus: expect.arrayContaining(["interaction_physics"]),
       },
+      motionTimeline: [
+        expect.objectContaining({
+          trigger: expect.any(String),
+          preparation: expect.any(String),
+          forceSource: expect.any(String),
+          settle: expect.any(String),
+        }),
+        expect.any(Object),
+        expect.objectContaining({ contactMaterial: expect.any(String) }),
+      ],
       vfxCues: [{ category: "weapon_trail" }],
       sfxCues: [{ type: "destruction" }],
+    });
+    expect(result.cinematography.rules[0]).toMatchObject({
+      cameraStart: expect.any(Object),
+      cameraPath: { primaryMovement: expect.any(String) },
+      cameraEnd: { nextCutPoint: expect.any(String) },
+    });
+    expect(result.acting.directions[0]?.characters[0]).toMatchObject({
+      performancePriority: expect.any(String),
+      allowedMicroMotion: expect.any(String),
+      beats: [
+        expect.objectContaining({
+          trigger: expect.any(String),
+          microPause: expect.any(String),
+          breath: expect.any(String),
+          weightShift: expect.any(String),
+        }),
+      ],
     });
     expect(
       validateStoryboardPlanning(result.planning, {

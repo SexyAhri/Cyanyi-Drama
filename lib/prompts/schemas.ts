@@ -26,6 +26,21 @@ const interactionContact = z.enum([
   "support",
 ]);
 
+const riskFocus = z.enum([
+  "character_count",
+  "identity_state",
+  "screen_direction",
+  "spatial_layout",
+  "prop_continuity",
+  "interaction_physics",
+  "camera_motion",
+  "focus_continuity",
+  "dialogue_lipsync",
+  "audio_pollution",
+  "lighting_weather",
+  "vfx_continuity",
+]);
+
 const actionDesignSchema = z
   .object({
     kind: z.enum(ACTION_DESIGN_KINDS),
@@ -207,6 +222,7 @@ const continuityStateSchema = z
         z
           .object({
             name: text,
+            assetVersion: optionalText,
             position: text,
             posture: text,
             facing: text,
@@ -224,6 +240,7 @@ const continuityStateSchema = z
         z
           .object({
             name: text,
+            assetVersion: optionalText,
             holder: optionalText,
             position: text,
             state: text,
@@ -231,6 +248,18 @@ const continuityStateSchema = z
           .strict(),
       )
       .max(30)
+      .optional(),
+    environmentState: z
+      .object({
+        keyLightSource: text,
+        lightDirection: text,
+        weather: text,
+        windDirection: optionalText,
+        damageState: z.array(text).max(20),
+        particles: z.array(text).max(20),
+        ambientAudioKey: optionalText,
+      })
+      .strict()
       .optional(),
   })
   .strict();
@@ -243,6 +272,36 @@ const worldContextSchema = z
     visualMotif: optionalText,
     environmentScale: optionalText,
     evidence: evidenceQuotes.optional(),
+    shotIntent: z
+      .object({
+        audienceTakeaway: text,
+        primaryVisibleEvent: text,
+        endBeat: text,
+      })
+      .strict()
+      .optional(),
+    constraints: z
+      .object({
+        mustHold: z.array(text).min(1).max(20),
+        changesHere: z.array(text).max(20),
+        mustNotAppear: z.array(text).max(3),
+      })
+      .strict()
+      .optional(),
+    riskFocus: z.array(riskFocus).max(3).optional(),
+    referenceScopes: z
+      .array(
+        z
+          .object({
+            assetName: text,
+            assetVersion: optionalText,
+            inherit: z.array(text).min(1).max(12),
+            exclude: z.array(text).max(12),
+          })
+          .strict(),
+      )
+      .max(30)
+      .optional(),
   })
   .strict();
 
@@ -287,11 +346,16 @@ export const storyboardPanelSchema = z
             target: optionalText,
             bodyPart: optionalText,
             prop: optionalText,
+            trigger: optionalText,
+            preparation: optionalText,
+            forceSource: optionalText,
             trajectory: optionalText,
             contact: interactionContact.optional(),
             contactPoint: optionalText,
+            contactMaterial: optionalText,
             reaction: optionalText,
             result: optionalText,
+            settle: optionalText,
             causedBy: optionalText,
             choreographyStep: optionalText,
           })
@@ -334,6 +398,47 @@ export const cinematographySchema = z
           composition: text,
           depthOfField: text,
           colorTone: text,
+          cameraStart: z
+            .object({
+              position: text,
+              height: text,
+              angle: text,
+              shotSize: text,
+              composition: text,
+              focus: text,
+            })
+            .strict()
+            .optional(),
+          cameraPath: z
+            .object({
+              primaryMovement: z.enum([
+                "locked",
+                "pan",
+                "tilt",
+                "push",
+                "pull",
+                "track",
+                "orbit",
+                "crane",
+                "handheld",
+              ]),
+              direction: text,
+              speed: text,
+              distance: text,
+              stabilization: text,
+              focusChange: optionalText,
+            })
+            .strict()
+            .optional(),
+          cameraEnd: z
+            .object({
+              shotSize: text,
+              composition: text,
+              focus: text,
+              nextCutPoint: text,
+            })
+            .strict()
+            .optional(),
         })
         .strict(),
     ),
@@ -354,6 +459,10 @@ export const actingDirectionSchema = z
                 action: text,
                 expression: text,
                 evidence: evidenceQuotes,
+                performancePriority: z
+                  .enum(["primary", "reaction", "background"])
+                  .optional(),
+                allowedMicroMotion: optionalText,
                 beats: z
                   .array(
                     z
@@ -362,6 +471,10 @@ export const actingDirectionSchema = z
                         endSecond: z.number().int().min(1).max(15),
                         objective: text,
                         subtext: optionalText,
+                        trigger: optionalText,
+                        microPause: optionalText,
+                        breath: optionalText,
+                        weightShift: optionalText,
                         action: text,
                         expression: text,
                         gazeTarget: optionalText,

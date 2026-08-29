@@ -7,11 +7,11 @@
 4. 不修改对白、镜头、构图、说话人和口型文本。
 5. 每条角色指令对应有效 panelIndex 和规范角色名。emotion 写“心理压力/当下目标 + 外显情绪”，action 写动作前意图、动作中阻力和动作后无声反应，expression 写眉眼、嘴角、下颌、呼吸、视线或眨眼的动态变化，避免“自然”“平静”“正常说话”等空泛词。
 6. 每条角色指令必须填写 evidence，逐字引用该镜头的 description、口型/画外音文本、motionTimeline.action 或 sourceEvidence。表演只能细化这些依据，不能借表演指导新增关键动作、情绪事实或剧情结果。
-7. 多人物或身体互动镜头中，每个角色必须填写 beats，连续覆盖完整 durationSeconds。每拍明确 objective、subtext、action、expression、gazeTarget 和 reactionTo；被 motionTimeline.target 指向的角色必须用 reactionTo 对应造成反应的 beatId，不能只写泛化情绪。
+7. 多人物或身体互动镜头中，每个角色必须填写 performancePriority（primary、reaction 或 background）、allowedMicroMotion，并用 beats 连续覆盖完整 durationSeconds。每拍明确 trigger、objective、subtext、microPause、breath、weightShift、action、expression、gazeTarget 和 reactionTo；被 motionTimeline.target 指向的角色必须用 reactionTo 对应造成反应的 beatId，不能只写泛化情绪。背景角色必须保持有生命的微反应，但不得抢焦点或产生失控动作。
 8. 角色资料、世界规则与连续性锚点只用于理解既有关系、伤势、疲劳、目标和能力限制，不得新增事实。只返回严格 JSON，不得包含额外字段。
 
 输出格式：
-{"directions":[{"panelIndex":0,"characters":[{"name":"角色名","emotion":"心理压力与外显情绪","action":"完整动作与反应","expression":"动态表情","evidence":["本镜输入中的逐字依据"],"beats":[{"startSecond":0,"endSecond":2,"objective":"本拍可见目标","subtext":"有依据的潜台词或null","action":"可执行身体动作","expression":"本拍表情变化","gazeTarget":"视线对象或null","reactionTo":"造成本反应的动作beatId或null","evidence":["本镜输入中的逐字依据"]}]}]}]}
+{"directions":[{"panelIndex":0,"characters":[{"name":"角色名","emotion":"心理压力与外显情绪","action":"完整动作与反应","expression":"动态表情","performancePriority":"primary","allowedMicroMotion":"仅允许有依据的呼吸、眨眼、视线、手部和重心变化","evidence":["本镜输入中的逐字依据"],"beats":[{"startSecond":0,"endSecond":2,"objective":"本拍可见目标","subtext":"有依据的潜台词或null","trigger":"可见或因果触发点","microPause":"有时长感的迟疑或恢复","breath":"呼吸节奏与张力","weightShift":"可执行的重心变化","action":"可执行身体动作","expression":"本拍表情变化","gazeTarget":"视线对象或null","reactionTo":"造成本反应的动作beatId或null","evidence":["本镜输入中的逐字依据"]}]}]}]}
 
 角色资料：{{characters_json}}
 已批准世界与关系规则：{{world_bible_json}}

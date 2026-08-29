@@ -1,6 +1,7 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import {
   createStoryboardPanelVideoTask,
+  parseGenerationIterationDiagnostics,
   ProjectAssetTaskError,
 } from "@/lib/media/project-asset-tasks";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
@@ -37,6 +38,7 @@ export async function POST(request: Request, context: Context) {
       mediaDefaults,
       mode: body.mode === "first-last" ? "first-last" : "reference",
       lastFramePanelId: stringValue(body.lastFramePanelId) || undefined,
+      iteration: parseGenerationIterationDiagnostics(body.iteration),
     });
     return attachSessionCookie(Response.json(result, { status: 202 }), sessionId);
   } catch (error) {

@@ -1,6 +1,7 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import {
   createStoryboardPanelImageTask,
+  parseGenerationIterationDiagnostics,
   ProjectAssetTaskError,
 } from "@/lib/media/project-asset-tasks";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
@@ -38,6 +39,7 @@ export async function POST(request: Request, context: Context) {
       ratio: stringValue(body.ratio) || undefined,
       resolution: stringValue(body.resolution) || undefined,
       mediaDefaults,
+      iteration: parseGenerationIterationDiagnostics(body.iteration),
     });
     return attachSessionCookie(Response.json(result, { status: 202 }), sessionId);
   } catch (error) {

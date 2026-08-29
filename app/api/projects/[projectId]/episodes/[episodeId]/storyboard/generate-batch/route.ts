@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import {
   createStoryboardPanelImageTask,
+  parseGenerationIterationDiagnostics,
   ProjectAssetTaskError,
 } from "@/lib/media/project-asset-tasks";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
@@ -11,7 +12,7 @@ type Context = {
   params: Promise<{ projectId: string; episodeId: string }>;
 };
 
-type PanelItem = { panelId: string; prompt?: string };
+type PanelItem = { panelId: string; prompt?: string; iteration?: unknown };
 
 export async function POST(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
@@ -50,6 +51,9 @@ export async function POST(request: Request, context: Context) {
         ratio: stringValue(body.ratio) || undefined,
         resolution: stringValue(body.resolution) || undefined,
         mediaDefaults,
+        iteration: parseGenerationIterationDiagnostics(
+          item.iteration ?? body.iteration,
+        ),
       });
       results.push({ item, ...result });
     } catch (error) {

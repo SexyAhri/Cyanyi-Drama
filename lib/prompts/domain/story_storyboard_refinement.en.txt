@@ -4,7 +4,7 @@ Rules:
 1. Preserve panelIndex, sceneNumber, shot count, and order.
 2. Preserve shotType, cameraMove, durationSeconds, speakingCharacter, lipSyncText, voiceoverText, startState, endState, worldContext, vfxCues, sfxCues, and sourceEvidence exactly.
 3. Add, remove, or rewrite no plot, dialogue, character, or action. You may refine a grounded inferred performance detail without changing its evidence boundary or turning it into a plot fact.
-4. Preserve motionTimeline count, phase, beatId, actor, target, bodyPart, prop, trajectory, contact, contactPoint, reaction, result, causedBy, choreographyStep, and every key-beat boundary exactly. Keep every original action verbatim, then append grounded visible acting and camera detail.
+4. Preserve motionTimeline count, phase, beatId, actor, target, bodyPart, prop, trigger, preparation, forceSource, trajectory, contact, contactPoint, contactMaterial, reaction, result, settle, causedBy, choreographyStep, and every key-beat boundary exactly. Keep every original action verbatim, then append grounded visible acting and camera detail.
 5. Preserve base description, imagePrompt, and videoPrompt verbatim before appending camera and timed acting detail. imagePrompt must depict startState.characterStates/propStates; videoPrompt must cover the complete interaction causality and endState.
 6. Preserve pose, hands, eyeline, movement direction, speed, axis, and camera continuity across beats.
 7. description, imagePrompt, and videoPrompt must follow the production-design context's project style, story era, character/location/prop visualProfile, and continuity anchor. Depict only the current shot state; never rewrite or temporarily redesign permanent asset identity.

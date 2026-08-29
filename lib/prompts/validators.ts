@@ -509,7 +509,9 @@ export function normalizeStoryboardPlanningContract(
   );
 
   const panels = spokenNormalized.panels.map((rawPanel) => {
-      const panel = ensureStoryboardStateCharacters(rawPanel);
+      const panel = ensureStoryboardProductionContract(
+        ensureStoryboardStateCharacters(rawPanel),
+      );
       const sourceEvidence = panel.sourceEvidence.filter((quote) =>
         input.sourceText.includes(quote),
       );
@@ -543,22 +545,152 @@ export function normalizeStoryboardPlanningContract(
       const previous = panels[index - 1];
       if (
         previous?.sceneNumber !== panel.sceneNumber ||
-        !sameStoryboardCharacterSet(previous.characters, panel.characters) ||
         !previous.endState ||
         !panel.startState
       )
         return panel;
+      const sameCharacters = sameStoryboardCharacterSet(
+        previous.characters,
+        panel.characters,
+      );
       return {
         ...panel,
         startState: {
           ...panel.startState,
-          hands: previous.endState.hands,
-          props: previous.endState.props,
-          screenDirection: previous.endState.screenDirection,
+          ...(sameCharacters
+            ? {
+                hands: previous.endState.hands,
+                props: previous.endState.props,
+                screenDirection: previous.endState.screenDirection,
+                characterStates: previous.endState.characterStates,
+                propStates: previous.endState.propStates,
+              }
+            : {}),
+          environmentState: previous.endState.environmentState,
         },
       };
     }),
   };
+}
+
+function ensureStoryboardProductionContract(
+  panel: StoryboardPlanning["panels"][number],
+): StoryboardPlanning["panels"][number] {
+  const lastBeat = panel.motionTimeline.at(-1);
+  const interaction = panel.motionTimeline.some(motionBeatNeedsInteractionContract);
+  const riskFocus = [
+    ...(panel.characters.length > 1 ? (["identity_state"] as const) : []),
+    ...(interaction ? (["interaction_physics"] as const) : []),
+    ...(panel.props.length ? (["prop_continuity"] as const) : []),
+    ...(panel.lipSyncText ? (["dialogue_lipsync"] as const) : []),
+    ...(panel.vfxCues.length ? (["vfx_continuity"] as const) : []),
+  ].slice(0, 3);
+  const environmentState = {
+    keyLightSource: "沿用场景已建立的主光源",
+    lightDirection: "保持场景已建立的光线方向",
+    weather: "保持剧本与连续性锚点已建立的天气",
+    windDirection: null,
+    damageState: [],
+    particles: [],
+    ambientAudioKey: "保持本场景已建立的环境底噪",
+  };
+  const normalizeBeat = (
+    beat: StoryboardPlanning["panels"][number]["motionTimeline"][number],
+    index: number,
+  ) => {
+    if (!motionBeatNeedsInteractionContract(beat)) return beat;
+    return {
+      ...beat,
+      trigger:
+        beat.trigger ??
+        (index > 0
+          ? `承接${panel.motionTimeline[index - 1]?.beatId ?? "上一节拍"}的结果`
+          : `承接起始状态：${panel.startState?.body ?? panel.description}`),
+      preparation: beat.preparation ?? `为动作建立重心、距离与发力姿态：${beat.action}`,
+      forceSource:
+        beat.forceSource ??
+        `${beat.actor ?? "施动者"}通过${beat.bodyPart ?? beat.prop ?? "身体重心"}发力`,
+      contactMaterial:
+        beat.contactMaterial ??
+        (beat.contact && beat.contact !== "none"
+          ? "按角色服装、身体或道具既定材质表现接触"
+          : null),
+      settle: beat.settle ?? beat.result ?? `动作完成后稳定在本节拍结束状态`,
+    };
+  };
+  const worldContext = panel.worldContext ?? {};
+  return {
+    ...panel,
+    startState: panel.startState
+      ? {
+          ...panel.startState,
+          environmentState:
+            panel.startState.environmentState ?? environmentState,
+        }
+      : panel.startState,
+    endState: panel.endState
+      ? {
+          ...panel.endState,
+          environmentState: panel.endState.environmentState ?? environmentState,
+        }
+      : panel.endState,
+    motionTimeline: panel.motionTimeline.map(normalizeBeat),
+    worldContext: {
+      ...worldContext,
+      shotIntent: worldContext.shotIntent ?? {
+        audienceTakeaway: panel.description,
+        primaryVisibleEvent: panel.motionTimeline[0]?.action ?? panel.description,
+        endBeat: lastBeat?.result ?? lastBeat?.action ?? panel.endState?.body ?? panel.description,
+      },
+      constraints: worldContext.constraints ?? {
+        mustHold: [
+          ...(panel.locationName ? [`场景保持为${panel.locationName}`] : []),
+          ...(panel.characters.length
+            ? [`仅保持已批准角色身份与数量：${panel.characters.join("、")}`]
+            : ["保持已批准的环境空镜状态"]),
+          ...(panel.props.length
+            ? [`保持道具身份与状态：${panel.props.join("、")}`]
+            : []),
+        ],
+        changesHere: [lastBeat?.result ?? lastBeat?.action ?? panel.description],
+        mustNotAppear: riskFocus.map(storyboardRiskProhibition),
+      },
+      riskFocus: worldContext.riskFocus?.slice(0, 3) ?? riskFocus,
+      referenceScopes:
+        worldContext.referenceScopes ??
+        [
+          ...panel.characters.map((assetName) => ({
+            assetName,
+            assetVersion: null,
+            inherit: ["身份", "脸型", "发型", "服装", "体型"],
+            exclude: ["本镜未明确要求的姿态、表情和临时状态"],
+          })),
+          ...panel.props.map((assetName) => ({
+            assetName,
+            assetVersion: null,
+            inherit: ["形制", "材质", "颜色", "识别特征"],
+            exclude: ["本镜未明确要求的持有者、位置和开合破损状态"],
+          })),
+        ],
+    },
+  };
+}
+
+function storyboardRiskProhibition(risk: string) {
+  switch (risk) {
+    case "identity_state":
+      return "禁止角色换脸、换装、身份互换或数量漂移";
+    case "interaction_physics":
+      return "禁止穿模、接触滑移、受力无反应、瞬移或动作重置";
+    case "prop_continuity":
+      return "禁止道具复制、消失、换手跳变或状态重置";
+    case "dialogue_lipsync":
+      return "禁止错误角色口型、多人同时开口或口型时序漂移";
+    case "vfx_continuity":
+      return "禁止特效颜色、形态、阶段、运动或消散规律漂移";
+    default:
+      return `禁止出现与风险 ${risk} 对应的连续性漂移`;
+  }
 }
 
 function ensureStoryboardStateCharacters(
@@ -1097,6 +1229,12 @@ export function validateStoryboardPlanning(
     productionContextText?: string;
   },
 ) {
+  if (input.screenplay)
+    data = normalizeStoryboardPlanningContract(data, {
+      sourceText: input.sourceText,
+      screenplay: input.screenplay,
+      productionContextText: input.productionContextText,
+    });
   const issues = validateSequentialPanelIndices(data.panels, "panels");
   const screenplayCharacters = nameSet(
     input.screenplay?.scenes.flatMap((scene) => [
@@ -1118,6 +1256,7 @@ export function validateStoryboardPlanning(
   data.panels.forEach((panel, index) => {
     validateMotionTimeline(panel, `panels.${index}`, issues);
     validateStructuredContinuityState(panel, `panels.${index}`, issues);
+    validateStoryboardProductionContract(panel, `panels.${index}`, issues);
     validateProductionCues(
       panel,
       `${input.sourceText}\n${input.productionContextText ?? ""}`,
@@ -1222,11 +1361,135 @@ export function validateCinematographyCoverage(
   data: Cinematography,
   expectedPanelIndices: readonly number[],
 ) {
-  return validateExactPanelCoverage(
+  const issues = validateExactPanelCoverage(
     data.rules.map((rule) => rule.panelIndex),
     expectedPanelIndices,
     "rules",
   );
+  data.rules.forEach((rule, index) => {
+    if (rule.cameraStart && rule.cameraPath && rule.cameraEnd) return;
+    issues.push(
+      issue(
+        `rules.${index}`,
+        "CAMERA_CONTRACT_REQUIRED",
+        "Every shot requires cameraStart, one primary cameraPath movement, and cameraEnd with a cut point",
+      ),
+    );
+  });
+  return issues;
+}
+
+export function normalizeCinematographyContract(
+  data: Cinematography,
+  panels: ReadonlyArray<{
+    panelIndex: number;
+    cameraMove: string;
+    shotType?: string;
+    characters?: readonly string[];
+  }> = [],
+): Cinematography {
+  const panelsByIndex = new Map(
+    panels.map((panel) => [panel.panelIndex, panel]),
+  );
+  return {
+    rules: data.rules.map((rule) => {
+      const panel = panelsByIndex.get(rule.panelIndex);
+      const shotSize = panel?.shotType ?? rule.camera;
+      const focus = panel?.characters?.[0] ?? "当前叙事主体";
+      return {
+        ...rule,
+        cameraStart: rule.cameraStart ?? {
+          position: rule.cameraPosition,
+          height: rule.camera,
+          angle: rule.camera,
+          shotSize,
+          composition: rule.composition,
+          focus,
+        },
+        cameraPath: rule.cameraPath ?? {
+          primaryMovement: inferPrimaryCameraMovement(
+            `${panel?.cameraMove ?? ""} ${rule.camera} ${rule.cameraPosition}`,
+          ),
+          direction: panel?.cameraMove ?? "沿已批准构图的叙事方向",
+          speed: "均匀克制",
+          distance: "仅覆盖起止构图所需距离",
+          stabilization: "保持轴线、地平线与主体可读性",
+          focusChange: null,
+        },
+        cameraEnd: rule.cameraEnd ?? {
+          shotSize,
+          composition: rule.composition,
+          focus: "动作结果或主要反应",
+          nextCutPoint: "主要可见事件完成并稳定时",
+        },
+      };
+    }),
+  };
+}
+
+function inferPrimaryCameraMovement(value: string) {
+  if (/(?:推近|push|dolly in)/iu.test(value)) return "push" as const;
+  if (/(?:拉远|pull|dolly out)/iu.test(value)) return "pull" as const;
+  if (/(?:横移|跟随|track)/iu.test(value)) return "track" as const;
+  if (/(?:摇摄|pan)/iu.test(value)) return "pan" as const;
+  if (/(?:俯仰|tilt)/iu.test(value)) return "tilt" as const;
+  if (/(?:环绕|orbit)/iu.test(value)) return "orbit" as const;
+  if (/(?:升降|crane)/iu.test(value)) return "crane" as const;
+  if (/(?:手持|handheld)/iu.test(value)) return "handheld" as const;
+  return "locked" as const;
+}
+
+export function normalizeActingDirectionContract(
+  data: ActingDirection,
+  panels: ReadonlyArray<{
+    panelIndex: number;
+    characters: readonly string[];
+    durationSeconds?: number;
+    motionTimeline?: ReadonlyArray<{
+      beatId?: string | null;
+      actor?: string | null;
+      target?: string | null;
+      action: string;
+    }>;
+  }>,
+): ActingDirection {
+  const panelsByIndex = new Map(
+    panels.map((panel) => [panel.panelIndex, panel]),
+  );
+  return {
+    directions: data.directions.map((direction) => {
+      const panel = panelsByIndex.get(direction.panelIndex);
+      return {
+        ...direction,
+        characters: direction.characters.map((character) => ({
+          ...character,
+          performancePriority:
+            character.performancePriority ??
+            (panel?.motionTimeline?.some(
+              (beat) => beat.target === character.name,
+            )
+              ? "reaction"
+              : "primary"),
+          allowedMicroMotion:
+            character.allowedMicroMotion ??
+            "仅允许与当前情绪、动作和反应有因果关系的呼吸、眨眼、视线、手部和重心微动",
+          beats: character.beats?.map((beat, index) => ({
+            ...beat,
+            trigger:
+              beat.trigger ??
+              (index > 0
+                ? "承接上一表演节拍的动作与情绪结果"
+                : "承接本镜起始状态和当前剧情刺激"),
+            microPause:
+              beat.microPause ?? "在意图形成或受力反馈后保留克制的微停顿",
+            breath: beat.breath ?? "呼吸随情绪张力和动作发力连续变化",
+            weightShift:
+              beat.weightShift ?? "重心随准备、动作、接触反应和收势连续转移",
+          })),
+        })),
+      };
+    }),
+  };
 }
 
 export function validateActingCoverage(
@@ -1250,6 +1513,7 @@ export function validateActingCoverage(
     }>;
   }>,
 ) {
+  data = normalizeActingDirectionContract(data, panels);
   const issues = validateExactPanelCoverage(
     data.directions.map((direction) => direction.panelIndex),
     panels.map((panel) => panel.panelIndex),
@@ -1302,6 +1566,17 @@ export function validateActingCoverage(
             "Multi-character and physical-interaction shots require timed acting beats for every visible character",
           ),
         );
+      if (
+        requiresTimedPerformance &&
+        (!character.performancePriority || !character.allowedMicroMotion)
+      )
+        issues.push(
+          issue(
+            `directions.panel_${panel.panelIndex}.characters.${characterIndex}`,
+            "ACTING_PERFORMANCE_CONTRACT_REQUIRED",
+            "Complex performances require a priority and an explicit allowed-micro-motion boundary",
+          ),
+        );
       if (character.beats?.length) {
         character.beats.forEach((beat, beatIndex) => {
           const expectedStart = character.beats?.[beatIndex - 1]?.endSecond ?? 0;
@@ -1328,6 +1603,20 @@ export function validateActingCoverage(
                 `directions.panel_${panel.panelIndex}.characters.${characterIndex}.beats.${beatIndex}`,
                 "ACTING_BEAT_CONTEXT_REQUIRED",
                 "Timed acting beats require explicit subtext, gazeTarget, and reactionTo values; use null only when the approved shot genuinely has none",
+              ),
+            );
+          if (
+            requiresTimedPerformance &&
+            (!beat.trigger ||
+              !beat.microPause ||
+              !beat.breath ||
+              !beat.weightShift)
+          )
+            issues.push(
+              issue(
+                `directions.panel_${panel.panelIndex}.characters.${characterIndex}.beats.${beatIndex}`,
+                "ACTING_PHYSICAL_DETAIL_REQUIRED",
+                "Complex acting beats require trigger, micro-pause, breath, and weight-shift direction",
               ),
             );
           beat.evidence.forEach((evidence, evidenceIndex) => {
@@ -1583,17 +1872,21 @@ function validateMotionTimeline(
       !beat.actor ||
       beat.target === undefined ||
       (!beat.bodyPart && !beat.prop) ||
+      !beat.trigger ||
+      !beat.preparation ||
+      !beat.forceSource ||
       !beat.trajectory ||
       beat.contact === undefined ||
       beat.reaction === undefined ||
       !beat.result ||
+      !beat.settle ||
       beat.causedBy === undefined;
     if (requiresInteraction && interactionContractIncomplete)
       issues.push(
         issue(
           `${path}.motionTimeline.${beatIndex}`,
           "INTERACTION_BEAT_CONTRACT_REQUIRED",
-          "Complex physical beats require beatId, actor, target, bodyPart or prop, trajectory, contact, reaction, result, and an explicit causedBy value so downstream video generation can preserve causality",
+          "Complex physical beats require trigger, preparation, force source, trajectory, contact, reaction, result, settle, and explicit causality so downstream video generation can preserve action physics",
         ),
       );
     if (beat.beatId) {
@@ -1640,13 +1933,17 @@ function validateMotionTimeline(
     if (
       beat.contact &&
       beat.contact !== "none" &&
-      (!beat.target || !beat.contactPoint || !beat.reaction || !beat.result)
+      (!beat.target ||
+        !beat.contactPoint ||
+        !beat.contactMaterial ||
+        !beat.reaction ||
+        !beat.result)
     )
       issues.push(
         issue(
           `${path}.motionTimeline.${beatIndex}`,
           "INTERACTION_CONTACT_INCOMPLETE",
-          "Physical contact requires target, contactPoint, reaction, and result",
+          "Physical contact requires target, contactPoint, contactMaterial, reaction, and result",
         ),
       );
   });
@@ -1684,11 +1981,15 @@ function validateProductionCues(
   issues: StructuredValidationIssue[],
 ) {
   const worldEvidence = panel.worldContext?.evidence;
+  const loreFields = [
+    panel.worldContext?.realm,
+    panel.worldContext?.technique,
+    panel.worldContext?.powerRule,
+    panel.worldContext?.visualMotif,
+    panel.worldContext?.environmentScale,
+  ];
   if (
-    panel.worldContext &&
-    Object.entries(panel.worldContext).some(
-      ([key, value]) => key !== "evidence" && Boolean(value),
-    ) &&
+    loreFields.some(Boolean) &&
     !worldEvidence?.length
   )
     issues.push(
@@ -1837,6 +2138,19 @@ function validateStoryboardScreenplayContract(
         ),
       );
     if (previous?.sceneNumber === panel.sceneNumber) {
+      if (
+        previous.endState?.environmentState &&
+        panel.startState?.environmentState &&
+        JSON.stringify(previous.endState.environmentState) !==
+          JSON.stringify(panel.startState.environmentState)
+      )
+        issues.push(
+          issue(
+            `panels.${index}.startState.environmentState`,
+            "ENVIRONMENT_STATE_DISCONTINUITY",
+            "Light, weather, damage, particles, wind, and ambient audio must inherit the prior shot end state before changing",
+          ),
+        );
       const previousCharacters = new Map(
         (previous.endState?.characterStates ?? []).map((state) => [
           normalizeName(state.name),
@@ -2074,6 +2388,87 @@ function validateStoryboardScreenplayContract(
         );
       }
     }
+}
+
+function validateStoryboardProductionContract(
+  panel: StoryboardPlanning["panels"][number],
+  path: string,
+  issues: StructuredValidationIssue[],
+) {
+  const context = panel.worldContext;
+  if (!context?.shotIntent)
+    issues.push(
+      issue(
+        `${path}.worldContext.shotIntent`,
+        "SHOT_INTENT_REQUIRED",
+        "Every shot requires an audience takeaway, one primary visible event, and an end beat",
+      ),
+    );
+  if (!context?.constraints)
+    issues.push(
+      issue(
+        `${path}.worldContext.constraints`,
+        "SHOT_CONSTRAINTS_REQUIRED",
+        "Every shot requires mustHold, changesHere, and targeted mustNotAppear constraints",
+      ),
+    );
+  if (context?.constraints) {
+    const held = new Set(context.constraints.mustHold.map(normalizeActionText));
+    const changes = new Set(
+      context.constraints.changesHere.map(normalizeActionText),
+    );
+    const prohibited = new Set(
+      context.constraints.mustNotAppear.map(normalizeActionText),
+    );
+    if (
+      [...held].some((value) => changes.has(value) || prohibited.has(value)) ||
+      [...changes].some((value) => prohibited.has(value))
+    )
+      issues.push(
+        issue(
+          `${path}.worldContext.constraints`,
+          "SHOT_CONSTRAINT_CONFLICT",
+          "The same instruction cannot be held, changed, and prohibited in one shot",
+        ),
+      );
+    if (context.riskFocus?.length && !context.constraints.mustNotAppear.length)
+      issues.push(
+        issue(
+          `${path}.worldContext.constraints.mustNotAppear`,
+          "RISK_PROHIBITION_REQUIRED",
+          "Risk-focused generation requires at least one targeted prohibition paired with positive locks",
+        ),
+      );
+  }
+  const shotAssets = nameSet([...panel.characters, ...panel.props]);
+  for (const [index, scope] of (context?.referenceScopes ?? []).entries()) {
+    if (!shotAssets.has(normalizeName(scope.assetName)))
+      issues.push(
+        issue(
+          `${path}.worldContext.referenceScopes.${index}.assetName`,
+          "REFERENCE_ASSET_NOT_IN_SHOT",
+          `Reference inheritance may only target an asset present in the shot: ${scope.assetName}`,
+        ),
+      );
+    const inherited = new Set(scope.inherit.map(normalizeActionText));
+    if (scope.exclude.some((value) => inherited.has(normalizeActionText(value))))
+      issues.push(
+        issue(
+          `${path}.worldContext.referenceScopes.${index}`,
+          "REFERENCE_SCOPE_CONFLICT",
+          "A reference attribute cannot be both inherited and excluded",
+        ),
+      );
+  }
+  for (const edge of ["startState", "endState"] as const)
+    if (!panel[edge]?.environmentState)
+      issues.push(
+        issue(
+          `${path}.${edge}.environmentState`,
+          "ENVIRONMENT_STATE_REQUIRED",
+          "Every shot edge requires light, weather, particles, damage, and ambient-audio continuity state",
+        ),
+      );
 }
 
 function validateSpokenCoverage(
