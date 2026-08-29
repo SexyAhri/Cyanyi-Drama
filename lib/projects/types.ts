@@ -40,6 +40,41 @@ export type EpisodeRecord = {
   name: string;
   description: string | null;
   novelText: string | null;
+  activeSourceId: string | null;
+  activeSourceKind: "original" | "adapted";
   createdAt: string;
   updatedAt: string;
+};
+
+export type ManuscriptRecord = {
+  id: string;
+  projectId: string;
+  title: string;
+  author: string | null;
+  synopsis: string | null;
+  sourceFileName: string | null;
+  charCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EpisodeSourceVersionRecord = {
+  id: string;
+  episodeId: string;
+  manuscriptId: string | null;
+  kind: "original" | "adapted";
+  version: number;
+  title: string | null;
+  summary: string | null;
+  content: string;
+  adaptationMode: string | null;
+  instructions: string | null;
+  changeSummary: string[];
+  promptTrace: Record<string, unknown> | null;
+  channelId: string | null;
+  model: string | null;
+  sourceHash: string;
+  sourceStartIndex: number | null;
+  sourceEndIndex: number | null;
+  createdAt: string;
 };

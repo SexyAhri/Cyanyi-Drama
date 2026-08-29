@@ -14,6 +14,7 @@ export const PROMPT_IDS = {
   ASSET_VISUAL_DESIGN: "asset_visual_design",
   CHARACTER_REFERENCE_DESCRIPTION: "character_reference_description",
   EPISODE_SPLIT: "episode_split",
+  EPISODE_ADAPTATION: "episode_adaptation",
   STUDIO_WORKFLOW_AGENT: "studio_workflow_agent",
 } as const;
 

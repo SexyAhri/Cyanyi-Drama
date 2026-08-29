@@ -7,7 +7,12 @@ import type {
 } from "@/lib/novel/domain-types";
 import type { StoryboardContinuityIssue } from "@/lib/novel/continuity-store";
 import type { StoryboardContentReview } from "@/lib/novel/storyboard-review";
-import type { EpisodeRecord, ProjectRecord } from "@/lib/projects/types";
+import type {
+  EpisodeRecord,
+  EpisodeSourceVersionRecord,
+  ManuscriptRecord,
+  ProjectRecord,
+} from "@/lib/projects/types";
 
 export type StudioLocale = "en" | "zh-CN";
 
@@ -219,6 +224,14 @@ export type EpisodeSplitResult = {
   confidence: "high" | "medium" | "low" | null;
   episodes: EpisodeSplitDraft[];
   persisted: EpisodeRecord[] | null;
+  manuscript: ManuscriptRecord;
+};
+
+export type EpisodeSourceListResult = {
+  activeSourceId: string | null;
+  activeSourceKind: "original" | "adapted";
+  sources: EpisodeSourceVersionRecord[];
+  manuscript: ManuscriptRecord | null;
 };
 
 export type ProjectMediaAsset = {

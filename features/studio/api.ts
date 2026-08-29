@@ -1,12 +1,14 @@
 import type { MediaTask } from "@/lib/media/task-contract";
 import type {
   EpisodeRecord,
+  EpisodeSourceVersionRecord,
   ProjectConfig,
   ProjectRecord,
 } from "@/lib/projects/types";
 
 import type {
   EpisodeSplitResult,
+  EpisodeSourceListResult,
   EditorProjectRecord,
   ProductionData,
   ProductionDeliverableCatalog,
@@ -240,8 +242,17 @@ export async function deleteStudioWorkflow(runId: string) {
 export async function splitStudioNovel(
   projectId: string,
   input: {
-    content: string;
+    content?: string;
+    manuscriptId?: string;
+    sourceFileName?: string;
+    title?: string;
+    author?: string;
+    synopsis?: string;
     mode: "auto" | "markers" | "ai";
+    method?: "markers" | "ai";
+    markerType?: string | null;
+    confidence?: "high" | "medium" | "low" | null;
+    episodes?: EpisodeSplitResult["episodes"];
     channelId?: string;
     model?: string;
     locale: "en" | "zh";
@@ -456,6 +467,49 @@ export async function extractStudioAssets(
       headers: { "Content-Type": "application/json" },
       method: "POST",
     },
+  );
+}
+
+export async function loadStudioEpisodeSources(
+  projectId: string,
+  episodeId: string,
+  signal?: AbortSignal,
+) {
+  return request<EpisodeSourceListResult>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/sources`,
+    { signal },
+  );
+}
+
+export async function adaptStudioEpisode(
+  projectId: string,
+  episodeId: string,
+  input: {
+    channelId: string;
+    model: string;
+    mode: "faithful" | "polish" | "drama" | "custom";
+    instructions?: string;
+    locale: "en" | "zh";
+  },
+) {
+  return request<{ source: EpisodeSourceVersionRecord }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/sources`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
+export async function activateStudioEpisodeSource(
+  projectId: string,
+  episodeId: string,
+  sourceId: string,
+) {
+  return request<{ source: EpisodeSourceVersionRecord }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/sources/${encodeURIComponent(sourceId)}/activate`,
+    { method: "POST" },
   );
 }
 

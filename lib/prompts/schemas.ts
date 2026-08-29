@@ -400,6 +400,19 @@ export const episodeSplitSchema = z
   })
   .strict();
 
+export const episodeAdaptationSchema = z
+  .object({
+    title: z.string().trim().min(1).max(160),
+    summary: z.string().trim().min(1).max(4_000),
+    adaptedText: z.string().trim().min(1).max(500_000),
+    changeSummary: z.array(z.string().trim().min(1).max(600)).max(30),
+    sourceEvidence: z
+      .array(z.string().trim().min(2).max(1_000))
+      .min(1)
+      .max(30),
+  })
+  .strict();
+
 export const assetVisualDesignSchema = z
   .object({
     visualIdentity: z.string().trim().min(1).max(1_200),
@@ -448,5 +461,6 @@ export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
   [PROMPT_IDS.ASSET_VISUAL_DESIGN]: assetVisualDesignSchema,
   [PROMPT_IDS.CHARACTER_REFERENCE_DESCRIPTION]: characterReferenceDescriptionSchema,
   [PROMPT_IDS.EPISODE_SPLIT]: episodeSplitSchema,
+  [PROMPT_IDS.EPISODE_ADAPTATION]: episodeAdaptationSchema,
   [PROMPT_IDS.STUDIO_WORKFLOW_AGENT]: studioWorkflowAgentSchema,
 };

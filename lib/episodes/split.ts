@@ -1,14 +1,18 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
-import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
-import { decryptSecret } from "@/lib/server/crypto";
-import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import { episodeSplitSchema } from "@/lib/prompts/schemas";
+import type { ManuscriptRecord } from "@/lib/projects/types";
 import { prisma } from "@/lib/server/prisma";
-import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
-import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
+
+import { EpisodeSplitError } from "./errors";
+import { resolveEpisodeTextProvider } from "./provider";
+
+export { EpisodeSplitError } from "./errors";
+
+export const MAX_MANUSCRIPT_CHARS = 50_000_000;
+export const MAX_AI_SPLIT_CHARS = 500_000;
 
 export type EpisodeSplitDraft = {
   number: number;
@@ -27,15 +31,6 @@ export type EpisodeMarkerResult = {
   matches: Array<{ index: number; text: string; episodeNumber: number }>;
   episodes: EpisodeSplitDraft[];
 };
-
-export class EpisodeSplitError extends Error {
-  constructor(
-    message: string,
-    readonly status = 400,
-  ) {
-    super(message);
-  }
-}
 
 const CHINESE_DIGITS: Record<string, number> = {
   零: 0,
@@ -129,7 +124,7 @@ export function detectEpisodeMarkers(content: string): EpisodeMarkerResult {
     return {
       number: match.episodeNumber,
       title: titleSuffix || `第 ${match.episodeNumber} 集`,
-      summary: "",
+      summary: summarizeEpisodeContent(episodeContent),
       content: episodeContent,
       wordCount: countWords(episodeContent),
       startIndex,
@@ -158,8 +153,12 @@ export async function splitEpisodesWithAi(input: {
   model: string;
   locale?: PromptLocale;
 }) {
+  if (input.content.length > MAX_AI_SPLIT_CHARS)
+    throw new EpisodeSplitError(
+      `AI 分集单次最多处理 ${MAX_AI_SPLIT_CHARS.toLocaleString()} 字符；超长原著请使用章节标记分集，AI 只处理确认后的单集`,
+    );
   await assertProjectOwnership(input.userId, input.projectId);
-  const provider = await resolveProvider(input);
+  const provider = await resolveEpisodeTextProvider(input);
   const result = await requestOpenAiStructured({
     ...provider,
     prompt: renderPrompt({
@@ -222,9 +221,23 @@ export async function persistEpisodeSplits(input: {
   userId: string;
   projectId: string;
   episodes: EpisodeSplitDraft[];
+  manuscriptId?: string;
 }) {
   await assertProjectOwnership(input.userId, input.projectId);
-  const numbers = input.episodes.map((episode) => episode.number);
+  const manuscript = input.manuscriptId
+    ? await prisma.manuscript.findFirst({
+        where: { id: input.manuscriptId, projectId: input.projectId },
+      })
+    : null;
+  if (input.manuscriptId && !manuscript)
+    throw new EpisodeSplitError("导入的原著不存在", 404);
+  const episodes = manuscript
+    ? resolveManuscriptSlices(input.episodes, manuscript.sourceText)
+    : input.episodes.map((episode) => ({
+        ...episode,
+        summary: episode.summary || summarizeEpisodeContent(episode.content),
+      }));
+  const numbers = episodes.map((episode) => episode.number);
   if (new Set(numbers).size !== numbers.length)
     throw new EpisodeSplitError("分集编号不能重复");
   return prisma.$transaction(async (tx) => {
@@ -234,12 +247,25 @@ export async function persistEpisodeSplits(input: {
         id: true,
         episodeNumber: true,
         novelText: true,
+        activeSourceId: true,
+        activeSourceKind: true,
         storyboard: { select: { id: true } },
+        editorProject: { select: { id: true } },
+        sourceVersions: {
+          where: { kind: "original" },
+          select: { id: true, version: true, sourceHash: true },
+          orderBy: { version: "desc" },
+        },
         _count: {
           select: {
+            mediaTasks: true,
             clips: true,
+            shots: true,
             voiceLines: true,
+            audioTracks: true,
+            assetReferences: true,
             workflowRuns: true,
+            productionDeliverables: true,
           },
         },
       },
@@ -248,10 +274,11 @@ export async function persistEpisodeSplits(input: {
       existing.map((episode) => [episode.episodeNumber, episode]),
     );
     const records = [];
-    for (const episode of input.episodes) {
+    for (const episode of episodes) {
       const current = existingByNumber.get(episode.number);
       const hasDownstream = current
         ? Boolean(current.storyboard) ||
+          Boolean(current.editorProject) ||
           Object.values(current._count).some((count) => count > 0)
         : false;
       if (current?.novelText !== episode.content && hasDownstream)
@@ -259,31 +286,190 @@ export async function persistEpisodeSplits(input: {
           `第 ${episode.number} 集已有制作数据，不能用新的分集内容覆盖`,
           409,
         );
-      records.push(
-        await tx.episode.upsert({
-          where: {
-            projectId_episodeNumber: {
+      const sourceHash = textHash(episode.content);
+      if (!current) {
+        const episodeId = randomUUID();
+        const sourceId = randomUUID();
+        records.push(
+          await tx.episode.create({
+            data: {
+              id: episodeId,
               projectId: input.projectId,
               episodeNumber: episode.number,
+              name: episode.title,
+              description: episode.summary || null,
+              novelText: episode.content,
+              activeSourceId: sourceId,
+              activeSourceKind: "original",
+              sourceVersions: {
+                create: {
+                  id: sourceId,
+                  manuscriptId: manuscript?.id,
+                  kind: "original",
+                  version: 1,
+                  title: episode.title,
+                  summary: episode.summary || null,
+                  content: episode.content,
+                  sourceHash,
+                  sourceStartIndex: episode.startIndex,
+                  sourceEndIndex: episode.endIndex,
+                },
+              },
             },
+          }),
+        );
+        continue;
+      }
+
+      let sourceId =
+        current.novelText === episode.content &&
+        current.activeSourceKind === "original" &&
+        current.activeSourceId
+          ? current.activeSourceId
+          : current.sourceVersions.find(
+              (source) => source.sourceHash === sourceHash,
+            )?.id;
+      if (!sourceId) {
+        sourceId = randomUUID();
+        await tx.episodeSourceVersion.create({
+          data: {
+            id: sourceId,
+            episodeId: current.id,
+            manuscriptId: manuscript?.id,
+            kind: "original",
+            version: (current.sourceVersions[0]?.version ?? 0) + 1,
+            title: episode.title,
+            summary: episode.summary || null,
+            content: episode.content,
+            sourceHash,
+            sourceStartIndex: episode.startIndex,
+            sourceEndIndex: episode.endIndex,
           },
-          create: {
-            id: randomUUID(),
-            projectId: input.projectId,
-            episodeNumber: episode.number,
+        });
+      }
+      records.push(
+        await tx.episode.update({
+          where: { id: current.id },
+          data: {
             name: episode.title,
             description: episode.summary || null,
             novelText: episode.content,
-          },
-          update: {
-            name: episode.title,
-            description: episode.summary || null,
-            novelText: episode.content,
+            activeSourceId: sourceId,
+            activeSourceKind: "original",
           },
         }),
       );
     }
     return records;
+  });
+}
+
+export async function saveManuscript(input: {
+  userId: string;
+  projectId: string;
+  content: string;
+  title: string;
+  author?: string;
+  synopsis?: string;
+  sourceFileName?: string;
+}) {
+  await assertProjectOwnership(input.userId, input.projectId);
+  const sourceHash = textHash(input.content);
+  const manuscript = await prisma.manuscript.upsert({
+    where: {
+      projectId_sourceHash: { projectId: input.projectId, sourceHash },
+    },
+    create: {
+      id: randomUUID(),
+      projectId: input.projectId,
+      title: input.title.trim() || "未命名小说",
+      author: input.author?.trim() || null,
+      synopsis: input.synopsis?.trim() || null,
+      sourceFileName: input.sourceFileName?.trim() || null,
+      sourceText: input.content,
+      sourceHash,
+      charCount: input.content.length,
+    },
+    update: {
+      title: input.title.trim() || "未命名小说",
+      author: input.author?.trim() || null,
+      synopsis: input.synopsis?.trim() || null,
+      sourceFileName: input.sourceFileName?.trim() || null,
+    },
+  });
+  return toManuscriptRecord(manuscript);
+}
+
+export async function updateManuscriptMetadata(input: {
+  userId: string;
+  projectId: string;
+  manuscriptId: string;
+  title: string;
+  author?: string;
+  synopsis?: string;
+}) {
+  const current = await prisma.manuscript.findFirst({
+    where: {
+      id: input.manuscriptId,
+      projectId: input.projectId,
+      project: { userId: input.userId },
+    },
+  });
+  if (!current) throw new EpisodeSplitError("导入的原著不存在", 404);
+  return toManuscriptRecord(
+    await prisma.manuscript.update({
+      where: { id: current.id },
+      data: {
+        title: input.title.trim() || current.title,
+        author: input.author?.trim() || null,
+        synopsis: input.synopsis?.trim() || null,
+      },
+    }),
+  );
+}
+
+export function summarizeEpisodeContent(content: string, maxLength = 240) {
+  const paragraphs = content
+    .replace(/^\uFEFF/u, "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line &&
+        !/^(?:第[零〇一二两三四五六七八九十百千万\d]+[卷章节幕集]|Episode\s*\d+|Chapter\s*\d+)/iu.test(
+          line,
+        ) &&
+        !/^(?:书名|小说名|作品名|作者|字数|简介)\s*[：:]/u.test(line),
+    );
+  const paragraph = paragraphs.find((line) => line.length >= 20) ?? paragraphs[0] ?? "";
+  const normalized = paragraph.replace(/\s+/gu, " ").trim();
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength).trimEnd()}…`
+    : normalized;
+}
+
+function resolveManuscriptSlices(episodes: EpisodeSplitDraft[], source: string) {
+  const sorted = [...episodes].sort((left, right) => left.startIndex - right.startIndex);
+  let expectedStart = 0;
+  for (const [index, episode] of sorted.entries()) {
+    if (
+      episode.startIndex !== expectedStart ||
+      episode.endIndex <= episode.startIndex ||
+      episode.endIndex > source.length
+    )
+      throw new EpisodeSplitError(`第 ${index + 1} 个分集边界不连续或已失效`);
+    expectedStart = episode.endIndex;
+  }
+  if (expectedStart !== source.length)
+    throw new EpisodeSplitError("分集边界没有完整覆盖原著");
+  return sorted.map((episode) => {
+    const content = source.slice(episode.startIndex, episode.endIndex);
+    return {
+      ...episode,
+      content,
+      wordCount: countWords(content),
+      summary: episode.summary.trim() || summarizeEpisodeContent(content),
+    };
   });
 }
 
@@ -345,56 +531,9 @@ function validateAiBoundaries(
   return issues;
 }
 
-async function resolveProvider(input: {
-  userId: string;
-  channelId: string;
-  model: string;
-}) {
-  const channel = await prisma.channel.findFirst({
-    where: accessibleChannelWhere(input.userId, input.channelId),
-  });
-  if (!channel) throw new EpisodeSplitError("分析渠道不存在", 404);
-  if (
-    channel.protocol !== "openai-compatible" &&
-    channel.protocol !== "volcengine-ark"
-  )
-    throw new EpisodeSplitError("AI 分集需要 OpenAI 兼容渠道");
-  const configuredModel = await prisma.providerModel.findFirst({
-    where: { channelId: input.channelId, modelId: input.model, selected: true },
-  });
-  if (!configuredModel) throw new EpisodeSplitError("分析模型未配置");
-  const apiKeys = parseApiKeys(channel.encryptedApiKeys);
-  if (!apiKeys.length) throw new EpisodeSplitError("分析渠道缺少 API Key");
-  const runtimeSettings = await loadUserRuntimeSettings(input.userId);
-  return {
-    baseUrl: channel.baseUrl,
-    apiKeys,
-    model: input.model,
-    ...structuredRequestOptions(runtimeSettings),
-    structuredOutputMode: supportsStoredStructuredOutputs(
-      configuredModel.capabilitiesJson,
-    )
-      ? ("json_schema" as const)
-      : ("json_object" as const),
-  };
-}
-
 async function assertProjectOwnership(userId: string, projectId: string) {
   const project = await prisma.project.count({ where: { id: projectId, userId } });
   if (!project) throw new EpisodeSplitError("项目不存在", 404);
-}
-
-function parseApiKeys(value: string) {
-  try {
-    const parsed: unknown = JSON.parse(decryptSecret(value));
-    return Array.isArray(parsed)
-      ? parsed.flatMap((item) =>
-          typeof item === "string" && item.trim() ? [item.trim()] : [],
-        )
-      : [];
-  } catch {
-    return [];
-  }
 }
 
 function chineseNumber(value: string) {
@@ -422,4 +561,26 @@ function countWords(value: string) {
   const cjk = value.match(/[\u3400-\u9fff]/g)?.length ?? 0;
   const latin = value.match(/[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*/g)?.length ?? 0;
   return cjk + latin;
+}
+
+function textHash(value: string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function toManuscriptRecord(row: {
+  id: string;
+  projectId: string;
+  title: string;
+  author: string | null;
+  synopsis: string | null;
+  sourceFileName: string | null;
+  charCount: number;
+  createdAt: Date;
+  updatedAt: Date;
+}): ManuscriptRecord {
+  return {
+    ...row,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
 }

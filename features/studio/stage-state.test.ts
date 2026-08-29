@@ -198,6 +198,8 @@ function snapshot(input?: {
           name: "Episode 1",
           description: null,
           novelText: input?.novelText ?? null,
+          activeSourceId: input?.novelText ? "source-original-1" : null,
+          activeSourceKind: "original",
           createdAt: "2026-08-26T00:00:00Z",
           updatedAt: "2026-08-26T00:00:00Z",
         },

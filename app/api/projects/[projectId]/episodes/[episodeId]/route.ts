@@ -1,3 +1,4 @@
+import { EpisodeSourceError } from "@/lib/episodes/errors";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { deleteEpisode, updateEpisode } from "@/lib/projects/queries";
 import {
@@ -44,7 +45,20 @@ export async function PATCH(request: Request, context: RouteContext) {
   if (body.novelText === null || typeof body.novelText === "string")
     update.novelText =
       typeof body.novelText === "string" ? body.novelText.trim() || null : null;
-  const episode = await updateEpisode(user.id, projectId, episodeId, update);
+  let episode;
+  try {
+    episode = await updateEpisode(user.id, projectId, episodeId, update);
+  } catch (error) {
+    if (error instanceof EpisodeSourceError)
+      return attachSessionCookie(
+        Response.json(
+          { message: error.message, details: error.details },
+          { status: error.status },
+        ),
+        sessionId,
+      );
+    throw error;
+  }
   if (!episode)
     return attachSessionCookie(
       Response.json({ message: "剧集不存在" }, { status: 404 }),

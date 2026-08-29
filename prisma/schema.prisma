@@ -211,6 +211,7 @@ model Project {
   updatedAt              DateTime                @updatedAt @map("updated_at")
   user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   config                 ProjectConfig?
+  manuscripts            Manuscript[]
   episodes               Episode[]
   mediaTasks             MediaTask[]
   characters             NovelCharacter[]
@@ -260,6 +261,8 @@ model Episode {
   name                   String
   description            String?                 @db.Text
   novelText              String?                 @map("novel_text") @db.Text
+  activeSourceId         String?                 @map("active_source_id")
+  activeSourceKind       String                  @default("original") @map("active_source_kind") @db.VarChar(32)
   createdAt              DateTime                @default(now()) @map("created_at")
   updatedAt              DateTime                @updatedAt @map("updated_at")
   project                Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -273,10 +276,59 @@ model Episode {
   assetReferences        AssetReference[]
   workflowRuns           WorkflowRun[]
   productionDeliverables ProductionDeliverable[]
+  sourceVersions         EpisodeSourceVersion[]
 
   @@unique([projectId, episodeNumber])
   @@index([projectId, episodeNumber])
   @@map("episodes")
+}
+
+model Manuscript {
+  id             String                 @id
+  projectId      String                 @map("project_id")
+  title          String
+  author         String?
+  synopsis       String?                @db.Text
+  sourceFileName String?                @map("source_file_name")
+  sourceText     String                 @map("source_text") @db.Text
+  sourceHash     String                 @map("source_hash") @db.VarChar(64)
+  charCount      Int                    @map("char_count")
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+  project        Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceVersions EpisodeSourceVersion[]
+
+  @@unique([projectId, sourceHash])
+  @@index([projectId, createdAt])
+  @@map("manuscripts")
+}
+
+model EpisodeSourceVersion {
+  id               String      @id
+  episodeId        String      @map("episode_id")
+  manuscriptId     String?     @map("manuscript_id")
+  kind             String      @db.VarChar(32)
+  version          Int
+  title            String?
+  summary          String?     @db.Text
+  content          String      @db.Text
+  adaptationMode   String?     @map("adaptation_mode") @db.VarChar(32)
+  instructions     String?     @db.Text
+  changeSummary    Json?       @map("change_summary")
+  promptTrace      Json?       @map("prompt_trace")
+  channelId        String?     @map("channel_id")
+  model            String?
+  sourceHash       String      @map("source_hash") @db.VarChar(64)
+  sourceStartIndex Int?        @map("source_start_index")
+  sourceEndIndex   Int?        @map("source_end_index")
+  createdAt        DateTime    @default(now()) @map("created_at")
+  episode          Episode     @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  manuscript       Manuscript? @relation(fields: [manuscriptId], references: [id], onDelete: SetNull)
+
+  @@unique([episodeId, kind, version])
+  @@index([episodeId, createdAt])
+  @@index([manuscriptId])
+  @@map("episode_source_versions")
 }
 
 model MediaTask {

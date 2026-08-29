@@ -232,6 +232,37 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       qualityGates: ["schema_valid", "source_boundaries_locatable", "full_source_coverage"],
     }),
   },
+  [PROMPT_IDS.EPISODE_ADAPTATION]: {
+    pathStem: "domain/episode_adaptation",
+    version: 1,
+    variables: [
+      "source_text",
+      "episode_summary",
+      "manuscript_context",
+      "project_context",
+      "adaptation_mode",
+      "custom_instructions",
+    ],
+    agent: defineAgent({
+      id: "episode_adaptation_editor",
+      responsibility:
+        "Create one reviewable prose adaptation while preserving every supplied story fact.",
+      prohibited: [
+        "overwriting or pretending to replace the source",
+        "inventing plot events, identities, relationships, powers, props, dialogue facts, or outcomes",
+        "changing chronology, ownership, winners, injuries, deaths, or revealed information",
+        "turning visual art-style settings into unsupported story facts",
+      ],
+      contextPolicy: { scope: "episode", trust: "untrusted" },
+      evidencePolicy: { required: true, mode: "source_quotes" },
+      qualityGates: [
+        "schema_valid",
+        "source_evidence_locatable",
+        "facts_preserved",
+        "adaptation_mode_followed",
+      ],
+    }),
+  },
   [PROMPT_IDS.ASSET_VISUAL_DESIGN]: {
     pathStem: "domain/asset_visual_design",
     version: 1,

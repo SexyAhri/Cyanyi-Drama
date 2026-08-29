@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { Prisma } from "@prisma/client";
 
+import { assertEpisodeHasNoDownstream } from "@/lib/episodes/adaptation";
 import { prisma } from "@/lib/server/prisma";
 import type { EpisodeRecord, ProjectRecord } from "./types";
 
@@ -135,12 +136,30 @@ export async function createEpisode(
     orderBy: { episodeNumber: "desc" },
     select: { episodeNumber: true },
   });
+  const sourceId = input.novelText ? randomUUID() : null;
   const episode = await prisma.episode.create({
     data: {
       id: randomUUID(),
       projectId,
       episodeNumber: (last?.episodeNumber ?? 0) + 1,
       ...input,
+      activeSourceId: sourceId,
+      activeSourceKind: "original",
+      ...(sourceId && input.novelText
+        ? {
+            sourceVersions: {
+              create: {
+                id: sourceId,
+                kind: "original",
+                version: 1,
+                title: input.name,
+                summary: input.description,
+                content: input.novelText,
+                sourceHash: textHash(input.novelText),
+              },
+            },
+          }
+        : {}),
     },
   });
   return toEpisode(episode);
@@ -156,15 +175,69 @@ export async function updateEpisode(
     novelText?: string | null;
   },
 ) {
-  if (
-    !(await prisma.episode.count({
-      where: { id: episodeId, projectId, project: { userId } },
-    }))
-  )
-    return null;
-  return toEpisode(
-    await prisma.episode.update({ where: { id: episodeId }, data: input }),
-  );
+  const existing = await prisma.episode.findFirst({
+    where: { id: episodeId, projectId, project: { userId } },
+  });
+  if (!existing) return null;
+  const nextText =
+    input.novelText === undefined
+      ? undefined
+      : input.novelText?.trim() || null;
+  if (nextText === undefined || nextText === existing.novelText)
+    return toEpisode(
+      await prisma.episode.update({ where: { id: episodeId }, data: input }),
+    );
+  await assertEpisodeHasNoDownstream({ userId, projectId, episodeId });
+
+  if (!nextText)
+    return toEpisode(
+      await prisma.episode.update({
+        where: { id: episodeId },
+        data: {
+          ...input,
+          novelText: null,
+          activeSourceId: null,
+          activeSourceKind: "original",
+        },
+      }),
+    );
+
+  return prisma.$transaction(async (tx) => {
+    const kind = existing.activeSourceKind === "adapted" ? "adapted" : "original";
+    const latest = await tx.episodeSourceVersion.findFirst({
+      where: { episodeId, kind },
+      orderBy: { version: "desc" },
+      select: { version: true },
+    });
+    const sourceId = randomUUID();
+    await tx.episodeSourceVersion.create({
+      data: {
+        id: sourceId,
+        episodeId,
+        kind,
+        version: (latest?.version ?? 0) + 1,
+        title: input.name ?? existing.name,
+        summary:
+          input.description === undefined
+            ? existing.description
+            : input.description,
+        content: nextText,
+        adaptationMode: kind === "adapted" ? "manual" : null,
+        sourceHash: textHash(nextText),
+      },
+    });
+    return toEpisode(
+      await tx.episode.update({
+        where: { id: episodeId },
+        data: {
+          ...input,
+          novelText: nextText,
+          activeSourceId: sourceId,
+          activeSourceKind: kind,
+        },
+      }),
+    );
+  });
 }
 
 export async function deleteEpisode(
@@ -228,6 +301,8 @@ function toEpisode(row: {
   name: string;
   description: string | null;
   novelText: string | null;
+  activeSourceId: string | null;
+  activeSourceKind: string;
   createdAt: Date;
   updatedAt: Date;
 }): EpisodeRecord {
@@ -238,9 +313,16 @@ function toEpisode(row: {
     name: row.name,
     description: row.description,
     novelText: row.novelText,
+    activeSourceId: row.activeSourceId,
+    activeSourceKind:
+      row.activeSourceKind === "adapted" ? "adapted" : "original",
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+function textHash(value: string) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function parseJsonObject(

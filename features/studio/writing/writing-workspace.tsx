@@ -5,6 +5,7 @@ import {
   Ban,
   BookOpenText,
   Braces,
+  FilePenLine,
   LoaderCircle,
   Pause,
   Play,
@@ -15,12 +16,22 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import type { EpisodeSourceVersionRecord } from "@/lib/projects/types";
 import { cn } from "@/lib/utils";
 
 import {
+  activateStudioEpisodeSource,
   controlStudioWorkflow,
+  loadStudioEpisodeSources,
   loadStudioProductionData,
   startStoryToScriptWorkflow,
   updateStudioEpisode,
@@ -41,6 +52,7 @@ import type {
 } from "../types";
 import { workflowStepLabel } from "../workflow-labels";
 import { StatusIndicator } from "../components/status-indicator";
+import { AdaptationDialog } from "./adaptation-dialog";
 
 export function WritingWorkspace({
   analysisModelId,
@@ -62,7 +74,9 @@ export function WritingWorkspace({
   snapshot: WorkspaceSnapshot;
 }) {
   const copy = getStudioCopy(locale);
-  const [tab, setTab] = useState<"source" | "screenplay">("source");
+  const [tab, setTab] = useState<"original" | "adapted" | "screenplay">(
+    episode.activeSourceKind,
+  );
   const [novelText, setNovelText] = useState(episode.novelText ?? "");
   const [savedText, setSavedText] = useState(episode.novelText ?? "");
   const serverTextRef = useRef({
@@ -74,6 +88,15 @@ export function WritingWorkspace({
   const [isLoadingClips, setIsLoadingClips] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isActing, setIsActing] = useState(false);
+  const [isLoadingSources, setIsLoadingSources] = useState(true);
+  const [isActivatingSource, setIsActivatingSource] = useState(false);
+  const [sourceRevision, setSourceRevision] = useState(0);
+  const [sourceCatalog, setSourceCatalog] = useState<
+    Awaited<ReturnType<typeof loadStudioEpisodeSources>> | null
+  >(null);
+  const [selectedSourceIds, setSelectedSourceIds] = useState<
+    Partial<Record<"original" | "adapted", string>>
+  >({});
   const workflows = snapshot.workflows.filter(
     (workflow) => workflow.episodeId === episode.id,
   );
@@ -92,6 +115,30 @@ export function WritingWorkspace({
     setSavedText(nextText);
     serverTextRef.current = { episodeId: episode.id, text: nextText };
   }, [episode.id, episode.novelText]);
+
+  useEffect(() => {
+    setTab(episode.activeSourceKind);
+    setSelectedSourceIds({});
+  }, [episode.id, episode.activeSourceKind]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setIsLoadingSources(true);
+    void loadStudioEpisodeSources(
+      snapshot.project.id,
+      episode.id,
+      controller.signal,
+    )
+      .then(setSourceCatalog)
+      .catch((error) => {
+        if (!controller.signal.aborted)
+          toast.error(error instanceof Error ? error.message : copy.loadFailed);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoadingSources(false);
+      });
+    return () => controller.abort();
+  }, [copy.loadFailed, episode.id, snapshot.project.id, sourceRevision]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -143,6 +190,22 @@ export function WritingWorkspace({
     );
   }, [onContextChange, selectedClip]);
 
+  const sourceKind = tab === "adapted" ? "adapted" : "original";
+  const sourceVersions = (sourceCatalog?.sources ?? []).filter(
+    (source) => source.kind === sourceKind,
+  );
+  const selectedSource =
+    sourceVersions.find(
+      (source) => source.id === selectedSourceIds[sourceKind],
+    ) ??
+    sourceVersions.find((source) => source.id === sourceCatalog?.activeSourceId) ??
+    sourceVersions[0];
+  const selectedSourceIsActive =
+    Boolean(selectedSource) && selectedSource?.id === sourceCatalog?.activeSourceId;
+  const displayedSourceText = selectedSourceIsActive
+    ? novelText
+    : (selectedSource?.content ?? "");
+
   async function saveSource() {
     setIsSaving(true);
     try {
@@ -157,12 +220,39 @@ export function WritingWorkspace({
       setNovelText(persisted);
       setSavedText(persisted);
       toast.success(copy.saved);
+      setSourceRevision((current) => current + 1);
       await onRefresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : copy.actionFailed);
     } finally {
       setIsSaving(false);
     }
+  }
+
+  async function activateSource(source: EpisodeSourceVersionRecord) {
+    setIsActivatingSource(true);
+    try {
+      await activateStudioEpisodeSource(
+        snapshot.project.id,
+        episode.id,
+        source.id,
+      );
+      setNovelText(source.content);
+      setSavedText(source.content);
+      setSourceRevision((current) => current + 1);
+      toast.success(copy.sourceActivated);
+      await onRefresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : copy.actionFailed);
+    } finally {
+      setIsActivatingSource(false);
+    }
+  }
+
+  async function handleAdaptationCreated(source: EpisodeSourceVersionRecord) {
+    setSelectedSourceIds((current) => ({ ...current, adapted: source.id }));
+    setTab("adapted");
+    setSourceRevision((current) => current + 1);
   }
 
   async function startWorkflow() {
@@ -217,24 +307,45 @@ export function WritingWorkspace({
           <h1 className="mt-1 text-xl font-semibold">{copy.sourceEditor}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="font-mono">
-            {novelText.length.toLocaleString()} {copy.wordCount}
-          </span>
-          <span aria-hidden>·</span>
-          <span>{isDirty ? copy.unsavedChanges : copy.saved}</span>
-          <Button
-            disabled={!isDirty || isSaving || workflowActive}
-            onClick={() => void saveSource()}
-            size="sm"
-            type="button"
-          >
-            {isSaving ? (
-              <LoaderCircle className="size-4 animate-spin" />
-            ) : (
-              <Save className="size-4" />
-            )}
-            {isSaving ? copy.saving : copy.save}
-          </Button>
+          {tab !== "screenplay" ? (
+            <>
+              <span className="font-mono">
+                {displayedSourceText.length.toLocaleString()} {copy.wordCount}
+              </span>
+              <span aria-hidden>·</span>
+              <span>
+                {selectedSourceIsActive
+                  ? isDirty
+                    ? copy.unsavedChanges
+                    : copy.productionSource
+                  : copy.sourceReadOnly}
+              </span>
+              {selectedSourceIsActive ? (
+                <Button
+                  disabled={!isDirty || isSaving || workflowActive}
+                  onClick={() => void saveSource()}
+                  size="sm"
+                  type="button"
+                >
+                  {isSaving ? (
+                    <LoaderCircle className="size-4 animate-spin" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  {isSaving ? copy.saving : copy.save}
+                </Button>
+              ) : null}
+              <AdaptationDialog
+                defaultModelId={analysisModelId}
+                disabled={isSaving || workflowActive || !sourceCatalog?.sources.length}
+                episodeId={episode.id}
+                locale={locale}
+                models={models}
+                onCreated={handleAdaptationCreated}
+                projectId={snapshot.project.id}
+              />
+            </>
+          ) : null}
         </div>
       </header>
 
@@ -243,13 +354,29 @@ export function WritingWorkspace({
       >
         <Tabs
           className="min-w-0 py-5 xl:min-h-0 xl:overflow-hidden xl:pr-7"
-          onValueChange={(value) => setTab(value as "source" | "screenplay")}
+          onValueChange={(value) =>
+            setTab(value as "original" | "adapted" | "screenplay")
+          }
           value={tab}
         >
           <TabsList variant="line">
-            <TabsTrigger value="source">
+            <TabsTrigger value="original">
               <BookOpenText className="size-4" />
-              {copy.sourceText}
+              {copy.originalSource}
+              <Badge className="ml-1" variant="secondary">
+                {(sourceCatalog?.sources ?? []).filter(
+                  (source) => source.kind === "original",
+                ).length}
+              </Badge>
+            </TabsTrigger>
+            <TabsTrigger value="adapted">
+              <FilePenLine className="size-4" />
+              {copy.adaptedSource}
+              <Badge className="ml-1" variant="secondary">
+                {(sourceCatalog?.sources ?? []).filter(
+                  (source) => source.kind === "adapted",
+                ).length}
+              </Badge>
             </TabsTrigger>
             <TabsTrigger value="screenplay">
               <Braces className="size-4" />
@@ -259,16 +386,47 @@ export function WritingWorkspace({
               </Badge>
             </TabsTrigger>
           </TabsList>
-          <TabsContent className="mt-4 xl:min-h-0 xl:overflow-hidden" value="source">
-            <Textarea
-              aria-label={copy.novelText}
-              className="h-[min(60dvh,44rem)] min-h-80 resize-y overflow-y-auto rounded-md bg-card p-4 leading-7 field-sizing-fixed xl:h-full xl:min-h-0 xl:resize-none"
-              disabled={isSaving || workflowActive}
-              onChange={(event) => setNovelText(event.target.value)}
-              placeholder={copy.novelTextPlaceholder}
-              value={novelText}
-            />
-          </TabsContent>
+          {(["original", "adapted"] as const).map((kind) => {
+            const versions = (sourceCatalog?.sources ?? []).filter(
+              (source) => source.kind === kind,
+            );
+            const source =
+              versions.find(
+                (item) => item.id === selectedSourceIds[kind],
+              ) ??
+              versions.find((item) => item.id === sourceCatalog?.activeSourceId) ??
+              versions[0];
+            const isActive = source?.id === sourceCatalog?.activeSourceId;
+            return (
+              <TabsContent
+                className="mt-4 xl:min-h-0 xl:overflow-hidden"
+                key={kind}
+                value={kind}
+              >
+                <SourceVersionPane
+                  activeSourceId={sourceCatalog?.activeSourceId ?? null}
+                  displayedText={isActive ? novelText : (source?.content ?? "")}
+                  isActivating={isActivatingSource}
+                  isLoading={isLoadingSources}
+                  isSaving={isSaving}
+                  kind={kind}
+                  locale={locale}
+                  manuscriptSynopsis={sourceCatalog?.manuscript?.synopsis}
+                  onActivate={(next) => void activateSource(next)}
+                  onChange={setNovelText}
+                  onSelect={(sourceId) =>
+                    setSelectedSourceIds((current) => ({
+                      ...current,
+                      [kind]: sourceId,
+                    }))
+                  }
+                  source={source}
+                  versions={versions}
+                  workflowActive={workflowActive}
+                />
+              </TabsContent>
+            );
+          })}
           <TabsContent className="mt-4 xl:min-h-0 xl:overflow-y-auto" value="screenplay">
             <ScreenplayList
               clips={clips}
@@ -371,6 +529,130 @@ export function WritingWorkspace({
             </div>
           </aside>
       </div>
+    </div>
+  );
+}
+
+function SourceVersionPane({
+  activeSourceId,
+  displayedText,
+  isActivating,
+  isLoading,
+  isSaving,
+  kind,
+  locale,
+  manuscriptSynopsis,
+  onActivate,
+  onChange,
+  onSelect,
+  source,
+  versions,
+  workflowActive,
+}: {
+  activeSourceId: string | null;
+  displayedText: string;
+  isActivating: boolean;
+  isLoading: boolean;
+  isSaving: boolean;
+  kind: "original" | "adapted";
+  locale: StudioLocale;
+  manuscriptSynopsis?: string | null;
+  onActivate: (source: EpisodeSourceVersionRecord) => void;
+  onChange: (value: string) => void;
+  onSelect: (sourceId: string) => void;
+  source?: EpisodeSourceVersionRecord;
+  versions: EpisodeSourceVersionRecord[];
+  workflowActive: boolean;
+}) {
+  const copy = getStudioCopy(locale);
+  if (isLoading)
+    return (
+      <div className="flex min-h-80 items-center justify-center text-muted-foreground">
+        <LoaderCircle className="size-5 animate-spin" />
+      </div>
+    );
+  if (!source)
+    return (
+      <div className="flex min-h-80 items-center justify-center border-y px-6 text-center text-sm text-muted-foreground">
+        {kind === "adapted" ? copy.noAdaptedSource : copy.novelTextPlaceholder}
+      </div>
+    );
+
+  const isActive = source.id === activeSourceId;
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex flex-col gap-3 border-y py-3 sm:flex-row sm:items-center">
+        <Select onValueChange={(value) => value && onSelect(value)} value={source.id}>
+          <SelectTrigger className="h-8 w-full sm:w-64">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {versions.map((version) => (
+              <SelectItem key={version.id} value={version.id}>
+                {copy.sourceVersion} {version.version} · {formatStudioDate(locale, version.createdAt)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+          <Badge variant="outline">
+            {kind === "adapted" ? copy.adaptedSource : copy.originalSource} v{source.version}
+          </Badge>
+          {isActive ? <Badge>{copy.productionSource}</Badge> : null}
+          {!isActive ? (
+            <Button
+              disabled={isActivating || workflowActive}
+              onClick={() => onActivate(source)}
+              size="sm"
+              type="button"
+            >
+              {isActivating ? <LoaderCircle className="size-4 animate-spin" /> : null}
+              {copy.setProductionSource}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      {manuscriptSynopsis ? (
+        <div className="border-b py-3 text-sm">
+          <p className="text-xs font-medium text-muted-foreground">
+            {copy.manuscriptSynopsis}
+          </p>
+          <p className="mt-1 line-clamp-3 leading-6">{manuscriptSynopsis}</p>
+        </div>
+      ) : null}
+
+      {source.summary || source.changeSummary.length ? (
+        <div className="grid gap-3 border-b py-3 text-sm lg:grid-cols-2">
+          {source.summary ? (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground">
+                {copy.episodeSynopsis}
+              </p>
+              <p className="mt-1 line-clamp-3 leading-6">{source.summary}</p>
+            </div>
+          ) : null}
+          {source.changeSummary.length ? (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground">
+                {copy.changeSummary}
+              </p>
+              <p className="mt-1 line-clamp-3 leading-6">
+                {source.changeSummary.join("；")}
+              </p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <Textarea
+        aria-label={kind === "adapted" ? copy.adaptedSource : copy.originalSource}
+        className="mt-4 h-[min(56dvh,42rem)] min-h-80 resize-y overflow-y-auto rounded-md bg-card p-4 leading-7 field-sizing-fixed xl:min-h-0 xl:flex-1 xl:resize-none"
+        disabled={!isActive || isSaving || workflowActive}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={copy.novelTextPlaceholder}
+        value={displayedText}
+      />
     </div>
   );
 }

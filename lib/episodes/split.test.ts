@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { detectEpisodeMarkers, resolveAiEpisodeBoundaries } from "./split";
+import {
+  detectEpisodeMarkers,
+  resolveAiEpisodeBoundaries,
+  summarizeEpisodeContent,
+} from "./split";
 
 describe("episode splitting", () => {
   it("splits explicit Chinese episode markers without changing source text", () => {
@@ -69,5 +73,13 @@ describe("episode splitting", () => {
         "A start A end B start B end",
       ),
     ).toThrow("endMarker 不在本集范围内");
+  });
+
+  it("creates a factual local preview summary without using metadata headings", () => {
+    expect(
+      summarizeEpisodeContent(
+        "第1章 初见\n作者：测试作者\n少年推开院门，看见多年未归的父亲站在雨中。",
+      ),
+    ).toBe("少年推开院门，看见多年未归的父亲站在雨中。");
   });
 });
