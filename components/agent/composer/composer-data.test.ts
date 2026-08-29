@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  applyRuntimeSettingsToComposer,
   createDefaultComposerSettings,
   defaultImageModelOptions,
   normalizeComposerSettings,
   imageFormatOptions,
   resolveComposerModelOptions,
+  setComposerMode,
 } from "./composer-data";
+import { DEFAULT_RUNTIME_SETTINGS } from "@/lib/settings/runtime-contract";
 
 describe("composer model resolution", () => {
   it("does not expose text models as video models", () => {
@@ -125,5 +128,31 @@ describe("composer model resolution", () => {
         format: "png",
       },
     ]);
+  });
+
+  it("keeps independent image and video defaults when switching modes", () => {
+    const settings = applyRuntimeSettingsToComposer(
+      createDefaultComposerSettings(),
+      {
+        ...DEFAULT_RUNTIME_SETTINGS,
+        imageGenerationRatio: "3:2",
+        imageGenerationResolution: "4k",
+        imageGenerationCount: 3,
+        videoGenerationRatio: "9:16",
+        videoGenerationResolution: "720p",
+        videoGenerationDuration: "5s",
+      },
+    );
+
+    expect(setComposerMode(settings, "image")).toMatchObject({
+      ratio: "3:2",
+      resolution: "4k",
+      imageCount: 3,
+    });
+    expect(setComposerMode(settings, "video")).toMatchObject({
+      ratio: "9:16",
+      resolution: "720p",
+      duration: "5s",
+    });
   });
 });

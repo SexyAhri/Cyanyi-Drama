@@ -41,6 +41,13 @@ export type AgentComposerSettings = {
   videoModel: string;
   ratio: string;
   resolution: string;
+  imageRatio: string;
+  imageResolution: string;
+  imageCount: number;
+  imageQuality: string;
+  videoRatio: string;
+  videoResolution: string;
+  videoDuration: string;
   imageFormat: string;
   videoFormat: string;
   style: string;

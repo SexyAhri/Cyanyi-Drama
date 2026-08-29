@@ -8,6 +8,13 @@ export type AgentComposerMetadata = {
   videoModel?: string;
   ratio?: string;
   resolution?: string;
+  imageRatio?: string;
+  imageResolution?: string;
+  imageCount?: number;
+  imageQuality?: string;
+  videoRatio?: string;
+  videoResolution?: string;
+  videoDuration?: string;
   imageFormat?: string;
   videoFormat?: string;
   style?: string;
@@ -130,6 +137,28 @@ export function getComposerReferenceImages(composer: AgentComposerMetadata) {
     seen.add(url);
     return true;
   });
+}
+
+export function resolveComposerForMediaKind(
+  composer: AgentComposerMetadata,
+  kind: "image" | "video",
+): AgentComposerMetadata {
+  if (kind === "image") {
+    return {
+      ...composer,
+      mode: "image",
+      ratio: composer.imageRatio ?? composer.ratio,
+      resolution: composer.imageResolution ?? composer.resolution,
+    };
+  }
+
+  return {
+    ...composer,
+    mode: "video",
+    ratio: composer.videoRatio ?? composer.ratio,
+    resolution: composer.videoResolution ?? composer.resolution,
+    duration: composer.videoDuration ?? composer.duration,
+  };
 }
 
 function findLastUserMessageWithReferenceImages(messages: AgentMessage[]) {

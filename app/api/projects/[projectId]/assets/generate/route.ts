@@ -3,6 +3,7 @@ import {
   createProjectImageTask,
   ProjectAssetTaskError,
 } from "@/lib/media/project-asset-tasks";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 
 type Context = { params: Promise<{ projectId: string }> };
 
@@ -17,6 +18,7 @@ export async function POST(request: Request, context: Context) {
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
   if (!targetType || !targetId || !channelId || !model || !prompt) return attachSessionCookie(Response.json({ message: "targetType、targetId、channelId、model 和 prompt 是必填项" }, { status: 400 }), sessionId);
   try {
+    const mediaDefaults = await loadUserRuntimeSettings(user.id);
     const result = await createProjectImageTask({
       userId: user.id,
       projectId,
@@ -27,6 +29,7 @@ export async function POST(request: Request, context: Context) {
       prompt,
       ratio: typeof body.ratio === "string" ? body.ratio : undefined,
       resolution: typeof body.resolution === "string" ? body.resolution : undefined,
+      mediaDefaults,
       useSelectedReference: body.useSelectedReference === true,
     });
     return attachSessionCookie(Response.json(result, { status: 202 }), sessionId);

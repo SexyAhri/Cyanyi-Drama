@@ -19,6 +19,9 @@ export type MediaProviderRequest = {
   resolution?: string;
   format?: string;
   style?: string;
+  count?: number;
+  n?: number;
+  quality?: string;
   duration?: string;
   fps?: number;
   width?: number;

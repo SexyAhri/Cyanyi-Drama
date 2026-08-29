@@ -18,6 +18,10 @@ import {
   DEFAULT_RUNTIME_SETTINGS,
   type RuntimeSettings,
 } from "@/lib/settings/runtime-contract";
+import {
+  loadRuntimeSettings,
+  saveRuntimeSettings,
+} from "@/lib/settings/runtime-client";
 
 import type { ShellCopy } from "./chat-shell-i18n";
 
@@ -28,7 +32,7 @@ export function RuntimeSettingsPanel({ copy }: { copy: ShellCopy }) {
 
   useEffect(() => {
     let active = true;
-    void loadSettings()
+    void loadRuntimeSettings()
       .then((next) => {
         if (active) setSettings(next);
       })
@@ -56,7 +60,7 @@ export function RuntimeSettingsPanel({ copy }: { copy: ShellCopy }) {
   async function save() {
     setSaving(true);
     try {
-      const saved = await saveSettings(settings);
+      const saved = await saveRuntimeSettings(settings);
       setSettings(saved);
       toast.success(copy.settingsRuntimeSaveSuccess);
     } catch (error) {
@@ -144,6 +148,79 @@ export function RuntimeSettingsPanel({ copy }: { copy: ShellCopy }) {
         </div>
       </SettingsSection>
 
+      <SettingsSection
+        description={copy.settingsImageGenerationDescription}
+        title={copy.settingsImageGeneration}
+      >
+        <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <SelectField
+            disabled={loading || saving}
+            label={copy.settingsGenerationRatio}
+            onChange={(value) => update("imageGenerationRatio", value as RuntimeSettings["imageGenerationRatio"])}
+            options={RATIO_OPTIONS}
+            value={settings.imageGenerationRatio}
+          />
+          <SelectField
+            disabled={loading || saving}
+            label={copy.settingsGenerationResolution}
+            onChange={(value) => update("imageGenerationResolution", value as RuntimeSettings["imageGenerationResolution"])}
+            options={IMAGE_RESOLUTION_OPTIONS}
+            value={settings.imageGenerationResolution}
+          />
+          <NumberField
+            disabled={loading || saving}
+            hint={copy.settingsImageCountHint}
+            label={copy.settingsImageCount}
+            max={4}
+            min={1}
+            onChange={(value) => update("imageGenerationCount", value)}
+            value={settings.imageGenerationCount}
+          />
+          <SelectField
+            disabled={loading || saving}
+            label={copy.settingsImageQuality}
+            onChange={(value) => update("imageGenerationQuality", value as RuntimeSettings["imageGenerationQuality"])}
+            options={[
+              { label: copy.settingsImageQualityAuto, value: "auto" },
+              { label: copy.settingsImageQualityHigh, value: "high" },
+            ]}
+            value={settings.imageGenerationQuality}
+          />
+        </div>
+      </SettingsSection>
+
+      <SettingsSection
+        description={copy.settingsVideoGenerationDescription}
+        title={copy.settingsVideoGeneration}
+      >
+        <div className="grid items-start gap-4 sm:grid-cols-3">
+          <SelectField
+            disabled={loading || saving}
+            label={copy.settingsGenerationRatio}
+            onChange={(value) => update("videoGenerationRatio", value as RuntimeSettings["videoGenerationRatio"])}
+            options={RATIO_OPTIONS}
+            value={settings.videoGenerationRatio}
+          />
+          <SelectField
+            disabled={loading || saving}
+            label={copy.settingsGenerationResolution}
+            onChange={(value) => update("videoGenerationResolution", value as RuntimeSettings["videoGenerationResolution"])}
+            options={VIDEO_RESOLUTION_OPTIONS}
+            value={settings.videoGenerationResolution}
+          />
+          <SelectField
+            disabled={loading || saving}
+            label={copy.settingsVideoDuration}
+            onChange={(value) => update("videoGenerationDuration", value as RuntimeSettings["videoGenerationDuration"])}
+            options={[
+              { label: "5s", value: "5s" },
+              { label: "10s", value: "10s" },
+            ]}
+            value={settings.videoGenerationDuration}
+          />
+        </div>
+      </SettingsSection>
+
       <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-4">
         <Button
           disabled={loading || saving}
@@ -162,6 +239,29 @@ export function RuntimeSettingsPanel({ copy }: { copy: ShellCopy }) {
     </div>
   );
 }
+
+const RATIO_OPTIONS = [
+  "1:1",
+  "3:2",
+  "2:3",
+  "16:9",
+  "9:16",
+  "4:3",
+  "3:4",
+  "21:9",
+].map((value) => ({ label: value, value }));
+
+const IMAGE_RESOLUTION_OPTIONS = ["1k", "2k", "4k"].map((value) => ({
+  label: value.toUpperCase(),
+  value,
+}));
+
+const VIDEO_RESOLUTION_OPTIONS = ["720p", "1080p", "2k", "4k"].map(
+  (value) => ({
+    label: value.endsWith("k") ? value.toUpperCase() : value,
+    value,
+  }),
+);
 
 function SettingsSection({
   children,
@@ -257,30 +357,4 @@ function SelectField({
       </Select>
     </div>
   );
-}
-
-async function loadSettings() {
-  const response = await fetch("/api/settings/runtime", { cache: "no-store" });
-  const payload = (await response.json()) as {
-    message?: string;
-    settings?: RuntimeSettings;
-  };
-  if (!response.ok || !payload.settings)
-    throw new Error(payload.message || "运行设置加载失败");
-  return payload.settings;
-}
-
-async function saveSettings(settings: RuntimeSettings) {
-  const response = await fetch("/api/settings/runtime", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(settings),
-  });
-  const payload = (await response.json()) as {
-    message?: string;
-    settings?: RuntimeSettings;
-  };
-  if (!response.ok || !payload.settings)
-    throw new Error(payload.message || "运行设置保存失败");
-  return payload.settings;
 }

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { UserRuntimeSettings } from "@prisma/client";
 
 import { prisma } from "@/lib/server/prisma";
 import {
@@ -29,7 +30,7 @@ export async function saveUserRuntimeSettings(
   return toRuntimeSettings(row);
 }
 
-function toRuntimeSettings(row: RuntimeSettings) {
+function toRuntimeSettings(row: UserRuntimeSettings) {
   return runtimeSettingsSchema.parse({
     structuredRequestTimeoutSeconds: row.structuredRequestTimeoutSeconds,
     structuredOutputStreaming: row.structuredOutputStreaming,
@@ -37,5 +38,12 @@ function toRuntimeSettings(row: RuntimeSettings) {
     workflowStepMaxAttempts: row.workflowStepMaxAttempts,
     workflowConcurrency: row.workflowConcurrency,
     screenplayClipMaxChars: row.screenplayClipMaxChars,
+    imageGenerationRatio: row.imageGenerationRatio,
+    imageGenerationResolution: row.imageGenerationResolution,
+    imageGenerationCount: row.imageGenerationCount,
+    imageGenerationQuality: row.imageGenerationQuality,
+    videoGenerationRatio: row.videoGenerationRatio,
+    videoGenerationResolution: row.videoGenerationResolution,
+    videoGenerationDuration: row.videoGenerationDuration,
   });
 }

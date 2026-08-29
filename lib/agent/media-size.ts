@@ -13,7 +13,7 @@ type PresetRatio =
   | "4:3"
   | "3:4"
   | "21:9";
-type ResolutionPreset = "720p" | "1080p" | "2k" | "4k";
+type ResolutionPreset = "720p" | "1080p" | "1k" | "2k" | "4k";
 
 const RATIO_PATTERN = /^\s*(\d+(?:\.\d+)?)\s*[:：xX]\s*(\d+(?:\.\d+)?)\s*$/;
 const SIZE_MULTIPLE = 16;
@@ -47,6 +47,16 @@ const COMMON_SIZE_PRESETS: Record<
     "3:4": "1072x1424",
     "21:9": "2496x1072",
   },
+  "1k": {
+    "1:1": "1024x1024",
+    "3:2": "1248x832",
+    "2:3": "832x1248",
+    "16:9": "1360x768",
+    "9:16": "768x1360",
+    "4:3": "1168x880",
+    "3:4": "880x1168",
+    "21:9": "1552x672",
+  },
   "2k": {
     "1:1": "2048x2048",
     "3:2": "2496x1664",
@@ -72,11 +82,17 @@ const COMMON_SIZE_PRESETS: Record<
 const PIXEL_BUDGETS: Record<ResolutionPreset, number> = {
   "720p": 1024 * 1024,
   "1080p": 1920 * 1080,
+  "1k": 1024 * 1024,
   "2k": 2048 * 2048,
   "4k": MAX_PIXELS,
 };
 
-const FORMULA_RESOLUTIONS = new Set<ResolutionPreset>(["720p", "2k", "4k"]);
+const FORMULA_RESOLUTIONS = new Set<ResolutionPreset>([
+  "720p",
+  "1k",
+  "2k",
+  "4k",
+]);
 
 export function getOpenAICompatibleImageSizeCandidates(
   resolution: string,
@@ -94,13 +110,14 @@ function normalizeResolution(resolution: string): ResolutionPreset {
   if (
     normalized === "720p" ||
     normalized === "1080p" ||
+    normalized === "1k" ||
     normalized === "2k" ||
     normalized === "4k"
   ) {
     return normalized;
   }
 
-  return "1080p";
+  return "1k";
 }
 
 function calculateImageSize(resolution: ResolutionPreset, ratio: string) {

@@ -5,6 +5,7 @@ import {
   ProjectAssetTaskError,
   type ProjectAssetTarget,
 } from "@/lib/media/project-asset-tasks";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 
 type Context = { params: Promise<{ projectId: string }> };
 
@@ -37,6 +38,7 @@ export async function POST(request: Request, context: Context) {
 
   const results: Array<{ item: BatchItem; task: unknown; entity: unknown }> = [];
   const batchId = `asset_batch_${randomUUID()}`;
+  const mediaDefaults = await loadUserRuntimeSettings(user.id);
   for (const item of items.slice(0, 50)) {
     try {
       const result = await createProjectImageTask({
@@ -50,6 +52,7 @@ export async function POST(request: Request, context: Context) {
         prompt: item.prompt?.trim() || basePrompt,
         ratio: stringValue(body.ratio) || undefined,
         resolution: stringValue(body.resolution) || undefined,
+        mediaDefaults,
         useSelectedReference: body.useSelectedReference !== false,
       });
       results.push({ item, ...result });

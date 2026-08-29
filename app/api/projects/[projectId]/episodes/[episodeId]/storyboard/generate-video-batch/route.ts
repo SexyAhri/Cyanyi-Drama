@@ -5,6 +5,7 @@ import {
   createStoryboardPanelVideoTask,
   ProjectAssetTaskError,
 } from "@/lib/media/project-asset-tasks";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 
 type Context = { params: Promise<{ projectId: string; episodeId: string }> };
 type PanelItem = {
@@ -29,6 +30,7 @@ export async function POST(request: Request, context: Context) {
   }
   const batchId = `storyboard_video_batch_${randomUUID()}`;
   const results: Array<{ item: PanelItem; task: unknown; panel: unknown }> = [];
+  const mediaDefaults = await loadUserRuntimeSettings(user.id);
   for (const item of items.slice(0, 50)) {
     try {
       const result = await createStoryboardPanelVideoTask({
@@ -43,6 +45,7 @@ export async function POST(request: Request, context: Context) {
         ratio: stringValue(body.ratio) || undefined,
         resolution: stringValue(body.resolution) || undefined,
         duration: stringValue(body.duration) || undefined,
+        mediaDefaults,
         mode:
           item.mode ??
           (body.mode === "first-last" ? "first-last" : "reference"),

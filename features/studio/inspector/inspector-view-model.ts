@@ -1,6 +1,7 @@
 import type {
   StudioLocale,
   StudioMediaTask,
+  StudioExecutionTrace,
   StudioExecutionSpan,
   StudioUsageCost,
   WorkflowRunSummary,
@@ -38,7 +39,10 @@ export function buildOperationItems(
         ),
       ),
     ...snapshot.tasks
-      .filter((task) => !episodeId || task.episodeId === episodeId)
+      .filter(
+        (task) =>
+          !episodeId || !task.episodeId || task.episodeId === episodeId,
+      )
       .map(
         (task): OperationItem => ({
           id: task.id,
@@ -181,6 +185,28 @@ export function buildTraceRows(spans: StudioExecutionSpan[]) {
   };
   for (const root of roots) visit(root, 0);
   return rows;
+}
+
+export function traceEventDisplayStatus(
+  event: StudioExecutionTrace["events"][number],
+  spanStatus: string | undefined,
+  isLatestEvent: boolean,
+) {
+  if (event.source !== "media_task") return event.status;
+  if (
+    ["failed", "retry_scheduled", "billing_settlement_failed"].includes(
+      event.type,
+    )
+  )
+    return "failed";
+  if (event.type === "canceled") return "canceled";
+  if (event.type === "succeeded") return "succeeded";
+  if (["queued", "running", "progress", "heartbeat"].includes(event.type))
+    return isLatestEvent && ["queued", "running"].includes(spanStatus ?? "")
+      ? spanStatus
+      : "succeeded";
+  if (["created", "cancel_requested"].includes(event.type)) return "succeeded";
+  return event.status;
 }
 
 const traceNameCopy: Record<StudioLocale, Record<string, string>> = {

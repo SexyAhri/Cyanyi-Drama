@@ -12,6 +12,42 @@ beforeEach(() => {
 });
 
 describe("OpenAI-compatible media provider", () => {
+  it("sends an explicit image count for text-to-image requests", async () => {
+    fetchWithProviderRetry.mockResolvedValue(
+      Response.json({ data: [{ url: "https://cdn.test/shot.png" }] }),
+    );
+
+    await openAiCompatibleMediaProvider.generate({
+      protocol: "openai-compatible",
+      providerKey: "custom",
+      baseUrl: "https://provider.test/v1",
+      apiKey: "key-1",
+      model: "gpt-image-2",
+      kind: "image",
+      request: {
+        prompt: "cinematic shot",
+        ratio: "1:1",
+        resolution: "2k",
+        count: 3,
+        quality: "high",
+      },
+    });
+
+    expect(fetchWithProviderRetry.mock.calls[0][0]).toBe(
+      "https://provider.test/v1/images/generations",
+    );
+    expect(
+      JSON.parse(fetchWithProviderRetry.mock.calls[0][1].body as string),
+    ).toEqual({
+      model: "gpt-image-2",
+      prompt: "cinematic shot",
+      size: "2048x2048",
+      n: 3,
+      quality: "high",
+      response_format: "url",
+    });
+  });
+
   it("embeds reference images before calling an external image endpoint", async () => {
     vi.stubGlobal(
       "fetch",

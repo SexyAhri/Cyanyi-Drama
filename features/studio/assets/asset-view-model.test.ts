@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { MediaTask } from "@/lib/media/task-contract";
 import type { ProjectAssetCatalog } from "../types";
 import {
   buildStudioAssetEntities,
@@ -27,10 +28,40 @@ describe("studio asset view model", () => {
       (asset) => asset.id !== "asset-character",
     );
 
-    const [character] = buildStudioAssetEntities(catalog, "character");
+    const [character] = buildStudioAssetEntities(
+      catalog,
+      "character",
+      undefined,
+      [createTask("succeeded", "appearance-1")],
+    );
 
     expect(character.candidates).toEqual([]);
   });
+
+  it.each(["queued", "running", "failed"] as const)(
+    "keeps a %s generation placeholder until the task can be inspected",
+    (status) => {
+      const catalog = createCatalog();
+      catalog.assets = catalog.assets.filter(
+        (asset) => asset.id !== "asset-character",
+      );
+
+      const [character] = buildStudioAssetEntities(
+        catalog,
+        "character",
+        undefined,
+        [createTask(status, "appearance-1")],
+      );
+
+      expect(character.candidates).toEqual([
+        expect.objectContaining({
+          id: "appearance-1",
+          assetId: null,
+          url: null,
+        }),
+      ]);
+    },
+  );
 
   it("builds a character prompt from the selected appearance and full profile", () => {
     const catalog = createCatalog();
@@ -287,4 +318,26 @@ function createAsset(id: string, entityType: string, entityId: string) {
     taskStatus: "succeeded",
     createdAt: "2026-01-01T00:00:00.000Z",
   };
+}
+
+function createTask(status: MediaTask["status"], targetId: string) {
+  return {
+    id: `task-${status}`,
+    traceId: `trace-${status}`,
+    spanId: `span-${status}`,
+    projectId: "project-1",
+    targetType: "character_appearance",
+    targetId,
+    status,
+    kind: "image",
+    provider: "test",
+    protocol: "openai-compatible",
+    model: "image-model",
+    request: {},
+    retryCount: 0,
+    maxRetries: 2,
+    progress: status === "running" ? 1 : 0,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  } as MediaTask;
 }

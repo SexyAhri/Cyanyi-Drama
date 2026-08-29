@@ -20,6 +20,7 @@ import {
 import {
   getComposerReferenceImages,
   normalizeMessages,
+  resolveComposerForMediaKind,
   type AgentComposerMetadata,
 } from "@/lib/agent/model-messages";
 import { getOpenAICompatibleImageSizeCandidates } from "@/lib/agent/media-size";
@@ -51,6 +52,8 @@ import {
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { getProject } from "@/lib/projects/queries";
 import { enqueueMediaJob } from "@/lib/queue/media-queue";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
+import type { RuntimeSettings } from "@/lib/settings/runtime-contract";
 
 type ChatRequestBody = {
   messages?: AgentMessage[];
@@ -137,8 +140,10 @@ type VideoGenerationState = {
 };
 
 type ImageGenerationToolInput = {
+  count?: number;
   format?: string;
   prompt: string;
+  quality?: string;
   ratio?: string;
   resolution?: string;
   style?: string;
@@ -661,13 +666,13 @@ function createAiSdkInstructions(
 
   if (composer?.imageModel) {
     lines.push(
-      `Current image defaults: model ${composer.imageModel}, ratio ${composer.ratio || "1:1"}, resolution ${composer.resolution || "1080p"}, quality high, format png, style ${composer.style || "auto"}.`,
+      `Current image defaults: model ${composer.imageModel}, ratio ${composer.imageRatio || composer.ratio || "1:1"}, resolution ${composer.imageResolution || composer.resolution || "1k"}, count ${composer.imageCount || 1}, quality ${composer.imageQuality || "high"}, format png, style ${composer.style || "auto"}.`,
     );
   }
 
   if (composer?.videoModel) {
     lines.push(
-      `Current video defaults: model ${composer.videoModel}, duration ${composer.duration || "5"}, ratio ${composer.ratio || "16:9"}, resolution ${composer.resolution || "1080p"}, format ${composer.videoFormat || "mp4"}.`,
+      `Current video defaults: model ${composer.videoModel}, duration ${composer.videoDuration || composer.duration || "10s"}, ratio ${composer.videoRatio || composer.ratio || "16:9"}, resolution ${composer.videoResolution || composer.resolution || "1080p"}, format ${composer.videoFormat || "mp4"}.`,
     );
   }
 
@@ -710,7 +715,7 @@ function createAiSdkTools({
   if (availableTools.enableImage) {
     tools.image_generation = tool({
       description:
-        "Generate or edit a single image with the app-configured image provider. Reference images from the current composer are attached automatically.",
+        "Generate or edit images with the app-configured image provider. Reference images from the current composer are attached automatically.",
       inputSchema: jsonSchema<ImageGenerationToolInput>({
         type: "object",
         properties: {
@@ -733,6 +738,14 @@ function createAiSdkTools({
             type: "string",
             description: "Optional image format such as png, jpeg, or webp.",
           },
+          count: {
+            type: "number",
+            description: "Optional image count from 1 to 4.",
+          },
+          quality: {
+            type: "string",
+            description: "Optional image quality such as auto or high.",
+          },
           style: {
             type: "string",
             description:
@@ -742,7 +755,7 @@ function createAiSdkTools({
         required: ["prompt"],
         additionalProperties: false,
       }),
-      execute: async ({ format, prompt, ratio, resolution, style }) => {
+      execute: async ({ count, format, prompt, quality, ratio, resolution, style }) => {
         const imageRoute = resolveModelRoute(
           composer?.imageModel,
           modelRoutes,
@@ -750,7 +763,7 @@ function createAiSdkTools({
         );
         const finalArgs = resolveMediaToolArgs(
           "image_generation",
-          { format, prompt, ratio, resolution, style },
+          { count, format, prompt, quality, ratio, resolution, style },
           composer,
           imageRoute.runtime,
         ) as ResolvedImageGenerationToolInput;
@@ -765,6 +778,9 @@ function createAiSdkTools({
             resolution: finalArgs.resolution,
             format: finalArgs.format,
             style: finalArgs.style,
+            count: finalArgs.count,
+            n: finalArgs.count,
+            quality: finalArgs.quality,
             referenceImages: finalArgs.referenceImages,
           },
         });
@@ -850,25 +866,31 @@ function resolveMediaToolArgs(
       ? getComposerReferenceImages(composer)
       : [];
 
+    const mediaComposer = composer
+      ? resolveComposerForMediaKind(composer, "image")
+      : undefined;
+
     return {
       ...input,
-      format: composer?.imageFormat ?? input.format,
-      model: composer?.imageModel,
+      count: mediaComposer?.imageCount ?? input.count,
+      format: mediaComposer?.imageFormat ?? input.format,
+      model: mediaComposer?.imageModel,
       prompt: input.prompt ?? "",
       providerHint: "openai-compatible-image" as const,
-      ratio: composer?.ratio ?? input.ratio,
-      referenceImage: composer?.referenceImage,
+      quality: mediaComposer?.imageQuality ?? input.quality,
+      ratio: mediaComposer?.ratio ?? input.ratio,
+      referenceImage: mediaComposer?.referenceImage,
       referenceImages,
       requestParams: composer
         ? createImageRequestParamsForComposer(
-            composer,
+            mediaComposer!,
             input.prompt ?? "",
             referenceImages.length,
             runtime?.baseUrl,
           )
         : undefined,
-      resolution: composer?.resolution ?? input.resolution,
-      style: composer?.style ?? input.style,
+      resolution: mediaComposer?.resolution ?? input.resolution,
+      style: mediaComposer?.style ?? input.style,
     } satisfies ResolvedImageGenerationToolInput;
   }
 
@@ -878,23 +900,27 @@ function resolveMediaToolArgs(
       ? getComposerReferenceImages(composer)
       : [];
 
+    const mediaComposer = composer
+      ? resolveComposerForMediaKind(composer, "video")
+      : undefined;
+
     return {
       ...input,
-      duration: composer?.duration ?? input.duration,
-      format: composer?.videoFormat ?? input.format,
-      model: composer?.videoModel,
+      duration: mediaComposer?.duration ?? input.duration,
+      format: mediaComposer?.videoFormat ?? input.format,
+      model: mediaComposer?.videoModel,
       prompt: input.prompt ?? "",
       providerHint: "openai-compatible-video" as const,
       referenceImages,
       requestParams: composer
         ? createVideoRequestParamsForComposer(
-            composer,
+            mediaComposer!,
             input.prompt ?? "",
             runtime?.baseUrl,
           )
         : undefined,
-      ratio: composer?.ratio ?? input.ratio,
-      resolution: composer?.resolution ?? input.resolution,
+      ratio: mediaComposer?.ratio ?? input.ratio,
+      resolution: mediaComposer?.resolution ?? input.resolution,
     } satisfies ResolvedVideoGenerationToolInput;
   }
 
@@ -967,6 +993,9 @@ async function* createMediaGenerationEvents({
       resolution: composer.resolution,
       format: composer.imageFormat,
       style: composer.style,
+      count: composer.imageCount,
+      n: composer.imageCount,
+      quality: composer.imageQuality,
       duration: composer.duration,
       referenceImages: getComposerReferenceImages(composer),
       referenceCount: getComposerReferenceImages(composer).length,
@@ -1002,6 +1031,8 @@ async function* createMediaGenerationEvents({
       ...(isVideo
         ? { duration: composer.duration, requestParams: videoRequestParams }
         : {
+            count: composer.imageCount,
+            quality: composer.imageQuality,
             referenceImages: getComposerReferenceImages(composer),
             referenceImage: composer.referenceImage,
             requestParams: imageRequestParams,
@@ -1148,10 +1179,7 @@ async function* createChatMediaToolEvents({
     );
 
     yield* createMediaGenerationEvents({
-      composer: {
-        ...resolvedComposer,
-        mode,
-      },
+      composer: resolveComposerForMediaKind(resolvedComposer, mode),
       prompt,
       runtime: mediaRoute.runtime,
     });
@@ -1465,7 +1493,7 @@ function createImageRequestParams({
     contentType,
     model: composer.imageModel,
     prompt,
-    n: 1,
+    n: typeof body.n === "number" ? body.n : 1,
     output_format:
       typeof body.output_format === "string" ? body.output_format : undefined,
     quality: typeof body.quality === "string" ? body.quality : undefined,
@@ -1752,9 +1780,9 @@ function createOpenAICompatibleImageBaseBody({
 }) {
   return {
     model: composer.imageModel,
-    n: 1,
+    n: normalizeImageCount(composer.imageCount),
     ...(imageSize ? { size: imageSize.size } : {}),
-    quality: "high",
+    quality: composer.imageQuality || "high",
     response_format: "b64_json",
     output_format: normalizeImageOutputFormat(),
   };
@@ -3901,6 +3929,7 @@ async function* createAiSdkEvents({
 export async function POST(request: Request) {
   const body = (await request.json()) as ChatRequestBody;
   const { user, sessionId } = await ensureAnonymousUser();
+  const runtimeSettings = await loadUserRuntimeSettings(user.id);
   if (body.projectId?.trim()) {
     const project = await getProject(user.id, body.projectId.trim());
     if (!project) {
@@ -3913,7 +3942,10 @@ export async function POST(request: Request) {
     }
   }
   const content = body.content?.trim() ?? "";
-  const composer = body.metadata?.composer;
+  const composer = applyRuntimeDefaultsToComposer(
+    body.metadata?.composer,
+    runtimeSettings,
+  );
   const modelRoutes = body.metadata?.modelRoutes;
   const resolved = resolveLanguageModel(body);
   const messages = normalizeMessages(body.messages, content, composer);
@@ -3966,7 +3998,10 @@ export async function POST(request: Request) {
       return attachSessionCookie(
         createAgentEventStreamResponse(
           createMediaGenerationEvents({
-            composer: resolveComposerRoutes(composer, modelRoutes)!,
+            composer: resolveComposerForMediaKind(
+              resolveComposerRoutes(composer, modelRoutes)!,
+              composer.mode,
+            ),
             prompt: content,
             runtime: {
               apiKey: mediaRoute.runtime.apiKey,
@@ -4031,6 +4066,55 @@ export async function POST(request: Request) {
       sessionId,
     );
   }
+}
+
+function applyRuntimeDefaultsToComposer(
+  composer: AgentComposerMetadata | undefined,
+  settings: RuntimeSettings,
+) {
+  if (!composer) return undefined;
+
+  const imageRatio =
+    composer.imageRatio ??
+    (composer.mode === "image" ? composer.ratio : undefined) ??
+    settings.imageGenerationRatio;
+  const imageResolution =
+    composer.imageResolution ??
+    (composer.mode === "image" ? composer.resolution : undefined) ??
+    settings.imageGenerationResolution;
+  const videoRatio =
+    composer.videoRatio ??
+    (composer.mode === "video" ? composer.ratio : undefined) ??
+    settings.videoGenerationRatio;
+  const videoResolution =
+    composer.videoResolution ??
+    (composer.mode === "video" ? composer.resolution : undefined) ??
+    settings.videoGenerationResolution;
+  const videoDuration =
+    composer.videoDuration ??
+    composer.duration ??
+    settings.videoGenerationDuration;
+  const withDefaults: AgentComposerMetadata = {
+    ...composer,
+    imageRatio,
+    imageResolution,
+    imageCount: normalizeImageCount(
+      composer.imageCount ?? settings.imageGenerationCount,
+    ),
+    imageQuality:
+      composer.imageQuality ?? settings.imageGenerationQuality,
+    videoRatio,
+    videoResolution,
+    videoDuration,
+  };
+
+  return composer.mode === "image" || composer.mode === "video"
+    ? resolveComposerForMediaKind(withDefaults, composer.mode)
+    : withDefaults;
+}
+
+function normalizeImageCount(value?: number) {
+  return Number.isInteger(value) ? Math.min(4, Math.max(1, value!)) : 1;
 }
 
 function createApiUrl(baseUrl: string, path: string) {

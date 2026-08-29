@@ -85,7 +85,7 @@ export function AssetCandidateGrid({
 
   return (
     <>
-      <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+      <div className="grid items-start gap-3 sm:grid-cols-2 2xl:grid-cols-3">
         {entity.candidates.map((candidate) => {
           const task = visibleTasks.find(
             (item) =>
@@ -306,11 +306,6 @@ function Candidate({
           ) : null}
         </div>
       </figcaption>
-      {task?.error?.message ? (
-        <p className="border-t px-2.5 py-2 text-xs text-destructive">
-          {task.error.message}
-        </p>
-      ) : null}
     </figure>
   );
 }
@@ -339,11 +334,6 @@ function PendingCandidate({
           status={runtimeStatusToStageStatus(task.status)}
         />
       </figcaption>
-      {task.error?.message ? (
-        <p className="border-t px-2.5 py-2 text-xs text-destructive">
-          {task.error.message}
-        </p>
-      ) : null}
     </figure>
   );
 }

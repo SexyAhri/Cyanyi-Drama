@@ -69,12 +69,14 @@ function requestImage(
   references: string[],
   size?: string,
 ) {
+  const count = normalizeImageCount(input.request.count ?? input.request.n);
   if (references.length) {
     const form = new FormData();
     form.append("model", input.model);
     form.append("prompt", input.request.prompt ?? "");
-    form.append("n", "1");
+    form.append("n", String(count));
     form.append("response_format", "url");
+    if (input.request.quality) form.append("quality", input.request.quality);
     if (size) form.append("size", size);
     const fileField =
       process.env.OPENAI_COMPATIBLE_IMAGE_EDIT_FILE_FIELD || "image[]";
@@ -96,10 +98,16 @@ function requestImage(
       model: input.model,
       prompt: input.request.prompt ?? "",
       ...(size ? { size } : {}),
+      n: count,
+      ...(input.request.quality ? { quality: input.request.quality } : {}),
       response_format: "url",
     }),
     cache: "no-store",
   });
+}
+
+function normalizeImageCount(value?: number) {
+  return Number.isInteger(value) ? Math.min(4, Math.max(1, value!)) : 1;
 }
 
 async function generateVideo(

@@ -7,10 +7,19 @@ import { ChatContainer, ChatMessages } from "@/components/ui/chat";
 import type { useAgent } from "@/hooks/use-agent";
 import { useRuntimeConnection } from "@/hooks/use-runtime-connection";
 import type { AgentMessage } from "@/lib/agent/types";
+import {
+  loadRuntimeSettings,
+  subscribeToRuntimeSettings,
+} from "@/lib/settings/runtime-client";
+import {
+  DEFAULT_RUNTIME_SETTINGS,
+  type RuntimeSettings,
+} from "@/lib/settings/runtime-contract";
 import { cn } from "@/lib/utils";
 
 import {
   AgentComposer,
+  applyRuntimeSettingsToComposer,
   type AgentComposerReferenceImage,
   type AgentComposerSettings,
   createDefaultComposerSettings,
@@ -68,9 +77,13 @@ export function Chat({
     [runtime.models],
   );
   const [composerSettings, setComposerSettings] = useState(() =>
-    createDefaultComposerSettings(composerModelOptions),
+    createDefaultComposerSettings(
+      composerModelOptions,
+      DEFAULT_RUNTIME_SETTINGS,
+    ),
   );
   const composerSettingsRef = useRef(composerSettings);
+  const runtimeSettingsRef = useRef<RuntimeSettings>(DEFAULT_RUNTIME_SETTINGS);
   const copy = getShellCopy(activeLocale);
   const {
     activeThreadId,
@@ -107,6 +120,37 @@ export function Chat({
   useEffect(() => {
     composerSettingsRef.current = composerSettings;
   }, [composerSettings]);
+
+  useEffect(() => {
+    let active = true;
+
+    const applySettings = (settings: RuntimeSettings) => {
+      runtimeSettingsRef.current = settings;
+      setComposerSettings((current) => {
+        const next = applyRuntimeSettingsToComposer(
+          current,
+          settings,
+          composerModelOptions,
+        );
+        composerSettingsRef.current = next;
+        return next;
+      });
+    };
+
+    void loadRuntimeSettings()
+      .then((settings) => {
+        if (active) applySettings(settings);
+      })
+      .catch(() => undefined);
+    const unsubscribe = subscribeToRuntimeSettings((settings) => {
+      if (active) applySettings(settings);
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [composerModelOptions]);
 
   useEffect(() => {
     setComposerSettings((current) =>
@@ -257,10 +301,14 @@ export function Chat({
     const storedComposerSettings = getComposerSettingsFromMessage(
       message,
       composerModelOptions,
+      runtimeSettingsRef.current,
     );
     const nextComposerSettings =
       storedComposerSettings ??
-      createDefaultComposerSettings(composerModelOptions);
+      createDefaultComposerSettings(
+        composerModelOptions,
+        runtimeSettingsRef.current,
+      );
 
     composerSettingsRef.current = nextComposerSettings;
     setComposerSettings(nextComposerSettings);
@@ -337,11 +385,13 @@ export function Chat({
     const storedComposerSettings = getComposerSettingsFromMessage(
       previousUserMessage,
       composerModelOptions,
+      runtimeSettingsRef.current,
     );
     const mediaToolComposerSettings = getComposerSettingsFromMediaToolTurn(
       agent.messages,
       previousUserMessage.id,
       composerModelOptions,
+      runtimeSettingsRef.current,
     );
     const messageComposerSettings = mergeComposerSettingsForRegeneration(
       storedComposerSettings ?? composerSettingsRef.current,
@@ -466,6 +516,7 @@ function dedupeReferenceImages(
 function getComposerSettingsFromMessage(
   message: AgentMessage,
   composerModelOptions: ReturnType<typeof resolveComposerModelOptions>,
+  runtimeSettings: RuntimeSettings,
 ) {
   const composer =
     message.metadata &&
@@ -480,10 +531,33 @@ function getComposerSettingsFromMessage(
     return null;
   }
 
+  const defaults = createDefaultComposerSettings(
+    composerModelOptions,
+    runtimeSettings,
+  );
+
   return normalizeComposerSettings(
     {
-      ...createDefaultComposerSettings(composerModelOptions),
+      ...defaults,
       ...composer,
+      imageRatio:
+        composer.imageRatio ??
+        (composer.mode === "image" ? composer.ratio : undefined) ??
+        defaults.imageRatio,
+      imageResolution:
+        composer.imageResolution ??
+        (composer.mode === "image" ? composer.resolution : undefined) ??
+        defaults.imageResolution,
+      videoRatio:
+        composer.videoRatio ??
+        (composer.mode === "video" ? composer.ratio : undefined) ??
+        defaults.videoRatio,
+      videoResolution:
+        composer.videoResolution ??
+        (composer.mode === "video" ? composer.resolution : undefined) ??
+        defaults.videoResolution,
+      videoDuration:
+        composer.videoDuration ?? composer.duration ?? defaults.videoDuration,
       referenceImage: undefined,
       referenceImages: Array.isArray(composer.referenceImages)
         ? composer.referenceImages
@@ -519,6 +593,7 @@ function getComposerSettingsFromMediaToolTurn(
   messages: AgentMessage[],
   userMessageId: string,
   composerModelOptions: ReturnType<typeof resolveComposerModelOptions>,
+  runtimeSettings: RuntimeSettings,
 ) {
   const userIndex = messages.findIndex((message) => message.id === userMessageId);
 
@@ -549,8 +624,21 @@ function getComposerSettingsFromMediaToolTurn(
   const referenceImages = Array.isArray(args.referenceImages)
     ? args.referenceImages.filter(isReferenceImage)
     : [];
-  const defaultSettings = createDefaultComposerSettings(composerModelOptions);
+  const defaultSettings = createDefaultComposerSettings(
+    composerModelOptions,
+    runtimeSettings,
+  );
   const isVideo = mediaToolCall.name === "video_generation";
+  const ratio =
+    getStringValue(args, "ratio") ??
+    (isVideo ? defaultSettings.videoRatio : defaultSettings.imageRatio);
+  const resolution =
+    getStringValue(args, "resolution") ??
+    (isVideo
+      ? defaultSettings.videoResolution
+      : defaultSettings.imageResolution);
+  const duration =
+    getStringValue(args, "duration") ?? defaultSettings.videoDuration;
 
   return normalizeComposerSettings(
     {
@@ -562,8 +650,16 @@ function getComposerSettingsFromMediaToolTurn(
       videoModel: isVideo
         ? getStringValue(args, "model") ?? defaultSettings.videoModel
         : defaultSettings.videoModel,
-      ratio: getStringValue(args, "ratio") ?? "1:1",
-      resolution: getStringValue(args, "resolution") ?? "1080p",
+      ratio,
+      resolution,
+      imageRatio: isVideo ? defaultSettings.imageRatio : ratio,
+      imageResolution: isVideo ? defaultSettings.imageResolution : resolution,
+      imageCount: getNumberValue(args, "count") ?? defaultSettings.imageCount,
+      imageQuality:
+        getStringValue(args, "quality") ?? defaultSettings.imageQuality,
+      videoRatio: isVideo ? ratio : defaultSettings.videoRatio,
+      videoResolution: isVideo ? resolution : defaultSettings.videoResolution,
+      videoDuration: duration,
       imageFormat: isVideo
         ? defaultSettings.imageFormat
         : getStringValue(args, "format") ?? "png",
@@ -571,7 +667,7 @@ function getComposerSettingsFromMediaToolTurn(
         ? getStringValue(args, "format") ?? "mp4"
         : defaultSettings.videoFormat,
       style: getStringValue(args, "style") ?? "auto",
-      duration: getStringValue(args, "duration") ?? "10s",
+      duration,
       template: "none",
       templatePrompt: undefined,
       referenceImage: undefined,
@@ -589,6 +685,12 @@ function getStringValue(source: Record<string, unknown>, key: string) {
   const value = source[key];
 
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function getNumberValue(source: Record<string, unknown>, key: string) {
+  const value = source[key];
+
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function isReferenceImage(

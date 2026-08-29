@@ -31,6 +31,7 @@ import { StatusIndicator } from "../components/status-indicator";
 import {
   buildTraceRows,
   localizedTraceAttributes,
+  traceEventDisplayStatus,
   traceEventLabel,
   traceEventSourceLabel,
   traceSpanKindLabel,
@@ -128,6 +129,15 @@ export function TraceDialog({
   const selectedSpan = trace?.spans.find(
     (span) => span.spanId === selectedSpanId,
   );
+  const spansById = useMemo(
+    () => new Map((trace?.spans ?? []).map((span) => [span.spanId, span])),
+    [trace?.spans],
+  );
+  const latestEventIdsBySpan = useMemo(() => {
+    const latest = new Map<string, string>();
+    for (const event of trace?.events ?? []) latest.set(event.spanId, event.id);
+    return latest;
+  }, [trace?.events]);
 
   return (
     <Dialog onOpenChange={onOpenChange} open={Boolean(traceId)}>
@@ -222,39 +232,46 @@ export function TraceDialog({
             >
               {trace.events.length ? (
                 <div className="divide-y">
-                  {trace.events.map((event) => (
-                    <div className="px-5 py-3" key={event.id}>
-                      <div className="flex items-start gap-3">
-                        <Clock3 className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-start gap-2">
-                            <p className="min-w-0 flex-1 truncate text-xs font-medium">
-                              {traceEventLabel(event.type, locale)}
-                            </p>
-                            {event.status ? (
-                              <StatusIndicator
-                                compact
-                                locale={locale}
-                                status={runtimeStatusToStageStatus(
-                                  event.status,
-                                )}
-                              />
+                  {trace.events.map((event) => {
+                    const displayStatus = traceEventDisplayStatus(
+                      event,
+                      spansById.get(event.spanId)?.status,
+                      latestEventIdsBySpan.get(event.spanId) === event.id,
+                    );
+                    return (
+                      <div className="px-5 py-3" key={event.id}>
+                        <div className="flex items-start gap-3">
+                          <Clock3 className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start gap-2">
+                              <p className="min-w-0 flex-1 truncate text-xs font-medium">
+                                {traceEventLabel(event.type, locale)}
+                              </p>
+                              {displayStatus ? (
+                                <StatusIndicator
+                                  compact
+                                  locale={locale}
+                                  status={runtimeStatusToStageStatus(
+                                    displayStatus,
+                                  )}
+                                />
+                              ) : null}
+                            </div>
+                            {event.message ? (
+                              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                                {event.message}
+                              </p>
                             ) : null}
-                          </div>
-                          {event.message ? (
-                            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                              {event.message}
+                            <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground/75">
+                              {traceEventSourceLabel(event.source, locale)} ·{" "}
+                              {formatStudioDate(locale, event.createdAt)} ·{" "}
+                              {event.spanId}
                             </p>
-                          ) : null}
-                          <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground/75">
-                            {traceEventSourceLabel(event.source, locale)} ·{" "}
-                            {formatStudioDate(locale, event.createdAt)} ·{" "}
-                            {event.spanId}
-                          </p>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <Empty label={text.noEvents} />

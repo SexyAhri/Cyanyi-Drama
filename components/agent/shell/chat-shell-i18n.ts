@@ -121,6 +121,18 @@ export type ShellCopy = {
   settingsRuntimeSaveSuccess: string;
   settingsRuntimeSaving: string;
   settingsRuntimeReset: string;
+  settingsImageGeneration: string;
+  settingsImageGenerationDescription: string;
+  settingsVideoGeneration: string;
+  settingsVideoGenerationDescription: string;
+  settingsGenerationRatio: string;
+  settingsGenerationResolution: string;
+  settingsImageCount: string;
+  settingsImageCountHint: string;
+  settingsImageQuality: string;
+  settingsImageQualityAuto: string;
+  settingsImageQualityHigh: string;
+  settingsVideoDuration: string;
   settingsWorkflowModels: string;
   settingsWorkflowModelsDescription: string;
   settingsAnalysisModel: string;
@@ -291,6 +303,20 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsRuntimeSaveSuccess: "Runtime settings saved.",
     settingsRuntimeSaving: "Saving...",
     settingsRuntimeReset: "Restore defaults",
+    settingsImageGeneration: "Image generation",
+    settingsImageGenerationDescription:
+      "Defaults used by image tasks and the /chat image composer unless a request overrides them.",
+    settingsVideoGeneration: "Video generation",
+    settingsVideoGenerationDescription:
+      "Defaults used by video tasks and the /chat video composer unless a request overrides them.",
+    settingsGenerationRatio: "Aspect ratio",
+    settingsGenerationResolution: "Resolution",
+    settingsImageCount: "Image count",
+    settingsImageCountHint: "Generate 1-4 images for each image task.",
+    settingsImageQuality: "Quality",
+    settingsImageQualityAuto: "Automatic",
+    settingsImageQualityHigh: "High",
+    settingsVideoDuration: "Default duration",
     settingsWorkflowModels: "Workflow models",
     settingsWorkflowModelsDescription:
       "Defaults used by each generation workflow.",
@@ -460,6 +486,20 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsRuntimeSaveSuccess: "运行设置已保存。",
     settingsRuntimeSaving: "保存中...",
     settingsRuntimeReset: "恢复默认值",
+    settingsImageGeneration: "图片生成",
+    settingsImageGenerationDescription:
+      "图片任务和 /chat 图片模式的默认参数，请求显式选择时优先使用本次参数。",
+    settingsVideoGeneration: "视频生成",
+    settingsVideoGenerationDescription:
+      "视频任务和 /chat 视频模式的默认参数，请求显式选择时优先使用本次参数。",
+    settingsGenerationRatio: "画面比例",
+    settingsGenerationResolution: "分辨率",
+    settingsImageCount: "生成数量",
+    settingsImageCountHint: "每个图片任务生成 1-4 张。",
+    settingsImageQuality: "图片质量",
+    settingsImageQualityAuto: "自动",
+    settingsImageQualityHigh: "高清",
+    settingsVideoDuration: "默认时长",
     settingsWorkflowModels: "工作流模型",
     settingsWorkflowModelsDescription:
       "对应各个生成工作流的默认模型。",

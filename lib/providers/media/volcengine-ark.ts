@@ -27,6 +27,7 @@ async function generateImage(input: GenerateProviderMediaInput) {
   const references = await referencesAsDataUrls(
     input.request.referenceImages ?? [],
   );
+  const count = normalizeImageCount(input.request.count ?? input.request.n);
   const response = await fetchWithProviderRetry(
     joinUrl(input.baseUrl, "images/generations"),
     {
@@ -38,7 +39,10 @@ async function generateImage(input: GenerateProviderMediaInput) {
         size: resolveImageSize(input.request.ratio, input.request.resolution),
         aspect_ratio: input.request.ratio,
         watermark: false,
-        sequential_image_generation: "disabled",
+        sequential_image_generation: count > 1 ? "auto" : "disabled",
+        ...(count > 1
+          ? { sequential_image_generation_options: { max_images: count } }
+          : {}),
         ...(references.length ? { image: references } : {}),
         response_format: "url",
       }),
@@ -55,6 +59,10 @@ async function generateImage(input: GenerateProviderMediaInput) {
     url,
     metadata: { model: input.model, protocol: "volcengine-ark" },
   }));
+}
+
+function normalizeImageCount(value?: number) {
+  return Number.isInteger(value) ? Math.min(4, Math.max(1, value!)) : 1;
 }
 
 async function generateVideo(input: GenerateProviderMediaInput) {

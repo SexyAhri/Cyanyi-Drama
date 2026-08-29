@@ -23,12 +23,16 @@ import { cn } from "@/lib/utils";
 import {
   composerModes,
   durationOptions,
+  imageCountOptions,
   imageFormatOptions,
+  imageQualityOptions,
+  imageResolutionOptions,
   isAgentComposerMode,
   ratioOptions,
-  resolutionOptions,
+  setComposerMode,
   styleOptions,
   videoFormatOptions,
+  videoResolutionOptions,
 } from "./composer-data";
 import { ComposerSelect } from "./composer-select";
 import { TemplateGallery } from "./template-gallery";
@@ -300,12 +304,12 @@ export function AgentComposer({
                 }
                 onValueChange={(mode) => {
                   if (isAgentComposerMode(mode)) {
-                    patchSettings({
-                      mode,
+                    onSettingsChange(setComposerMode({
+                      ...settings,
                       ...(mode !== "image"
                         ? { template: "none", templatePrompt: undefined }
                         : {}),
-                    });
+                    }, mode));
                   }
                 }}
                 options={composerModes}
@@ -321,15 +325,35 @@ export function AgentComposer({
                   />
                   <ComposerSelect
                     label="比例"
-                    onValueChange={(ratio) => patchSettings({ ratio })}
+                    onValueChange={(ratio) =>
+                      patchSettings({ imageRatio: ratio, ratio })
+                    }
                     options={ratioOptions}
-                    value={settings.ratio}
+                    value={settings.imageRatio}
                   />
                   <ComposerSelect
                     label="分辨率"
-                    onValueChange={(resolution) => patchSettings({ resolution })}
-                    options={resolutionOptions}
-                    value={settings.resolution}
+                    onValueChange={(resolution) =>
+                      patchSettings({ imageResolution: resolution, resolution })
+                    }
+                    options={imageResolutionOptions}
+                    value={settings.imageResolution}
+                  />
+                  <ComposerSelect
+                    label="数量"
+                    onValueChange={(count) =>
+                      patchSettings({ imageCount: Number(count) })
+                    }
+                    options={imageCountOptions}
+                    value={String(settings.imageCount)}
+                  />
+                  <ComposerSelect
+                    label="质量"
+                    onValueChange={(imageQuality) =>
+                      patchSettings({ imageQuality })
+                    }
+                    options={imageQualityOptions}
+                    value={settings.imageQuality}
                   />
                   <ComposerSelect
                     label="格式"
@@ -370,21 +394,27 @@ export function AgentComposer({
                   />
                   <ComposerSelect
                     label="时长"
-                    onValueChange={(duration) => patchSettings({ duration })}
+                    onValueChange={(duration) =>
+                      patchSettings({ duration, videoDuration: duration })
+                    }
                     options={durationOptions}
-                    value={settings.duration}
+                    value={settings.videoDuration}
                   />
                   <ComposerSelect
                     label="比例"
-                    onValueChange={(ratio) => patchSettings({ ratio })}
+                    onValueChange={(ratio) =>
+                      patchSettings({ ratio, videoRatio: ratio })
+                    }
                     options={ratioOptions}
-                    value={settings.ratio}
+                    value={settings.videoRatio}
                   />
                   <ComposerSelect
                     label="分辨率"
-                    onValueChange={(resolution) => patchSettings({ resolution })}
-                    options={resolutionOptions}
-                    value={settings.resolution}
+                    onValueChange={(resolution) =>
+                      patchSettings({ resolution, videoResolution: resolution })
+                    }
+                    options={videoResolutionOptions}
+                    value={settings.videoResolution}
                   />
                   <ComposerSelect
                     label="格式"

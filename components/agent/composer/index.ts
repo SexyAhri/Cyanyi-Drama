@@ -1,10 +1,12 @@
 export { AgentComposer } from "./agent-composer";
 export {
   createDefaultComposerSettings,
+  applyRuntimeSettingsToComposer,
   defaultImageModelOptions,
   defaultVideoModelOptions,
   normalizeComposerSettings,
   resolveComposerModelOptions,
+  setComposerMode,
 } from "./composer-data";
 export type {
   AgentComposerMetadata,

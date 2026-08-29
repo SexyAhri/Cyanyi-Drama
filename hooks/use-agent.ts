@@ -312,6 +312,28 @@ export function sanitizeLocalMessageMetadata(
         typeof composer.resolution === "string"
           ? composer.resolution
           : undefined,
+      imageRatio:
+        typeof composer.imageRatio === "string" ? composer.imageRatio : undefined,
+      imageResolution:
+        typeof composer.imageResolution === "string"
+          ? composer.imageResolution
+          : undefined,
+      imageCount:
+        typeof composer.imageCount === "number" ? composer.imageCount : undefined,
+      imageQuality:
+        typeof composer.imageQuality === "string"
+          ? composer.imageQuality
+          : undefined,
+      videoRatio:
+        typeof composer.videoRatio === "string" ? composer.videoRatio : undefined,
+      videoResolution:
+        typeof composer.videoResolution === "string"
+          ? composer.videoResolution
+          : undefined,
+      videoDuration:
+        typeof composer.videoDuration === "string"
+          ? composer.videoDuration
+          : undefined,
       imageFormat:
         typeof composer.imageFormat === "string"
           ? composer.imageFormat

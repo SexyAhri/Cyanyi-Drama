@@ -3,6 +3,19 @@ import { describe, expect, it } from "vitest";
 import { getOpenAICompatibleImageSizeCandidates } from "./media-size";
 
 describe("getOpenAICompatibleImageSizeCandidates", () => {
+  it("maps the 1K image preset to provider dimensions", () => {
+    expect(getOpenAICompatibleImageSizeCandidates("1k", "1:1")[0]).toEqual({
+      height: 1024,
+      size: "1024x1024",
+      width: 1024,
+    });
+    expect(getOpenAICompatibleImageSizeCandidates("1k", "16:9")[0]).toEqual({
+      height: 768,
+      size: "1360x768",
+      width: 1360,
+    });
+  });
+
   it("uses dimensions divisible by 16 for the 1080p preset", () => {
     const sizes = [
       getOpenAICompatibleImageSizeCandidates("1080p", "1:1")[0],

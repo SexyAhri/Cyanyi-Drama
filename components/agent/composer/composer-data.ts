@@ -1,15 +1,22 @@
 import {
+  BadgeCheck,
   Clock3,
   FileImage,
   FileVideoCamera,
   ImagePlus,
   LayoutTemplate,
+  Layers3,
   MessageSquare,
   Palette,
   Scan,
   Sparkles,
   Video,
 } from "lucide-react";
+
+import {
+  DEFAULT_RUNTIME_SETTINGS,
+  type RuntimeSettings,
+} from "@/lib/settings/runtime-contract";
 
 import type {
   AgentComposerMode,
@@ -125,7 +132,25 @@ export const videoFormatOptions: AgentComposerOption[] = [
   },
 ];
 
-export const resolutionOptions: AgentComposerOption[] = [
+export const imageResolutionOptions: AgentComposerOption[] = [
+  {
+    id: "1k",
+    label: "1K",
+    icon: Scan,
+  },
+  {
+    id: "2k",
+    label: "2K",
+    icon: Scan,
+  },
+  {
+    id: "4k",
+    label: "4K",
+    icon: Scan,
+  },
+];
+
+export const videoResolutionOptions: AgentComposerOption[] = [
   {
     id: "720p",
     label: "720p",
@@ -146,6 +171,19 @@ export const resolutionOptions: AgentComposerOption[] = [
     label: "4K",
     icon: Scan,
   },
+];
+
+export const imageCountOptions: AgentComposerOption[] = [1, 2, 3, 4].map(
+  (count) => ({
+    id: String(count),
+    label: `${count} 张`,
+    icon: Layers3,
+  }),
+);
+
+export const imageQualityOptions: AgentComposerOption[] = [
+  { id: "auto", label: "自动质量", icon: BadgeCheck },
+  { id: "high", label: "高清", icon: BadgeCheck },
 ];
 
 export const styleOptions: AgentComposerOption[] = [
@@ -294,32 +332,57 @@ export function normalizeComposerSettings(
   const imageModelOptions = modelOptions.imageModelOptions ?? [];
   const videoModelOptions = modelOptions.videoModelOptions ?? [];
 
-  return {
+  const imageRatio = settings.imageRatio || "1:1";
+  const imageResolution = settings.imageResolution || "1k";
+  const videoRatio = settings.videoRatio || "16:9";
+  const videoResolution = settings.videoResolution || "1080p";
+  const videoDuration = settings.videoDuration || settings.duration || "10s";
+
+  return setComposerMode({
     ...settings,
     referenceImages: normalizeReferenceImages(
       settings.referenceImages,
       settings.referenceImage,
     ),
     imageModel: resolveSelectedModelId(settings.imageModel, imageModelOptions),
+    imageRatio,
+    imageResolution,
+    imageCount: normalizeImageCount(settings.imageCount),
+    imageQuality: imageQualityOptions.some(
+      (option) => option.id === settings.imageQuality,
+    )
+      ? settings.imageQuality
+      : "high",
     imageFormat: imageFormatOptions[0].id,
     videoModel: resolveSelectedModelId(settings.videoModel, videoModelOptions),
-  };
+    videoRatio,
+    videoResolution,
+    videoDuration,
+  }, settings.mode);
 }
 
 export function createDefaultComposerSettings(
   modelOptions: Partial<ComposerModelOptions> = {},
+  runtimeSettings: RuntimeSettings = DEFAULT_RUNTIME_SETTINGS,
 ): AgentComposerSettings {
   return normalizeComposerSettings(
     {
       mode: "chat",
       imageModel: "",
       videoModel: "",
-      ratio: "1:1",
-      resolution: "1080p",
+      ratio: runtimeSettings.imageGenerationRatio,
+      resolution: runtimeSettings.imageGenerationResolution,
+      imageRatio: runtimeSettings.imageGenerationRatio,
+      imageResolution: runtimeSettings.imageGenerationResolution,
+      imageCount: runtimeSettings.imageGenerationCount,
+      imageQuality: runtimeSettings.imageGenerationQuality,
+      videoRatio: runtimeSettings.videoGenerationRatio,
+      videoResolution: runtimeSettings.videoGenerationResolution,
+      videoDuration: runtimeSettings.videoGenerationDuration,
       imageFormat: imageFormatOptions[0].id,
       videoFormat: videoFormatOptions[0].id,
       style: "auto",
-      duration: "10s",
+      duration: runtimeSettings.videoGenerationDuration,
       template: "none",
       templatePrompt: undefined,
       referenceImages: [],
@@ -327,6 +390,56 @@ export function createDefaultComposerSettings(
     },
     modelOptions,
   );
+}
+
+export function applyRuntimeSettingsToComposer(
+  settings: AgentComposerSettings,
+  runtimeSettings: RuntimeSettings,
+  modelOptions: Partial<ComposerModelOptions> = {},
+) {
+  return normalizeComposerSettings(
+    {
+      ...settings,
+      imageRatio: runtimeSettings.imageGenerationRatio,
+      imageResolution: runtimeSettings.imageGenerationResolution,
+      imageCount: runtimeSettings.imageGenerationCount,
+      imageQuality: runtimeSettings.imageGenerationQuality,
+      videoRatio: runtimeSettings.videoGenerationRatio,
+      videoResolution: runtimeSettings.videoGenerationResolution,
+      videoDuration: runtimeSettings.videoGenerationDuration,
+    },
+    modelOptions,
+  );
+}
+
+export function setComposerMode(
+  settings: AgentComposerSettings,
+  mode: AgentComposerMode,
+): AgentComposerSettings {
+  if (mode === "image") {
+    return {
+      ...settings,
+      mode,
+      ratio: settings.imageRatio,
+      resolution: settings.imageResolution,
+    };
+  }
+
+  if (mode === "video") {
+    return {
+      ...settings,
+      mode,
+      ratio: settings.videoRatio,
+      resolution: settings.videoResolution,
+      duration: settings.videoDuration,
+    };
+  }
+
+  return { ...settings, mode };
+}
+
+function normalizeImageCount(value: number) {
+  return Number.isInteger(value) ? Math.min(4, Math.max(1, value)) : 1;
 }
 
 function normalizeReferenceImages(

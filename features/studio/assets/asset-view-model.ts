@@ -2,6 +2,7 @@ import type {
   ProjectAssetCatalog,
   ProjectMediaAsset,
 } from "../types";
+import type { MediaTask } from "@/lib/media/task-contract";
 import {
   compileAssetVisualProfile,
   parseAssetVisualProfile,
@@ -34,8 +35,19 @@ export function buildStudioAssetEntities(
   catalog: ProjectAssetCatalog,
   kind: StudioAssetKind,
   artStyle?: string,
+  tasks: MediaTask[] = [],
 ): StudioAssetEntity[] {
   const assetsById = new Map(catalog.assets.map((asset) => [asset.id, asset]));
+  const placeholderTargetIds = new Set(
+    tasks
+      .filter(
+        (task) =>
+          task.kind === "image" &&
+          ["queued", "running", "failed", "canceled"].includes(task.status) &&
+          task.targetId,
+      )
+      .map((task) => task.targetId as string),
+  );
   if (kind === "character") {
     return catalog.characters.map((character) => {
       const visualProfile = parseAssetVisualProfile(character.visualProfile);
@@ -61,15 +73,15 @@ export function buildStudioAssetEntities(
           const asset = appearance.imageAssetId
             ? assetsById.get(appearance.imageAssetId)
             : undefined;
-          return asset
+          return asset || placeholderTargetIds.has(appearance.id)
             ? [
                 toCandidate({
                   id: appearance.id,
                   asset,
-                  assetId: appearance.imageAssetId,
+                  assetId: asset ? appearance.imageAssetId : null,
                   createdAt: appearance.createdAt,
                   description: appearance.description,
-                  selected: appearance.selected,
+                  selected: Boolean(asset && appearance.selected),
                 }),
               ]
             : [];
@@ -102,15 +114,15 @@ export function buildStudioAssetEntities(
           const asset = image.imageAssetId
             ? assetsById.get(image.imageAssetId)
             : undefined;
-          return asset
+          return asset || placeholderTargetIds.has(image.id)
             ? [
                 toCandidate({
                   id: image.id,
                   asset,
-                  assetId: image.imageAssetId,
+                  assetId: asset ? image.imageAssetId : null,
                   createdAt: image.createdAt,
                   description: image.description,
-                  selected: image.selected,
+                  selected: Boolean(asset && image.selected),
                 }),
               ]
             : [];

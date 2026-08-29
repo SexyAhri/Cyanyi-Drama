@@ -15,6 +15,13 @@ describe("runtime settings", () => {
       workflowStepMaxAttempts: 3,
       workflowConcurrency: 2,
       screenplayClipMaxChars: 1_600,
+      imageGenerationRatio: "1:1",
+      imageGenerationResolution: "1k",
+      imageGenerationCount: 1,
+      imageGenerationQuality: "high",
+      videoGenerationRatio: "16:9",
+      videoGenerationResolution: "1080p",
+      videoGenerationDuration: "10s",
     });
   });
 
@@ -35,6 +42,18 @@ describe("runtime settings", () => {
       runtimeSettingsSchema.safeParse({
         ...DEFAULT_RUNTIME_SETTINGS,
         screenplayClipMaxChars: 399,
+      }).success,
+    ).toBe(false);
+    expect(
+      runtimeSettingsSchema.safeParse({
+        ...DEFAULT_RUNTIME_SETTINGS,
+        imageGenerationCount: 5,
+      }).success,
+    ).toBe(false);
+    expect(
+      runtimeSettingsSchema.safeParse({
+        ...DEFAULT_RUNTIME_SETTINGS,
+        imageGenerationResolution: "1080p",
       }).success,
     ).toBe(false);
   });

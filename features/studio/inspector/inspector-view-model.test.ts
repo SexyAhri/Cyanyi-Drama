@@ -14,6 +14,7 @@ import {
   operationErrorMessage,
   localizedTraceAttributes,
   traceEventLabel,
+  traceEventDisplayStatus,
   traceEventSourceLabel,
   traceSpanKindLabel,
   traceSpanLabel,
@@ -56,10 +57,12 @@ describe("studio inspector view model", () => {
       tasks: [
         { id: "task-1", episodeId: "episode-1", updatedAt: "2026-01-02T00:00:00.000Z" },
         { id: "task-2", episodeId: "episode-2", updatedAt: "2026-01-03T00:00:00.000Z" },
+        { id: "task-project", updatedAt: "2026-01-04T00:00:00.000Z" },
       ],
     } as unknown as WorkspaceSnapshot;
 
     expect(buildOperationItems(snapshot, "episode-1").map((item) => item.id)).toEqual([
+      "task-project",
       "task-1",
       "step-screenplay",
       "step-split",
@@ -211,6 +214,28 @@ describe("studio inspector view model", () => {
       ["step", 1],
       ["task", 2],
     ]);
+  });
+
+  it("renders media task events as history unless the latest event is active", () => {
+    const event = {
+      source: "media_task" as const,
+      id: "event-running",
+      spanId: "span-media",
+      type: "running",
+      status: "running",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    expect(traceEventDisplayStatus(event, "failed", false)).toBe("succeeded");
+    expect(traceEventDisplayStatus(event, "running", false)).toBe("succeeded");
+    expect(traceEventDisplayStatus(event, "running", true)).toBe("running");
+    expect(
+      traceEventDisplayStatus(
+        { ...event, type: "retry_scheduled", status: "failed" },
+        "failed",
+        true,
+      ),
+    ).toBe("failed");
   });
 
   it("localizes trace labels without hiding diagnostic values", () => {

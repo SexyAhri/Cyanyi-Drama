@@ -3,6 +3,7 @@ import {
   createStoryboardPanelImageTask,
   ProjectAssetTaskError,
 } from "@/lib/media/project-asset-tasks";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 
 type Context = {
   params: Promise<{ projectId: string; episodeId: string; panelId: string }>;
@@ -25,6 +26,7 @@ export async function POST(request: Request, context: Context) {
   }
 
   try {
+    const mediaDefaults = await loadUserRuntimeSettings(user.id);
     const result = await createStoryboardPanelImageTask({
       userId: user.id,
       projectId,
@@ -35,6 +37,7 @@ export async function POST(request: Request, context: Context) {
       prompt: stringValue(body.prompt) || undefined,
       ratio: stringValue(body.ratio) || undefined,
       resolution: stringValue(body.resolution) || undefined,
+      mediaDefaults,
     });
     return attachSessionCookie(Response.json(result, { status: 202 }), sessionId);
   } catch (error) {

@@ -136,9 +136,10 @@ export function AssetsWorkspace({
             catalog,
             tab,
             snapshot.project.config.artStyle,
+            snapshot.tasks,
           )
         : [],
-    [catalog, snapshot.project.config.artStyle, tab],
+    [catalog, snapshot.project.config.artStyle, snapshot.tasks, tab],
   );
   const selectedEntity =
     entities.find((entity) => entity.id === selectedEntityId) ?? entities[0];

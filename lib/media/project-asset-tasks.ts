@@ -18,6 +18,7 @@ import {
   applyProjectArtStyle,
   getProjectArtStyleLabel,
 } from "@/lib/projects/art-style";
+import type { MediaGenerationDefaults } from "@/lib/settings/runtime-contract";
 
 export type ProjectAssetTarget = "character" | "location" | "prop";
 
@@ -32,6 +33,7 @@ type CreateProjectImageTaskInput = {
   prompt: string;
   ratio?: string;
   resolution?: string;
+  mediaDefaults?: MediaGenerationDefaults;
   useSelectedReference?: boolean;
   referenceAssetIds?: string[];
   targetAppearanceId?: string;
@@ -109,8 +111,14 @@ export async function createProjectImageTask(
         artStyle,
         "zh",
       ),
-      ratio: input.ratio ?? "1:1",
-      resolution: input.resolution ?? "2k",
+      ratio: input.ratio ?? input.mediaDefaults?.imageGenerationRatio ?? "1:1",
+      resolution:
+        input.resolution ??
+        input.mediaDefaults?.imageGenerationResolution ??
+        "1k",
+      count: input.mediaDefaults?.imageGenerationCount ?? 1,
+      n: input.mediaDefaults?.imageGenerationCount ?? 1,
+      quality: input.mediaDefaults?.imageGenerationQuality ?? "high",
       format: "png",
       ...(referenceImages.length ? { referenceImages } : {}),
     },
@@ -141,6 +149,7 @@ export async function createStoryboardPanelImageTask(input: {
   prompt?: string;
   ratio?: string;
   resolution?: string;
+  mediaDefaults?: MediaGenerationDefaults;
 }) {
   const channel = await prisma.channel.findFirst({
     where: { id: input.channelId, userId: input.userId },
@@ -223,8 +232,14 @@ export async function createStoryboardPanelImageTask(input: {
         artStyle,
         "zh",
       ),
-      ratio: input.ratio ?? "16:9",
-      resolution: input.resolution ?? "2k",
+      ratio: input.ratio ?? input.mediaDefaults?.imageGenerationRatio ?? "1:1",
+      resolution:
+        input.resolution ??
+        input.mediaDefaults?.imageGenerationResolution ??
+        "1k",
+      count: input.mediaDefaults?.imageGenerationCount ?? 1,
+      n: input.mediaDefaults?.imageGenerationCount ?? 1,
+      quality: input.mediaDefaults?.imageGenerationQuality ?? "high",
       format: "png",
       ...(referenceImages.length ? { referenceImages } : {}),
     },
@@ -250,6 +265,7 @@ export async function createStoryboardPanelVideoTask(input: {
   ratio?: string;
   resolution?: string;
   duration?: string;
+  mediaDefaults?: MediaGenerationDefaults;
   mode?: "reference" | "first-last";
   lastFramePanelId?: string;
 }) {
@@ -373,7 +389,10 @@ export async function createStoryboardPanelVideoTask(input: {
     episodeId: input.episodeId,
     panelId: panel.id,
     requestedDurationSeconds:
-      parseDurationSeconds(input.duration) ?? panel.durationSeconds ?? 5,
+      parseDurationSeconds(input.duration) ??
+      panel.durationSeconds ??
+      parseDurationSeconds(input.mediaDefaults?.videoGenerationDuration) ??
+      5,
   });
   const dialoguePrompt = dialogueVideoPrompt({
     description: panel.description ?? basePrompt,
@@ -405,8 +424,11 @@ export async function createStoryboardPanelVideoTask(input: {
     model: input.model,
     request: {
       prompt: applyProjectArtStyle(prompt, artStyle, "zh"),
-      ratio: input.ratio ?? "16:9",
-      resolution: input.resolution ?? "720p",
+      ratio: input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9",
+      resolution:
+        input.resolution ??
+        input.mediaDefaults?.videoGenerationResolution ??
+        "1080p",
       duration: `${dialogue.durationSeconds}s`,
       format: "mp4",
       audioMode: "ambient_only",
