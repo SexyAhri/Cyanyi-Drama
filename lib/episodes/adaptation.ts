@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import { episodeAdaptationSchema } from "@/lib/prompts/schemas";
+import { buildSourceEvents } from "@/lib/prompts/validators";
 import type { EpisodeSourceVersionRecord } from "@/lib/projects/types";
 import { prisma } from "@/lib/server/prisma";
 
@@ -22,6 +23,7 @@ export type EpisodeAdaptationProgress =
   | { type: "delta"; delta: string };
 
 const MAX_ADAPTATION_SOURCE_CHARS = 500_000;
+export const MAX_ADAPTATION_EVENT_ANCHORS = 120;
 
 export async function listEpisodeSources(input: {
   userId: string;
@@ -70,6 +72,16 @@ export async function adaptEpisodeSource(input: {
     );
 
   const provider = await resolveEpisodeTextProvider(input);
+  const eventAnchors = buildAdaptationEventAnchors(original.content);
+  if (eventAnchors.length > MAX_ADAPTATION_EVENT_ANCHORS)
+    throw new EpisodeSourceError(
+      `本集包含 ${eventAnchors.length} 个需要逐项保留的原文事件，超过单次改编可可靠核对的 ${MAX_ADAPTATION_EVENT_ANCHORS} 个；请先调整分集边界，避免改编时静默漏掉中间剧情`,
+      409,
+    );
+  const continuityContext = await loadEpisodeContinuityContext({
+    projectId: input.projectId,
+    episodeNumber: episode.episodeNumber,
+  });
   let preview = createJsonStringFieldStream("adaptedText");
   const result = await requestOpenAiStructured({
     ...provider,
@@ -81,6 +93,7 @@ export async function adaptEpisodeSource(input: {
         source_evidence_candidates: JSON.stringify(
           buildSourceEvidenceCandidates(original.content),
         ),
+        source_event_anchors_json: JSON.stringify(eventAnchors),
         manuscript_context: JSON.stringify({
           title: original.manuscript?.title ?? "",
           author: original.manuscript?.author ?? "",
@@ -90,6 +103,7 @@ export async function adaptEpisodeSource(input: {
           name: episode.project.name,
           description: episode.project.description ?? "",
         }),
+        episode_continuity_context: JSON.stringify(continuityContext),
         adaptation_mode: input.mode,
         custom_instructions: input.instructions?.trim() ?? "",
       },
@@ -98,6 +112,11 @@ export async function adaptEpisodeSource(input: {
     validate: (data) => [
       ...validateSourceEvidence(data.sourceEvidence, original.content),
       ...validateAdaptationSummary(data.summary, original.content),
+      ...validateAdaptationEventCoverage(
+        data.eventCoverage,
+        eventAnchors,
+        data.adaptedText,
+      ),
     ],
     temperature: 0.2,
     onOutputStart: () => {
@@ -206,23 +225,210 @@ export function validateSourceEvidence(evidence: string[], source: string) {
 }
 
 export function buildSourceEvidenceCandidates(source: string) {
+  return buildDistributedEvidenceCandidates(source, 8, 40);
+}
+
+function buildDistributedEvidenceCandidates(
+  source: string,
+  maximumCount: number,
+  maximumLength: number,
+) {
   const segments = (source.match(/[^。！？!?\r\n]+[。！？!?]?/gu) ?? [])
     .map((segment) => segment.trim())
     .filter((segment) => segment.length >= 10);
   if (!segments.length) {
-    const fallback = source.trim().slice(0, 40);
+    const fallback = source.trim().slice(0, maximumLength);
     return fallback ? [fallback] : [];
   }
   const candidates: string[] = [];
-  const count = Math.min(8, segments.length);
+  const count = Math.min(maximumCount, segments.length);
   for (let index = 0; index < count; index += 1) {
     const segmentIndex = Math.round(
       (index * (segments.length - 1)) / Math.max(1, count - 1),
     );
-    const quote = segments[segmentIndex].slice(0, 40);
+    const quote = segments[segmentIndex].slice(0, maximumLength);
     if (!candidates.includes(quote)) candidates.push(quote);
   }
   return candidates;
+}
+
+export type AdaptationEventAnchor = {
+  eventId: string;
+  evidence: string;
+};
+
+export function buildAdaptationEventAnchors(
+  source: string,
+): AdaptationEventAnchor[] {
+  return buildSourceEvents(source)
+    .flatMap((event) => splitAdaptationEventEvidence(event.evidence))
+    .map((evidence, index) => ({
+      eventId: `A${String(index + 1).padStart(3, "0")}`,
+      evidence,
+    }));
+}
+
+function splitAdaptationEventEvidence(value: string, maximumLength = 800) {
+  if (value.length <= maximumLength) return [value];
+  const parts: string[] = [];
+  for (let start = 0; start < value.length; start += maximumLength) {
+    const part = value.slice(start, start + maximumLength).trim();
+    if (part) parts.push(part);
+  }
+  return parts;
+}
+
+export function validateAdaptationEventCoverage(
+  coverage: Array<{
+    eventId: string;
+    sourceEvidence: string;
+    adaptedEvidence: string;
+  }>,
+  anchors: readonly AdaptationEventAnchor[],
+  adaptedText: string,
+) {
+  const issues: Array<{
+    code: string;
+    path: string;
+    message: string;
+  }> = [];
+  const expected = new Map(anchors.map((anchor) => [anchor.eventId, anchor]));
+  const seen = new Set<string>();
+  coverage.forEach((item, index) => {
+    const anchor = expected.get(item.eventId);
+    if (!anchor)
+      issues.push({
+        code: "ADAPTATION_EVENT_UNKNOWN",
+        path: `eventCoverage.${index}.eventId`,
+        message: `Unknown adaptation event anchor ${item.eventId}`,
+      });
+    else if (item.sourceEvidence !== anchor.evidence)
+      issues.push({
+        code: "ADAPTATION_EVENT_SOURCE_CHANGED",
+        path: `eventCoverage.${index}.sourceEvidence`,
+        message: `Source evidence for ${item.eventId} must remain verbatim`,
+      });
+    if (seen.has(item.eventId))
+      issues.push({
+        code: "ADAPTATION_EVENT_DUPLICATE",
+        path: `eventCoverage.${index}.eventId`,
+        message: `Adaptation event anchor ${item.eventId} appears more than once`,
+      });
+    seen.add(item.eventId);
+    if (!adaptedText.includes(item.adaptedEvidence))
+      issues.push({
+        code: "ADAPTATION_EVENT_OUTPUT_NOT_FOUND",
+        path: `eventCoverage.${index}.adaptedEvidence`,
+        message: `Adapted evidence for ${item.eventId} must be copied verbatim from adaptedText`,
+      });
+  });
+  anchors.forEach((anchor) => {
+    if (!seen.has(anchor.eventId))
+      issues.push({
+        code: "ADAPTATION_EVENT_MISSING",
+        path: "eventCoverage",
+        message: `Adaptation event anchor ${anchor.eventId} is not accounted for`,
+      });
+  });
+  return issues;
+}
+
+export type EpisodeContinuityContext = {
+  previousEpisode: EpisodeBoundaryContext | null;
+  currentEpisode: { episodeNumber: number };
+  nextEpisode: EpisodeBoundaryContext | null;
+  policy: string;
+};
+
+type EpisodeBoundaryContext = {
+  episodeNumber: number;
+  name: string;
+  summary: string | null;
+  boundaryText: string;
+};
+
+export function buildEpisodeContinuityContext(input: {
+  episodeNumber: number;
+  previous?: {
+    episodeNumber: number;
+    name: string;
+    description: string | null;
+    novelText: string | null;
+  } | null;
+  next?: {
+    episodeNumber: number;
+    name: string;
+    description: string | null;
+    novelText: string | null;
+  } | null;
+}): EpisodeContinuityContext {
+  return {
+    previousEpisode: input.previous
+      ? {
+          episodeNumber: input.previous.episodeNumber,
+          name: input.previous.name,
+          summary: input.previous.description,
+          boundaryText: episodeBoundaryText(input.previous.novelText, "end"),
+        }
+      : null,
+    currentEpisode: { episodeNumber: input.episodeNumber },
+    nextEpisode: input.next
+      ? {
+          episodeNumber: input.next.episodeNumber,
+          name: input.next.name,
+          summary: input.next.description,
+          boundaryText: episodeBoundaryText(input.next.novelText, "start"),
+        }
+      : null,
+    policy:
+      "Previous ending is continuity context, not content to repeat. Next opening is a hard boundary: do not consume, reveal, resolve, or move any next-episode event into the current adaptation.",
+  };
+}
+
+async function loadEpisodeContinuityContext(input: {
+  projectId: string;
+  episodeNumber: number;
+}) {
+  const select = {
+    episodeNumber: true,
+    name: true,
+    description: true,
+    novelText: true,
+  } as const;
+  const [previous, next] = await Promise.all([
+    prisma.episode.findFirst({
+      where: {
+        projectId: input.projectId,
+        episodeNumber: { lt: input.episodeNumber },
+      },
+      orderBy: { episodeNumber: "desc" },
+      select,
+    }),
+    prisma.episode.findFirst({
+      where: {
+        projectId: input.projectId,
+        episodeNumber: { gt: input.episodeNumber },
+      },
+      orderBy: { episodeNumber: "asc" },
+      select,
+    }),
+  ]);
+  return buildEpisodeContinuityContext({
+    episodeNumber: input.episodeNumber,
+    previous,
+    next,
+  });
+}
+
+function episodeBoundaryText(
+  value: string | null | undefined,
+  edge: "start" | "end",
+) {
+  const text = value?.replace(/\s+/gu, " ").trim() ?? "";
+  if (text.length <= 1_200) return text;
+  return edge === "start"
+    ? `${text.slice(0, 1_200)}...`
+    : `...${text.slice(-1_200)}`;
 }
 
 export function validateAdaptationSummary(summary: string, source: string) {

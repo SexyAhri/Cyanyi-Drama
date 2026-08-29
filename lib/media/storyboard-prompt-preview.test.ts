@@ -14,6 +14,15 @@ vi.mock("@/lib/server/prisma", () => ({
   },
 }));
 
+vi.mock("@/lib/assets/story-world", () => ({
+  loadProjectAssetStoryWorldContext: vi.fn().mockResolvedValue({
+    lock: { setting: "premodern", evidence: ["王朝"] },
+    groundingText: "王朝古镇",
+  }),
+  getStoryWorldDirective: vi.fn(() => "故事时代硬约束：前现代世界"),
+  findStoryWorldTextConflicts: vi.fn(() => []),
+}));
+
 import { previewStoryboardPanelPrompt } from "./project-asset-tasks";
 
 describe("storyboard prompt preview", () => {
@@ -36,6 +45,10 @@ describe("storyboard prompt preview", () => {
     expect(preview.compiledPrompt).toContain(
       "项目统一画风（最高优先级）：中国水墨动画风格",
     );
+    expect(preview.compiledPrompt).toContain("故事时代硬约束：前现代世界");
+    expect(preview.compiledPrompt).toContain("不可省略的结构化镜头制作蓝图");
+    expect(preview.compiledPrompt).toContain("林玄受创");
+    expect(preview.compiledPrompt).toContain("林玄站立");
     expect(preview.compiledPrompt).toContain("嘴角溢出鲜血");
     expect(preview.finalPrompt).toContain("嘴角留有少量红色水迹");
     expect(preview.safetyRewrites).toEqual([
@@ -72,6 +85,12 @@ describe("storyboard prompt preview", () => {
         expect.objectContaining({ key: "dialogue_timing" }),
       ]),
     );
+    expect(preview.compiledPrompt).toContain("动作时间线");
+    expect(preview.compiledPrompt).toContain("林玄后退一步");
+    expect(preview.compiledPrompt).toContain("逐角色分拍表演");
+    expect(preview.compiledPrompt).toContain("稳住呼吸再判断来袭方向");
+    expect(preview.compiledPrompt).toContain("摄影机位与构图规则");
+    expect(preview.compiledPrompt).toContain("保持林玄与来袭方向同框");
   });
 });
 
@@ -86,7 +105,41 @@ function panel() {
     imagePrompt: "林玄嘴角溢出鲜血",
     videoPrompt: "林玄后退一步",
     firstLastFramePrompt: null,
-    actingNotesJson: null,
+    actingNotesJson: JSON.stringify({
+      characters: [
+        {
+          name: "林玄",
+          emotion: "受创后警觉",
+          action: "后退并稳住重心",
+          expression: "压住痛感",
+          beats: [
+            {
+              startSecond: 0,
+              endSecond: 4,
+              objective: "稳住呼吸再判断来袭方向",
+              subtext: "不能露出破绽",
+              action: "后退一步",
+              expression: "目光收紧",
+              gazeTarget: "来袭方向",
+              reactionTo: "B1",
+            },
+          ],
+        },
+      ],
+    }),
+    photographyRules: JSON.stringify({
+      composition: "保持林玄与来袭方向同框",
+      cameraPosition: "侧前方",
+    }),
+    startStateJson: JSON.stringify({ body: "林玄站立" }),
+    endStateJson: JSON.stringify({ body: "林玄后退后站稳" }),
+    motionBeatsJson: JSON.stringify([
+      { startSecond: 0, endSecond: 4, action: "林玄后退一步" },
+    ]),
+    worldContextJson: JSON.stringify({ technique: "护体诀" }),
+    vfxCuesJson: JSON.stringify([]),
+    sfxCuesJson: JSON.stringify([]),
+    sourceEvidenceJson: JSON.stringify(["林玄受创后退。"]),
     charactersJson: "[]",
     propsJson: "[]",
     locationName: null,

@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildAdaptationEventAnchors,
+  buildEpisodeContinuityContext,
   buildSourceEvidenceCandidates,
   createJsonStringFieldStream,
   extractPartialJsonStringField,
   validateAdaptationSummary,
+  validateAdaptationEventCoverage,
   validateSourceEvidence,
 } from "./adaptation";
 
@@ -76,6 +79,78 @@ describe("episode adaptation evidence", () => {
     expect(candidates.every((quote) => source.includes(quote))).toBe(true);
     expect(candidates[0]).toContain("寒夜练武");
     expect(candidates.at(-1)).toContain("阴阳之境");
+  });
+
+  it("requires every source event to map to exact adapted text", () => {
+    const source = [
+      "韩宇在寒夜练武。",
+      "父亲交给他母亲留下的无字古籍。",
+      "韩宇得知母亲仍然在世。",
+    ].join("\n");
+    const anchors = buildAdaptationEventAnchors(source);
+    const adaptedText = "寒夜里韩宇继续练武。父亲把无字古籍交给韩宇，他终于得知母亲仍在人世。";
+    const coverage = anchors.map((anchor, index) => ({
+      eventId: anchor.eventId,
+      sourceEvidence: anchor.evidence,
+      adaptedEvidence:
+        index === 0
+          ? "寒夜里韩宇继续练武"
+          : index === 1
+            ? "父亲把无字古籍交给韩宇"
+            : "他终于得知母亲仍在人世",
+    }));
+
+    expect(
+      validateAdaptationEventCoverage(coverage, anchors, adaptedText),
+    ).toEqual([]);
+    expect(
+      validateAdaptationEventCoverage(coverage.slice(0, -1), anchors, adaptedText)
+        .map((issue) => issue.code),
+    ).toContain("ADAPTATION_EVENT_MISSING");
+    expect(
+      validateAdaptationEventCoverage(
+        [{ ...coverage[0], adaptedEvidence: "不存在的改编片段" }, ...coverage.slice(1)],
+        anchors,
+        adaptedText,
+      ).map((issue) => issue.code),
+    ).toContain("ADAPTATION_EVENT_OUTPUT_NOT_FOUND");
+  });
+
+  it("keeps every event instead of sampling away middle events", () => {
+    const source = Array.from(
+      { length: 40 },
+      (_, index) => `第${index + 1}段发生一个不可跳过的连续剧情事件。`,
+    ).join("\n");
+    const anchors = buildAdaptationEventAnchors(source);
+
+    expect(anchors).toHaveLength(40);
+    expect(anchors[0].evidence).toContain("第1段");
+    expect(anchors.at(-1)?.evidence).toContain("第40段");
+    expect(anchors[19].evidence).toContain("第20段");
+  });
+
+  it("separates prior continuity from the next-episode hard boundary", () => {
+    const context = buildEpisodeContinuityContext({
+      episodeNumber: 2,
+      previous: {
+        episodeNumber: 1,
+        name: "第一集",
+        description: "韩宇接过古籍",
+        novelText: `开场${"前".repeat(1_300)}上一集结尾`,
+      },
+      next: {
+        episodeNumber: 3,
+        name: "第三集",
+        description: "宗门来人",
+        novelText: `下一集开场${"后".repeat(1_300)}`,
+      },
+    });
+
+    expect(context.previousEpisode?.boundaryText).toContain("上一集结尾");
+    expect(context.previousEpisode?.boundaryText).not.toContain("开场");
+    expect(context.nextEpisode?.boundaryText).toContain("下一集开场");
+    expect(context.nextEpisode?.boundaryText).not.toContain("后".repeat(1_250));
+    expect(context.policy).toContain("do not consume");
   });
 });
 

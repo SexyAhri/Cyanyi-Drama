@@ -5,6 +5,9 @@ const fetchWithProviderRetry = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/providers/http", () => ({ fetchWithProviderRetry }));
 
 import {
+  assertTimelineDialogueAudioCoverage,
+  assertTimelineRenderCoverage,
+  assertVoiceLinePanelCoverage,
   mediaAssetMetadata,
   generateImage,
   isSourceMediaDownloadFailure,
@@ -79,5 +82,51 @@ describe("image generation runtime", () => {
       ),
     ).rejects.toThrow("quota exhausted");
     expect(fetchWithProviderRetry).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("timeline render coverage", () => {
+  it("fails instead of silently skipping a timeline panel without media", () => {
+    expect(() =>
+      assertTimelineRenderCoverage({
+        sequenceIds: ["panel-1", "panel-2"],
+        panelMedia: [
+          { id: "panel-1", panelIndex: 0, url: "https://media.test/1.png" },
+          { id: "panel-2", panelIndex: 1, url: null },
+        ],
+      }),
+    ).toThrow("TIMELINE_RENDER_PANEL_MEDIA_MISSING:1");
+  });
+
+  it("fails when a saved timeline points to a missing storyboard panel", () => {
+    expect(() =>
+      assertTimelineRenderCoverage({
+        sequenceIds: ["panel-1", "deleted-panel"],
+        panelMedia: [
+          { id: "panel-1", panelIndex: 0, url: "https://media.test/1.png" },
+        ],
+      }),
+    ).toThrow("TIMELINE_RENDER_TRACK_PANEL_MISSING:deleted-panel");
+  });
+
+  it("fails when a voice line is not bound to a storyboard panel", () => {
+    expect(() =>
+      assertVoiceLinePanelCoverage({
+        panelIds: ["panel-1"],
+        lines: [
+          { id: "line-1", lineIndex: 0, matchedPanelId: "panel-1" },
+          { id: "line-2", lineIndex: 1, matchedPanelId: null },
+        ],
+      }),
+    ).toThrow("AUDIO_MERGE_LINE_PANEL_MISSING:1");
+  });
+
+  it("requires a merged dialogue track before rendering voiced panels", () => {
+    expect(() => assertTimelineDialogueAudioCoverage(2, undefined)).toThrow(
+      "TIMELINE_RENDER_DIALOGUE_AUDIO_MISSING",
+    );
+    expect(() =>
+      assertTimelineDialogueAudioCoverage(2, "https://media.test/dialogue.mp3"),
+    ).not.toThrow();
   });
 });

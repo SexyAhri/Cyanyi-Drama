@@ -9,11 +9,17 @@ Manuscript context:
 Project adaptation constraints:
 {{project_context}}
 
+Adjacent-episode continuity and boundaries:
+{{episode_continuity_context}}
+
 Source:
 {{source_text}}
 
 Ready-to-use verbatim source-evidence candidates:
 {{source_evidence_candidates}}
+
+Complete source-event table that must be mapped item by item:
+{{source_event_anchors_json}}
 
 Requirements:
 1. faithful only cleans expression and paragraphs; polish may improve readability, action, and dialogue rhythm; drama may compress repetition, surface conflict earlier, and strengthen the episode hook.
@@ -22,6 +28,8 @@ Requirements:
 4. Project art style, aspect ratio, and model settings affect downstream visual production only and must not become story facts.
 5. Regenerate summary only after reading the complete source. It must cover the setup, central conflict, major progression or turn, and the ending state or hook; do not merely excerpt or paraphrase the opening paragraph. When the source is long enough, write 180–300 characters; summarize shorter sources proportionally but completely.
 6. Choose 3–6 sourceEvidence items from the candidates above to demonstrate preservation of major facts from the beginning, middle, and ending. The candidates are contiguous verbatim source slices; do not paraphrase, insert or remove characters, alter punctuation, add quotation marks, or use ellipses.
+7. previousEpisode exists only to preserve character knowledge, relationships, injuries, prop ownership, and unresolved goals. Do not repeat a previous event unless the current source makes it happen again. nextEpisode is a hard boundary: do not consume, reveal, resolve, or move any next-episode event into this adaptation.
+8. eventCoverage must return every item in the complete event table exactly once. Copy its evidence verbatim into sourceEvidence. adaptedEvidence must be one contiguous verbatim excerpt from adaptedText proving that event remains. treatment must be preserved, condensed, or visualized; omission is not allowed, and events between the opening, middle, and ending may not be skipped as unsampled material.
 
 Return only this JSON shape:
 {
@@ -29,5 +37,6 @@ Return only this JSON shape:
   "summary": "source-faithful episode summary",
   "adaptedText": "complete adapted prose",
   "changeSummary": ["editing treatment applied"],
-  "sourceEvidence": ["verbatim source excerpt"]
+  "sourceEvidence": ["verbatim source excerpt"],
+  "eventCoverage": [{"eventId":"A001","sourceEvidence":"verbatim event anchor","adaptedEvidence":"verbatim corresponding adaptation excerpt","treatment":"preserved|condensed|visualized"}]
 }

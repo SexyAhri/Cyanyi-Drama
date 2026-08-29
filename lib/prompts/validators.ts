@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { canonicalSummaryPlaceholderFragments } from "@/lib/assets/canonical-summary";
 import type { StructuredValidationIssue } from "@/lib/llm/structured-output";
 import {
   actingDirectionSchema,
@@ -95,23 +96,45 @@ export function validateLocationPropAnalysis(
     "props",
     issues,
   );
-  data.locations.forEach((location, index) =>
+  data.locations.forEach((location, index) => {
     validateEvidence(
       location.evidence,
       sourceText,
       `locations.${index}.evidence`,
       issues,
-    ),
-  );
-  data.props.forEach((prop, index) =>
+    );
+    validateCanonicalSummary(
+      location.summary,
+      `locations.${index}.summary`,
+      issues,
+    );
+  });
+  data.props.forEach((prop, index) => {
     validateEvidence(
       prop.evidence,
       sourceText,
       `props.${index}.evidence`,
       issues,
+    );
+    validateCanonicalSummary(prop.summary, `props.${index}.summary`, issues);
+  });
+  return issues;
+}
+
+function validateCanonicalSummary(
+  summary: string | null | undefined,
+  path: string,
+  issues: StructuredValidationIssue[],
+) {
+  const placeholders = canonicalSummaryPlaceholderFragments(summary);
+  if (!placeholders.length) return;
+  issues.push(
+    issue(
+      path,
+      "EMPTY_CANONICAL_FACT_TEMPLATE",
+      `Remove non-factual placeholder fragments (${placeholders.join("; ")}); preserve only source-backed stable facts, or return null when no stable fact is stated`,
     ),
   );
-  return issues;
 }
 
 export function validateClipSegmentation(
@@ -293,6 +316,18 @@ export function validateScreenplayConversion(
           input.clipText,
           `scenes.${sceneIndex}.content.${contentIndex}`,
           issues,
+        );
+      if (
+        content.type === "action" &&
+        requiresActionDesign(content.text) &&
+        !content.actionDesign
+      )
+        issues.push(
+          issue(
+            `scenes.${sceneIndex}.content.${contentIndex}.actionDesign`,
+            "ACTION_DESIGN_REQUIRED",
+            "Fight, chase, attack, defense, transformation, summoning, and named-technique actions require an explicit actionDesign",
+          ),
         );
       if (content.type === "action" && content.actionDesign)
         validateActionDesign(
@@ -587,7 +622,7 @@ function closestStoryboardEvidence(
       bestScore = score;
     }
   }
-  return best;
+  return bestScore > 0 ? best : undefined;
 }
 
 function storyboardTextOverlapScore(left: string, right: string) {
@@ -833,6 +868,47 @@ function validateActionDesign(
         ),
       );
   }
+  if (design.vfxPlan.length && !design.visualMotif)
+    issues.push(
+      issue(
+        `${path}.visualMotif`,
+        "VFX_VISUAL_MOTIF_REQUIRED",
+        "An action with VFX cues requires a concrete reusable visual motif; do not leave effect authorship to the video model",
+      ),
+    );
+  if (design.visualMotif && !design.visualMotifSource)
+    issues.push(
+      issue(
+        `${path}.visualMotifSource`,
+        "VFX_VISUAL_MOTIF_SOURCE_REQUIRED",
+        "visualMotifSource must identify source, world_bible, or production_inference",
+      ),
+    );
+  if (
+    design.visualMotifSource === "production_inference" &&
+    !design.visualMotifRationale
+  )
+    issues.push(
+      issue(
+        `${path}.visualMotifRationale`,
+        "VFX_VISUAL_MOTIF_RATIONALE_REQUIRED",
+        "A production-inferred visual motif requires a rationale tied to project style, era, ability facts, and the reusable effect library",
+      ),
+    );
+  if (!design.visualMotif && (design.visualMotifSource || design.visualMotifRationale))
+    issues.push(
+      issue(
+        `${path}.visualMotif`,
+        "VFX_VISUAL_MOTIF_METADATA_ORPHANED",
+        "visual motif provenance is only valid when visualMotif is present",
+      ),
+    );
+}
+
+function requiresActionDesign(value: string) {
+  return /(?:打斗|决斗|交战|混战|追逐|追赶|逃窜|攻击|突袭|进攻|防御|格挡|招架|闪避|反击|挥(?:剑|刀|拳)|刺向|劈向|砍向|斩向|射向|踢向|击中|命中|受击|功法|招式|剑诀|刀法|掌法|拳法|法术|变身|召唤|fight|duel|combat|chase|attack|defend|block|dodge|counter|strike|slash|shoot|transform|summon)/iu.test(
+    value,
+  );
 }
 
 export type SourceEvent = { eventId: string; evidence: string };
@@ -878,6 +954,7 @@ function validateSourceEventCoverage(
 ) {
   const coverage = data.coverage ?? [];
   const byId = new Map(coverage.map((item) => [item.eventId, item]));
+  const materializationCursor = new Map<string, number>();
   for (const event of sourceEvents) {
     const item = byId.get(event.eventId);
     if (!item) {
@@ -906,6 +983,14 @@ function validateSourceEventCoverage(
           "An omitted source event requires a reason",
         ),
       );
+    if (item.modes.includes("omitted"))
+      issues.push(
+        issue(
+          `coverage.${event.eventId}.modes`,
+          "SOURCE_EVENT_OMISSION_FORBIDDEN",
+          "Every source event must remain visual, dialogue, or voiceover; unfilmable exposition belongs in grounded voiceover rather than being dropped",
+        ),
+      );
     if (item.modes.includes("omitted") && item.modes.length > 1)
       issues.push(
         issue(
@@ -914,6 +999,35 @@ function validateSourceEventCoverage(
           "omitted cannot be combined with a covered mode",
         ),
       );
+    const modeCounts = stringCounts(item.modes);
+    for (const [mode, count] of modeCounts)
+      if (count > 1)
+        issues.push(
+          issue(
+            `coverage.${event.eventId}.modes`,
+            "SOURCE_EVENT_MODE_DUPLICATE",
+            `Coverage mode ${mode} must not be repeated for ${event.eventId}`,
+          ),
+        );
+    for (const mode of item.modes) {
+      if (mode === "omitted") continue;
+      const materializationKey = `${mode}\u0000${normalizeActionText(event.evidence)}`;
+      const materializedIndex = findSourceEventModeMaterializationIndex(
+        data,
+        event.evidence,
+        mode,
+        materializationCursor.get(materializationKey) ?? -1,
+      );
+      if (materializedIndex < 0)
+        issues.push(
+          issue(
+            `coverage.${event.eventId}.modes`,
+            "SOURCE_EVENT_MODE_NOT_MATERIALIZED",
+            `Source event ${event.eventId} claims ${mode} coverage but no matching ${mode} content exists in screenplay scenes`,
+          ),
+        );
+      else materializationCursor.set(materializationKey, materializedIndex);
+    }
   }
   const expected = new Set(sourceEvents.map((event) => event.eventId));
   coverage.forEach((item, index) => {
@@ -934,6 +1048,40 @@ function validateSourceEventCoverage(
         ),
       );
   });
+}
+
+function findSourceEventModeMaterializationIndex(
+  data: ScreenplayConversion,
+  eventEvidence: string,
+  mode: "visual" | "dialogue" | "voiceover",
+  afterIndex: number,
+) {
+  const contentItems = data.scenes.flatMap((scene) => scene.content);
+  return contentItems.findIndex((content, index) => {
+      if (index <= afterIndex) return false;
+      if (mode === "visual" && content.type === "action")
+        return [
+          content.text,
+          ...(content.evidence ?? []),
+          ...(content.actionDesign?.evidence ?? []),
+        ].some((value) => eventTextsReferToEachOther(value, eventEvidence));
+      if (mode === "dialogue" && content.type === "dialogue")
+        return eventTextsReferToEachOther(content.lines, eventEvidence);
+      if (mode === "voiceover" && content.type === "voiceover")
+        return eventTextsReferToEachOther(content.text, eventEvidence);
+      return false;
+    });
+}
+
+function eventTextsReferToEachOther(left: string, right: string) {
+  const normalizedLeft = normalizeActionText(left);
+  const normalizedRight = normalizeActionText(right);
+  return (
+    Boolean(normalizedLeft) &&
+    Boolean(normalizedRight) &&
+    (normalizedLeft.includes(normalizedRight) ||
+      normalizedRight.includes(normalizedLeft))
+  );
 }
 
 function normalizeActionText(value: string) {
@@ -969,6 +1117,7 @@ export function validateStoryboardPlanning(
   );
   data.panels.forEach((panel, index) => {
     validateMotionTimeline(panel, `panels.${index}`, issues);
+    validateStructuredContinuityState(panel, `panels.${index}`, issues);
     validateProductionCues(
       panel,
       `${input.sourceText}\n${input.productionContextText ?? ""}`,
@@ -1082,7 +1231,24 @@ export function validateCinematographyCoverage(
 
 export function validateActingCoverage(
   data: ActingDirection,
-  panels: ReadonlyArray<{ panelIndex: number; characters: readonly string[] }>,
+  panels: ReadonlyArray<{
+    panelIndex: number;
+    characters: readonly string[];
+    durationSeconds?: number;
+    description?: string;
+    lipSyncText?: string | null;
+    voiceoverText?: string | null;
+    sourceEvidence?: readonly string[];
+    motionTimeline?: ReadonlyArray<{
+      startSecond?: number;
+      endSecond?: number;
+      action: string;
+      actor?: string | null;
+      target?: string | null;
+      contact?: string;
+      beatId?: string | null;
+    }>;
+  }>,
 ) {
   const issues = validateExactPanelCoverage(
     data.directions.map((direction) => direction.panelIndex),
@@ -1101,6 +1267,107 @@ export function validateActingCoverage(
       `directions.panel_${panel.panelIndex}.characters`,
       issues,
     );
+    const evidenceCandidates = new Set(
+      [
+        panel.description,
+        panel.lipSyncText,
+        panel.voiceoverText,
+        ...(panel.sourceEvidence ?? []),
+        ...(panel.motionTimeline?.map((beat) => beat.action) ?? []),
+      ].filter((value): value is string => Boolean(value?.trim())),
+    );
+    direction.characters.forEach((character, characterIndex) => {
+      character.evidence.forEach((evidence, evidenceIndex) => {
+        if (evidenceCandidates.has(evidence)) return;
+        issues.push(
+          issue(
+            `directions.panel_${panel.panelIndex}.characters.${characterIndex}.evidence.${evidenceIndex}`,
+            "ACTING_DIRECTION_NOT_GROUNDED",
+            "Acting direction evidence must exactly quote this panel's description, spoken text, motion beat, or source evidence",
+          ),
+        );
+      });
+      const requiresTimedPerformance =
+        panel.characters.length > 1 ||
+        (panel.motionTimeline ?? []).some((beat) =>
+          motionBeatNeedsInteractionContract(
+            beat as StoryboardPlanning["panels"][number]["motionTimeline"][number],
+          ),
+        );
+      if (requiresTimedPerformance && !character.beats?.length)
+        issues.push(
+          issue(
+            `directions.panel_${panel.panelIndex}.characters.${characterIndex}.beats`,
+            "ACTING_BEATS_REQUIRED",
+            "Multi-character and physical-interaction shots require timed acting beats for every visible character",
+          ),
+        );
+      if (character.beats?.length) {
+        character.beats.forEach((beat, beatIndex) => {
+          const expectedStart = character.beats?.[beatIndex - 1]?.endSecond ?? 0;
+          if (
+            beat.startSecond !== expectedStart ||
+            beat.endSecond <= beat.startSecond ||
+            (panel.durationSeconds !== undefined &&
+              beat.endSecond > panel.durationSeconds)
+          )
+            issues.push(
+              issue(
+                `directions.panel_${panel.panelIndex}.characters.${characterIndex}.beats.${beatIndex}`,
+                "ACTING_TIMELINE_NOT_CONTIGUOUS",
+                `Expected a positive acting beat beginning at ${expectedStart}s`,
+              ),
+            );
+          if (
+            beat.subtext === undefined ||
+            beat.gazeTarget === undefined ||
+            beat.reactionTo === undefined
+          )
+            issues.push(
+              issue(
+                `directions.panel_${panel.panelIndex}.characters.${characterIndex}.beats.${beatIndex}`,
+                "ACTING_BEAT_CONTEXT_REQUIRED",
+                "Timed acting beats require explicit subtext, gazeTarget, and reactionTo values; use null only when the approved shot genuinely has none",
+              ),
+            );
+          beat.evidence.forEach((evidence, evidenceIndex) => {
+            if (evidenceCandidates.has(evidence)) return;
+            issues.push(
+              issue(
+                `directions.panel_${panel.panelIndex}.characters.${characterIndex}.beats.${beatIndex}.evidence.${evidenceIndex}`,
+                "ACTING_BEAT_NOT_GROUNDED",
+                "Timed acting beat evidence must exactly quote this panel's approved material",
+              ),
+            );
+          });
+        });
+        if (
+          panel.durationSeconds !== undefined &&
+          character.beats.at(-1)?.endSecond !== panel.durationSeconds
+        )
+          issues.push(
+            issue(
+              `directions.panel_${panel.panelIndex}.characters.${characterIndex}.beats`,
+              "ACTING_TIMELINE_DURATION_MISMATCH",
+              "Timed acting beats must cover the complete shot duration",
+            ),
+          );
+      }
+      const isInteractionTarget = (panel.motionTimeline ?? []).some(
+        (beat) => beat.target === character.name && beat.actor !== character.name,
+      );
+      if (
+        isInteractionTarget &&
+        !character.beats?.some((beat) => Boolean(beat.reactionTo?.trim()))
+      )
+        issues.push(
+          issue(
+            `directions.panel_${panel.panelIndex}.characters.${characterIndex}.beats`,
+            "TARGET_REACTION_BEAT_REQUIRED",
+            "A character targeted by a physical interaction requires a timed reactionTo beat",
+          ),
+        );
+    });
   }
   return issues;
 }
@@ -1212,6 +1479,35 @@ export function validateStoryboardRefinement(
           "Refinement must preserve the base location",
         ),
       );
+    if (base.description && !refined.description.includes(base.description))
+      issues.push(
+        issue(
+          `panels.panel_${base.panelIndex}.description`,
+          "PLANNED_EVENT_TEXT_DROPPED",
+          "Refinement may append production detail but must preserve the base description verbatim",
+        ),
+      );
+    base.motionTimeline.forEach((beat, beatIndex) => {
+      if (refined.motionTimeline[beatIndex]?.action.includes(beat.action)) return;
+      issues.push(
+        issue(
+          `panels.panel_${base.panelIndex}.motionTimeline.${beatIndex}.action`,
+          "PLANNED_EVENT_TEXT_DROPPED",
+          "Refinement must preserve each planned action beat verbatim before adding acting or camera detail",
+        ),
+      );
+    });
+    for (const field of ["imagePrompt", "videoPrompt"] as const) {
+      const planned = base[field];
+      if (!planned || refined[field]?.includes(planned)) continue;
+      issues.push(
+        issue(
+          `panels.panel_${base.panelIndex}.${field}`,
+          "PLANNED_EVENT_TEXT_DROPPED",
+          `Refinement must preserve the base ${field} verbatim before appending production detail`,
+        ),
+      );
+    }
     validateExactValues(
       refined.sourceEvidence,
       base.sourceEvidence,
@@ -1266,6 +1562,7 @@ function validateMotionTimeline(
   path: string,
   issues: StructuredValidationIssue[],
 ) {
+  const seenBeatIds = new Set<string>();
   panel.motionTimeline.forEach((beat, beatIndex) => {
     const expectedStart = panel.motionTimeline[beatIndex - 1]?.endSecond ?? 0;
     if (
@@ -1280,6 +1577,78 @@ function validateMotionTimeline(
           `Expected a positive, continuous beat beginning at ${expectedStart}s`,
         ),
       );
+    const requiresInteraction = motionBeatNeedsInteractionContract(beat);
+    const interactionContractIncomplete =
+      !beat.beatId ||
+      !beat.actor ||
+      beat.target === undefined ||
+      (!beat.bodyPart && !beat.prop) ||
+      !beat.trajectory ||
+      beat.contact === undefined ||
+      beat.reaction === undefined ||
+      !beat.result ||
+      beat.causedBy === undefined;
+    if (requiresInteraction && interactionContractIncomplete)
+      issues.push(
+        issue(
+          `${path}.motionTimeline.${beatIndex}`,
+          "INTERACTION_BEAT_CONTRACT_REQUIRED",
+          "Complex physical beats require beatId, actor, target, bodyPart or prop, trajectory, contact, reaction, result, and an explicit causedBy value so downstream video generation can preserve causality",
+        ),
+      );
+    if (beat.beatId) {
+      if (seenBeatIds.has(beat.beatId))
+        issues.push(
+          issue(
+            `${path}.motionTimeline.${beatIndex}.beatId`,
+            "INTERACTION_BEAT_ID_DUPLICATE",
+            `Duplicate interaction beat id: ${beat.beatId}`,
+          ),
+        );
+      seenBeatIds.add(beat.beatId);
+    }
+    if (beat.causedBy && !seenBeatIds.has(beat.causedBy))
+      issues.push(
+        issue(
+          `${path}.motionTimeline.${beatIndex}.causedBy`,
+          "INTERACTION_CAUSE_NOT_PRIOR",
+          "causedBy must reference an earlier beat in the same shot",
+        ),
+      );
+    if (beat.actor && !nameSet(panel.characters).has(normalizeName(beat.actor)))
+      issues.push(
+        issue(
+          `${path}.motionTimeline.${beatIndex}.actor`,
+          "INTERACTION_ACTOR_NOT_IN_SHOT",
+          `Interaction actor must appear in panel.characters: ${beat.actor}`,
+        ),
+      );
+    if (
+      beat.target &&
+      !nameSet([...panel.characters, ...panel.props]).has(normalizeName(beat.target)) &&
+      ![panel.description, panel.videoPrompt, ...panel.sourceEvidence].some((value) =>
+        value.includes(beat.target ?? ""),
+      )
+    )
+      issues.push(
+        issue(
+          `${path}.motionTimeline.${beatIndex}.target`,
+          "INTERACTION_TARGET_NOT_IN_SHOT",
+          `Interaction target must be a character or prop in the shot: ${beat.target}`,
+        ),
+      );
+    if (
+      beat.contact &&
+      beat.contact !== "none" &&
+      (!beat.target || !beat.contactPoint || !beat.reaction || !beat.result)
+    )
+      issues.push(
+        issue(
+          `${path}.motionTimeline.${beatIndex}`,
+          "INTERACTION_CONTACT_INCOMPLETE",
+          "Physical contact requires target, contactPoint, reaction, and result",
+        ),
+      );
   });
   const finalBeat = panel.motionTimeline.at(-1);
   if (finalBeat?.endSecond !== panel.durationSeconds)
@@ -1288,6 +1657,22 @@ function validateMotionTimeline(
         `${path}.motionTimeline`,
         "MOTION_TIMELINE_DURATION_MISMATCH",
         "The final motion beat must end at durationSeconds",
+      ),
+    );
+  const interactionBeatCount = panel.motionTimeline.filter(
+    motionBeatNeedsInteractionContract,
+  ).length;
+  const interactionComplexity =
+    panel.characters.length +
+    interactionBeatCount * 2 +
+    panel.vfxCues.length +
+    panel.sfxCues.length;
+  if (interactionComplexity > 18)
+    issues.push(
+      issue(
+        path,
+        "SHOT_INTERACTION_COMPLEXITY_EXCEEDED",
+        `Shot interaction complexity is ${interactionComplexity}; split shots when character count + interaction beats*2 + VFX cues + SFX cues exceeds 18`,
       ),
     );
 }
@@ -1319,6 +1704,27 @@ function validateProductionCues(
       knowledgeText,
       `${path}.worldContext.evidence`,
       issues,
+    );
+  if (panel.vfxCues.length && !panel.worldContext?.visualMotif)
+    issues.push(
+      issue(
+        `${path}.worldContext.visualMotif`,
+        "STORYBOARD_VFX_VISUAL_MOTIF_REQUIRED",
+        "A shot with VFX cues must carry the reusable visual motif from actionDesign instead of delegating effect design to the video model",
+      ),
+    );
+  if (
+    panel.worldContext?.visualMotif &&
+    !normalizeActionText(knowledgeText).includes(
+      normalizeActionText(panel.worldContext.visualMotif),
+    )
+  )
+    issues.push(
+      issue(
+        `${path}.worldContext.visualMotif`,
+        "STORYBOARD_VFX_VISUAL_MOTIF_CHANGED",
+        "visualMotif must exactly preserve a motif supplied by the screenplay, effect library, or approved world reference",
+      ),
     );
 
   panel.vfxCues.forEach((cue, cueIndex) => {
@@ -1430,7 +1836,122 @@ function validateStoryboardScreenplayContract(
           "Panel scene numbers must follow screenplay order",
         ),
       );
+    if (previous?.sceneNumber === panel.sceneNumber) {
+      const previousCharacters = new Map(
+        (previous.endState?.characterStates ?? []).map((state) => [
+          normalizeName(state.name),
+          state,
+        ]),
+      );
+      for (const state of panel.startState?.characterStates ?? []) {
+        const prior = previousCharacters.get(normalizeName(state.name));
+        if (!prior || JSON.stringify(prior) === JSON.stringify(state)) continue;
+        issues.push(
+          issue(
+            `panels.${index}.startState.characterStates`,
+            "CHARACTER_STATE_DISCONTINUITY",
+            `Character state must inherit the prior shot exactly before new action begins: ${state.name}`,
+          ),
+        );
+      }
+      const previousProps = new Map(
+        (previous.endState?.propStates ?? []).map((state) => [
+          normalizeName(state.name),
+          state,
+        ]),
+      );
+      for (const state of panel.startState?.propStates ?? []) {
+        const prior = previousProps.get(normalizeName(state.name));
+        if (!prior || JSON.stringify(prior) === JSON.stringify(state)) continue;
+        issues.push(
+          issue(
+            `panels.${index}.startState.propStates`,
+            "PROP_STATE_DISCONTINUITY",
+            `Prop ownership, position, and state must inherit the prior shot exactly: ${state.name}`,
+          ),
+        );
+      }
+    }
   });
+
+  const panelEvidence = new Set(
+    data.panels.flatMap((panel) => panel.sourceEvidence),
+  );
+  let previousActionPanel = -1;
+  const requiredActionOccurrences = new Map<string, number>();
+  for (const scene of screenplay.scenes) {
+    if (!data.panels.some((panel) => panel.sceneNumber === scene.sceneNumber))
+      issues.push(
+        issue(
+          "panels",
+          "SCREENPLAY_SCENE_MISSING",
+          `Screenplay scene ${scene.sceneNumber} has no storyboard panel`,
+        ),
+      );
+    for (const content of scene.content) {
+      if (content.type !== "action") continue;
+      const actionKey = `${scene.sceneNumber}\u0000${normalizeActionText(content.text)}`;
+      const requiredOccurrence =
+        (requiredActionOccurrences.get(actionKey) ?? 0) + 1;
+      requiredActionOccurrences.set(actionKey, requiredOccurrence);
+      const candidates = [content.text, ...(content.evidence ?? [])];
+      const matchingPanels = data.panels
+        .map((panel, panelIndex) => ({ panel, panelIndex }))
+        .filter(
+          ({ panel }) =>
+            panel.sceneNumber === scene.sceneNumber &&
+            panel.sourceEvidence.some((evidence) =>
+              candidates.some((candidate) =>
+                eventTextsReferToEachOther(evidence, candidate),
+              ),
+            ),
+        );
+      const matchingPanel = matchingPanels[0]?.panelIndex ?? -1;
+      if (matchingPanel < 0) {
+        issues.push(
+          issue(
+            "panels",
+            "SCREENPLAY_ACTION_MISSING",
+            `Storyboard must preserve the screenplay action: ${content.text}`,
+          ),
+        );
+        continue;
+      }
+      if (
+        storyboardActionMaterializationCount(
+          matchingPanels.map(({ panel }) => panel),
+          content.text,
+        ) < requiredOccurrence
+      )
+        issues.push(
+          issue(
+            "panels",
+            "SCREENPLAY_ACTION_NOT_MATERIALIZED",
+            `Storyboard evidence references an action without depicting it in description, motionTimeline, or videoPrompt: ${content.text}`,
+          ),
+        );
+      if (matchingPanel < previousActionPanel)
+        issues.push(
+          issue(
+            "panels",
+            "SCREENPLAY_ACTION_ORDER_CHANGED",
+            "Storyboard action evidence must follow screenplay order",
+          ),
+        );
+      previousActionPanel = Math.max(previousActionPanel, matchingPanel);
+    }
+  }
+  for (const event of screenplay.coverage ?? []) {
+    if (event.modes.includes("omitted") || panelEvidence.has(event.evidence))
+      continue;
+    issues.push(
+      issue(
+        "panels",
+        "STORYBOARD_SOURCE_EVENT_MISSING",
+        `Storyboard sourceEvidence must account for ${event.eventId}`,
+      ),
+    );
+  }
 
   type SpokenItem = {
     delivery: "dialogue" | "voiceover";
@@ -1492,6 +2013,66 @@ function validateStoryboardScreenplayContract(
             "Every evidence-backed fight or skill design must reach at least one storyboard panel with VFX or SFX cues",
           ),
         );
+      for (const step of content.actionDesign.choreography) {
+        const materialized = matchingPanels.some((panel) =>
+          panel.motionTimeline.some(
+            (beat) =>
+              eventTextsReferToEachOther(beat.choreographyStep ?? "", step) ||
+              eventTextsReferToEachOther(beat.action, step),
+          ),
+        );
+        if (materialized) continue;
+        issues.push(
+          issue(
+            "panels",
+            "ACTION_CHOREOGRAPHY_STEP_MISSING",
+            `Every actionDesign choreography step must reach the storyboard motion timeline: ${step}`,
+          ),
+        );
+      }
+      if (
+        content.actionDesign.target &&
+        !matchingPanels.some((panel) =>
+          panel.motionTimeline.some(
+            (beat) =>
+              beat.target === content.actionDesign?.target &&
+              Boolean(beat.reaction?.trim()),
+          ),
+        )
+      )
+        issues.push(
+          issue(
+            "panels",
+            "ACTION_TARGET_REACTION_MISSING",
+            `The action target requires an explicit timed reaction: ${content.actionDesign.target}`,
+          ),
+        );
+      for (const [label, expected] of [
+        ["impact", content.actionDesign.impact],
+        ["environment response", content.actionDesign.environmentResponse],
+      ] as const) {
+        if (!expected) continue;
+        const materialized = matchingPanels.some((panel) =>
+          [
+            panel.videoPrompt,
+            panel.description,
+            panel.endState?.body ?? "",
+            ...panel.motionTimeline.flatMap((beat) => [
+              beat.action,
+              beat.reaction ?? "",
+              beat.result ?? "",
+            ]),
+          ].some((value) => eventTextsReferToEachOther(value, expected)),
+        );
+        if (materialized) continue;
+        issues.push(
+          issue(
+            "panels",
+            "ACTION_RESULT_NOT_MATERIALIZED",
+            `actionDesign ${label} must appear in a storyboard beat, description, video prompt, or end state: ${expected}`,
+          ),
+        );
+      }
     }
 }
 
@@ -1557,6 +2138,62 @@ function validateSpokenCoverage(
     );
 }
 
+function motionBeatNeedsInteractionContract(
+  beat: StoryboardPlanning["panels"][number]["motionTimeline"][number],
+) {
+  return Boolean(
+    beat.phase ||
+      beat.actor ||
+      beat.target ||
+      (beat.contact && beat.contact !== "none") ||
+      /(?:抓|握|拉|推|递|接|扶|抱|撞|击|打|踢|踹|刺|劈|砍|斩|挡|格|闪|躲|追|attack|strike|grab|push|pull|hand|block|dodge|chase)/iu.test(
+        beat.action,
+      ),
+  );
+}
+
+function validateStructuredContinuityState(
+  panel: StoryboardPlanning["panels"][number],
+  path: string,
+  issues: StructuredValidationIssue[],
+) {
+  const requiresStructuredState =
+    panel.characters.length > 1 ||
+    panel.props.length > 0 ||
+    panel.motionTimeline.some(motionBeatNeedsInteractionContract);
+  if (!requiresStructuredState) return;
+  for (const [edge, state] of [
+    ["startState", panel.startState],
+    ["endState", panel.endState],
+  ] as const) {
+    if (!state) continue;
+    const actualCharacters = state.characterStates?.map((item) => item.name) ?? [];
+    const actualProps = state.propStates?.map((item) => item.name) ?? [];
+    if (!sameNormalizedValues(actualCharacters, panel.characters))
+      issues.push(
+        issue(
+          `${path}.${edge}.characterStates`,
+          "CHARACTER_STATE_COVERAGE_MISMATCH",
+          "Complex shots require one structured continuity state for every panel character",
+        ),
+      );
+    if (!sameNormalizedValues(actualProps, panel.props))
+      issues.push(
+        issue(
+          `${path}.${edge}.propStates`,
+          "PROP_STATE_COVERAGE_MISMATCH",
+          "Shots with props require one structured continuity state for every panel prop",
+        ),
+      );
+  }
+}
+
+function sameNormalizedValues(actual: readonly string[], expected: readonly string[]) {
+  const left = [...nameSet(actual)].sort();
+  const right = [...nameSet(expected)].sort();
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 function sameTimelineBoundaries(
   left: StoryboardPlanning["panels"][number]["motionTimeline"],
   right: StoryboardPlanning["panels"][number]["motionTimeline"],
@@ -1578,6 +2215,7 @@ export function validateVoiceAnalysis(
     characters: readonly string[];
     temporarySpeakers?: readonly string[];
     panelIndices: readonly number[];
+    panelSpokenText?: readonly { panelIndex: number; text: string }[];
   },
 ) {
   const issues: StructuredValidationIssue[] = [];
@@ -1644,6 +2282,32 @@ export function validateVoiceAnalysis(
     if (line.matchedPanelIndex !== null)
       previousPanelIndex = line.matchedPanelIndex;
   });
+  if (input.panelSpokenText) {
+    const expectedSequence = input.panelSpokenText.map((item) => item.text).join("");
+    const actualSequence = data.lines.map((line) => line.content).join("");
+    if (actualSequence !== expectedSequence)
+      issues.push(
+        issue(
+          "lines",
+          "VOICE_PANEL_COVERAGE_MISMATCH",
+          "Voice analysis must preserve every storyboard lip-sync and voiceover segment exactly once and in panel order",
+        ),
+      );
+    for (const panel of input.panelSpokenText) {
+      const matched = data.lines
+        .filter((line) => line.matchedPanelIndex === panel.panelIndex)
+        .map((line) => line.content)
+        .join("");
+      if (matched === panel.text) continue;
+      issues.push(
+        issue(
+          `panels.${panel.panelIndex}`,
+          "VOICE_PANEL_MAPPING_MISMATCH",
+          `Voice lines mapped to panel ${panel.panelIndex} must reproduce its complete spoken text`,
+        ),
+      );
+    }
+  }
   return issues;
 }
 
@@ -1908,6 +2572,54 @@ function validateCanonicalNames(
       issues.push(issue(path, "DUPLICATE_NAME", `Duplicate name: ${value}`));
     seen.add(normalized);
   }
+}
+
+function storyboardActionMaterializationCount(
+  panels: StoryboardPlanning["panels"],
+  actionText: string,
+) {
+  const normalizedAction = normalizeActionText(actionText);
+  if (!normalizedAction) return 0;
+  const descriptions = normalizeActionText(
+    panels.map((panel) => panel.description).join(""),
+  );
+  const splitDescriptionCount = substringOccurrenceCount(
+    descriptions,
+    normalizedAction,
+  );
+  const perPanelCount = panels.reduce((total, panel) => {
+    const fieldCounts = [
+      substringOccurrenceCount(
+        normalizeActionText(panel.description),
+        normalizedAction,
+      ),
+      substringOccurrenceCount(
+        normalizeActionText(panel.videoPrompt),
+        normalizedAction,
+      ),
+      substringOccurrenceCount(
+        normalizeActionText(
+          panel.motionTimeline.map((beat) => beat.action).join(""),
+        ),
+        normalizedAction,
+      ),
+    ];
+    return total + Math.max(...fieldCounts);
+  }, 0);
+  return Math.max(splitDescriptionCount, perPanelCount);
+}
+
+function substringOccurrenceCount(value: string, search: string) {
+  if (!value || !search) return 0;
+  let count = 0;
+  let cursor = 0;
+  while (cursor <= value.length - search.length) {
+    const index = value.indexOf(search, cursor);
+    if (index < 0) break;
+    count += 1;
+    cursor = index + search.length;
+  }
+  return count;
 }
 
 function validateExactNames(

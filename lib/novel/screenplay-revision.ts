@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
+import {
+  getStoryWorldDirective,
+  loadProjectAssetStoryWorldContext,
+} from "@/lib/assets/story-world";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import {
@@ -13,7 +17,9 @@ import {
   validateScreenplayConversion,
 } from "@/lib/prompts/validators";
 import { listProductionProps } from "@/lib/production/domain-store";
+import { extractProjectEffectLibrary } from "@/lib/production/effect-library";
 import { loadApprovedWorldBible } from "@/lib/production/world-bible";
+import { getProjectArtStyleDirective } from "@/lib/projects/art-style";
 import { decryptSecret } from "@/lib/server/crypto";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { prisma } from "@/lib/server/prisma";
@@ -42,6 +48,8 @@ export async function reviseScreenplayClip(input: {
     locations,
     props,
     worldBible,
+    project,
+    effectRows,
     runtimeSettings,
   ] = await Promise.all([
     prisma.storyClip.findFirst({
@@ -72,6 +80,20 @@ export async function reviseScreenplayClip(input: {
     listNovelLocations(input.userId, input.projectId),
     listProductionProps(input.userId, input.projectId),
     loadApprovedWorldBible(input.userId, input.projectId),
+    prisma.project.findFirst({
+      where: { id: input.projectId, userId: input.userId },
+      select: {
+        name: true,
+        description: true,
+        config: { select: { artStyle: true } },
+      },
+    }),
+    prisma.storyClip.findMany({
+      where: { projectId: input.projectId, screenplay: { not: null } },
+      orderBy: { updatedAt: "desc" },
+      take: 200,
+      select: { screenplay: true },
+    }),
     loadUserRuntimeSettings(input.userId),
   ]);
   if (!clip) throw new Error("SCREENPLAY_REVISION_CLIP_NOT_FOUND");
@@ -102,12 +124,38 @@ export async function reviseScreenplayClip(input: {
     props: (props ?? []).map((prop) => prop.name),
   };
   const worldBibleText = JSON.stringify(worldBible?.payload ?? {});
+  const effectLibrary = extractProjectEffectLibrary(
+    effectRows.map((row) => row.screenplay),
+  );
+  const storyWorld = await loadProjectAssetStoryWorldContext({
+    userId: input.userId,
+    projectId: input.projectId,
+    assetName: "",
+    assetFacts: {
+      projectName: project?.name,
+      projectDescription: project?.description,
+      clipSource: clip.content,
+      effectLibrary,
+    },
+  });
+  const locale = input.locale === "en" ? "en" : "zh";
+  const projectStyleDirective = getProjectArtStyleDirective(
+    project?.config?.artStyle,
+    locale,
+  );
+  const storyWorldDirective = getStoryWorldDirective(storyWorld.lock, locale);
+  const productionKnowledgeText = [
+    worldBibleText,
+    JSON.stringify(effectLibrary),
+    projectStyleDirective,
+    storyWorldDirective,
+  ].join("\n");
   const sourceEvents = buildSourceEvents(clip.content);
   const sourceContract = {
     clipId: clip.id,
     clipText: clip.content,
     sourceEvents,
-    knowledgeText: worldBibleText,
+    knowledgeText: productionKnowledgeText,
   };
   const prompt = renderPrompt({
     id: PROMPT_IDS.STORY_SCREENPLAY_REVISION,
@@ -122,6 +170,9 @@ export async function reviseScreenplayClip(input: {
       location_library: JSON.stringify(locations ?? []),
       prop_library: JSON.stringify(props ?? []),
       world_bible_json: worldBibleText,
+      project_style: projectStyleDirective,
+      story_world_directive: storyWorldDirective,
+      effect_library_json: JSON.stringify(effectLibrary),
     },
   });
   const result = await requestOpenAiStructured({
@@ -146,7 +197,7 @@ export async function reviseScreenplayClip(input: {
           clipText: clip.content,
           canonical,
           sourceEvents,
-          knowledgeText: worldBibleText,
+          knowledgeText: productionKnowledgeText,
         },
       ),
     structuredOutputMode: supportsStoredStructuredOutputs(
@@ -165,7 +216,7 @@ export async function reviseScreenplayClip(input: {
     clipText: clip.content,
     canonical,
     sourceEvents,
-    knowledgeText: worldBibleText,
+    knowledgeText: productionKnowledgeText,
   });
   if (normalizationIssues.length)
     throw new Error(

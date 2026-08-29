@@ -24,7 +24,12 @@ import {
   findStoryWorldTextConflicts,
   getStoryWorldDirective,
   loadProjectAssetStoryWorldContext,
+  type AssetStoryWorldContext,
 } from "@/lib/assets/story-world";
+import {
+  compileAssetVisualProfile,
+  parseAssetVisualProfile,
+} from "@/lib/assets/visual-profile";
 
 export type ProjectAssetTarget = "character" | "location" | "prop";
 
@@ -220,9 +225,20 @@ export async function createStoryboardPanelImageTask(input: {
       charactersJson: true,
       propsJson: true,
       locationName: true,
+      startStateJson: true,
+      endStateJson: true,
+      motionBeatsJson: true,
+      worldContextJson: true,
+      vfxCuesJson: true,
+      sfxCuesJson: true,
+      sourceEvidenceJson: true,
+      actingNotesJson: true,
+      photographyRules: true,
+      storyboard: { select: { status: true } },
     },
   });
   if (!panel) throw new ProjectAssetTaskError("分镜格不存在", 404);
+  assertStoryboardApprovedForMedia(panel.storyboard.status);
   const prompt =
     input.prompt?.trim() || panel.imagePrompt?.trim() || panel.description?.trim();
   if (!prompt) throw new ProjectAssetTaskError("分镜格缺少图片提示词", 400);
@@ -233,7 +249,23 @@ export async function createStoryboardPanelImageTask(input: {
     props: parseStringArray(panel.propsJson),
     locationName: panel.locationName,
   });
-  const artStyle = await loadProjectArtStyle(input.projectId);
+  const productionDesign = await loadStoryboardProductionDesign({
+    userId: input.userId,
+    projectId: input.projectId,
+    characters: parseStringArray(panel.charactersJson),
+    props: parseStringArray(panel.propsJson),
+    locationName: panel.locationName,
+  });
+  const compiledPrompt = compileStoryboardProductionPrompt(
+    withStoryboardImageContinuityRequirements({
+      prompt: compileStoryboardEventBlueprint(prompt, panel, "image"),
+      characters: parseStringArray(panel.charactersJson),
+      props: parseStringArray(panel.propsJson),
+      locationName: panel.locationName,
+    }),
+    productionDesign,
+  );
+  assertStoryboardPromptStoryWorld(compiledPrompt, productionDesign.storyWorld);
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
@@ -247,16 +279,7 @@ export async function createStoryboardPanelImageTask(input: {
     protocol: channel.protocol,
     model: input.model,
     request: {
-      prompt: applyProjectArtStyle(
-        withStoryboardImageContinuityRequirements({
-          prompt,
-          characters: parseStringArray(panel.charactersJson),
-          props: parseStringArray(panel.propsJson),
-          locationName: panel.locationName,
-        }),
-        artStyle,
-        "zh",
-      ),
+      prompt: compiledPrompt,
       ratio: input.ratio ?? input.mediaDefaults?.imageGenerationRatio ?? "1:1",
       resolution:
         input.resolution ??
@@ -340,15 +363,25 @@ export async function createStoryboardPanelVideoTask(input: {
       videoPrompt: true,
       firstLastFramePrompt: true,
       actingNotesJson: true,
+      photographyRules: true,
+      startStateJson: true,
+      endStateJson: true,
+      motionBeatsJson: true,
+      worldContextJson: true,
+      vfxCuesJson: true,
+      sfxCuesJson: true,
+      sourceEvidenceJson: true,
       imageAsset: {
         select: { url: true, storageKey: true, mimeType: true },
       },
       charactersJson: true,
       propsJson: true,
       locationName: true,
+      storyboard: { select: { status: true } },
     },
   });
   if (!panel) throw new ProjectAssetTaskError("分镜格不存在", 404);
+  assertStoryboardApprovedForMedia(panel.storyboard.status);
   const basePrompt =
     input.prompt?.trim() ||
     (input.mode === "first-last"
@@ -421,7 +454,7 @@ export async function createStoryboardPanelVideoTask(input: {
   });
   const dialoguePrompt = dialogueVideoPrompt({
     description: panel.description ?? basePrompt,
-    motionPrompt: basePrompt,
+    motionPrompt: compileStoryboardEventBlueprint(basePrompt, panel, "video"),
     actingDirections: parseStoryboardActingDirections(panel.actingNotesJson),
     durationSeconds: dialogue.durationSeconds,
     lines: dialogue.lines,
@@ -434,7 +467,18 @@ export async function createStoryboardPanelVideoTask(input: {
     props: parseStringArray(panel.propsJson),
     locationName: panel.locationName,
   });
-  const artStyle = await loadProjectArtStyle(input.projectId);
+  const productionDesign = await loadStoryboardProductionDesign({
+    userId: input.userId,
+    projectId: input.projectId,
+    characters: parseStringArray(panel.charactersJson),
+    props: parseStringArray(panel.propsJson),
+    locationName: panel.locationName,
+  });
+  const compiledPrompt = compileStoryboardProductionPrompt(
+    prompt,
+    productionDesign,
+  );
+  assertStoryboardPromptStoryWorld(compiledPrompt, productionDesign.storyWorld);
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
@@ -448,7 +492,7 @@ export async function createStoryboardPanelVideoTask(input: {
     protocol: channel.protocol,
     model: input.model,
     request: {
-      prompt: applyProjectArtStyle(prompt, artStyle, "zh"),
+      prompt: compiledPrompt,
       ratio: input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9",
       resolution:
         input.resolution ??
@@ -523,6 +567,14 @@ export async function previewStoryboardPanelPrompt(input: {
       videoPrompt: true,
       firstLastFramePrompt: true,
       actingNotesJson: true,
+      photographyRules: true,
+      startStateJson: true,
+      endStateJson: true,
+      motionBeatsJson: true,
+      worldContextJson: true,
+      vfxCuesJson: true,
+      sfxCuesJson: true,
+      sourceEvidenceJson: true,
       charactersJson: true,
       propsJson: true,
       locationName: true,
@@ -558,14 +610,30 @@ export async function previewStoryboardPanelPrompt(input: {
     props,
     locationName: panel.locationName,
   });
-  const artStyle = await loadProjectArtStyle(input.projectId);
+  const productionDesign = await loadStoryboardProductionDesign({
+    userId: input.userId,
+    projectId: input.projectId,
+    characters,
+    props,
+    locationName: panel.locationName,
+  });
   let referenceCount = supportingReferences.length;
   let compiledPrompt = "";
   const sources: StoryboardPromptPreview["sources"] = [
     {
       key: "art_style",
       label: "项目画风",
-      value: getProjectArtStyleLabel(artStyle, "zh"),
+      value: getProjectArtStyleLabel(productionDesign.artStyle, "zh"),
+    },
+    {
+      key: "story_world",
+      label: "故事时代",
+      value: productionDesign.storyWorldDirective,
+    },
+    {
+      key: "visual_profiles",
+      label: "视觉档案",
+      value: `${productionDesign.visualProfiles.length} 个已确认角色 / 场景 / 道具设定`,
     },
     {
       key: "shot_prompt",
@@ -580,15 +648,14 @@ export async function previewStoryboardPanelPrompt(input: {
   ];
 
   if (input.kind === "image") {
-    compiledPrompt = applyProjectArtStyle(
+    compiledPrompt = compileStoryboardProductionPrompt(
       withStoryboardImageContinuityRequirements({
-        prompt: basePrompt,
+        prompt: compileStoryboardEventBlueprint(basePrompt, panel, "image"),
         characters,
         props,
         locationName: panel.locationName,
       }),
-      artStyle,
-      "zh",
+      productionDesign,
     );
   } else {
     if (input.mode === "first-last") {
@@ -653,7 +720,11 @@ export async function previewStoryboardPanelPrompt(input: {
         code: "missing_dialogue_audio",
         message: `${missingAudio.length} 句关联对白尚未生成配音`,
       });
-    let dialoguePrompt = basePrompt;
+    let dialoguePrompt = compileStoryboardEventBlueprint(
+      basePrompt,
+      panel,
+      "video",
+    );
     if (lines.length) {
       try {
         const plan = planPanelDialogue({
@@ -664,7 +735,7 @@ export async function previewStoryboardPanelPrompt(input: {
         });
         dialoguePrompt = dialogueVideoPrompt({
           description: panel.description ?? basePrompt,
-          motionPrompt: basePrompt,
+          motionPrompt: compileStoryboardEventBlueprint(basePrompt, panel, "video"),
           actingDirections: parseStoryboardActingDirections(panel.actingNotesJson),
           durationSeconds: plan.durationSeconds,
           lines,
@@ -687,17 +758,27 @@ export async function previewStoryboardPanelPrompt(input: {
         });
       }
     }
-    compiledPrompt = applyProjectArtStyle(
+    compiledPrompt = compileStoryboardProductionPrompt(
       withStoryboardVideoContinuityRequirements({
         prompt: dialoguePrompt,
         characters,
         props,
         locationName: panel.locationName,
       }),
-      artStyle,
-      "zh",
+      productionDesign,
     );
   }
+
+  const storyWorldConflicts = findStoryWorldTextConflicts(
+    compiledPrompt,
+    productionDesign.storyWorld,
+  );
+  if (storyWorldConflicts.length)
+    issues.push({
+      blocking: true,
+      code: "story_world_conflict",
+      message: `镜头提示与项目时代冲突：${storyWorldConflicts.join("、")}`,
+    });
 
   const sanitized = sanitizeMediaPrompt(compiledPrompt);
   if (sanitized.changes.length)
@@ -814,8 +895,9 @@ export function dialogueVideoPrompt(input: {
   );
   const performanceDirection = (character: string) => {
     const direction = actingByCharacter.get(character);
+    const beats = direction?.beats ?? [];
     return direction
-      ? `心理与情绪“${direction.emotion}”，动作与反应“${direction.action}”，表情变化“${direction.expression}”`
+      ? `心理与情绪“${direction.emotion}”，动作与反应“${direction.action}”，表情变化“${direction.expression}”${beats.length ? `；分拍执行：${beats.map((beat) => `${beat.startSecond}-${beat.endSecond}s 目标=${beat.objective} 潜台词=${beat.subtext ?? "未指定"} 动作=${beat.action} 表情=${beat.expression} 视线=${beat.gazeTarget ?? "未指定"} 反应于=${beat.reactionTo ?? "无"}`).join("；")}` : ""}`
       : "保持符合当前剧情的呼吸、视线、表情和重心变化";
   };
   const timingLines = input.timings.map((timing) => {
@@ -846,8 +928,10 @@ export function dialogueVideoPrompt(input: {
       ? [
           "逐角色表演指导：",
           ...input.actingDirections.map(
-            (direction) =>
-              `${direction.name} | 心理与情绪：${direction.emotion} | 动作与反应：${direction.action} | 表情变化：${direction.expression}`,
+            (direction) => {
+              const beats = direction.beats ?? [];
+              return `${direction.name} | 心理与情绪：${direction.emotion} | 动作与反应：${direction.action} | 表情变化：${direction.expression}${beats.length ? ` | 分拍：${beats.map((beat) => `${beat.startSecond}-${beat.endSecond}s 目标=${beat.objective} 潜台词=${beat.subtext ?? "未指定"} 动作=${beat.action} 表情=${beat.expression} 视线=${beat.gazeTarget ?? "未指定"} 反应于=${beat.reactionTo ?? "无"}`).join("；")}` : ""}`;
+            },
           ),
         ]
       : []),
@@ -869,6 +953,16 @@ type StoryboardActingDirection = {
   emotion: string;
   action: string;
   expression: string;
+  beats?: Array<{
+    startSecond: number;
+    endSecond: number;
+    objective: string;
+    subtext: string | null;
+    action: string;
+    expression: string;
+    gazeTarget: string | null;
+    reactionTo: string | null;
+  }>;
 };
 
 function parseStoryboardActingDirections(
@@ -888,8 +982,41 @@ function parseStoryboardActingDirections(
       const emotion = textValue(item.emotion);
       const action = textValue(item.action);
       const expression = textValue(item.expression);
+      const beats = Array.isArray(item.beats)
+        ? item.beats.flatMap((value) => {
+            if (!value || typeof value !== "object" || Array.isArray(value))
+              return [];
+            const beat = value as Record<string, unknown>;
+            const startSecond = Number(beat.startSecond);
+            const endSecond = Number(beat.endSecond);
+            const objective = textValue(beat.objective);
+            const subtext = textValue(beat.subtext);
+            const beatAction = textValue(beat.action);
+            const beatExpression = textValue(beat.expression);
+            if (
+              !Number.isFinite(startSecond) ||
+              !Number.isFinite(endSecond) ||
+              !objective ||
+              !beatAction ||
+              !beatExpression
+            )
+              return [];
+            return [
+              {
+                startSecond,
+                endSecond,
+                objective,
+                subtext: subtext || null,
+                action: beatAction,
+                expression: beatExpression,
+                gazeTarget: textValue(beat.gazeTarget) || null,
+                reactionTo: textValue(beat.reactionTo) || null,
+              },
+            ];
+          })
+        : [];
       return name && emotion && action && expression
-        ? [{ name, emotion, action, expression }]
+        ? [{ name, emotion, action, expression, beats }]
         : [];
     });
   } catch {
@@ -959,6 +1086,199 @@ async function loadProjectArtStyle(projectId: string) {
     select: { artStyle: true },
   });
   return config?.artStyle ?? "american-comic";
+}
+
+type StoryboardProductionDesign = {
+  artStyle: string;
+  storyWorld: AssetStoryWorldContext;
+  storyWorldDirective: string;
+  visualProfiles: string[];
+};
+
+async function loadStoryboardProductionDesign(input: {
+  userId: string;
+  projectId: string;
+  characters: string[];
+  props: string[];
+  locationName: string | null;
+}): Promise<StoryboardProductionDesign> {
+  const [artStyle, storyWorld, visualProfiles] = await Promise.all([
+    loadProjectArtStyle(input.projectId),
+    loadProjectAssetStoryWorldContext({
+      userId: input.userId,
+      projectId: input.projectId,
+      assetName:
+        input.locationName ?? input.characters[0] ?? input.props[0] ?? "",
+      assetFacts: {
+        characters: input.characters,
+        location: input.locationName,
+        props: input.props,
+      },
+    }),
+    loadStoryboardVisualProfiles(input),
+  ]);
+  return {
+    artStyle,
+    storyWorld,
+    storyWorldDirective: getStoryWorldDirective(storyWorld.lock, "zh"),
+    visualProfiles,
+  };
+}
+
+async function loadStoryboardVisualProfiles(input: {
+  projectId: string;
+  characters: string[];
+  props: string[];
+  locationName: string | null;
+}) {
+  const [characters, location, props] = await Promise.all([
+    input.characters.length
+      ? prisma.novelCharacter.findMany({
+          where: { projectId: input.projectId, name: { in: input.characters } },
+          select: { name: true, visualProfileJson: true },
+        })
+      : [],
+    input.locationName
+      ? prisma.novelLocation.findFirst({
+          where: { projectId: input.projectId, name: input.locationName },
+          select: { name: true, visualProfileJson: true },
+        })
+      : null,
+    input.props.length
+      ? prisma.novelProp.findMany({
+          where: { projectId: input.projectId, name: { in: input.props } },
+          select: { name: true, visualProfileJson: true },
+        })
+      : [],
+  ]);
+  return [
+    ...characters.map((item) => ({ kind: "角色", ...item })),
+    ...(location ? [{ kind: "场景", ...location }] : []),
+    ...props.map((item) => ({ kind: "道具", ...item })),
+  ].flatMap((item) => {
+    const profile = parseAssetVisualProfile(
+      parseStoredProfile(item.visualProfileJson),
+    );
+    return profile
+      ? [`${item.kind}「${item.name}」\n${compileAssetVisualProfile(profile)}`]
+      : [];
+  });
+}
+
+function compileStoryboardProductionPrompt(
+  prompt: string,
+  productionDesign: StoryboardProductionDesign,
+) {
+  const productionPrompt = [
+    productionDesign.storyWorldDirective,
+    ...(productionDesign.visualProfiles.length
+      ? [
+          "已确认资产视觉档案（永久身份硬约束；本镜临时状态不得改写这些设定）：",
+          ...productionDesign.visualProfiles,
+        ]
+      : []),
+    prompt,
+  ].join("\n");
+  return applyProjectArtStyle(
+    productionPrompt,
+    productionDesign.artStyle,
+    "zh",
+  );
+}
+
+type StoryboardEventBlueprintPanel = {
+  description?: string | null;
+  locationName?: string | null;
+  charactersJson?: string | null;
+  propsJson?: string | null;
+  startStateJson?: string | null;
+  endStateJson?: string | null;
+  motionBeatsJson?: string | null;
+  worldContextJson?: string | null;
+  vfxCuesJson?: string | null;
+  sfxCuesJson?: string | null;
+  sourceEvidenceJson?: string | null;
+  actingNotesJson?: string | null;
+  photographyRules?: string | null;
+};
+
+export function compileStoryboardEventBlueprint(
+  userPrompt: string,
+  panel: StoryboardEventBlueprintPanel,
+  kind: "image" | "video",
+) {
+  const characters = parseStringArray(panel.charactersJson ?? null);
+  const props = parseStringArray(panel.propsJson ?? null);
+  const sourceEvidence = parseStoredJsonValue(panel.sourceEvidenceJson, []);
+  const worldContext = parseStoredJsonValue(panel.worldContextJson, {});
+  const actingNotes = parseStoredJsonValue(panel.actingNotesJson, {});
+  const photographyRules = parseStoredJsonValue(panel.photographyRules, {});
+  const sections: string[] = [
+    "用户补充提示（只能补充表现方式，不得替换下方剧情事实与状态）：",
+    userPrompt,
+    "不可省略的结构化镜头制作蓝图：",
+    `剧情事件：${panel.description?.trim() || "按已批准分镜执行"}`,
+    `场景：${panel.locationName?.trim() || "未指定"}`,
+    `角色：${characters.length ? characters.join("、") : "无明确出镜角色"}`,
+    `道具：${props.length ? props.join("、") : "无关键道具"}`,
+    `世界与特效规则：${JSON.stringify(worldContext)}`,
+    `逐角色分拍表演：${JSON.stringify(actingNotes)}`,
+    `摄影机位与构图规则：${JSON.stringify(photographyRules)}`,
+    `原文事件依据：${JSON.stringify(sourceEvidence)}`,
+  ];
+  if (kind === "image") {
+    const staticState = parseStoredJsonValue(panel.startStateJson, {});
+    sections.push(
+      `作为后续视频首帧必须成立的静态起始状态：${JSON.stringify(staticState)}`,
+      "只表现这条已批准事件链的起始瞬间，不得提前画出结束结果，也不得省略、改写或新增剧情结果。",
+    );
+  } else {
+    sections.push(
+      `起始状态：${JSON.stringify(parseStoredJsonValue(panel.startStateJson, {}))}`,
+      `结束状态：${JSON.stringify(parseStoredJsonValue(panel.endStateJson, {}))}`,
+      `动作时间线：${JSON.stringify(parseStoredJsonValue(panel.motionBeatsJson, []))}`,
+      `特效执行：${JSON.stringify(parseStoredJsonValue(panel.vfxCuesJson, []))}`,
+      `动作与环境音效：${JSON.stringify(parseStoredJsonValue(panel.sfxCuesJson, []))}`,
+      "必须按时间线完成起始状态到结束状态的因果动作，不得跳过关键动作、命中反馈、道具状态变化或特效阶段。",
+    );
+  }
+  return sections.join("\n");
+}
+
+export function assertStoryboardApprovedForMedia(status: string) {
+  if (status === "ready") return;
+  throw new ProjectAssetTaskError(
+    `分镜尚未通过审核，不能生成媒体（当前状态：${status}）`,
+    409,
+  );
+}
+
+function parseStoredJsonValue<T>(value: string | null | undefined, fallback: T): T {
+  try {
+    return value ? (JSON.parse(value) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function assertStoryboardPromptStoryWorld(
+  prompt: string,
+  storyWorld: AssetStoryWorldContext,
+) {
+  const conflicts = findStoryWorldTextConflicts(prompt, storyWorld);
+  if (!conflicts.length) return;
+  throw new ProjectAssetTaskError(
+    `镜头提示与项目故事时代冲突：检测到${conflicts.join("、")}。请先修正分镜提示或对应视觉设定。`,
+    422,
+  );
+}
+
+function parseStoredProfile(value: string | null) {
+  try {
+    return value ? (JSON.parse(value) as unknown) : null;
+  } catch {
+    return null;
+  }
 }
 
 async function loadAssetTargetContext(input: CreateProjectImageTaskInput) {

@@ -8,6 +8,7 @@
 5. emotionStrength 必须在 0 到 1 之间。
 6. 同一段内连续的感叹、喘息和短句应继承实际发声角色，不能误标为旁白。无引号句子只有在“角色 + 说话/安慰/劝告等说话行为 + 逗号或冒号 + 原句”这一明确结构下才可提取后半句。inner_monologue 必须有具体 speaker，但只能作为该角色的声音，不能产生任何人物口型。
 7. 没有台词时返回空 lines；只返回严格 JSON，不得包含额外字段。
+8. 分镜中每条 lipSyncText 和 voiceoverText 都是已批准的配音合同，必须按 panelIndex 顺序逐字覆盖一次并映射回对应 matchedPanelIndex；不得因重新阅读原文而漏掉、合并、换序或改写。
 
 输出格式：
 {"lines":[{"speaker":"角色名","content":"原台词","delivery":"dialogue","emotionPrompt":"情绪描述或null","emotionStrength":0.5,"matchedPanelIndex":0}]}

@@ -455,6 +455,30 @@ describe("domain semantic validators", () => {
     );
   });
 
+  it("rejects padded location summaries instead of treating missing facts as canon", () => {
+    const issues = validateLocationPropAnalysis(
+      {
+        locations: [
+          {
+            name: "太炎镇",
+            summary:
+              "空间尺度为边陲小镇，地貌层级为无具体描述，建筑关系为无，静态概述：无",
+            evidence: ["太炎镇坐落于大秦王朝西部边陲"],
+          },
+        ],
+        props: [],
+      },
+      "太炎镇坐落于大秦王朝西部边陲。",
+    );
+
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        path: "locations.0.summary",
+        code: "EMPTY_CANONICAL_FACT_TEMPLATE",
+      }),
+    );
+  });
+
   it("attributes nearby quoted lines to exact collective source labels", () => {
     expect(
       isSourceBackedTemporarySpeaker(
@@ -941,6 +965,88 @@ describe("domain semantic validators", () => {
     expect(issues).toEqual([]);
   });
 
+  it("rejects source coverage that exists only in the coverage table", () => {
+    const source = "林澈进门。顾言递出怀表。";
+    const issues = validateScreenplayConversion(
+      {
+        clipId: "clip-1",
+        originalText: source,
+        coverage: [
+          {
+            eventId: "E001",
+            evidence: "林澈进门。",
+            modes: ["visual"],
+            reason: null,
+          },
+          {
+            eventId: "E002",
+            evidence: "顾言递出怀表。",
+            modes: ["visual"],
+            reason: null,
+          },
+        ],
+        scenes: [
+          {
+            sceneNumber: 0,
+            heading: { intExt: "INT", location: "书房", time: "夜" },
+            description: "",
+            characters: ["林澈"],
+            content: [{ type: "action", text: "林澈进门。" }],
+          },
+        ],
+      },
+      {
+        clipId: "clip-1",
+        clipText: source,
+        canonical,
+        sourceEvents: [
+          { eventId: "E001", evidence: "林澈进门。" },
+          { eventId: "E002", evidence: "顾言递出怀表。" },
+        ],
+      },
+    );
+
+    expect(issues.map((item) => item.code)).toContain(
+      "SOURCE_EVENT_MODE_NOT_MATERIALIZED",
+    );
+  });
+
+  it("does not let one screenplay action satisfy repeated source events", () => {
+    const repeated = "钟声响起。";
+    const issues = validateScreenplayConversion(
+      {
+        clipId: "clip-1",
+        originalText: repeated.repeat(2),
+        coverage: [
+          { eventId: "E001", evidence: repeated, modes: ["visual"], reason: null },
+          { eventId: "E002", evidence: repeated, modes: ["visual"], reason: null },
+        ],
+        scenes: [
+          {
+            sceneNumber: 0,
+            heading: { intExt: "INT", location: "书房", time: "夜" },
+            description: "",
+            characters: [],
+            content: [{ type: "action", text: repeated }],
+          },
+        ],
+      },
+      {
+        clipId: "clip-1",
+        clipText: repeated.repeat(2),
+        canonical,
+        sourceEvents: [
+          { eventId: "E001", evidence: repeated },
+          { eventId: "E002", evidence: repeated },
+        ],
+      },
+    );
+
+    expect(issues.map((item) => item.code)).toContain(
+      "SOURCE_EVENT_MODE_NOT_MATERIALIZED",
+    );
+  });
+
   it("keeps realm-specific fight design grounded and requires timed VFX/SFX cues", () => {
     const source = "林澈以筑基境施展青霄剑诀，剑光击中石壁，碎石迸裂。";
     const action = {
@@ -953,6 +1059,9 @@ describe("domain semantic validators", () => {
         target: "石壁",
         realm: "筑基境",
         technique: "青霄剑诀",
+        visualMotif: "青白剑气呈窄长弧线，银色边缘粒子沿轨迹快速收束消散",
+        visualMotifSource: "production_inference" as const,
+        visualMotifRationale: "依据已确认剑诀事实设计可复用表现，不增加能力或结果",
         choreography: ["沉肩起剑蓄力", "剑光释放并命中石壁"],
         impact: "碎石迸裂",
         environmentResponse: "石壁碎石迸裂",
@@ -1010,6 +1119,19 @@ describe("domain semantic validators", () => {
               gaze: "锁定石壁",
               screenDirection: "面向画面右侧",
               props: "青霄剑保持完整",
+              characterStates: [
+                {
+                  name: "林澈",
+                  position: "石壁左侧",
+                  posture: "沉肩持剑",
+                  facing: "面向石壁",
+                  gazeTarget: "石壁",
+                  leftHand: "握住剑柄",
+                  rightHand: "握住剑柄",
+                  contact: null,
+                },
+              ],
+              propStates: [],
             },
             endState: {
               body: "林澈完成挥剑后收势",
@@ -1017,11 +1139,26 @@ describe("domain semantic validators", () => {
               gaze: "看向命中点",
               screenDirection: "面向画面右侧",
               props: "青霄剑保持完整",
+              characterStates: [
+                {
+                  name: "林澈",
+                  position: "石壁左侧",
+                  posture: "挥剑后收势",
+                  facing: "面向石壁",
+                  gazeTarget: "命中点",
+                  leftHand: "握住剑柄",
+                  rightHand: "握住剑柄",
+                  contact: null,
+                },
+              ],
+              propStates: [],
             },
             worldContext: {
               realm: "筑基境",
               technique: "青霄剑诀",
               powerRule: "剑光可击裂石壁",
+              visualMotif:
+                "青白剑气呈窄长弧线，银色边缘粒子沿轨迹快速收束消散",
               environmentScale: "人物与石壁同框建立破坏尺度",
               evidence: [source],
             },
@@ -1032,6 +1169,18 @@ describe("domain semantic validators", () => {
                 action: "沉肩起剑",
                 camera: "全景锁定轴线",
                 phase: "anticipation",
+                beatId: "B1",
+                actor: "林澈",
+                target: "石壁",
+                bodyPart: "双肩与双手",
+                prop: "青霄剑",
+                trajectory: "剑身由低位抬至肩侧",
+                contact: "none",
+                contactPoint: null,
+                reaction: null,
+                result: "完成沉肩起剑蓄力",
+                causedBy: null,
+                choreographyStep: "沉肩起剑蓄力",
               },
               {
                 startSecond: 1,
@@ -1039,6 +1188,18 @@ describe("domain semantic validators", () => {
                 action: "挥剑释放剑光",
                 camera: "跟随剑光横移",
                 phase: "release",
+                beatId: "B2",
+                actor: "林澈",
+                target: "石壁",
+                bodyPart: "双手",
+                prop: "青霄剑",
+                trajectory: "剑光沿挥剑方向横向命中石壁",
+                contact: "strike",
+                contactPoint: "石壁中心",
+                reaction: "石壁受击开裂",
+                result: "剑光释放并命中石壁",
+                causedBy: "B1",
+                choreographyStep: "剑光释放并命中石壁",
               },
               {
                 startSecond: 2,
@@ -1046,6 +1207,18 @@ describe("domain semantic validators", () => {
                 action: "石壁碎裂，林澈收势",
                 camera: "停在命中点后回收",
                 phase: "aftermath",
+                beatId: "B3",
+                actor: "林澈",
+                target: "石壁",
+                bodyPart: "双手",
+                prop: "青霄剑",
+                trajectory: "剑身沿原挥动方向回收",
+                contact: "none",
+                contactPoint: null,
+                reaction: "石壁碎石迸裂",
+                result: "石壁碎石迸裂，林澈完成收势",
+                causedBy: "B2",
+                choreographyStep: null,
               },
             ],
             vfxCues: [
@@ -1089,6 +1262,31 @@ describe("domain semantic validators", () => {
         canonical,
       }).map((item) => item.code),
     ).toContain("ACTION_DESIGN_TERM_NOT_GROUNDED");
+
+    const missingMotif = structuredClone(screenplay);
+    delete (missingMotif.scenes[0].content[0].actionDesign as {
+      visualMotif?: string;
+    }).visualMotif;
+    expect(
+      validateScreenplayConversion(missingMotif, {
+        clipId: "clip-1",
+        clipText: source,
+        canonical,
+      }).map((item) => item.code),
+    ).toContain("VFX_VISUAL_MOTIF_REQUIRED");
+
+    const missingRationale = structuredClone(screenplay);
+    delete (missingRationale.scenes[0].content[0].actionDesign as {
+      visualMotifRationale?: string;
+    }).visualMotifRationale;
+    expect(
+      validateScreenplayConversion(missingRationale, {
+        clipId: "clip-1",
+        clipText: source,
+        canonical,
+      }).map((item) => item.code),
+    ).toContain("VFX_VISUAL_MOTIF_RATIONALE_REQUIRED");
+
   });
 
   it("rejects narration and accepts an explicitly introduced unquoted line", () => {
@@ -1230,6 +1428,18 @@ describe("domain semantic validators", () => {
                 endSecond: 3,
                 action: "剑光劈开石壁，天地震动",
                 camera: "稳定",
+                beatId: "B1",
+                actor: "林澈",
+                target: "石壁",
+                bodyPart: "双手",
+                prop: null,
+                trajectory: "剑光由林澈挥剑方向劈向石壁",
+                contact: "strike",
+                contactPoint: "石壁中心",
+                reaction: "石壁劈开并震动",
+                result: "剑光劈开石壁，天地震动",
+                causedBy: null,
+                choreographyStep: "剑光劈开石壁",
               },
             ],
             startState: {
@@ -1238,6 +1448,19 @@ describe("domain semantic validators", () => {
               gaze: "看向石壁",
               screenDirection: "面向画面右侧",
               props: "无",
+              characterStates: [
+                {
+                  name: "林澈",
+                  position: "石壁左侧",
+                  posture: "挥剑",
+                  facing: "面向石壁",
+                  gazeTarget: "石壁",
+                  leftHand: "持剑",
+                  rightHand: "持剑",
+                  contact: null,
+                },
+              ],
+              propStates: [],
             },
             endState: {
               body: "林澈收剑",
@@ -1245,6 +1468,19 @@ describe("domain semantic validators", () => {
               gaze: "看向石壁",
               screenDirection: "面向画面右侧",
               props: "无",
+              characterStates: [
+                {
+                  name: "林澈",
+                  position: "石壁左侧",
+                  posture: "收剑",
+                  facing: "面向石壁",
+                  gazeTarget: "石壁",
+                  leftHand: "持剑",
+                  rightHand: "持剑",
+                  contact: null,
+                },
+              ],
+              propStates: [],
             },
             vfxCues: [
               {
@@ -1528,6 +1764,686 @@ describe("domain semantic validators", () => {
     ).toContain("ENTITY_OUTPUT_MISSING");
   });
 
+  it("rejects acting direction that cannot quote the current panel", () => {
+    const issues = validateActingCoverage(
+      {
+        directions: [
+          {
+            panelIndex: 0,
+            characters: [
+              {
+                name: "林澈",
+                emotion: "警觉",
+                action: "拔剑迎敌",
+                expression: "目光收紧",
+                evidence: ["突然拔剑迎敌"],
+              },
+            ],
+          },
+        ],
+      },
+      [
+        {
+          panelIndex: 0,
+          characters: ["林澈"],
+          description: "林澈低头查看怀表",
+          sourceEvidence: ["林澈看向怀表。"],
+          motionTimeline: [{ action: "林澈抬起怀表" }],
+        },
+      ],
+    );
+
+    expect(issues.map((item) => item.code)).toContain(
+      "ACTING_DIRECTION_NOT_GROUNDED",
+    );
+  });
+
+  it("requires actionDesign for combat actions", () => {
+    const source = "林澈挥剑攻击顾言。";
+    const issues = validateScreenplayConversion(
+      {
+        clipId: "clip-1",
+        originalText: source,
+        scenes: [
+          {
+            sceneNumber: 0,
+            heading: { intExt: "INT", location: "书房", time: "夜" },
+            description: "",
+            characters: ["林澈", "顾言"],
+            content: [{ type: "action", text: source, origin: "source" }],
+          },
+        ],
+      },
+      {
+        clipId: "clip-1",
+        clipText: source,
+        canonical: {
+          characters: ["林澈", "顾言"],
+          locations: ["书房"],
+          props: [],
+        },
+      },
+    );
+
+    expect(issues.map((item) => item.code)).toContain("ACTION_DESIGN_REQUIRED");
+  });
+
+  it("blocks incomplete interaction beats and unstructured entity state", () => {
+    const source = "林澈挥剑攻击顾言。";
+    const issues = validateStoryboardPlanning(
+      {
+        panels: [
+          {
+            panelIndex: 0,
+            sceneNumber: 0,
+            shotType: "全景",
+            cameraMove: "稳定跟随",
+            durationSeconds: 2,
+            motionTimeline: [
+              {
+                startSecond: 0,
+                endSecond: 2,
+                action: source,
+                camera: "稳定跟随",
+              },
+            ],
+            startState: {
+              body: "林澈与顾言相对站立",
+              hands: "林澈持剑，顾言空手",
+              gaze: "互相注视",
+              screenDirection: "林澈向右，顾言向左",
+              props: "长剑在林澈手中",
+            },
+            endState: {
+              body: "林澈与顾言完成交锋",
+              hands: "林澈持剑，顾言空手",
+              gaze: "互相注视",
+              screenDirection: "林澈向右，顾言向左",
+              props: "长剑在林澈手中",
+            },
+            vfxCues: [],
+            sfxCues: [],
+            description: source,
+            locationName: "书房",
+            characters: ["林澈", "顾言"],
+            props: ["长剑"],
+            imagePrompt: source,
+            videoPrompt: source,
+            sourceEvidence: [source],
+          },
+        ],
+      },
+      {
+        sourceText: source,
+        canonical: {
+          characters: ["林澈", "顾言"],
+          locations: ["书房"],
+          props: ["长剑"],
+        },
+      },
+    );
+
+    expect(issues.map((item) => item.code)).toEqual(
+      expect.arrayContaining([
+        "INTERACTION_BEAT_CONTRACT_REQUIRED",
+        "CHARACTER_STATE_COVERAGE_MISMATCH",
+        "PROP_STATE_COVERAGE_MISMATCH",
+      ]),
+    );
+  });
+
+  it("requires choreography, target reaction, impact, and environment response in storyboard content", () => {
+    const source = "林澈挥剑攻击顾言。";
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: source,
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "书房", time: "夜" },
+          description: "",
+          characters: ["林澈", "顾言"],
+          content: [
+            {
+              type: "action" as const,
+              text: source,
+              origin: "source" as const,
+              actionDesign: {
+                kind: "fight" as const,
+                performer: "林澈",
+                target: "顾言",
+                realm: null,
+                technique: null,
+                visualMotif: null,
+                visualMotifSource: null,
+                visualMotifRationale: null,
+                choreography: ["林澈挥剑", "顾言侧身闪避"],
+                impact: "顾言肩部受击后退",
+                environmentResponse: "书架被撞得震动",
+                vfxPlan: [],
+                sfxPlan: [],
+                evidence: [source],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const state = {
+      body: "林澈与顾言相对站立",
+      hands: "林澈持剑，顾言空手",
+      gaze: "互相注视",
+      screenDirection: "林澈向右，顾言向左",
+      props: "无关键道具",
+      characterStates: [
+        {
+          name: "林澈",
+          position: "画面左侧",
+          posture: "挥剑",
+          facing: "向右",
+          gazeTarget: "顾言",
+          leftHand: "扶剑柄",
+          rightHand: "握剑",
+          contact: null,
+        },
+        {
+          name: "顾言",
+          position: "画面右侧",
+          posture: "站立",
+          facing: "向左",
+          gazeTarget: "林澈",
+          leftHand: "空闲",
+          rightHand: "空闲",
+          contact: null,
+        },
+      ],
+      propStates: [],
+    };
+    const issues = validateStoryboardPlanning(
+      {
+        panels: [
+          {
+            panelIndex: 0,
+            sceneNumber: 0,
+            shotType: "全景",
+            cameraMove: "稳定跟随",
+            durationSeconds: 2,
+            motionTimeline: [
+              {
+                startSecond: 0,
+                endSecond: 2,
+                action: source,
+                camera: "稳定跟随",
+                beatId: "B1",
+                actor: "林澈",
+                target: "顾言",
+                bodyPart: "右手",
+                prop: "长剑",
+                trajectory: "由左向右横挥",
+                contact: "none",
+                contactPoint: null,
+                reaction: null,
+                result: "林澈完成挥剑",
+                causedBy: null,
+                choreographyStep: "林澈挥剑",
+              },
+            ],
+            startState: state,
+            endState: state,
+            vfxCues: [],
+            sfxCues: [],
+            description: source,
+            locationName: "书房",
+            characters: ["林澈", "顾言"],
+            props: [],
+            imagePrompt: source,
+            videoPrompt: source,
+            sourceEvidence: [source],
+          },
+        ],
+      },
+      {
+        sourceText: JSON.stringify(screenplay),
+        canonical: {
+          characters: ["林澈", "顾言"],
+          locations: ["书房"],
+          props: [],
+        },
+        screenplay,
+      },
+    );
+
+    expect(issues.map((item) => item.code)).toEqual(
+      expect.arrayContaining([
+        "ACTION_CHOREOGRAPHY_STEP_MISSING",
+        "ACTION_TARGET_REACTION_MISSING",
+        "ACTION_RESULT_NOT_MATERIALIZED",
+      ]),
+    );
+  });
+
+  it("requires timed acting context and a reaction beat for interaction targets", () => {
+    const panels = [
+      {
+        panelIndex: 0,
+        durationSeconds: 2,
+        characters: ["林澈", "顾言"],
+        description: "林澈抓住顾言手腕。",
+        sourceEvidence: ["林澈抓住顾言手腕。"],
+        motionTimeline: [
+          {
+            startSecond: 0,
+            endSecond: 2,
+            action: "林澈抓住顾言手腕。",
+            actor: "林澈",
+            target: "顾言",
+            contact: "grab",
+            beatId: "B1",
+          },
+        ],
+      },
+    ];
+    const missing = validateActingCoverage(
+      {
+        directions: [
+          {
+            panelIndex: 0,
+            characters: ["林澈", "顾言"].map((name) => ({
+              name,
+              emotion: "警觉",
+              action: "完成互动",
+              expression: "目光收紧",
+              evidence: ["林澈抓住顾言手腕。"],
+            })),
+          },
+        ],
+      },
+      panels,
+    );
+    expect(missing.map((item) => item.code)).toEqual(
+      expect.arrayContaining(["ACTING_BEATS_REQUIRED", "TARGET_REACTION_BEAT_REQUIRED"]),
+    );
+
+    const complete = validateActingCoverage(
+      {
+        directions: [
+          {
+            panelIndex: 0,
+            characters: ["林澈", "顾言"].map((name) => ({
+              name,
+              emotion: "警觉",
+              action: "完成互动",
+              expression: "目光收紧",
+              evidence: ["林澈抓住顾言手腕。"],
+              beats: [
+                {
+                  startSecond: 0,
+                  endSecond: 2,
+                  objective: name === "林澈" ? "阻止顾言" : "挣脱控制",
+                  subtext: name === "林澈" ? "不能让他离开" : "必须脱身",
+                  action: name === "林澈" ? "抓紧手腕" : "手臂回抽",
+                  expression: "目光收紧",
+                  gazeTarget: name === "林澈" ? "顾言手腕" : "林澈",
+                  reactionTo: name === "顾言" ? "B1" : null,
+                  evidence: ["林澈抓住顾言手腕。"],
+                },
+              ],
+            })),
+          },
+        ],
+      },
+      panels,
+    );
+    expect(complete).toEqual([]);
+  });
+
+  it("rejects shots that exceed the interaction complexity budget", () => {
+    const source = "林澈与顾言连续交战。";
+    const characters = ["林澈", "顾言"];
+    const characterStates = characters.map((name, index) => ({
+      name,
+      position: index ? "画面右侧" : "画面左侧",
+      posture: "交战姿态",
+      facing: index ? "向左" : "向右",
+      gazeTarget: characters[1 - index],
+      leftHand: "参与攻防",
+      rightHand: "参与攻防",
+      contact: null,
+    }));
+    const issues = validateStoryboardPlanning(
+      {
+        panels: [
+          {
+            panelIndex: 0,
+            shotType: "全景",
+            cameraMove: "跟随",
+            durationSeconds: 8,
+            motionTimeline: Array.from({ length: 8 }, (_, index) => ({
+              startSecond: index,
+              endSecond: index + 1,
+              action: `${source}第${index + 1}拍`,
+              camera: "跟随",
+              beatId: `B${index + 1}`,
+              actor: characters[index % 2],
+              target: characters[(index + 1) % 2],
+              bodyPart: "双手",
+              prop: null,
+              trajectory: "沿交战轴线推进",
+              contact: "none" as const,
+              contactPoint: null,
+              reaction: null,
+              result: `完成第${index + 1}拍`,
+              causedBy: index ? `B${index}` : null,
+              choreographyStep: `第${index + 1}拍`,
+            })),
+            startState: {
+              body: source,
+              hands: "双方双手参与攻防",
+              gaze: "互相锁定",
+              screenDirection: "林澈向右，顾言向左",
+              props: "无",
+              characterStates,
+              propStates: [],
+            },
+            endState: {
+              body: source,
+              hands: "双方双手参与攻防",
+              gaze: "互相锁定",
+              screenDirection: "林澈向右，顾言向左",
+              props: "无",
+              characterStates,
+              propStates: [],
+            },
+            vfxCues: [],
+            sfxCues: [
+              {
+                startSecond: 0,
+                endSecond: 1,
+                type: "impact",
+                description: "交锋声",
+                evidence: [source],
+              },
+            ],
+            description: source,
+            locationName: "书房",
+            characters,
+            props: [],
+            imagePrompt: source,
+            videoPrompt: source,
+            sourceEvidence: [source],
+          },
+        ],
+      },
+      {
+        sourceText: source,
+        canonical: { characters, locations: ["书房"], props: [] },
+      },
+    );
+
+    expect(issues.map((item) => item.code)).toContain(
+      "SHOT_INTERACTION_COMPLEXITY_EXCEEDED",
+    );
+  });
+
+  it("rejects storyboards that drop ordinary actions, scenes, or source events", () => {
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: "林澈进门。顾言递出怀表。",
+      coverage: [
+        {
+          eventId: "E001",
+          evidence: "林澈进门。",
+          modes: ["visual" as const],
+          reason: null,
+        },
+        {
+          eventId: "E002",
+          evidence: "顾言递出怀表。",
+          modes: ["visual" as const],
+          reason: null,
+        },
+      ],
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "门厅", time: "夜" },
+          description: "门厅夜间",
+          characters: ["林澈"],
+          content: [{ type: "action" as const, text: "林澈进门。" }],
+        },
+        {
+          sceneNumber: 1,
+          heading: { intExt: "INT" as const, location: "书房", time: "夜" },
+          description: "书房夜间",
+          characters: ["顾言"],
+          content: [{ type: "action" as const, text: "顾言递出怀表。" }],
+        },
+      ],
+    };
+    const panel = {
+      panelIndex: 0,
+      sceneNumber: 0,
+      shotType: "中景",
+      cameraMove: "稳定",
+      durationSeconds: 2,
+      startState: {
+        body: "林澈站在门外",
+        hands: "双手自然垂下",
+        gaze: "看向门内",
+        screenDirection: "面向画面右侧",
+        props: "无",
+      },
+      endState: {
+        body: "林澈进入门厅",
+        hands: "双手自然垂下",
+        gaze: "看向室内",
+        screenDirection: "面向画面右侧",
+        props: "无",
+      },
+      motionTimeline: [
+        {
+          startSecond: 0,
+          endSecond: 2,
+          action: "林澈进门",
+          camera: "稳定跟随",
+        },
+      ],
+      vfxCues: [],
+      sfxCues: [],
+      speakingCharacter: null,
+      lipSyncText: null,
+      voiceoverText: null,
+      description: "林澈进门",
+      locationName: "门厅",
+      characters: ["林澈"],
+      props: [],
+      imagePrompt: "林澈进门",
+      videoPrompt: "林澈进门",
+      sourceEvidence: ["林澈进门。"],
+    };
+
+    const issues = validateStoryboardPlanning(
+      { panels: [panel] },
+      {
+        sourceText: JSON.stringify(screenplay),
+        canonical: {
+          characters: ["林澈", "顾言"],
+          locations: ["门厅", "书房"],
+          props: ["怀表"],
+        },
+        screenplay,
+      },
+    );
+    expect(issues.map((item) => item.code)).toEqual(
+      expect.arrayContaining([
+        "SCREENPLAY_SCENE_MISSING",
+        "SCREENPLAY_ACTION_MISSING",
+        "STORYBOARD_SOURCE_EVENT_MISSING",
+      ]),
+    );
+  });
+
+  it("rejects a storyboard that keeps an event only as evidence metadata", () => {
+    const source = "顾言递出怀表。";
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: source,
+      coverage: [
+        {
+          eventId: "E001",
+          evidence: source,
+          modes: ["visual" as const],
+          reason: null,
+        },
+      ],
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "书房", time: "夜" },
+          description: "书房夜间",
+          characters: ["顾言"],
+          content: [{ type: "action" as const, text: source }],
+        },
+      ],
+    };
+    const issues = validateStoryboardPlanning(
+      {
+        panels: [
+          {
+            panelIndex: 0,
+            sceneNumber: 0,
+            shotType: "中景",
+            cameraMove: "稳定",
+            durationSeconds: 2,
+            startState: {
+              body: "顾言站在书桌旁",
+              hands: "双手自然垂下",
+              gaze: "看向前方",
+              screenDirection: "面向画面左侧",
+              props: "怀表在桌上",
+            },
+            endState: {
+              body: "顾言仍站在书桌旁",
+              hands: "双手自然垂下",
+              gaze: "看向前方",
+              screenDirection: "面向画面左侧",
+              props: "怀表在桌上",
+            },
+            motionTimeline: [
+              {
+                startSecond: 0,
+                endSecond: 2,
+                action: "顾言静静站立",
+                camera: "固定中景",
+              },
+            ],
+            vfxCues: [],
+            sfxCues: [],
+            speakingCharacter: null,
+            lipSyncText: null,
+            voiceoverText: null,
+            description: "顾言静静站在书桌旁",
+            locationName: "书房",
+            characters: ["顾言"],
+            props: ["怀表"],
+            imagePrompt: "顾言站在书桌旁",
+            videoPrompt: "顾言保持站立",
+            sourceEvidence: [source],
+          },
+        ],
+      },
+      {
+        sourceText: JSON.stringify(screenplay),
+        canonical: {
+          characters: ["顾言"],
+          locations: ["书房"],
+          props: ["怀表"],
+        },
+        screenplay,
+      },
+    );
+
+    expect(issues.map((item) => item.code)).toContain(
+      "SCREENPLAY_ACTION_NOT_MATERIALIZED",
+    );
+  });
+
+  it("does not let one depicted action satisfy two repeated screenplay beats", () => {
+    const repeated = "钟声响起。";
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: repeated.repeat(2),
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "书房", time: "夜" },
+          description: "夜间书房",
+          characters: [],
+          content: [
+            { type: "action" as const, text: repeated },
+            { type: "action" as const, text: repeated },
+          ],
+        },
+      ],
+    };
+    const issues = validateStoryboardPlanning(
+      {
+        panels: [
+          {
+            panelIndex: 0,
+            sceneNumber: 0,
+            shotType: "空镜",
+            cameraMove: "稳定",
+            durationSeconds: 2,
+            startState: {
+              body: "环境空镜",
+              hands: "无",
+              gaze: "无",
+              screenDirection: "固定轴线",
+              props: "无",
+            },
+            endState: {
+              body: "环境空镜",
+              hands: "无",
+              gaze: "无",
+              screenDirection: "固定轴线",
+              props: "无",
+            },
+            motionTimeline: [
+              {
+                startSecond: 0,
+                endSecond: 2,
+                action: repeated,
+                camera: "固定空镜",
+              },
+            ],
+            vfxCues: [],
+            sfxCues: [],
+            speakingCharacter: null,
+            lipSyncText: null,
+            voiceoverText: null,
+            description: repeated,
+            locationName: "书房",
+            characters: [],
+            props: [],
+            imagePrompt: repeated,
+            videoPrompt: repeated,
+            sourceEvidence: [repeated],
+          },
+        ],
+      },
+      {
+        sourceText: JSON.stringify(screenplay),
+        canonical: { characters: [], locations: ["书房"], props: [] },
+        screenplay,
+      },
+    );
+
+    expect(issues.map((item) => item.code)).toContain(
+      "SCREENPLAY_ACTION_NOT_MATERIALIZED",
+    );
+  });
+
   it("rejects refinement changes to entities and source evidence", () => {
     const panel = {
       panelIndex: 0,
@@ -1645,6 +2561,39 @@ describe("domain semantic validators", () => {
 
     expect(issues.map((item) => item.code)).toEqual(
       expect.arrayContaining(["VOICE_CONTENT_NOT_IN_SOURCE", "UNKNOWN_PANEL"]),
+    );
+  });
+
+  it("rejects voice analysis that drops a storyboard spoken segment", () => {
+    const issues = validateVoiceAnalysis(
+      {
+        lines: [
+          {
+            speaker: "林澈",
+            content: "你好。",
+            delivery: "dialogue",
+            emotionPrompt: null,
+            emotionStrength: 0.5,
+            matchedPanelIndex: 0,
+          },
+        ],
+      },
+      {
+        sourceText: "林澈说：你好。顾言回答：请进。",
+        characters: ["林澈", "顾言"],
+        panelIndices: [0, 1],
+        panelSpokenText: [
+          { panelIndex: 0, text: "你好。" },
+          { panelIndex: 1, text: "请进。" },
+        ],
+      },
+    );
+
+    expect(issues.map((item) => item.code)).toEqual(
+      expect.arrayContaining([
+        "VOICE_PANEL_COVERAGE_MISMATCH",
+        "VOICE_PANEL_MAPPING_MISMATCH",
+      ]),
     );
   });
 

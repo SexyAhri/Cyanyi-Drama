@@ -5,25 +5,28 @@
 2. action 的 origin 为 source 时，text 必须完全由原文动作的有序摘录组成，只允许标点差异；不得补主语、代词、连接词或解释。需要补任何字就改为 bridge，并在 evidence 中逐条给出原文精确摘录。
 3. bridge 只允许把已知事件展开为连续可拍的过程，例如原文写“从暗格取出铁盒，交给韩宇”，可写为“韩子枫走到暗格前，伸手取出铁盒，转身双手递向韩宇”。不得补充未出现的道具、地点、人物、秘密、结果、心理判断、环境细节或任何台词。
 4. origin=inferred 只用于有依据的画面丰富，并必须同时给出 inferenceType、evidence、rationale、confidence。inferenceType=performance 可补攥衣角、眼眶泛红等符合明确情绪的微动作/表情；continuity 可补按住肩膀、手撑床沿等让相邻动作成立的姿态；production_detail 可补空药柜、手臂布条等由情境强烈暗示的布景/服装细节，但 confidence 不得高于 0.75。逐场检查“情绪是否可见、姿态是否承接、环境或服装是否存在强暗示的拍摄缺口”；确有缺口时每场补 0-2 条克制的 inferred 动作，没有充分证据则保持 0 条，不能为凑数量推演。推演不得改变剧情结果、关系、能力、归属、关键道具或新增台词。
-5. 每个会改变人物、道具或空间状态的事件，都要写出起始状态、执行动作和完成状态。取物、开门、入室、交接、落座、起身、转身、移动等过程不可压缩成一句概述；根据原文密度拆成多个 action，方便后续分镜形成自然过渡。
-6. 原文存在打斗、决斗、追逐、功法、招式、武器攻击、防御、变身或召唤时，对相应 action 增加 actionDesign。phase 只能原样使用 anticipation、charge、release、travel、impact、aftermath 六个英文代码，绝对不能翻译或创造其他值。VFX category 只能使用 skill_energy、weapon_trail、shockwave、explosion_debris、elemental_spell、speed_afterimage、shield_barrier、transformation_summon、environment_interaction；SFX type 只能使用 foley、weapon、energy、impact、environment、destruction。不是每次动作都要强行包含全部阶段，但必须有清楚的因果和受力反馈。
-7. actionDesign 中的 realm、technique、能力上限、视觉母题和环境反馈只能来自片段原文、角色库或已批准的世界观与战力规则。允许把已确认能力做得宏大、清晰、适合镜头，但不得新增境界、技能名、功法、元素、武器、胜负、伤害结果或超出当前境界的威力。evidence 必须逐条引用输入中的精确依据。
+5. 每个会改变人物、道具或空间状态的事件，都要写出起始状态、执行动作和完成状态。取物、开门、入室、交接、落座、起身、转身、移动等过程不可压缩成一句概述；根据原文密度拆成多个 action，方便后续分镜形成自然过渡。每个 scene.description 必须同时交代 location_library 中该地点的稳定空间/建筑身份与本片段原文明确的当前状态（时间、天气、临时陈设、战损、人物初始位置）；两者不得混淆，也不得用永久资料覆盖本集状态。
+6. 原文存在打斗、决斗、追逐、功法、招式、武器攻击、防御、变身或召唤时，对相应 action 强制增加 actionDesign，不得以普通 action 逃避设计。choreography 每项都是下游必须逐项实现的动作步骤，必须明确施动者、目标、起始姿态、方向、接触/未接触、目标反应与结果。phase 只能原样使用 anticipation、charge、release、travel、impact、aftermath 六个英文代码，绝对不能翻译或创造其他值。VFX category 只能使用 skill_energy、weapon_trail、shockwave、explosion_debris、elemental_spell、speed_afterimage、shield_barrier、transformation_summon、environment_interaction；SFX type 只能使用 foley、weapon、energy、impact、environment、destruction。不是每次动作都要强行包含全部阶段，但必须有清楚的因果和受力反馈。
+7. actionDesign 中的 realm、technique、能力上限和剧情结果只能来自片段原文、角色库或已批准的世界观与战力规则。特效视觉不能留给视频模型临场设计：已有功法/能力必须逐字复用 effect_library_json 中的 visualMotif 及稳定的颜色、形态、粒子、运动和消散规律；首次出现且原文未给视觉细节时，可以在项目画风和故事时代内做制作级推断，具体写出能量几何/材质感、主辅色、发光层级、粒子密度、运动轨迹、空间尺度、命中与余韵，并设 visualMotifSource=production_inference、填写 visualMotifRationale。该推断只设计“如何呈现”已确认能力，不得新增元素属性、武器、能力、威力、胜负、伤害结果或世界设定。原文明示或世界圣经已定义时分别使用 source 或 world_bible。evidence 必须逐条引用输入中的精确事实依据。
 8. 使用资产库规范名称；无法可靠匹配时可保留原文中的精确名称。原文明示路人、守卫、弟子或群体说出直接台词时，即使角色库未登记，也必须以原文称谓作为临时配音角色写入 scene.characters 和 dialogue.character；引语前后同段出现的群体反应可作为归属依据。群体称谓必须逐字沿用原文，禁止把“无数人”“一些人”“附近的修者”等不同称谓概括或合并成原文没有的“众人”，也不得删台词、改成旁白或凭空拆分个人。每个 scene.heading.location 只能填写一个规范场景名，或一个原文明示的精确地点名；禁止用分号、斜杠、逗号把“地区；具体场景”等多个层级拼在一个 location 中。地区背景留在 description 或独立场次。
 9. content.type 只能是 action、dialogue、voiceover。dialogue 仅用于角色明确说出口的直接引语：引号内台词，或紧跟在“说、问、答、安慰、劝、回应、开口”等说话行为之后的无引号原句。例如“韩宇反而安慰父亲，只要坚持，终有一天能让轻视他们的人闭嘴”中，“只要坚持，终有一天能让轻视他们的人闭嘴”必须成为韩宇的 dialogue，不能整句留作 action。
 10. 原文明示某角色清晰、完整的内心话时，使用 voiceover 并将 character 标为该角色。叙述层的世界背景、人物前史或因果说明如果无法自然视觉化且删去会损害理解，可使用 character=null 的旁白 voiceover；text 必须是原文连续精确摘录。不得把可见动作、环境描写、表情或已经作为 action 覆盖的句子临时改念成旁白，同一原文事件不得同时作为 action 和 voiceover 重复覆盖。voiceover 中画面人物都不张嘴、不做口型。
-11. coverage 必须逐一覆盖给定 source events，eventId 与 evidence 原样返回。modes 可为 visual、dialogue、voiceover；只有确实不可影视化时才用 omitted，并给出 reason。不得漏项或重复。
+11. coverage 必须逐一覆盖给定 source events，eventId 与 evidence 原样返回。modes 只能使用 visual、dialogue、voiceover；每个声明的 mode 都必须在 scenes.content 中有能与该事件逐字证据对应的 action、dialogue 或 voiceover，不能只在 coverage 表里声称已经覆盖。不能自然视觉化但影响理解的叙述必须使用有原文依据的 voiceover，禁止用 omitted 丢弃。不得漏项或重复。
 12. 保留无引号直接台词的原文，不得补写引号、改写台词或把叙述性说明塞进角色口型。
 13. originalText 必须完整保留输入片段，clipId 必须原样返回。
 14. 只返回严格 JSON，不得包含额外字段。
 
 输出格式：
-{"clipId":"片段ID","originalText":"完整原文","coverage":[{"eventId":"E001","evidence":"原文事件","modes":["visual"],"reason":null}],"scenes":[{"sceneNumber":0,"heading":{"intExt":"INT","location":"场景名","time":"时间"},"description":"原文支持的环境描述","characters":["角色名"],"content":[{"type":"action","text":"原文动作","origin":"source","actionDesign":{"kind":"skill","performer":"角色名","target":"对手或null","realm":"原文明示境界或null","technique":"原文明示招式或null","choreography":["起手与重心","释放与受力反馈"],"impact":"原文明示的命中结果或null","environmentResponse":"有依据的环境交互或null","vfxPlan":[{"phase":"release","category":"skill_energy","description":"有依据的技能视觉"}],"sfxPlan":[{"phase":"impact","type":"impact","description":"命中与环境回声"}],"evidence":["原文或已批准世界规则中的精确摘录"]}},{"type":"action","text":"有依据的可拍连接动作","origin":"bridge","evidence":["原文精确摘录"]},{"type":"action","text":"有依据的表演微动作","origin":"inferred","evidence":["原文精确摘录"],"inferenceType":"performance","rationale":"情绪的可见化且不改变事件","confidence":0.8},{"type":"dialogue","character":"角色名","parenthetical":null,"lines":"原台词"},{"type":"voiceover","character":null,"text":"原画外音"}]}]}
+{"clipId":"片段ID","originalText":"完整原文","coverage":[{"eventId":"E001","evidence":"原文事件","modes":["visual"],"reason":null}],"scenes":[{"sceneNumber":0,"heading":{"intExt":"INT","location":"场景名","time":"时间"},"description":"原文支持的环境描述","characters":["角色名"],"content":[{"type":"action","text":"原文动作","origin":"source","actionDesign":{"kind":"skill","performer":"角色名","target":"对手或null","realm":"原文明示境界或null","technique":"原文明示招式或null","visualMotif":"可跨集复用的具体能量形态、颜色、粒子、运动、尺度和消散规律","visualMotifSource":"source|world_bible|production_inference 或null","visualMotifRationale":"制作推断如何受能力事实、项目画风与时代约束，非推断时可为null","choreography":["起手与重心","释放与受力反馈"],"impact":"原文明示的命中结果或null","environmentResponse":"有依据的环境交互或null","vfxPlan":[{"phase":"release","category":"skill_energy","description":"执行 visualMotif 的本阶段具体视觉"}],"sfxPlan":[{"phase":"impact","type":"impact","description":"命中与环境回声"}],"evidence":["原文或已批准世界规则中的精确摘录"]}},{"type":"action","text":"有依据的可拍连接动作","origin":"bridge","evidence":["原文精确摘录"]},{"type":"action","text":"有依据的表演微动作","origin":"inferred","evidence":["原文精确摘录"],"inferenceType":"performance","rationale":"情绪的可见化且不改变事件","confidence":0.8},{"type":"dialogue","character":"角色名","parenthetical":null,"lines":"原台词"},{"type":"voiceover","character":null,"text":"原画外音"}]}]}
 
 片段 ID：{{clip_id}}
 角色库：{{character_library}}
 场景库：{{location_library}}
 道具库：{{prop_library}}
 已批准的世界观与战力规则（可为空）：{{world_bible_json}}
+项目统一画风：{{project_style}}
+故事时代与世界规范：{{story_world_directive}}
+已建立的跨集功法/特效视觉库（可为空）：{{effect_library_json}}
 原文事件表：{{source_events_json}}
 
 片段原文：

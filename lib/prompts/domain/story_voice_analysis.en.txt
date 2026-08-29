@@ -8,6 +8,7 @@ Rules:
 5. emotionStrength must be between 0 and 1.
 6. Consecutive exclamations, breaths, and short utterances in the same passage should inherit the character who actually vocalizes them, not Narrator. An unquoted sentence is eligible only when a character's speech act explicitly introduces it. inner_monologue must have a specific speaker but must never create lip movement for any visible character.
 7. Return an empty lines array when no dialogue exists. Return strict JSON only with no extra fields.
+8. Every storyboard lipSyncText and voiceoverText item is an approved voice contract. Preserve each exactly once in panelIndex order and map it back to that matchedPanelIndex. Never omit, merge, reorder, or rewrite it after rereading the source.
 
 Output:
 {"lines":[{"speaker":"Character","content":"Original line","delivery":"dialogue","emotionPrompt":"Emotion or null","emotionStrength":0.5,"matchedPanelIndex":0}]}

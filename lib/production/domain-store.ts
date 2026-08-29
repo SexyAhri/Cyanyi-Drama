@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  mergeCanonicalSummary,
+  sanitizeCanonicalSummary,
+} from "@/lib/assets/canonical-summary";
+import {
   buildPanelSubtitleTimings,
   buildSequentialTimeline,
 } from "@/lib/production/timeline";
@@ -64,24 +68,40 @@ export async function upsertProductionProps(
   userId: string,
   projectId: string,
   input: ProductionPropInput[],
+  options: { summaryMode?: "replace" | "merge" } = {},
 ) {
   if (!(await ownsProject(userId, projectId))) return null;
   const result = [];
   for (const item of input) {
     const name = item.name.trim();
     if (!name) continue;
+    const existing =
+      options.summaryMode === "merge"
+        ? await prisma.novelProp.findUnique({
+            where: { projectId_name: { projectId, name } },
+            select: { summary: true, metadataJson: true },
+          })
+        : null;
+    const summary =
+      options.summaryMode === "merge"
+        ? mergeCanonicalSummary(existing?.summary, item.summary)
+        : sanitizeCanonicalSummary(item.summary);
+    const metadataJson =
+      item.metadata === undefined && options.summaryMode === "merge"
+        ? existing?.metadataJson ?? null
+        : stringifyObject(item.metadata);
     const row = await prisma.novelProp.upsert({
       where: { projectId_name: { projectId, name } },
       create: {
         id: randomUUID(),
         projectId,
         name,
-        summary: item.summary?.trim() || null,
-        metadataJson: stringifyObject(item.metadata),
+        summary,
+        metadataJson,
       },
       update: {
-        summary: item.summary?.trim() || null,
-        metadataJson: stringifyObject(item.metadata),
+        summary,
+        metadataJson,
       },
     });
     result.push({

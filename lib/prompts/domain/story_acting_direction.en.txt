@@ -6,10 +6,14 @@ Rules:
 3. continuity and production_detail inferences preserve blocking or set continuity and must not become new psychological interpretation. For fight or technique shots, refine only the established weight shift, footwork, anticipation, kinetic chain, impact reaction, and recovery from actionDesign. Never add a technique or exceed the character's current realm.
 4. Do not change dialogue, shot, composition, active speaker, or lip-sync text.
 5. Reference valid panelIndex values and canonical character names. emotion combines psychological pressure or immediate objective with outward emotion; action specifies pre-action intent, resistance during the action, and silent aftermath; expression specifies dynamic changes in eyes, mouth, jaw, breath, gaze, or blinking. Avoid vague direction such as natural, calm, or speaks normally.
-6. Return strict JSON only with no extra fields.
+6. Every character direction requires evidence copied verbatim from that panel's description, lip-sync or voiceover text, motionTimeline.action, or sourceEvidence. Acting may refine only those anchors and must not introduce a key action, emotional fact, or story outcome.
+7. In multi-character or physical-interaction shots, every character requires beats that continuously cover durationSeconds. Each beat specifies objective, subtext, action, expression, gazeTarget, and reactionTo. A character named as motionTimeline.target must use reactionTo to identify the beatId that causes the response; generic emotion alone is insufficient.
+8. Character data, approved world/relationship rules, and continuity anchors may clarify existing relationships, injury, fatigue, objectives, and power limits but must not add facts. Return strict JSON only.
 
 Output:
-{"directions":[{"panelIndex":0,"characters":[{"name":"Character","emotion":"Grounded emotion","action":"How to perform the existing action","expression":"Grounded expression"}]}]}
+{"directions":[{"panelIndex":0,"characters":[{"name":"Character","emotion":"Grounded pressure and outward emotion","action":"Complete action and reaction","expression":"Dynamic expression","evidence":["Verbatim panel evidence"],"beats":[{"startSecond":0,"endSecond":2,"objective":"Visible beat objective","subtext":"Grounded subtext or null","action":"Executable body action","expression":"Beat-level expression change","gazeTarget":"Gaze target or null","reactionTo":"Causal motion beatId or null","evidence":["Verbatim panel evidence"]}]}]}]}
 
 Character data: {{characters_json}}
+Approved world and relationship rules: {{world_bible_json}}
+Cross-episode and adjacent-clip continuity anchor: {{continuity_anchor_json}}
 Panels: {{panels_json}}

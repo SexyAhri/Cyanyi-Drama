@@ -1,4 +1,8 @@
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
+import {
+  getStoryWorldDirective,
+  loadProjectAssetStoryWorldContext,
+} from "@/lib/assets/story-world";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import {
   requestOpenAiStructured,
@@ -23,6 +27,8 @@ import {
   saveProductionClips,
 } from "@/lib/production/domain-store";
 import { loadApprovedWorldBible } from "@/lib/production/world-bible";
+import { extractProjectEffectLibrary } from "@/lib/production/effect-library";
+import { getProjectArtStyleDirective } from "@/lib/projects/art-style";
 import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
 import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
@@ -30,6 +36,8 @@ import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { listNovelCharacters, listNovelLocations } from "./domain-store";
 import { normalizeScreenplayDialogue } from "./screenplay-dialogue";
 import { normalizeScreenplayProviderPayload } from "./screenplay-provider-normalization";
+
+export { extractProjectEffectLibrary } from "@/lib/production/effect-library";
 
 export type StoryToScriptStepInput = {
   projectId: string;
@@ -389,7 +397,7 @@ export async function convertEpisodeClipsToScreenplays(
         clip.id,
         clip.content,
         context.canonical,
-        context.worldBibleText,
+        context.productionKnowledgeText,
       );
       if (stored) {
         await prisma.storyClip.update({
@@ -418,7 +426,7 @@ export async function convertEpisodeClipsToScreenplays(
           clipId: clip.id,
           clipText: clip.content,
           sourceEvents,
-          knowledgeText: context.worldBibleText,
+          knowledgeText: context.productionKnowledgeText,
         };
         const result = await requestOpenAiStructured({
           ...context.provider,
@@ -433,6 +441,9 @@ export async function convertEpisodeClipsToScreenplays(
               location_library: JSON.stringify(context.locations),
               prop_library: JSON.stringify(context.props),
               world_bible_json: context.worldBibleText,
+              project_style: context.projectStyleDirective,
+              story_world_directive: context.storyWorldDirective,
+              effect_library_json: JSON.stringify(context.effectLibrary),
             },
           }),
           schema: screenplayConversionSchema,
@@ -452,7 +463,7 @@ export async function convertEpisodeClipsToScreenplays(
                 clipText: clip.content,
                 canonical: context.canonical,
                 sourceEvents,
-                knowledgeText: context.worldBibleText,
+                knowledgeText: context.productionKnowledgeText,
               },
             ),
         });
@@ -464,7 +475,7 @@ export async function convertEpisodeClipsToScreenplays(
           clipText: clip.content,
           canonical: context.canonical,
           sourceEvents,
-          knowledgeText: context.worldBibleText,
+          knowledgeText: context.productionKnowledgeText,
         });
         if (normalizationIssues.length)
           throw new Error(
@@ -649,6 +660,7 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
     locations,
     props,
     worldBible,
+    effectLibrary,
     runtimeSettings,
   ] =
     await Promise.all([
@@ -658,7 +670,14 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
           projectId: input.projectId,
           project: { userId },
         },
-        select: { novelText: true },
+        select: {
+          name: true,
+          description: true,
+          novelText: true,
+          project: {
+            select: { config: { select: { artStyle: true } } },
+          },
+        },
       }),
       prisma.channel.findFirst({
         where: accessibleChannelWhere(userId, input.channelId),
@@ -674,6 +693,7 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
       listNovelLocations(userId, input.projectId),
       listProductionProps(userId, input.projectId),
       loadApprovedWorldBible(userId, input.projectId),
+      loadProjectEffectLibrary(input.projectId),
       loadUserRuntimeSettings(userId),
     ]);
   if (!episode) throw new Error("STORY_EPISODE_NOT_FOUND");
@@ -690,6 +710,24 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
   if (!apiKeys.length) throw new Error("STORY_CHANNEL_API_KEY_MISSING");
   const sourceText = input.sourceText ?? episode.novelText;
   if (!sourceText?.trim()) throw new Error("STORY_SOURCE_TEXT_REQUIRED");
+  const storyWorld = await loadProjectAssetStoryWorldContext({
+    userId,
+    projectId: input.projectId,
+    assetName: "",
+    assetFacts: {
+      episodeName: episode.name,
+      episodeDescription: episode.description,
+      episodeSource: sourceText,
+      effectLibrary,
+    },
+  });
+  const locale = input.locale === "en" ? "en" : "zh";
+  const projectStyleDirective = getProjectArtStyleDirective(
+    episode.project?.config?.artStyle,
+    locale,
+  );
+  const storyWorldDirective = getStoryWorldDirective(storyWorld.lock, locale);
+  const worldBibleText = JSON.stringify(worldBible?.payload ?? {});
   return {
     sourceText,
     characters,
@@ -701,7 +739,16 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
       props: props.map((prop) => prop.name),
     },
     worldBible,
-    worldBibleText: JSON.stringify(worldBible?.payload ?? {}),
+    worldBibleText,
+    effectLibrary,
+    projectStyleDirective,
+    storyWorldDirective,
+    productionKnowledgeText: [
+      worldBibleText,
+      JSON.stringify(effectLibrary),
+      projectStyleDirective,
+      storyWorldDirective,
+    ].join("\n"),
     screenplayClipMaxChars: runtimeSettings.screenplayClipMaxChars,
     workflowConcurrency: runtimeSettings.workflowConcurrency,
     provider: {
@@ -717,6 +764,16 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
         : ("json_object" as const),
     },
   };
+}
+
+async function loadProjectEffectLibrary(projectId: string) {
+  const clips = await prisma.storyClip.findMany({
+    where: { projectId, screenplay: { not: null } },
+    orderBy: { updatedAt: "desc" },
+    take: 200,
+    select: { screenplay: true },
+  });
+  return extractProjectEffectLibrary(clips.map((clip) => clip.screenplay));
 }
 
 function parseApiKeys(value: string) {

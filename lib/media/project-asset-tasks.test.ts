@@ -1,8 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import { dialogueVideoPrompt } from "./project-asset-tasks";
+import {
+  assertStoryboardApprovedForMedia,
+  dialogueVideoPrompt,
+  ProjectAssetTaskError,
+} from "./project-asset-tasks";
 
 describe("storyboard video audio contract", () => {
+  it("blocks media generation until the storyboard is approved", () => {
+    expect(() => assertStoryboardApprovedForMedia("ready")).not.toThrow();
+    let error: unknown;
+    try {
+      assertStoryboardApprovedForMedia("review_required");
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(ProjectAssetTaskError);
+    expect(error).toMatchObject({ status: 409 });
+  });
+
   it("keeps native video audio ambient-only and withholds character lines", () => {
     const prompt = dialogueVideoPrompt({
       description: "韩宇扶住床沿，抬眼看向父亲。",
@@ -57,5 +73,41 @@ describe("storyboard video audio contract", () => {
     expect(prompt).toContain("其他角色不得感知未说出口的内容");
     expect(prompt).toContain("眼眶微红，下颌绷紧后松开");
     expect(prompt).not.toContain("我不能让父亲担心。");
+  });
+
+  it("propagates timed objective, subtext, gaze, and reaction into the video prompt", () => {
+    const prompt = dialogueVideoPrompt({
+      description: "韩宇接住父亲递来的铁盒。",
+      motionPrompt: "0-2s 韩宇接住铁盒，父亲松手。",
+      actingDirections: [
+        {
+          name: "韩宇",
+          emotion: "克制的疑惑",
+          action: "双手接盒",
+          expression: "视线由父亲转向铁盒",
+          beats: [
+            {
+              startSecond: 0,
+              endSecond: 2,
+              objective: "确认父亲的意图",
+              subtext: "这件东西为何现在交给我",
+              action: "双手接住铁盒",
+              expression: "眉心轻收",
+              gazeTarget: "铁盒",
+              reactionTo: "B1",
+            },
+          ],
+        },
+      ],
+      durationSeconds: 2,
+      lines: [],
+      playbackRate: 1,
+      timings: [],
+    });
+
+    expect(prompt).toContain("目标=确认父亲的意图");
+    expect(prompt).toContain("潜台词=这件东西为何现在交给我");
+    expect(prompt).toContain("视线=铁盒");
+    expect(prompt).toContain("反应于=B1");
   });
 });

@@ -16,6 +16,15 @@ const exactText = z
 const optionalText = z.string().trim().min(1).nullish();
 const stringList = z.array(text).max(100).default([]);
 const evidenceQuotes = z.array(exactText).min(1).max(12);
+const interactionContact = z.enum([
+  "none",
+  "touch",
+  "grab",
+  "strike",
+  "block",
+  "transfer",
+  "support",
+]);
 
 const actionDesignSchema = z
   .object({
@@ -24,6 +33,11 @@ const actionDesignSchema = z
     target: optionalText,
     realm: optionalText,
     technique: optionalText,
+    visualMotif: optionalText,
+    visualMotifSource: z
+      .enum(["source", "world_bible", "production_inference"])
+      .nullish(),
+    visualMotifRationale: optionalText,
     choreography: z.array(text).min(1).max(12),
     impact: optionalText,
     environmentResponse: optionalText,
@@ -188,6 +202,36 @@ const continuityStateSchema = z
     gaze: text,
     screenDirection: text,
     props: text,
+    characterStates: z
+      .array(
+        z
+          .object({
+            name: text,
+            position: text,
+            posture: text,
+            facing: text,
+            gazeTarget: optionalText,
+            leftHand: text,
+            rightHand: text,
+            contact: optionalText,
+          })
+          .strict(),
+      )
+      .max(30)
+      .optional(),
+    propStates: z
+      .array(
+        z
+          .object({
+            name: text,
+            holder: optionalText,
+            position: text,
+            state: text,
+          })
+          .strict(),
+      )
+      .max(30)
+      .optional(),
   })
   .strict();
 
@@ -196,6 +240,7 @@ const worldContextSchema = z
     realm: optionalText,
     technique: optionalText,
     powerRule: optionalText,
+    visualMotif: optionalText,
     environmentScale: optionalText,
     evidence: evidenceQuotes.optional(),
   })
@@ -237,6 +282,18 @@ export const storyboardPanelSchema = z
             action: text,
             camera: text,
             phase: z.enum(ACTION_PHASES).optional(),
+            beatId: optionalText,
+            actor: optionalText,
+            target: optionalText,
+            bodyPart: optionalText,
+            prop: optionalText,
+            trajectory: optionalText,
+            contact: interactionContact.optional(),
+            contactPoint: optionalText,
+            reaction: optionalText,
+            result: optionalText,
+            causedBy: optionalText,
+            choreographyStep: optionalText,
           })
           .strict(),
       )
@@ -296,6 +353,25 @@ export const actingDirectionSchema = z
                 emotion: text,
                 action: text,
                 expression: text,
+                evidence: evidenceQuotes,
+                beats: z
+                  .array(
+                    z
+                      .object({
+                        startSecond: z.number().int().min(0).max(14),
+                        endSecond: z.number().int().min(1).max(15),
+                        objective: text,
+                        subtext: optionalText,
+                        action: text,
+                        expression: text,
+                        gazeTarget: optionalText,
+                        reactionTo: optionalText,
+                        evidence: evidenceQuotes,
+                      })
+                      .strict(),
+                  )
+                  .max(15)
+                  .optional(),
               })
               .strict(),
           ),
@@ -410,6 +486,19 @@ export const episodeAdaptationSchema = z
       .array(z.string().trim().min(2).max(1_000))
       .min(1)
       .max(30),
+    eventCoverage: z
+      .array(
+        z
+          .object({
+            eventId: z.string().regex(/^A\d{3,}$/),
+            sourceEvidence: z.string().trim().min(2).max(1_000),
+            adaptedEvidence: z.string().trim().min(2).max(2_000),
+            treatment: z.enum(["preserved", "condensed", "visualized"]),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(120),
   })
   .strict();
 

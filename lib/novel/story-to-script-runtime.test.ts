@@ -10,6 +10,7 @@ const episodeFindFirst = vi.hoisted(() => vi.fn());
 const channelFindFirst = vi.hoisted(() => vi.fn());
 const providerModelFindFirst = vi.hoisted(() => vi.fn());
 const storyClipUpdate = vi.hoisted(() => vi.fn());
+const storyClipFindMany = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/llm/openai-structured", async (importOriginal) => ({
   ...(await importOriginal<
@@ -29,6 +30,12 @@ vi.mock("./domain-store", () => ({
 vi.mock("@/lib/server/crypto", () => ({
   decryptSecret: (value: string) => value,
 }));
+vi.mock("@/lib/assets/story-world", () => ({
+  loadProjectAssetStoryWorldContext: vi.fn().mockResolvedValue({
+    lock: { setting: "premodern", evidence: ["王朝"] },
+  }),
+  getStoryWorldDirective: vi.fn(() => "故事时代硬约束：前现代世界"),
+}));
 vi.mock("@/lib/settings/runtime-store", () => ({
   loadUserRuntimeSettings: vi.fn().mockResolvedValue({
     structuredRequestTimeoutSeconds: 600,
@@ -44,7 +51,7 @@ vi.mock("@/lib/server/prisma", () => ({
     episode: { findFirst: episodeFindFirst },
     channel: { findFirst: channelFindFirst },
     providerModel: { findFirst: providerModelFindFirst },
-    storyClip: { update: storyClipUpdate },
+    storyClip: { update: storyClipUpdate, findMany: storyClipFindMany },
   },
 }));
 
@@ -53,6 +60,7 @@ import {
   buildDeterministicScreenplay,
   buildSourceUnits,
   convertEpisodeClipsToScreenplays,
+  extractProjectEffectLibrary,
   hasCompleteClipCoverage,
   mapWithConcurrency,
   MAX_SCREENPLAY_CLIP_CHARS,
@@ -73,6 +81,7 @@ const runtimeInput = {
 beforeEach(() => {
   vi.clearAllMocks();
   currentClips = [];
+  storyClipFindMany.mockResolvedValue([]);
   episodeFindFirst.mockResolvedValue({ novelText: "甲说：你好。乙走进书房。" });
   channelFindFirst.mockResolvedValue({
     protocol: "openai-compatible",
@@ -104,6 +113,36 @@ let currentClips: Array<{
 }> = [];
 
 describe("story-to-script runtime", () => {
+  it("builds one reusable VFX motif per recurring technique", () => {
+    const screenplay = JSON.stringify({
+      scenes: [
+        {
+          content: [
+            {
+              type: "action",
+              actionDesign: {
+                kind: "skill",
+                performer: "甲",
+                technique: "青霄剑诀",
+                visualMotif: "青白细线剑气，边缘银亮，尾迹快速收束",
+                visualMotifSource: "production_inference",
+                visualMotifRationale: "遵循剑诀事实与项目画风",
+                vfxPlan: [{ phase: "release", category: "weapon_trail" }],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(extractProjectEffectLibrary([screenplay, screenplay])).toEqual([
+      expect.objectContaining({
+        key: "technique:青霄剑诀",
+        visualMotif: "青白细线剑气，边缘银亮，尾迹快速收束",
+      }),
+    ]);
+  });
+
   it("recognizes only contiguous, exact source coverage", () => {
     expect(
       hasCompleteClipCoverage(" 甲\n乙 ", [

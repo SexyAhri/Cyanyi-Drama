@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import { Prisma } from "@prisma/client";
 
+import {
+  mergeCanonicalSummary,
+  sanitizeCanonicalSummary,
+} from "@/lib/assets/canonical-summary";
 import { prisma } from "@/lib/server/prisma";
 import type {
   CharacterAppearanceRecord,
@@ -84,21 +88,33 @@ export async function upsertNovelLocations(
   userId: string,
   projectId: string,
   input: Array<{ name: string; summary?: string | null }>,
+  options: { summaryMode?: "replace" | "merge" } = {},
 ) {
   if (!(await ownsProject(userId, projectId))) return null;
   const result = [] as NovelLocationRecord[];
   for (const item of input) {
     const name = item.name.trim();
     if (!name) continue;
+    const existing =
+      options.summaryMode === "merge"
+        ? await prisma.novelLocation.findUnique({
+            where: { projectId_name: { projectId, name } },
+            select: { summary: true },
+          })
+        : null;
+    const summary =
+      options.summaryMode === "merge"
+        ? mergeCanonicalSummary(existing?.summary, item.summary)
+        : sanitizeCanonicalSummary(item.summary);
     const row = await prisma.novelLocation.upsert({
       where: { projectId_name: { projectId, name } },
       create: {
         id: randomUUID(),
         projectId,
         name,
-        summary: item.summary?.trim() || null,
+        summary,
       },
-      update: { summary: item.summary?.trim() || null },
+      update: { summary },
       include: locationInclude,
     });
     result.push(toLocation(row));

@@ -270,28 +270,39 @@ async function mergeEpisodeAudio(
   userId: string,
 ) {
   if (!episodeId || !projectId) throw new Error("AUDIO_MERGE_EPISODE_REQUIRED");
-  const panels = await prisma.storyboardPanel.findMany({
-    where: {
-      storyboard: { episodeId, projectId, project: { userId } },
-    },
-    orderBy: { panelIndex: "asc" },
-    select: {
-      id: true,
-      durationSeconds: true,
-      voiceLines: {
-        orderBy: { lineIndex: "asc" },
-        select: {
-          id: true,
-          lineIndex: true,
-          durationSeconds: true,
-          audioAsset: {
-            select: { url: true, storageKey: true, mimeType: true },
+  const [panels, voiceLines] = await Promise.all([
+    prisma.storyboardPanel.findMany({
+      where: {
+        storyboard: { episodeId, projectId, project: { userId } },
+      },
+      orderBy: { panelIndex: "asc" },
+      select: {
+        id: true,
+        durationSeconds: true,
+        voiceLines: {
+          orderBy: { lineIndex: "asc" },
+          select: {
+            id: true,
+            lineIndex: true,
+            durationSeconds: true,
+            audioAsset: {
+              select: { url: true, storageKey: true, mimeType: true },
+            },
           },
         },
       },
-    },
-  });
+    }),
+    prisma.voiceLine.findMany({
+      where: { episodeId, episode: { projectId, project: { userId } } },
+      orderBy: { lineIndex: "asc" },
+      select: { id: true, lineIndex: true, matchedPanelId: true },
+    }),
+  ]);
   if (!panels.length) throw new Error("AUDIO_MERGE_PANELS_EMPTY");
+  assertVoiceLinePanelCoverage({
+    panelIds: panels.map((panel) => panel.id),
+    lines: voiceLines,
+  });
   const clips: Array<{
     url: string;
     startSeconds: number;
@@ -469,7 +480,7 @@ async function renderEpisodeTimeline(
   if (!episodeId || !projectId)
     throw new Error("TIMELINE_RENDER_EPISODE_REQUIRED");
 
-  const [storyboard, editorProject] = await Promise.all([
+  const [storyboard, editorProject, voiceLineCount] = await Promise.all([
     prisma.storyboard.findFirst({
       where: { projectId, episodeId, project: { userId } },
       select: {
@@ -492,30 +503,25 @@ async function renderEpisodeTimeline(
       },
       select: { timelineJson: true },
     }),
+    prisma.voiceLine.count({
+      where: { episodeId, episode: { projectId, project: { userId } } },
+    }),
   ]);
   if (!storyboard) throw new Error("TIMELINE_RENDER_STORYBOARD_NOT_FOUND");
   const sequence = parseTimelineSequence(
     parseJsonValue(editorProject?.timelineJson),
   );
   const panels = new Map(storyboard.panels.map((panel) => [panel.id, panel]));
-  const renderTracks = sequence.flatMap((track) => {
-    const panel = panels.get(track.id);
-    return panel ? [{ ...track, panel }] : [];
-  });
-  if (!renderTracks.length) throw new Error("TIMELINE_RENDER_TRACKS_INVALID");
-
-  const segments: Array<{
-    url: string;
-    panelIndex: number;
-    kind: "image" | "video";
-    durationSeconds?: number;
-    sourceStartSeconds?: number;
-    volume?: number;
-    transition?: "cut" | "fade";
-    transitionDurationSeconds?: number;
+  if (!sequence.length) throw new Error("TIMELINE_RENDER_TRACKS_INVALID");
+  const resolvedTracks: Array<{
+    track: (typeof sequence)[number];
+    panel: (typeof storyboard.panels)[number];
+    url: string | null;
+    imageUrl: string | null | undefined;
   }> = [];
-  for (const track of renderTracks) {
-    const { panel } = track;
+  for (const track of sequence) {
+    const panel = panels.get(track.id);
+    if (!panel) continue;
     const lipSyncUrl = await resolveAssetUrl(panel.lipSyncAsset);
     const videoUrl = lipSyncUrl
       ? undefined
@@ -525,25 +531,33 @@ async function renderEpisodeTimeline(
         ? undefined
         : await resolveAssetUrl(panel.imageAsset);
     const url = lipSyncUrl ?? videoUrl ?? imageUrl;
-    if (url)
-      segments.push({
-        url,
-        panelIndex: panel.panelIndex,
-        kind: imageUrl ? "image" : "video",
-        durationSeconds: track.duration,
-        sourceStartSeconds: track.sourceStart,
-        volume: track.volume,
-        transition: track.transition,
-        transitionDurationSeconds: track.transitionDuration,
-      });
+    resolvedTracks.push({ track, panel, url: url ?? null, imageUrl });
   }
-  if (!segments.length) throw new Error("TIMELINE_RENDER_NO_MEDIA_PANELS");
+  assertTimelineRenderCoverage({
+    sequenceIds: sequence.map((track) => track.id),
+    panelMedia: resolvedTracks.map(({ panel, url }) => ({
+      id: panel.id,
+      panelIndex: panel.panelIndex,
+      url,
+    })),
+  });
+  const segments = resolvedTracks.map(({ track, panel, url, imageUrl }) => ({
+    url: url!,
+    panelIndex: panel.panelIndex,
+    kind: imageUrl ? ("image" as const) : ("video" as const),
+    durationSeconds: track.duration,
+    sourceStartSeconds: track.sourceStart,
+    volume: track.volume,
+    transition: track.transition,
+    transitionDurationSeconds: track.transitionDuration,
+  }));
 
   const audioTrack = await prisma.episodeAudioTrack.findFirst({
     where: { episodeId, trackType: "merged" },
     select: { asset: { select: { url: true, storageKey: true } } },
   });
   const audioUrl = (await resolveAssetUrl(audioTrack?.asset)) ?? undefined;
+  assertTimelineDialogueAudioCoverage(voiceLineCount, audioUrl);
 
   const specification = normalizeRenderSpecification(
     request as Record<string, unknown>,
@@ -569,6 +583,56 @@ async function renderEpisodeTimeline(
       },
     },
   ];
+}
+
+export function assertTimelineRenderCoverage(input: {
+  sequenceIds: readonly string[];
+  panelMedia: readonly {
+    id: string;
+    panelIndex: number;
+    url: string | null;
+  }[];
+}) {
+  const mediaById = new Map(input.panelMedia.map((panel) => [panel.id, panel]));
+  const missingTracks = input.sequenceIds.filter((id) => !mediaById.has(id));
+  if (missingTracks.length)
+    throw new Error(
+      `TIMELINE_RENDER_TRACK_PANEL_MISSING:${missingTracks.join(",")}`,
+    );
+  const missingMedia = input.sequenceIds.flatMap((id) => {
+    const panel = mediaById.get(id);
+    return panel && !panel.url ? [panel.panelIndex] : [];
+  });
+  if (missingMedia.length)
+    throw new Error(
+      `TIMELINE_RENDER_PANEL_MEDIA_MISSING:${missingMedia.join(",")}`,
+    );
+}
+
+export function assertVoiceLinePanelCoverage(input: {
+  panelIds: readonly string[];
+  lines: readonly {
+    id: string;
+    lineIndex: number;
+    matchedPanelId: string | null;
+  }[];
+}) {
+  const panelIds = new Set(input.panelIds);
+  const unmatched = input.lines.flatMap((line) =>
+    line.matchedPanelId && panelIds.has(line.matchedPanelId)
+      ? []
+      : [line.lineIndex],
+  );
+  if (unmatched.length)
+    throw new Error(`AUDIO_MERGE_LINE_PANEL_MISSING:${unmatched.join(",")}`);
+}
+
+export function assertTimelineDialogueAudioCoverage(
+  voiceLineCount: number,
+  audioUrl: string | undefined,
+) {
+  if (voiceLineCount > 0 && !audioUrl)
+    throw new Error("TIMELINE_RENDER_DIALOGUE_AUDIO_MISSING");
 }
 
 function parseJsonValue(value: string | null | undefined) {

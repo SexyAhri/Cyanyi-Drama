@@ -120,6 +120,14 @@ function normalizeActionDesign(
     target: optionalText(design.target),
     realm: optionalText(design.realm),
     technique: optionalText(design.technique),
+    visualMotif: optionalText(design.visualMotif),
+    visualMotifSource: includes(
+      ["source", "world_bible", "production_inference"] as const,
+      design.visualMotifSource,
+    )
+      ? design.visualMotifSource
+      : null,
+    visualMotifRationale: optionalText(design.visualMotifRationale),
     choreography,
     impact: optionalText(design.impact),
     environmentResponse: optionalText(design.environmentResponse),

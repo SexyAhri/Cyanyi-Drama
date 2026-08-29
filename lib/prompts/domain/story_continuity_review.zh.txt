@@ -1,12 +1,14 @@
 审查给定生产资料中的连续性冲突，不得改写或润色分镜。
 
 只检查：
-1. 相邻镜头中的角色身份和状态连续性。
+1. 相邻镜头中的角色身份与逐角色状态连续性，包括 position、posture、facing、gazeTarget、左右手占用和身体接触。
 2. 场景、时间、光向、视线、轴线和空间连续性。
-3. 道具的出现、归属和状态连续性。
+3. 道具的出现、唯一实例、holder、position 和 state 连续性；交接必须经历双方接触再完成所有权转移。
 4. 规范实体引用和面板顺序。
-5. 只报告能由输入资料证明的冲突。
-6. 只返回严格 JSON，不得包含额外字段。
+5. 对照 visualProfile 检查角色脸部/发式/服装、场景空间结构/固定地标、道具结构/材质/识别点是否在 description、imagePrompt、videoPrompt 中漂移；同时检查项目画风和故事时代是否被替换。
+6. 第一镜在叙事和地点承接时必须符合 continuity anchor；明确转场或时间跳跃时不强制继承天气、光线、姿态等临时状态。永久资产设定始终继承。
+7. 只报告能由输入资料证明的冲突。
+8. 只返回严格 JSON，不得包含额外字段。
 
 输出格式：
 {"passed":false,"issues":[{"code":"CONTINUITY_CODE","severity":"error","panelIndex":0,"entityType":"character","entityName":"规范名称","message":"有证据的冲突","suggestedFix":"最小修复建议或null"}]}
@@ -14,4 +16,7 @@
 角色：{{characters_json}}
 场景：{{locations_json}}
 道具：{{props_json}}
+项目统一画风：{{project_style}}
+故事时代与世界规范：{{story_world_directive}}
+跨集与相邻片段连续性锚点：{{continuity_anchor_json}}
 分镜：{{panels_json}}

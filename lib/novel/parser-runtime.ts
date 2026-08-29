@@ -111,7 +111,9 @@ export async function parseNovelAndPersist(
           data: data.locations,
           trace,
           persist: () =>
-            upsertNovelLocations(userId, input.projectId, data.locations),
+            upsertNovelLocations(userId, input.projectId, data.locations, {
+              summaryMode: "merge",
+            }),
         }),
         persistAnalysisPart({
           hooks,
@@ -121,7 +123,9 @@ export async function parseNovelAndPersist(
           trace,
           persistTrace: false,
           persist: () =>
-            upsertProductionProps(userId, input.projectId, data.props),
+            upsertProductionProps(userId, input.projectId, data.props, {
+              summaryMode: "merge",
+            }),
         }),
       ]);
       if (persisted[0].status === "fulfilled") locations = persisted[0].value;

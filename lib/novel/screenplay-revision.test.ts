@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestOpenAiStructured = vi.hoisted(() => vi.fn());
 const storyClipFindFirst = vi.hoisted(() => vi.fn());
+const storyClipFindMany = vi.hoisted(() => vi.fn());
+const projectFindFirst = vi.hoisted(() => vi.fn());
 const channelFindFirst = vi.hoisted(() => vi.fn());
 const providerModelFindFirst = vi.hoisted(() => vi.fn());
 const deliverableAggregate = vi.hoisted(() => vi.fn());
@@ -15,6 +17,12 @@ const editorProjectUpdateMany = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/llm/openai-structured", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/llm/openai-structured")>()),
   requestOpenAiStructured,
+}));
+vi.mock("@/lib/assets/story-world", () => ({
+  loadProjectAssetStoryWorldContext: vi.fn().mockResolvedValue({
+    lock: { setting: "premodern", evidence: ["王朝"] },
+  }),
+  getStoryWorldDirective: vi.fn(() => "故事时代硬约束：前现代世界"),
 }));
 vi.mock("@/lib/production/domain-store", () => ({
   listProductionProps: vi.fn().mockResolvedValue([]),
@@ -43,7 +51,11 @@ vi.mock("@/lib/server/prisma", () => ({
   prisma: {
     channel: { findFirst: channelFindFirst },
     providerModel: { findFirst: providerModelFindFirst },
-    storyClip: { findFirst: storyClipFindFirst },
+    project: { findFirst: projectFindFirst },
+    storyClip: {
+      findFirst: storyClipFindFirst,
+      findMany: storyClipFindMany,
+    },
     $transaction: async (callback: (tx: unknown) => unknown) =>
       callback({
         editorProject: { updateMany: editorProjectUpdateMany },
@@ -80,7 +92,7 @@ const screenplay = {
     {
       sceneNumber: 0,
       heading: { intExt: "INT" as const, location: "书房", time: "日" },
-      description: "",
+      description: "书房内，甲从门口进入室内",
       characters: ["甲"],
       content: [{ type: "action" as const, text: source }],
     },
@@ -89,6 +101,12 @@ const screenplay = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  projectFindFirst.mockResolvedValue({
+    name: "项目",
+    description: null,
+    config: { artStyle: "chinese-animation" },
+  });
+  storyClipFindMany.mockResolvedValue([]);
   storyClipFindFirst.mockResolvedValue({
     id: "clip-1",
     episodeId: "episode-1",

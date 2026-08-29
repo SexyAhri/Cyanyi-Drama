@@ -30,6 +30,12 @@ vi.mock("./domain-store", () => ({
 vi.mock("@/lib/server/crypto", () => ({
   decryptSecret: (value: string) => value,
 }));
+vi.mock("@/lib/assets/story-world", () => ({
+  loadProjectAssetStoryWorldContext: vi.fn().mockResolvedValue({
+    lock: { setting: "premodern", evidence: ["王朝"] },
+  }),
+  getStoryWorldDirective: vi.fn(() => "故事时代硬约束：前现代世界"),
+}));
 vi.mock("@/lib/settings/runtime-store", () => ({
   loadUserRuntimeSettings: vi.fn().mockResolvedValue({
     structuredRequestTimeoutSeconds: 600,
@@ -66,6 +72,7 @@ import {
   buildEpisodeStoryboard,
   normalizeStoryboardPlanningProviderPayload,
   normalizeStoryboardRefinementProviderPayload,
+  stitchStoryboardClipBoundaries,
   StoryboardBatchError,
 } from "./script-to-storyboard-runtime";
 
@@ -80,7 +87,19 @@ const runtimeInput = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  episodeFindFirst.mockResolvedValue({ id: "episode-1" });
+  episodeFindFirst.mockImplementation(
+    (query: { where?: { episodeNumber?: unknown } }) =>
+      query.where?.episodeNumber
+        ? Promise.resolve(null)
+        : Promise.resolve({
+            id: "episode-1",
+            name: "第一集",
+            description: "开篇",
+            novelText: "甲在书房说你好。",
+            episodeNumber: 1,
+            project: { config: { artStyle: "chinese-animation" } },
+          }),
+  );
   channelFindFirst.mockResolvedValue({
     protocol: "openai-compatible",
     baseUrl: "https://provider.test/v1",
@@ -110,6 +129,37 @@ beforeEach(() => {
 });
 
 describe("script-to-storyboard runtime", () => {
+  it("stitches state and frame linkage across continuous clip boundaries", () => {
+    const endState = {
+      body: "甲立于书桌旁",
+      hands: "右手按住古籍",
+      gaze: "看向门口",
+      screenDirection: "面向画面右侧",
+      props: "古籍位于桌面",
+    };
+    const panels = stitchStoryboardClipBoundaries([
+      {
+        clipId: "clip-1",
+        locationName: "书房",
+        characters: ["甲"],
+        startState: { ...endState, hands: "双手垂下" },
+        endState,
+        linkedToNextPanel: false,
+      },
+      {
+        clipId: "clip-2",
+        locationName: "书房",
+        characters: ["甲"],
+        startState: { ...endState, hands: "双手重置" },
+        endState: { ...endState, gaze: "看向窗外" },
+        linkedToNextPanel: false,
+      },
+    ]);
+
+    expect(panels[0].linkedToNextPanel).toBe(true);
+    expect(panels[1].startState).toEqual(endState);
+  });
+
   it("persists clip identity, global panel order, and phase details", async () => {
     requestOpenAiStructured.mockImplementation(successfulPhaseResponse);
     const hooks = artifactHooks();
@@ -140,11 +190,11 @@ describe("script-to-storyboard runtime", () => {
             phase: "continuity",
             durationSeconds: 3,
             videoPrompt: expect.stringContaining(
-              "0-1s | 动作：甲开始说你好",
+              "0-1s | 节拍：普通动作 | 施动者：未指定 | 目标：无 | 肢体/道具：未指定 | 动作：甲开始说你好",
             ),
             vfxCues: [],
             sfxCues: [],
-            sourceEvidence: ["你好"],
+            sourceEvidence: ["你好", "甲说：你好。"],
           }),
         ],
       }),
@@ -156,6 +206,7 @@ describe("script-to-storyboard runtime", () => {
     expect(savedPanel.videoPrompt).toContain(
       "甲 | 心理与情绪：平静 | 动作与反应：说话 | 表情变化：自然",
     );
+    expect(savedPanel.videoPrompt).toContain("潜台词=先观察对方是否理解");
     expect(hooks.persistArtifact).toHaveBeenCalledWith(
       "storyboard.clip.phase3",
       "clip-1",
@@ -293,6 +344,35 @@ describe("script-to-storyboard runtime", () => {
     });
   });
 
+  it("invalidates acting cache when character context changes", async () => {
+    requestOpenAiStructured.mockImplementation(successfulPhaseResponse);
+    const hooks = artifactHooks();
+
+    await buildEpisodeStoryboard("user-1", runtimeInput, hooks);
+    requestOpenAiStructured.mockClear();
+    listNovelCharacters.mockResolvedValue([
+      {
+        name: "甲",
+        aliases: [],
+        profile: { temperament: "说话前先观察对方反应" },
+        introduction: null,
+      },
+    ]);
+
+    const rerun = await buildEpisodeStoryboard("user-1", runtimeInput, hooks);
+    const requestedPromptIds = requestOpenAiStructured.mock.calls.map(
+      (call) => (call[0] as PhaseRequest).prompt.id,
+    );
+
+    expect(requestedPromptIds).toEqual([
+      PROMPT_IDS.STORY_STORYBOARD_PLANNING,
+      PROMPT_IDS.STORY_ACTING_DIRECTION,
+      PROMPT_IDS.STORY_STORYBOARD_REFINEMENT,
+      PROMPT_IDS.STORY_CONTINUITY_REVIEW,
+    ]);
+    expect(rerun.results[0].reusedPhases).toEqual(["phase2.cine"]);
+  });
+
   it("normalizes continuity prop arrays before planning schema parsing", () => {
     const raw = planning();
     raw.panels[0].startState.props = ["长剑", "护符"] as unknown as string;
@@ -370,6 +450,89 @@ describe("script-to-storyboard runtime", () => {
     ).toEqual([]);
   });
 
+  it("keeps screenplay VFX and SFX design in deterministic fallback panels", () => {
+    const source = "林澈施展青霄剑诀，剑光击中石壁，碎石迸裂。";
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: source,
+      coverage: [
+        {
+          eventId: "E001",
+          evidence: source,
+          modes: ["visual" as const],
+          reason: null,
+        },
+      ],
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "石室", time: "夜" },
+          description: "石室夜间",
+          characters: ["林澈"],
+          content: [
+            {
+              type: "action" as const,
+              text: source,
+              origin: "source" as const,
+              actionDesign: {
+                kind: "skill" as const,
+                performer: "林澈",
+                target: "石壁",
+                realm: null,
+                technique: "青霄剑诀",
+                visualMotif: "青白剑气呈窄长弧线，银色边缘粒子快速收束消散",
+                visualMotifSource: "production_inference" as const,
+                visualMotifRationale: "依据剑诀与项目画风建立跨集表现",
+                choreography: ["林澈沉肩起剑", "挥剑释放剑光", "石壁碎裂后收势"],
+                impact: "剑光击中石壁，碎石迸裂",
+                environmentResponse: "石壁碎石迸裂",
+                vfxPlan: [
+                  {
+                    phase: "release" as const,
+                    category: "weapon_trail" as const,
+                    description: "青白剑光沿挥剑方向延伸",
+                  },
+                ],
+                sfxPlan: [
+                  {
+                    phase: "impact" as const,
+                    type: "destruction" as const,
+                    description: "剑光命中与碎石爆裂",
+                  },
+                ],
+                evidence: [source],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const sourceText = JSON.stringify(screenplay, null, 2);
+    const result = buildDeterministicStoryboardPhases({
+      canonical: { characters: ["林澈"], locations: ["石室"], props: [] },
+      clip: { ...clip(), content: source },
+      props: [],
+      screenplay,
+      sourceText,
+    });
+
+    expect(result.planning.panels[0]).toMatchObject({
+      worldContext: {
+        technique: "青霄剑诀",
+        visualMotif: "青白剑气呈窄长弧线，银色边缘粒子快速收束消散",
+      },
+      vfxCues: [{ category: "weapon_trail" }],
+      sfxCues: [{ type: "destruction" }],
+    });
+    expect(
+      validateStoryboardPlanning(result.planning, {
+        sourceText,
+        canonical: { characters: ["林澈"], locations: ["石室"], props: [] },
+        screenplay,
+      }),
+    ).toEqual([]);
+  });
+
   it("keeps a voice-over speaker and abbreviated key prop on fallback panels", () => {
     const screenplay = {
       clipId: "clip-1",
@@ -399,7 +562,9 @@ describe("script-to-storyboard runtime", () => {
         props: ["无字古籍"],
       },
       clip: { ...clip(), content: screenplay.originalText },
-      props: [{ name: "无字古籍", summary: null, metadata: {} }],
+      props: [
+        { name: "无字古籍", summary: null, metadata: {}, visualProfile: {} },
+      ],
       screenplay,
       sourceText,
     });
@@ -468,6 +633,20 @@ function successfulPhaseResponse(input: PhaseRequest) {
                 emotion: "平静",
                 action: "说话",
                 expression: "自然",
+                evidence: ["你好"],
+                beats: [
+                  {
+                    startSecond: 0,
+                    endSecond: 3,
+                    objective: "确认对方听清问候",
+                    subtext: "先观察对方是否理解",
+                    action: "自然说出问候并观察",
+                    expression: "语气平稳，目光专注",
+                    gazeTarget: "对方",
+                    reactionTo: null,
+                    evidence: ["你好"],
+                  },
+                ],
               },
             ],
           },
@@ -535,7 +714,7 @@ function planning() {
         props: [],
         imagePrompt: "甲在书房",
         videoPrompt: "甲说你好",
-        sourceEvidence: ["你好"],
+        sourceEvidence: ["你好", "甲说：你好。"],
       },
     ],
   };

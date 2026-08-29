@@ -15,7 +15,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_LOCATION_PROP_ANALYSIS]: {
     pathStem: "domain/story_location_prop_analysis",
-    version: 3,
+    version: 5,
     variables: ["source_text", "location_library", "prop_library"],
     agent: defineAgent({
       id: "production_designer",
@@ -46,7 +46,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_SCREENPLAY_CONVERSION]: {
     pathStem: "domain/story_screenplay_conversion",
-    version: 8,
+    version: 12,
     variables: [
       "clip_id",
       "clip_text",
@@ -55,6 +55,9 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       "location_library",
       "prop_library",
       "world_bible_json",
+      "project_style",
+      "story_world_directive",
+      "effect_library_json",
     ],
     agent: defineAgent({
       id: "screenwriter",
@@ -70,13 +73,16 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_STORYBOARD_PLANNING]: {
     pathStem: "domain/story_storyboard_planning",
-    version: 6,
+    version: 10,
     variables: [
       "source_text",
       "characters_json",
       "locations_json",
       "props_json",
       "world_bible_json",
+      "project_style",
+      "story_world_directive",
+      "continuity_anchor_json",
     ],
     agent: defineAgent({
       id: "storyboard_director",
@@ -87,8 +93,13 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_CINEMATOGRAPHY]: {
     pathStem: "domain/story_cinematography",
-    version: 3,
-    variables: ["panels_json", "locations_json"],
+    version: 6,
+    variables: [
+      "panels_json",
+      "locations_json",
+      "project_style",
+      "story_world_directive",
+    ],
     agent: defineAgent({
       id: "cinematographer",
       responsibility:
@@ -100,8 +111,13 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_ACTING_DIRECTION]: {
     pathStem: "domain/story_acting_direction",
-    version: 5,
-    variables: ["panels_json", "characters_json"],
+    version: 7,
+    variables: [
+      "panels_json",
+      "characters_json",
+      "world_bible_json",
+      "continuity_anchor_json",
+    ],
     agent: defineAgent({
       id: "acting_director",
       responsibility:
@@ -113,12 +129,13 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_STORYBOARD_REFINEMENT]: {
     pathStem: "domain/story_storyboard_refinement",
-    version: 5,
+    version: 8,
     variables: [
       "source_text",
       "panels_json",
       "cinematography_json",
       "acting_json",
+      "production_design_json",
     ],
     agent: defineAgent({
       id: "storyboard_editor",
@@ -134,7 +151,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_VOICE_ANALYSIS]: {
     pathStem: "domain/story_voice_analysis",
-    version: 5,
+    version: 6,
     variables: ["source_text", "characters_json", "panels_json"],
     agent: defineAgent({
       id: "dialogue_editor",
@@ -149,12 +166,15 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_CONTINUITY_REVIEW]: {
     pathStem: "domain/story_continuity_review",
-    version: 1,
+    version: 4,
     variables: [
       "panels_json",
       "characters_json",
       "locations_json",
       "props_json",
+      "project_style",
+      "story_world_directive",
+      "continuity_anchor_json",
     ],
     agent: defineAgent({
       id: "continuity_supervisor",
@@ -234,12 +254,14 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.EPISODE_ADAPTATION]: {
     pathStem: "domain/episode_adaptation",
-    version: 3,
+    version: 5,
     variables: [
       "source_text",
       "source_evidence_candidates",
+      "source_event_anchors_json",
       "manuscript_context",
       "project_context",
+      "episode_continuity_context",
       "adaptation_mode",
       "custom_instructions",
     ],
@@ -265,11 +287,13 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.ASSET_VISUAL_DESIGN]: {
     pathStem: "domain/asset_visual_design",
-    version: 2,
+    version: 4,
     variables: [
       "asset_kind",
       "asset_name",
+      "asset_requirements",
       "story_facts_json",
+      "source_evidence_json",
       "story_world_context_json",
       "story_world_directive",
       "project_style",
@@ -308,7 +332,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_SCREENPLAY_REVISION]: {
     pathStem: "domain/story_screenplay_revision",
-    version: 1,
+    version: 4,
     variables: [
       "clip_id",
       "clip_text",
@@ -319,6 +343,9 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       "location_library",
       "prop_library",
       "world_bible_json",
+      "project_style",
+      "story_world_directive",
+      "effect_library_json",
     ],
     agent: defineAgent({
       id: "screenplay_revision_editor",

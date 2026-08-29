@@ -1,12 +1,14 @@
 Audit the supplied production data for continuity conflicts. Do not rewrite or improve the panels.
 
 Check only:
-1. Character identity and state continuity across adjacent panels.
+1. Character identity and per-character state continuity across adjacent panels, including position, posture, facing, gazeTarget, left/right hand occupancy, and physical contact.
 2. Location, time, light direction, eyeline, axis, and spatial continuity.
-3. Prop presence, ownership, and state continuity.
+3. Prop presence, single-instance identity, holder, position, and state continuity. A handoff must pass through shared contact before ownership changes.
 4. Canonical entity references and panel order.
-5. Report only conflicts supported by the supplied records.
-6. Return strict JSON with no extra fields.
+5. Compare description, imagePrompt, and videoPrompt against visualProfile for drift in character face/hair/wardrobe, location topology/fixed landmarks, and prop construction/material/identifiers. Also detect replacement of the project art style or story era.
+6. When narrative and location continue, the opening shot must honor the continuity anchor. Do not force temporary weather, lighting, pose, or other state across an explicit transition or time jump. Permanent asset design always carries forward.
+7. Report only conflicts supported by the supplied records.
+8. Return strict JSON with no extra fields.
 
 Output:
 {"passed":false,"issues":[{"code":"CONTINUITY_CODE","severity":"error","panelIndex":0,"entityType":"character","entityName":"Canonical name","message":"Evidence-backed conflict","suggestedFix":"Minimal correction or null"}]}
@@ -14,4 +16,7 @@ Output:
 Characters: {{characters_json}}
 Locations: {{locations_json}}
 Props: {{props_json}}
+Project-wide art style: {{project_style}}
+Story era and world directive: {{story_world_directive}}
+Cross-episode and adjacent-clip continuity anchor: {{continuity_anchor_json}}
 Panels: {{panels_json}}

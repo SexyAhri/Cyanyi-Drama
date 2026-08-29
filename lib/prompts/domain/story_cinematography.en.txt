@@ -4,13 +4,16 @@ Rules:
 1. Do not change shot count, plot, characters, dialogue, or action.
 2. Return exactly one rule for each panelIndex.
 3. camera, cameraPosition, focalLength, lighting, composition, depthOfField, and colorTone must be specific and consistent.
-4. Preserve axis, light direction, eyeline, and spatial continuity across adjacent shots.
-5. Return strict JSON only with no extra fields.
+4. Preserve axis, light direction, eyeline, and spatial continuity across adjacent shots. In interaction and fight shots, keep actor, target, contact point, and target reaction simultaneously readable; blocking, depth of field, and camera movement must not hide decisive contact or force response.
+5. visualProfile in location data is the approved set topology. Camera position, composition, depth of field, and lighting must remain feasible within its entrances, depth layers, fixed landmarks, and practical light sources. Project style controls photographic presentation; the story-world directive controls architecture, dressing, materials, and light-source technology. Do not redesign the set or era.
+6. Return strict JSON only with no extra fields.
 
 Output:
 {"rules":[{"panelIndex":0,"camera":"Camera height and angle","cameraPosition":"Exact position relative to cast and set","focalLength":"Lens or equivalent focal length","lighting":"Direction and quality","composition":"Framing and blocking","depthOfField":"Depth of field","colorTone":"Color tone"}]}
 
 Location data: {{locations_json}}
+Project-wide art style: {{project_style}}
+Story era and world directive: {{story_world_directive}}
 
 Panels:
 {{panels_json}}

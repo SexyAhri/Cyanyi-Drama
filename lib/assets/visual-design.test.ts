@@ -118,6 +118,8 @@ describe("asset visual design", () => {
     expect(request.prompt.text).toContain("最高优先级");
     expect(request.prompt.text).toContain("古代东方修炼世界");
     expect(request.prompt.text).toContain("画风与视觉改编世界是两套独立约束");
+    expect(request.prompt.text).toContain("本资产制作字段要求");
+    expect(request.prompt.text).toContain("韩子枫曾是韩家庄的天才");
     expect(result.profile).toMatchObject({
       source: "model",
       model: "analysis-model",

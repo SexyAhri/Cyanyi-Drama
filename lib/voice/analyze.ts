@@ -158,6 +158,10 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
         (character) => character.name,
       ),
       panelIndices: panelContext.map((panel) => panel.panelIndex),
+      panelSpokenText: panelContext.flatMap((panel) => {
+        const text = panel.lipSyncText ?? panel.voiceoverText;
+        return text ? [{ panelIndex: panel.panelIndex, text }] : [];
+      }),
     });
     if (issues.length)
       throw new VoiceAnalyzeError(
@@ -564,6 +568,23 @@ function requestVoiceAnalysis(input: {
             ? [(value as { panelIndex: number }).panelIndex]
             : [],
         ),
+        panelSpokenText: input.panels.flatMap((value) => {
+          if (!value || typeof value !== "object") return [];
+          const panel = value as {
+            panelIndex?: unknown;
+            lipSyncText?: unknown;
+            voiceoverText?: unknown;
+          };
+          const text =
+            typeof panel.lipSyncText === "string"
+              ? panel.lipSyncText
+              : typeof panel.voiceoverText === "string"
+                ? panel.voiceoverText
+                : null;
+          return typeof panel.panelIndex === "number" && text
+            ? [{ panelIndex: panel.panelIndex, text }]
+            : [];
+        }),
       }),
   });
 }

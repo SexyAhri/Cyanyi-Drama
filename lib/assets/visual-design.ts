@@ -55,7 +55,16 @@ export async function generateProjectAssetVisualProfile(input: {
     variables: {
       asset_kind: localizedKind(input.targetType, input.locale),
       asset_name: context.name,
+      asset_requirements: localizedAssetRequirements(
+        input.targetType,
+        input.locale,
+      ),
       story_facts_json: JSON.stringify(context.facts, null, 2),
+      source_evidence_json: JSON.stringify(
+        storyWorld.relatedSourceEvidence,
+        null,
+        2,
+      ),
       story_world_context_json: JSON.stringify(
         storyWorldContextForPrompt(storyWorld),
         null,
@@ -315,6 +324,24 @@ function localizedKind(kind: VisualDesignTargetType, locale?: PromptLocale) {
   if (kind === "character") return "角色";
   if (kind === "location") return "场景";
   return "道具";
+}
+
+function localizedAssetRequirements(
+  targetType: VisualDesignTargetType,
+  locale?: PromptLocale,
+) {
+  const english = locale === "en";
+  if (targetType === "character")
+    return english
+      ? "Character profile: lock facial structure, hair, body proportions, era-compatible layered wardrobe, footwear, accessories, and stable identifiers. Separate permanent identity from episode-specific injury, emotion, action, or costume state."
+      : "角色设定：锁定脸型五官、发式、体型比例、符合时代的服装层次、鞋履配饰和稳定识别点；永久身份与本集伤势、情绪、动作或临时换装必须分开。";
+  if (targetType === "location")
+    return english
+      ? "Location profile: define reusable spatial topology and scale, parent/sub-area relationships, entrances, foreground/midground/background, fixed architecture or terrain, era-compatible materials and craft, primary practical light sources, and repeatable landmarks. Do not turn weather, time of day, damage, temporary dressing, or an episode event into permanent identity."
+      : "场景设定：明确可复用的空间拓扑与尺度、父级/子区域关系、出入口、前中后景、固定建筑或地貌、符合时代的材料与工艺、主要实际光源和可重复地标；不得把天气、昼夜、战损、临时陈设或本集事件当成永久身份。";
+  return english
+    ? "Prop profile: lock silhouette, real-world scale, operable parts, era-compatible construction, material and craft, surface wear, colors, ornament, ownership or ability rules, and stable identifiers. Separate permanent design from current holder, open/closed state, damage, activation, or other episode state."
+    : "道具设定：锁定轮廓、实际比例、可动部件、符合时代的结构、材质与工艺、表面磨损、配色装饰、归属或能力规则和稳定识别点；永久设计与当前持有者、开合、破损、激活等本集状态必须分开。";
 }
 
 function parseValue(value: string | null) {
