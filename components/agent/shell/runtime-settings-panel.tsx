@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { RotateCcw, Save } from "lucide-react";
 import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -25,10 +23,31 @@ import {
 
 import type { ShellCopy } from "./chat-shell-i18n";
 
-export function RuntimeSettingsPanel({ copy }: { copy: ShellCopy }) {
+export const RUNTIME_SETTINGS_FORM_ID = "agent-runtime-settings-form";
+
+export type RuntimeSettingsPanelStatus = {
+  loading: boolean;
+  saving: boolean;
+};
+
+type RuntimeSettingsPanelProps = {
+  copy: ShellCopy;
+  formId: string;
+  onStatusChange: (status: RuntimeSettingsPanelStatus) => void;
+};
+
+export function RuntimeSettingsPanel({
+  copy,
+  formId,
+  onStatusChange,
+}: RuntimeSettingsPanelProps) {
   const [settings, setSettings] = useState(DEFAULT_RUNTIME_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    onStatusChange({ loading, saving });
+  }, [loading, onStatusChange, saving]);
 
   useEffect(() => {
     let active = true;
@@ -73,7 +92,15 @@ export function RuntimeSettingsPanel({ copy }: { copy: ShellCopy }) {
   }
 
   return (
-    <div className="grid gap-7">
+    <form
+      className="grid gap-7"
+      id={formId}
+      onReset={() => setSettings(DEFAULT_RUNTIME_SETTINGS)}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
       <SettingsSection
         description={copy.settingsRuntimeRequestsDescription}
         title={copy.settingsRuntimeRequests}
@@ -221,22 +248,7 @@ export function RuntimeSettingsPanel({ copy }: { copy: ShellCopy }) {
         </div>
       </SettingsSection>
 
-      <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-4">
-        <Button
-          disabled={loading || saving}
-          onClick={() => setSettings(DEFAULT_RUNTIME_SETTINGS)}
-          type="button"
-          variant="outline"
-        >
-          <RotateCcw />
-          {copy.settingsRuntimeReset}
-        </Button>
-        <Button disabled={loading || saving} onClick={save} type="button">
-          <Save />
-          {saving ? copy.settingsRuntimeSaving : copy.settingsSave}
-        </Button>
-      </div>
-    </div>
+    </form>
   );
 }
 

@@ -20,11 +20,13 @@ import { cn } from "@/lib/utils";
 import {
   AgentComposer,
   applyRuntimeSettingsToComposer,
+  type AgentComposerMode,
   type AgentComposerReferenceImage,
   type AgentComposerSettings,
   createDefaultComposerSettings,
   normalizeComposerSettings,
   resolveComposerModelOptions,
+  setComposerMode,
 } from "../composer";
 import { DebugPanel } from "../debug";
 import { MessageList } from "../message";
@@ -33,7 +35,6 @@ import {
   getShellCopy,
   type AgentLocale,
   type ModelOption,
-  type ShellNavItem,
   type ShellThread,
   type ShellUser,
 } from "../shell";
@@ -43,6 +44,7 @@ import { PromptStarter } from "./prompt-starter";
 import { useChatThreads } from "./use-chat-threads";
 
 export type ChatProps = {
+  appVersion?: string;
   archivedThreads?: ShellThread[];
   agent: ReturnType<typeof useAgent>;
   locale?: AgentLocale;
@@ -50,12 +52,12 @@ export type ChatProps = {
   onLogout?: () => void;
   recentThreads?: ShellThread[];
   shellActions?: React.ReactNode;
-  runtimeItems?: ShellNavItem[];
   suggestions?: string[];
   user?: ShellUser | null;
 };
 
 export function Chat({
+  appVersion,
   archivedThreads,
   agent,
   locale,
@@ -63,8 +65,7 @@ export function Chat({
   onLogout,
   recentThreads,
   shellActions,
-  runtimeItems,
-  suggestions = defaultSuggestions,
+  suggestions,
   user,
 }: ChatProps) {
   const [activeLocale, setActiveLocale] = useState<AgentLocale>(
@@ -85,6 +86,7 @@ export function Chat({
   const composerSettingsRef = useRef(composerSettings);
   const runtimeSettingsRef = useRef<RuntimeSettings>(DEFAULT_RUNTIME_SETTINGS);
   const copy = getShellCopy(activeLocale);
+  const activeSuggestions = suggestions ?? defaultSuggestions[activeLocale];
   const {
     activeThreadId,
     archiveThread,
@@ -226,6 +228,20 @@ export function Chat({
     setComposerSettings(nextSettings);
   }
 
+  function handleComposerModeSelect(mode: AgentComposerMode) {
+    setComposerSettingsWithUpdater((current) =>
+      setComposerMode(
+        {
+          ...current,
+          ...(mode !== "image"
+            ? { template: "none", templatePrompt: undefined }
+            : {}),
+        },
+        mode,
+      ),
+    );
+  }
+
   function setComposerSettingsWithUpdater(
     updater: (current: AgentComposerSettings) => AgentComposerSettings,
   ) {
@@ -234,29 +250,6 @@ export function Chat({
       composerSettingsRef.current = nextSettings;
       return nextSettings;
     });
-  }
-
-  function append(message: { role: "user"; content: string }) {
-    const messageComposerSettings = composerSettingsRef.current;
-    setInput("");
-    void agent.sendMessage(message.content, {
-      metadata: {
-        ...runtime.metadata,
-        composer: messageComposerSettings,
-      },
-    });
-
-    if (messageComposerSettings.mode === "chat") {
-      setComposerSettingsWithUpdater((current) =>
-        current.mode === "chat"
-          ? {
-              ...current,
-              referenceImages: [],
-              referenceImage: undefined,
-            }
-          : current,
-      );
-    }
   }
 
   function handleSelectThread(thread: ShellThread) {
@@ -409,6 +402,7 @@ export function Chat({
 
   return (
     <ChatShell
+      appVersion={appVersion}
       currentThreadId={activeThreadId}
       locale={activeLocale}
       models={runtime.models}
@@ -431,26 +425,27 @@ export function Chat({
       onUnarchiveThread={unarchiveThread}
       recentThreads={threads.filter((thread) => !thread.archived)}
       runtimeConnection={runtime.connection}
-      runtimeItems={runtimeItems}
       selectedModel={runtime.selectedModel}
       topbarActions={shellActions}
       user={user}
     >
-      <div className="relative min-h-0 flex-1 bg-background">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_18%,color-mix(in_oklch,var(--primary),transparent_88%),transparent_34rem),linear-gradient(180deg,color-mix(in_oklch,var(--accent),transparent_88%),transparent_22rem)]" />
+      <div className="relative min-h-0 flex-1 bg-muted/20">
         <div
           className={cn(
-            "relative mx-auto h-[calc(100svh-3.5rem)] w-full max-w-6xl px-4 py-4",
+            "mx-auto h-[calc(100svh-3.5rem)] w-full max-w-6xl px-4 py-4",
             hasToolMessages && "pb-4",
           )}
         >
           <ChatContainer className="h-full">
             {agent.messages.length === 0 ? (
               <PromptStarter
-                append={append}
-                description={copy.promptStarterDescription}
-                label={copy.promptSuggestionsLabel}
-                suggestions={suggestions}
+                copy={copy}
+                onModeSelect={handleComposerModeSelect}
+                onPromptSelect={(prompt) => {
+                  handleComposerModeSelect("chat");
+                  setInput(prompt);
+                }}
+                suggestions={activeSuggestions}
               />
             ) : (
               <ChatMessages messages={agent.messages}>

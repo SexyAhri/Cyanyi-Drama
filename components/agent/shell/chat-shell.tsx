@@ -6,11 +6,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { inferModelCapabilities } from "@/lib/agent/provider-types";
 
 import { ChatSidebar } from "./chat-sidebar";
-import {
-  demoArchivedThreads,
-  demoRecentThreads,
-  runtimeNavItems,
-} from "./chat-shell-data";
+import { demoArchivedThreads, demoRecentThreads } from "./chat-shell-data";
 import { getShellCopy } from "./chat-shell-i18n";
 import {
   ChatShellPanels,
@@ -26,7 +22,6 @@ import type {
   ModelOption,
   ChannelModelUpdate,
   RuntimeConnectionSettings,
-  ShellNavItem,
   ShellThread,
   ShellUser,
 } from "./chat-shell-types";
@@ -37,6 +32,7 @@ import {
 } from "./chat-shell-utils";
 
 type ChatShellProps = {
+  appVersion?: string;
   archivedThreads?: ShellThread[];
   children: React.ReactNode;
   currentThreadId?: string | null;
@@ -60,13 +56,13 @@ type ChatShellProps = {
   onUnarchiveThread?: (threadId: string) => void;
   recentThreads?: ShellThread[];
   runtimeConnection?: RuntimeConnectionSettings;
-  runtimeItems?: ShellNavItem[];
   selectedModel: string;
   topbarActions?: React.ReactNode;
   user?: ShellUser | null;
 };
 
 export function ChatShell({
+  appVersion,
   archivedThreads = demoArchivedThreads,
   children,
   currentThreadId,
@@ -94,7 +90,6 @@ export function ChatShell({
     baseUrl: "",
     status: "idle",
   },
-  runtimeItems = runtimeNavItems,
   selectedModel,
   topbarActions,
   user,
@@ -166,7 +161,6 @@ export function ChatShell({
         onArchiveThread={onArchiveThread}
         onDeleteThread={onDeleteThread}
         onOpenArchive={() => setOpenPanel("archive")}
-        onOpenExplore={() => setOpenPanel("explore")}
         onOpenHelp={() => setOpenPanel("help")}
         onOpenSearch={() => setOpenPanel("search")}
         onOpenSettings={() => setOpenPanel("settings")}
@@ -181,9 +175,11 @@ export function ChatShell({
       />
       <SidebarInset className="min-h-svh overflow-hidden">
         <ChatTopbar
+          appVersion={appVersion}
           currentThreadTitle={currentThreadTitle}
           copy={copy}
           onNewChat={handleNewChat}
+          onOpenSettings={() => setOpenPanel("settings")}
           topbarActions={topbarActions}
         />
         {children}
@@ -191,7 +187,6 @@ export function ChatShell({
       <ChatShellPanels
         archivedThreads={archivedThreads}
         copy={copy}
-        exploreItems={runtimeItems}
         models={shellModels}
         onOpenChange={setOpenPanel}
         onModelsChange={onModelsChange}

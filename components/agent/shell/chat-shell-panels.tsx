@@ -4,7 +4,6 @@ import {
   Archive,
   ArchiveRestore,
   Bot,
-  Compass,
   Search,
 } from "lucide-react";
 
@@ -26,17 +25,15 @@ import type {
   ModelOption,
   ChannelModelUpdate,
   RuntimeConnectionSettings,
-  ShellNavItem,
   ShellThread,
 } from "./chat-shell-types";
 import type { ShellSettings } from "./shell-settings";
 
-export type ShellPanel = "archive" | "explore" | "help" | "search" | "settings";
+export type ShellPanel = "archive" | "help" | "search" | "settings";
 
 type ChatShellPanelsProps = {
   archivedThreads: ShellThread[];
   copy: ShellCopy;
-  exploreItems: ShellNavItem[];
   models: ModelOption[];
   onOpenChange: (panel: ShellPanel | null) => void;
   onRuntimeConnectionClear: () => void;
@@ -57,7 +54,6 @@ type ChatShellPanelsProps = {
 export function ChatShellPanels({
   archivedThreads,
   copy,
-  exploreItems,
   models,
   onOpenChange,
   onRuntimeConnectionClear,
@@ -100,31 +96,6 @@ export function ChatShellPanels({
       </ShellDialog>
 
       <ShellDialog
-        description={copy.exploreDescription}
-        icon={<Compass />}
-        onOpenChange={(open) => onOpenChange(open ? "explore" : null)}
-        open={openPanel === "explore"}
-        title={copy.explore}
-      >
-        <div className="grid gap-2">
-          {exploreItems.map((item) => {
-            const Icon = item.icon;
-
-            return (
-              <a
-                className="flex items-center gap-3 rounded-lg border p-3 text-sm hover:bg-muted"
-                href={item.href}
-                key={item.id}
-              >
-                <Icon className="size-4 text-muted-foreground" />
-                <span className="font-medium">{item.label}</span>
-              </a>
-            );
-          })}
-        </div>
-      </ShellDialog>
-
-      <ShellDialog
         description={copy.archiveDescription}
         icon={<Archive />}
         onOpenChange={(open) => onOpenChange(open ? "archive" : null)}
@@ -152,7 +123,6 @@ export function ChatShellPanels({
         <div className="grid gap-2 text-sm">
           <HelpRow label={copy.helpNewChat} value={copy.helpNewChatValue} />
           <HelpRow label={copy.helpSearch} value={copy.helpSearchValue} />
-          <HelpRow label={copy.helpRuntime} value={copy.helpRuntimeValue} />
           <HelpRow label={copy.helpSettings} value={copy.helpSettingsValue} />
         </div>
       </ShellDialog>

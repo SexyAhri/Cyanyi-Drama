@@ -7,7 +7,6 @@ import {
   Loader2,
   Mic,
   Paperclip,
-  Plus,
   Square,
 } from "lucide-react";
 
@@ -122,6 +121,24 @@ export function AgentComposer({
     });
   }
 
+  function selectMode(mode: string) {
+    if (!isAgentComposerMode(mode)) {
+      return;
+    }
+
+    onSettingsChange(
+      setComposerMode(
+        {
+          ...settings,
+          ...(mode !== "image"
+            ? { template: "none", templatePrompt: undefined }
+            : {}),
+        },
+        mode,
+      ),
+    );
+  }
+
   async function addFiles(nextFiles: File[] | null) {
     if (!nextFiles?.length) {
       return;
@@ -209,7 +226,35 @@ export function AgentComposer({
           />
         ) : null}
 
-        <div className="w-full rounded-2xl border bg-card/90 p-2 shadow-lg shadow-primary/5 backdrop-blur">
+        <div className="w-full rounded-lg border bg-card p-2 shadow-sm">
+          <div
+            aria-label="Generation mode"
+            className="mb-1 flex items-center gap-1 overflow-x-auto border-b px-1 pb-2"
+            role="group"
+          >
+            {composerModes.map((mode) => {
+              const Icon = mode.icon;
+              const active = settings.mode === mode.id;
+
+              return (
+                <Button
+                  aria-pressed={active}
+                  className={cn(
+                    "h-8 shrink-0 gap-1.5 rounded-md px-2.5 text-sm",
+                    active && "bg-muted text-foreground shadow-xs",
+                  )}
+                  key={mode.id}
+                  onClick={() => selectMode(mode.id)}
+                  type="button"
+                  variant="ghost"
+                >
+                  {Icon ? <Icon /> : null}
+                  <span>{mode.label}</span>
+                </Button>
+              );
+            })}
+          </div>
+
           <div className="relative">
             <Textarea
               className={cn(
@@ -280,41 +325,19 @@ export function AgentComposer({
             />
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex min-w-0 flex-wrap items-center gap-1">
+          <div className="flex items-center gap-2 pt-1">
+            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
               <Button
                 aria-label="Add attachment"
-                className="h-8 px-2"
                 onClick={async () => {
                   await addFiles(await showFileUploadDialog(settings.mode));
                 }}
+                size="icon-sm"
                 type="button"
                 variant="ghost"
               >
-                <Plus />
+                <Paperclip />
               </Button>
-              <ComposerSelect
-                active
-                onClear={() =>
-                  patchSettings({
-                    mode: "chat",
-                    template: "none",
-                    templatePrompt: undefined,
-                  })
-                }
-                onValueChange={(mode) => {
-                  if (isAgentComposerMode(mode)) {
-                    onSettingsChange(setComposerMode({
-                      ...settings,
-                      ...(mode !== "image"
-                        ? { template: "none", templatePrompt: undefined }
-                        : {}),
-                    }, mode));
-                  }
-                }}
-                options={composerModes}
-                value={settings.mode}
-              />
 
               {settings.mode === "image" ? (
                 <>
@@ -426,18 +449,7 @@ export function AgentComposer({
               ) : null}
             </div>
 
-            <div className="flex items-center gap-2">
-              <Button
-                aria-label="Attach a file"
-                onClick={async () => {
-                  await addFiles(await showFileUploadDialog(settings.mode));
-                }}
-                size="icon"
-                type="button"
-                variant="outline"
-              >
-                <Paperclip />
-              </Button>
+            <div className="flex shrink-0 items-center gap-2">
               {isSpeechSupported ? (
                 <Button
                   aria-label="Voice input"

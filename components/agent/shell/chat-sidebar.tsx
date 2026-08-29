@@ -80,7 +80,6 @@ type ChatSidebarProps = {
   onModelChange: (modelId: string) => void;
   onNewChat: () => void;
   onOpenArchive: () => void;
-  onOpenExplore: () => void;
   onOpenHelp: () => void;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
@@ -106,7 +105,6 @@ export function ChatSidebar({
   onModelChange,
   onNewChat,
   onOpenArchive,
-  onOpenExplore,
   onOpenHelp,
   onOpenSearch,
   onOpenSettings,
@@ -140,11 +138,13 @@ export function ChatSidebar({
               title={copy.newChat}
             >
               <BrandAvatar
-                alt="Agent UI"
+                alt={copy.accountLabel}
                 className="size-7 rounded-md"
                 size="default"
               />
-              <span className="min-w-0 truncate font-medium">Agent UI</span>
+              <span className="min-w-0 truncate font-medium">
+                {copy.accountLabel}
+              </span>
               <Pencil className="size-4 text-sidebar-foreground/70" />
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -164,9 +164,7 @@ export function ChatSidebar({
                       ? undefined
                       : item.id === "search"
                         ? onOpenSearch
-                        : item.id === "explore"
-                          ? onOpenExplore
-                          : onOpenSettings
+                        : onOpenSettings
                   }
                   size={compact ? "sm" : "default"}
                 />
@@ -338,10 +336,6 @@ function getPrimaryLabel(itemId: string, copy: ShellCopy) {
 
   if (itemId === "search") {
     return copy.search;
-  }
-
-  if (itemId === "explore") {
-    return copy.explore;
   }
 
   if (itemId === "settings") {

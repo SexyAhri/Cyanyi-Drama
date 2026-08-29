@@ -1,10 +1,8 @@
 import {
   Clapperboard,
-  Compass,
   MessageSquare,
   Search,
   Settings,
-  Sparkles,
 } from "lucide-react";
 
 import type { ShellNavItem, ShellThread } from "./chat-shell-types";
@@ -22,29 +20,9 @@ export const primaryNavItems: ShellNavItem[] = [
     icon: Search,
   },
   {
-    id: "explore",
-    label: "Explore",
-    icon: Compass,
-  },
-  {
     id: "settings",
     label: "Settings",
     icon: Settings,
-  },
-];
-
-export const runtimeNavItems: ShellNavItem[] = [
-  {
-    id: "ai-sdk",
-    href: "/chat",
-    label: "AI SDK",
-    icon: Sparkles,
-  },
-  {
-    id: "langgraph",
-    href: "/chat/langgraph",
-    label: "LangGraph",
-    icon: Compass,
   },
 ];
 

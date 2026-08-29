@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, X } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -17,20 +17,16 @@ import { cn } from "@/lib/utils";
 import type { AgentComposerOption } from "./types";
 
 type ComposerSelectProps = {
-  active?: boolean;
   className?: string;
   label?: string;
-  onClear?: () => void;
   onValueChange: (value: string) => void;
   options: AgentComposerOption[];
   value: string;
 };
 
 export function ComposerSelect({
-  active,
   className,
   label,
-  onClear,
   onValueChange,
   options,
   value,
@@ -50,36 +46,20 @@ export function ComposerSelect({
           <Button
             className={cn(
               "h-8 gap-1 rounded-lg px-2 text-sm",
-              active &&
-                "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
               className,
             )}
             type="button"
-            variant={active ? "secondary" : "ghost"}
+            variant="ghost"
           >
             {isRatioSelect ? (
               <RatioIcon ratio={selected.id} />
             ) : Icon ? (
               <Icon />
             ) : null}
-            <span>{selected.label}</span>
-            {onClear ? (
-              <span
-                aria-label="Clear mode"
-                className="ml-0.5 rounded-sm p-0.5 hover:bg-primary/10"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onClear();
-                }}
-                role="button"
-                tabIndex={0}
-              >
-                <X className="size-3" />
-              </span>
-            ) : (
-              <ChevronDown className="size-3.5 text-muted-foreground" />
-            )}
+            <span className="max-w-44 truncate" title={selected.label}>
+              {selected.label}
+            </span>
+            <ChevronDown className="size-3.5 text-muted-foreground" />
           </Button>
         }
       />

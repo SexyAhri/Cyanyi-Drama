@@ -1,5 +1,14 @@
-export const defaultSuggestions = [
-  "What is the weather in San Francisco?",
-  "Explain step-by-step how to solve this math problem: If x^2 + 6x + 9 = 25, what is x?",
-  "Design a simple algorithm to find the longest palindrome in a string.",
-];
+import type { AgentLocale } from "../shell";
+
+export const defaultSuggestions: Record<AgentLocale, string[]> = {
+  en: [
+    "Turn this story idea into a concise vertical-drama outline.",
+    "Design a consistent visual prompt for a lead character.",
+    "Review a scene and suggest stronger pacing and shot coverage.",
+  ],
+  "zh-CN": [
+    "把这个故事想法整理成一版竖屏短剧大纲。",
+    "为主角整理一份可保持一致性的视觉提示词。",
+    "检查这场戏的节奏，并给出更完整的镜头覆盖建议。",
+  ],
+};

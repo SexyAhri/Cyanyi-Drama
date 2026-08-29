@@ -8,7 +8,6 @@ export {
   demoArchivedThreads,
   demoRecentThreads,
   primaryNavItems,
-  runtimeNavItems,
 } from "./chat-shell-data";
 export {
   getShellCopy,

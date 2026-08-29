@@ -1,11 +1,14 @@
 "use client";
 
-import { Settings } from "lucide-react";
+import { useState } from "react";
+import { RotateCcw, Save, Settings } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -19,8 +22,14 @@ import type {
 } from "./chat-shell-types";
 import { ChannelSettingsPanel } from "./channel-settings-panel";
 import { PreferencesSettingsPanel } from "./preferences-settings-panel";
-import { RuntimeSettingsPanel } from "./runtime-settings-panel";
+import {
+  RUNTIME_SETTINGS_FORM_ID,
+  RuntimeSettingsPanel,
+  type RuntimeSettingsPanelStatus,
+} from "./runtime-settings-panel";
 import type { ShellSettings } from "./shell-settings";
+
+type SettingsTab = "channels" | "preferences" | "runtime";
 
 type AgentSettingsDialogProps = {
   copy: ShellCopy;
@@ -49,9 +58,14 @@ export function AgentSettingsDialog({
   runtimeConnection,
   settings,
 }: AgentSettingsDialogProps) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>("channels");
+  const [runtimeStatus, setRuntimeStatus] =
+    useState<RuntimeSettingsPanelStatus>({ loading: true, saving: false });
+  const runtimeBusy = runtimeStatus.loading || runtimeStatus.saving;
+
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="max-h-[92vh] overflow-x-hidden overflow-y-auto sm:max-w-5xl">
+      <DialogContent className="max-h-[92vh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-5xl">
         <DialogHeader>
           <div className="flex items-center gap-3">
             <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground [&_svg]:size-4">
@@ -62,9 +76,13 @@ export function AgentSettingsDialog({
           <DialogDescription>{copy.settingsDescription}</DialogDescription>
         </DialogHeader>
 
-        <Tabs className="min-w-0 w-full" defaultValue="channels">
+        <Tabs
+          className="flex min-h-0 w-full min-w-0 flex-col"
+          onValueChange={(value) => setActiveTab(value as SettingsTab)}
+          value={activeTab}
+        >
           <TabsList
-            className="min-w-0 max-w-full justify-start gap-5 overflow-x-auto border-b px-0 pb-0"
+            className="min-w-0 max-w-full shrink-0 justify-start gap-5 overflow-x-auto border-b px-0 pb-0"
             variant="line"
           >
             <TabsTrigger className="flex-none px-0 pb-3" value="channels">
@@ -76,73 +94,71 @@ export function AgentSettingsDialog({
             <TabsTrigger className="flex-none px-0 pb-3" value="runtime">
               {copy.settingsRuntime}
             </TabsTrigger>
-            <TabsTrigger
-              className="flex-none px-0 pb-3"
-              value="prompt-sources"
-            >
-              {copy.settingsPromptSources}
-            </TabsTrigger>
-            <TabsTrigger className="flex-none px-0 pb-3" value="webdav">
-              {copy.settingsWebdav}
-            </TabsTrigger>
           </TabsList>
 
-          <TabsContent className="mt-4 grid gap-3" value="channels">
-            <ChannelSettingsPanel
-              copy={copy}
-              models={models}
-              onFinish={() => onOpenChange(false)}
-              onModelsChange={onModelsChange}
-              onRefreshModels={onTestRuntimeConnection}
-              onRuntimeConnectionChange={onRuntimeConnectionChange}
-              onRuntimeConnectionClear={onRuntimeConnectionClear}
-              runtimeConnection={runtimeConnection}
-            />
-          </TabsContent>
+          <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pt-4">
+            <TabsContent className="mt-0 grid gap-3" value="channels">
+              <ChannelSettingsPanel
+                copy={copy}
+                models={models}
+                onModelsChange={onModelsChange}
+                onRefreshModels={onTestRuntimeConnection}
+                onRuntimeConnectionChange={onRuntimeConnectionChange}
+                onRuntimeConnectionClear={onRuntimeConnectionClear}
+                runtimeConnection={runtimeConnection}
+              />
+            </TabsContent>
 
-          <TabsContent className="mt-4 grid gap-3" value="preferences">
-            <PreferencesSettingsPanel
-              copy={copy}
-              models={models}
-              onChange={onSettingsChange}
-              settings={settings}
-            />
-          </TabsContent>
+            <TabsContent className="mt-0 grid gap-3" value="preferences">
+              <PreferencesSettingsPanel
+                copy={copy}
+                models={models}
+                onChange={onSettingsChange}
+                settings={settings}
+              />
+            </TabsContent>
 
-          <TabsContent className="mt-4" value="runtime">
-            <RuntimeSettingsPanel copy={copy} />
-          </TabsContent>
+            <TabsContent className="mt-0" value="runtime">
+              <RuntimeSettingsPanel
+                copy={copy}
+                formId={RUNTIME_SETTINGS_FORM_ID}
+                onStatusChange={setRuntimeStatus}
+              />
+            </TabsContent>
 
-          <TabsContent className="mt-4" value="prompt-sources">
-            <SettingsPlaceholder
-              description={copy.settingsPromptSourcesDescription}
-              message={copy.settingsComingSoon}
-            />
-          </TabsContent>
-
-          <TabsContent className="mt-4" value="webdav">
-            <SettingsPlaceholder
-              description={copy.settingsWebdavDescription}
-              message={copy.settingsComingSoon}
-            />
-          </TabsContent>
+          </div>
         </Tabs>
+
+        <DialogFooter>
+          {activeTab === "runtime" ? (
+            <>
+              <Button
+                disabled={runtimeBusy}
+                form={RUNTIME_SETTINGS_FORM_ID}
+                type="reset"
+                variant="outline"
+              >
+                <RotateCcw />
+                {copy.settingsRuntimeReset}
+              </Button>
+              <Button
+                disabled={runtimeBusy}
+                form={RUNTIME_SETTINGS_FORM_ID}
+                type="submit"
+              >
+                <Save />
+                {runtimeStatus.saving
+                  ? copy.settingsRuntimeSaving
+                  : copy.settingsSave}
+              </Button>
+            </>
+          ) : (
+            <Button onClick={() => onOpenChange(false)} type="button">
+              {copy.settingsFinish}
+            </Button>
+          )}
+        </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function SettingsPlaceholder({
-  description,
-  message,
-}: {
-  description: string;
-  message: string;
-}) {
-  return (
-    <div className="grid min-h-48 place-content-center gap-2 rounded-lg border border-dashed p-6 text-center">
-      <p className="font-medium">{message}</p>
-      <p className="text-sm text-muted-foreground">{description}</p>
-    </div>
   );
 }

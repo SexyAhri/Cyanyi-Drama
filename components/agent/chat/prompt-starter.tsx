@@ -1,102 +1,129 @@
 "use client";
 
-import { ArrowRight, ImagePlus, MessageSquare, Sparkles, Video } from "lucide-react";
+import { ArrowRight, Clapperboard, ImagePlus, Video } from "lucide-react";
+import Link from "next/link";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+import type { AgentComposerMode } from "../composer";
+import type { ShellCopy } from "../shell";
+
 type PromptStarterProps = {
-  append: (message: { role: "user"; content: string }) => void;
-  description: string;
-  label: string;
+  copy: ShellCopy;
+  onModeSelect: (mode: AgentComposerMode) => void;
+  onPromptSelect: (prompt: string) => void;
   suggestions: string[];
 };
 
-const starterHighlights = [
-  {
-    label: "Chat",
-    icon: MessageSquare,
-  },
-  {
-    label: "Image",
-    icon: ImagePlus,
-  },
-  {
-    label: "Video",
-    icon: Video,
-  },
-];
-
-const suggestionAccents = [
-  "border-l-sky-400",
-  "border-l-emerald-400",
-  "border-l-violet-400",
-  "border-l-amber-400",
-];
-
 export function PromptStarter({
-  append,
-  description,
-  label,
+  copy,
+  onModeSelect,
+  onPromptSelect,
   suggestions,
 }: PromptStarterProps) {
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center py-8">
-      <div className="grid w-full max-w-5xl gap-6">
-        <div className="mx-auto grid max-w-2xl justify-items-center gap-3 text-center">
-          <Badge
-            className="gap-1 border-primary/20 bg-primary/10 text-primary shadow-sm shadow-primary/10"
-            variant="outline"
-          >
-            <Sparkles className="size-3" />
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col justify-center gap-7 py-6">
+        <div className="grid max-w-2xl gap-2">
+          <p className="text-xs font-medium text-muted-foreground">
             Cyanyi Drama
-          </Badge>
-          <div className="grid gap-2">
-            <h2 className="text-3xl font-semibold tracking-normal sm:text-4xl">
-              {label}
-            </h2>
-            <p className="max-w-xl text-sm leading-6 text-muted-foreground">
-              {description}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            {starterHighlights.map((item) => {
-              const Icon = item.icon;
-
-              return (
-                <span
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full border bg-card/80 px-3 text-xs text-muted-foreground shadow-sm shadow-primary/5 backdrop-blur"
-                  key={item.label}
-                >
-                  <Icon className="size-3.5" />
-                  {item.label}
-                </span>
-              );
-            })}
-          </div>
+          </p>
+          <h1 className="text-2xl font-semibold sm:text-3xl">
+            {copy.promptStarterTitle}
+          </h1>
+          <p className="text-sm leading-6 text-muted-foreground">
+            {copy.promptStarterDescription}
+          </p>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-3">
-          {suggestions.map((suggestion, index) => (
-            <Button
-              className={cn(
-                "group h-auto min-h-28 items-start justify-between gap-4 rounded-xl border-l-4 bg-card/85 p-4 text-left shadow-sm shadow-primary/5 backdrop-blur transition-all hover:-translate-y-0.5 hover:bg-card hover:shadow-md hover:shadow-primary/10",
-                suggestionAccents[index % suggestionAccents.length],
-              )}
-              key={suggestion}
-              onClick={() => append({ role: "user", content: suggestion })}
-              type="button"
-              variant="outline"
-            >
-              <span className="min-w-0 whitespace-normal text-sm leading-5 text-foreground">
-                {suggestion}
+        <div className="grid gap-2 sm:grid-cols-3">
+          <Link
+            className={cn(
+              buttonVariants({ variant: "outline" }),
+              "group h-auto min-h-20 items-center justify-start gap-3 rounded-lg p-3 text-left",
+            )}
+            href="/projects"
+          >
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+              <Clapperboard className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-medium">
+                {copy.dramaStudio}
               </span>
-              <ArrowRight className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
-            </Button>
-          ))}
+              <span className="mt-0.5 block whitespace-normal text-xs leading-4 text-muted-foreground">
+                {copy.promptStarterProjectDescription}
+              </span>
+            </span>
+            <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+          </Link>
+          <StarterAction
+            description={copy.promptStarterImageDescription}
+            icon={ImagePlus}
+            label={copy.promptStarterImage}
+            onClick={() => onModeSelect("image")}
+          />
+          <StarterAction
+            description={copy.promptStarterVideoDescription}
+            icon={Video}
+            label={copy.promptStarterVideo}
+            onClick={() => onModeSelect("video")}
+          />
         </div>
+
+        <section className="grid gap-2">
+          <h2 className="text-sm font-medium">{copy.promptSuggestionsLabel}</h2>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {suggestions.map((suggestion) => (
+              <Button
+                className="group h-auto min-h-16 items-start justify-between gap-3 rounded-lg p-3 text-left"
+                key={suggestion}
+                onClick={() => onPromptSelect(suggestion)}
+                type="button"
+                variant="ghost"
+              >
+                <span className="min-w-0 whitespace-normal text-sm leading-5">
+                  {suggestion}
+                </span>
+                <ArrowRight className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              </Button>
+            ))}
+          </div>
+        </section>
       </div>
     </div>
+  );
+}
+
+function StarterAction({
+  description,
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  description: string;
+  icon: typeof ImagePlus;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      className="group h-auto min-h-20 items-center justify-start gap-3 rounded-lg p-3 text-left"
+      onClick={onClick}
+      type="button"
+      variant="outline"
+    >
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+        <Icon className="size-4" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium">{label}</span>
+        <span className="mt-0.5 block whitespace-normal text-xs leading-4 text-muted-foreground">
+          {description}
+        </span>
+      </span>
+      <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+    </Button>
   );
 }

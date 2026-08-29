@@ -89,7 +89,6 @@ type ChannelDraft = ChannelConfig;
 type ChannelSettingsPanelProps = {
   copy: ShellCopy;
   models: ModelOption[];
-  onFinish: () => void;
   onRuntimeConnectionChange: (settings: RuntimeConnectionSettings) => void;
   onRuntimeConnectionClear: () => void;
   onModelsChange?: (update: ChannelModelUpdate) => void;
@@ -100,7 +99,6 @@ type ChannelSettingsPanelProps = {
 export function ChannelSettingsPanel({
   copy,
   models,
-  onFinish,
   onRuntimeConnectionChange,
   onRuntimeConnectionClear,
   onModelsChange,
@@ -470,12 +468,6 @@ export function ChannelSettingsPanel({
             </div>
           );
         })}
-      </div>
-
-      <div className="flex justify-end pt-2">
-        <Button onClick={onFinish} type="button">
-          {copy.settingsFinish}
-        </Button>
       </div>
 
       <Sheet

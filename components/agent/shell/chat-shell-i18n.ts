@@ -18,14 +18,10 @@ export type ShellCopy = {
   currentModel: string;
   dramaStudio: string;
   english: string;
-  explore: string;
-  exploreDescription: string;
   help: string;
   helpDescription: string;
   helpNewChat: string;
   helpNewChatValue: string;
-  helpRuntime: string;
-  helpRuntimeValue: string;
   helpSearch: string;
   helpSearchValue: string;
   helpSettings: string;
@@ -39,10 +35,18 @@ export type ShellCopy = {
   newChat: string;
   noMatchingChats: string;
   openAccountMenu: string;
+  openSettings: string;
   openWorkspaceMenu: string;
+  projectVersion: string;
   provider: string;
+  promptStarterImage: string;
+  promptStarterImageDescription: string;
+  promptStarterProjectDescription: string;
   promptSuggestionsLabel: string;
   promptStarterDescription: string;
+  promptStarterTitle: string;
+  promptStarterVideo: string;
+  promptStarterVideoDescription: string;
   recentChats: string;
   refreshModels: string;
   runtime: string;
@@ -94,7 +98,6 @@ export type ShellCopy = {
   settingsCancel: string;
   settingsFinish: string;
   settingsDefaultChannel: string;
-  settingsComingSoon: string;
   settingsPreferences: string;
   settingsPreferencesDescription: string;
   settingsRuntime: string;
@@ -158,11 +161,7 @@ export type ShellCopy = {
   settingsTtsRateSlightlyFast: string;
   settingsTtsRateFast: string;
   settingsTtsRateVeryFast: string;
-  settingsPromptSources: string;
-  settingsPromptSourcesDescription: string;
   settingsDescription: string;
-  settingsWebdav: string;
-  settingsWebdavDescription: string;
   showApiKey: string;
   showModelName: string;
   switchLanguage: string;
@@ -174,7 +173,7 @@ export type ShellCopy = {
 
 export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
   en: {
-    accountLabel: "Agent UI",
+    accountLabel: "Cyanyi Drama",
     apiKey: "API Key",
     archivedChats: "Archived chats",
     archiveDescription:
@@ -193,18 +192,16 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     currentModel: "Current model",
     dramaStudio: "Drama Studio",
     english: "English",
-    explore: "Explore",
-    exploreDescription: "Jump between available runtime demos.",
     help: "Help",
-    helpDescription: "Front-end shell interactions for this Agent UI template.",
+    helpDescription:
+      "Use conversations for quick creative tasks and projects for complete production workflows.",
     helpNewChat: "New chat",
     helpNewChatValue: "Clears the current thread state.",
-    helpRuntime: "Runtime",
-    helpRuntimeValue: "Switches between example pages.",
     helpSearch: "Search",
-    helpSearchValue: "Filters local demo conversations.",
+    helpSearchValue: "Filters saved conversations.",
     helpSettings: "Settings",
-    helpSettingsValue: "Controls shell preferences and runtime connection.",
+    helpSettingsValue:
+      "Manages model channels, creative defaults, and runtime behavior.",
     hideApiKey: "Hide API Key",
     inputPlaceholder: "Ask AI...",
     language: "Language",
@@ -215,11 +212,22 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     newChat: "New chat",
     noMatchingChats: "No matching chats",
     openAccountMenu: "Open account menu",
+    openSettings: "Open settings",
     openWorkspaceMenu: "Open workspace menu",
+    projectVersion: "Project version",
     provider: "Provider",
-    promptSuggestionsLabel: "Try these prompts",
+    promptStarterImage: "Generate an image",
+    promptStarterImageDescription:
+      "Create character, location, prop, or storyboard references.",
+    promptStarterProjectDescription:
+      "Manage scripts, assets, storyboards, audio, and final delivery.",
+    promptSuggestionsLabel: "Ask the creative agent",
     promptStarterDescription:
-      "Start with a question, generate media, or test a tool call. The composer below can switch between chat, image, and video modes.",
+      "Plan with the agent, generate media directly, or move into a complete production project.",
+    promptStarterTitle: "What do you want to create?",
+    promptStarterVideo: "Generate a video",
+    promptStarterVideoDescription:
+      "Turn a shot description or visual reference into a video clip.",
     recentChats: "Chats",
     refreshModels: "Refresh models",
     runtime: "Runtime",
@@ -272,7 +280,6 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsCancel: "Cancel",
     settingsFinish: "Done",
     settingsDefaultChannel: "Default channel",
-    settingsComingSoon: "This section is not configured yet.",
     settingsPreferences: "Preferences",
     settingsPreferencesDescription:
       "Adjust the workspace layout and model display preferences.",
@@ -344,14 +351,8 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsTtsRateSlightlyFast: "Slightly fast (1.2x)",
     settingsTtsRateFast: "Fast (1.5x)",
     settingsTtsRateVeryFast: "Very fast (2.0x)",
-    settingsPromptSources: "Prompt sources",
-    settingsPromptSourcesDescription:
-      "Manage reusable prompt and template sources.",
     settingsDescription:
       "Manage model channels, creative defaults, and workflow runtime behavior.",
-    settingsWebdav: "WebDAV",
-    settingsWebdavDescription:
-      "Connect WebDAV storage for syncing workspace assets.",
     showApiKey: "Show API Key",
     showModelName: "Show model name",
     switchLanguage: "Switch language",
@@ -361,7 +362,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     workspace: "Workspace",
   },
   "zh-CN": {
-    accountLabel: "Agent UI",
+    accountLabel: "Cyanyi Drama",
     apiKey: "API Key",
     archivedChats: "归档会话",
     archiveDescription: "查看暂时不在主列表中的已保存会话。",
@@ -379,18 +380,15 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     currentModel: "当前模型",
     dramaStudio: "漫剧创作",
     english: "English",
-    explore: "探索",
-    exploreDescription: "在可用的运行时示例之间快速切换。",
     help: "帮助",
-    helpDescription: "这个 Agent UI 模板的前端壳层交互说明。",
+    helpDescription:
+      "会话适合快速创作任务，完整制作流程统一进入项目工作台。",
     helpNewChat: "新建会话",
     helpNewChatValue: "清空当前会话状态。",
-    helpRuntime: "运行时",
-    helpRuntimeValue: "切换到不同的示例页面。",
     helpSearch: "搜索",
-    helpSearchValue: "筛选本地演示会话。",
+    helpSearchValue: "筛选已经保存的会话。",
     helpSettings: "设置",
-    helpSettingsValue: "控制壳层偏好和运行时连接。",
+    helpSettingsValue: "管理模型渠道、创作默认值和工作流运行参数。",
     hideApiKey: "隐藏 API Key",
     inputPlaceholder: "问问 AI...",
     language: "语言",
@@ -401,11 +399,20 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     newChat: "新建会话",
     noMatchingChats: "没有匹配的会话",
     openAccountMenu: "打开账户菜单",
+    openSettings: "打开设置",
     openWorkspaceMenu: "打开工作区菜单",
+    projectVersion: "项目版本",
     provider: "提供商",
-    promptSuggestionsLabel: "试试这些提示",
+    promptStarterImage: "生成图片",
+    promptStarterImageDescription: "制作角色、场景、道具或分镜视觉参考。",
+    promptStarterProjectDescription:
+      "管理剧本、资产、分镜、声音和最终交付。",
+    promptSuggestionsLabel: "直接问创作助手",
     promptStarterDescription:
-      "从一个问题开始，也可以生成图片、视频或测试工具调用。下方输入区可在聊天、图片和视频模式之间切换。",
+      "可以先和助手规划，也可以直接生成媒体，完整制作流程请进入项目工作台。",
+    promptStarterTitle: "今天要创作什么？",
+    promptStarterVideo: "生成视频",
+    promptStarterVideoDescription: "把镜头描述或视觉参考生成视频片段。",
     recentChats: "会话",
     refreshModels: "刷新模型",
     runtime: "运行时",
@@ -457,7 +464,6 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsCancel: "取消",
     settingsFinish: "完成",
     settingsDefaultChannel: "默认渠道",
-    settingsComingSoon: "此功能暂未配置。",
     settingsPreferences: "偏好设置",
     settingsPreferencesDescription: "调整工作区布局和模型显示偏好。",
     settingsRuntime: "运行设置",
@@ -527,12 +533,8 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsTtsRateSlightlyFast: "轻微加速 (1.2x)",
     settingsTtsRateFast: "加速 (1.5x)",
     settingsTtsRateVeryFast: "快速 (2.0x)",
-    settingsPromptSources: "提示词来源",
-    settingsPromptSourcesDescription: "管理可复用的提示词和模板来源。",
     settingsDescription:
       "管理模型渠道、创作默认值和工作流运行参数。",
-    settingsWebdav: "WebDAV",
-    settingsWebdavDescription: "连接 WebDAV 存储，同步工作区资源。",
     showApiKey: "显示 API Key",
     showModelName: "显示模型名称",
     switchLanguage: "切换语言",
