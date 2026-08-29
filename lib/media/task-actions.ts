@@ -81,9 +81,9 @@ export async function controlMediaTask(input: {
       error instanceof Error ? error.message : "Retry limit reached.",
     );
   }
-  queued = { ...queued, queueJobId: undefined };
+  queued = { ...queued, queueJobId: task.id };
   await store.update(queued);
-  const job = await enqueueMediaJob({
+  await enqueueMediaJob({
     taskId: task.id,
     userId: input.userId,
     projectId: task.projectId,
@@ -91,7 +91,5 @@ export async function controlMediaTask(input: {
     kind: task.kind,
     maxAttempts: 1,
   });
-  queued.queueJobId = job.id;
-  await store.update(queued);
   return queued;
 }

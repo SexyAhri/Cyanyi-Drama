@@ -1124,7 +1124,9 @@ async function* createMediaGenerationEvents({
     return;
   }
 
-  const queuedJob = await enqueueMediaJob({
+  mediaTask.queueJobId = mediaTask.id;
+  await taskStore.update(mediaTask);
+  await enqueueMediaJob({
     taskId: mediaTask.id,
     userId: runtime.userId,
     projectId: runtime.projectId,
@@ -1133,8 +1135,6 @@ async function* createMediaGenerationEvents({
     kind: mediaTaskKind,
     maxAttempts: mediaTask.maxRetries + 1,
   });
-  mediaTask.queueJobId = queuedJob.id;
-  await taskStore.update(mediaTask);
 
   try {
     const completed = await waitForQueuedMediaTask(taskStore, mediaTask.id);
@@ -1276,7 +1276,9 @@ async function enqueueAndWaitMediaGeneration({
     request,
   });
   await store.create(task);
-  const job = await enqueueMediaJob({
+  const queued = { ...task, queueJobId: task.id };
+  await store.update(queued);
+  await enqueueMediaJob({
     taskId: task.id,
     userId: runtime.userId,
     channelId: runtime.channelId,
@@ -1285,8 +1287,6 @@ async function enqueueAndWaitMediaGeneration({
     kind,
     maxAttempts: task.maxRetries + 1,
   });
-  const queued = { ...task, queueJobId: job.id };
-  await store.update(queued);
   const completed = await waitForQueuedMediaTask(store, task.id);
   if (completed.status !== "succeeded")
     throw new Error(completed.error?.message || "Media task failed.");

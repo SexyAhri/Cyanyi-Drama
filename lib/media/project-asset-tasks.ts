@@ -257,16 +257,17 @@ export async function createStoryboardPanelImageTask(input: {
     props: parseStringArray(panel.propsJson),
     locationName: panel.locationName,
   });
+  const generationPrompt = withStoryboardImageContinuityRequirements({
+    prompt: compileStoryboardEventBlueprint(prompt, panel, "image"),
+    characters: parseStringArray(panel.charactersJson),
+    props: parseStringArray(panel.propsJson),
+    locationName: panel.locationName,
+  });
   const compiledPrompt = compileStoryboardProductionPrompt(
-    withStoryboardImageContinuityRequirements({
-      prompt: compileStoryboardEventBlueprint(prompt, panel, "image"),
-      characters: parseStringArray(panel.charactersJson),
-      props: parseStringArray(panel.propsJson),
-      locationName: panel.locationName,
-    }),
+    generationPrompt,
     productionDesign,
   );
-  assertStoryboardPromptStoryWorld(compiledPrompt, productionDesign.storyWorld);
+  assertStoryboardPromptStoryWorld(generationPrompt, productionDesign);
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
@@ -481,7 +482,7 @@ export async function createStoryboardPanelVideoTask(input: {
     prompt,
     productionDesign,
   );
-  assertStoryboardPromptStoryWorld(compiledPrompt, productionDesign.storyWorld);
+  assertStoryboardPromptStoryWorld(prompt, productionDesign);
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
@@ -623,6 +624,7 @@ export async function previewStoryboardPanelPrompt(input: {
   });
   let referenceCount = supportingReferences.length;
   let compiledPrompt = "";
+  let generationPrompt = "";
   const sources: StoryboardPromptPreview["sources"] = [
     {
       key: "art_style",
@@ -652,13 +654,14 @@ export async function previewStoryboardPanelPrompt(input: {
   ];
 
   if (input.kind === "image") {
+    generationPrompt = withStoryboardImageContinuityRequirements({
+      prompt: compileStoryboardEventBlueprint(basePrompt, panel, "image"),
+      characters,
+      props,
+      locationName: panel.locationName,
+    });
     compiledPrompt = compileStoryboardProductionPrompt(
-      withStoryboardImageContinuityRequirements({
-        prompt: compileStoryboardEventBlueprint(basePrompt, panel, "image"),
-        characters,
-        props,
-        locationName: panel.locationName,
-      }),
+      generationPrompt,
       productionDesign,
     );
   } else {
@@ -762,20 +765,21 @@ export async function previewStoryboardPanelPrompt(input: {
         });
       }
     }
+    generationPrompt = withStoryboardVideoContinuityRequirements({
+      prompt: dialoguePrompt,
+      characters,
+      props,
+      locationName: panel.locationName,
+    });
     compiledPrompt = compileStoryboardProductionPrompt(
-      withStoryboardVideoContinuityRequirements({
-        prompt: dialoguePrompt,
-        characters,
-        props,
-        locationName: panel.locationName,
-      }),
+      generationPrompt,
       productionDesign,
     );
   }
 
-  const storyWorldConflicts = findStoryWorldTextConflicts(
-    compiledPrompt,
-    productionDesign.storyWorld,
+  const storyWorldConflicts = storyboardPromptStoryWorldConflicts(
+    generationPrompt,
+    productionDesign,
   );
   if (storyWorldConflicts.length)
     issues.push({
@@ -1484,13 +1488,26 @@ function parseStoredJsonValue<T>(value: string | null | undefined, fallback: T):
 
 function assertStoryboardPromptStoryWorld(
   prompt: string,
-  storyWorld: AssetStoryWorldContext,
+  productionDesign: StoryboardProductionDesign,
 ) {
-  const conflicts = findStoryWorldTextConflicts(prompt, storyWorld);
+  const conflicts = storyboardPromptStoryWorldConflicts(
+    prompt,
+    productionDesign,
+  );
   if (!conflicts.length) return;
   throw new ProjectAssetTaskError(
     `镜头提示与项目故事时代冲突：检测到${conflicts.join("、")}。请先修正分镜提示或对应视觉设定。`,
     422,
+  );
+}
+
+function storyboardPromptStoryWorldConflicts(
+  prompt: string,
+  productionDesign: StoryboardProductionDesign,
+) {
+  return findStoryWorldTextConflicts(
+    [...productionDesign.visualProfiles, prompt].join("\n"),
+    productionDesign.storyWorld,
   );
 }
 

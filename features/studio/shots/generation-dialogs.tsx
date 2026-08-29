@@ -40,10 +40,7 @@ import type {
   StudioModelOption,
   StudioStoryboardPanel,
 } from "../types";
-import {
-  nextStoryboardPanel,
-  type ShotMediaKind,
-} from "./shot-view-model";
+import { nextStoryboardPanel, type ShotMediaKind } from "./shot-view-model";
 
 type VideoMode = "reference" | "first-last";
 
@@ -150,8 +147,7 @@ export function PanelGenerationDialog({
             kind,
             mode,
             prompt,
-            lastFramePanelId:
-              mode === "first-last" ? nextPanel?.id : undefined,
+            lastFramePanelId: mode === "first-last" ? nextPanel?.id : undefined,
           },
           controller.signal,
         );
@@ -171,7 +167,17 @@ export function PanelGenerationDialog({
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [episodeId, kind, mode, nextPanel?.id, open, panel.id, projectId, prompt, promptText.previewFailed]);
+  }, [
+    episodeId,
+    kind,
+    mode,
+    nextPanel?.id,
+    open,
+    panel.id,
+    projectId,
+    prompt,
+    promptText.previewFailed,
+  ]);
 
   async function submit() {
     const model = models.find((item) => item.id === modelId);
@@ -190,8 +196,7 @@ export function PanelGenerationDialog({
           model: model.modelId,
           mode,
           prompt: prompt.trim() || undefined,
-          lastFramePanelId:
-            mode === "first-last" ? nextPanel?.id : undefined,
+          lastFramePanelId: mode === "first-last" ? nextPanel?.id : undefined,
         });
       }
       toast.success(copy.taskSubmitted);
@@ -207,16 +212,17 @@ export function PanelGenerationDialog({
   return (
     <Dialog onOpenChange={setOpen} open={open}>
       <DialogTrigger render={trigger} />
-      <DialogContent className="max-h-[min(90dvh,44rem)] overflow-y-auto overflow-x-hidden rounded-lg sm:max-w-lg">
-        <DialogHeader>
+      <DialogContent className="max-h-[calc(100dvh-1rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-lg p-0 sm:max-h-[min(90dvh,44rem)] sm:max-w-lg">
+        <DialogHeader className="border-b px-4 py-4">
           <DialogTitle>
             {kind === "image" ? copy.generateImage : copy.generateVideo}
           </DialogTitle>
           <DialogDescription>
-            {copy.panel} {String(panel.panelIndex + 1).padStart(2, "0")} · {panel.shotType || copy.panelDescription}
+            {copy.panel} {String(panel.panelIndex + 1).padStart(2, "0")} ·{" "}
+            {panel.shotType || copy.panelDescription}
           </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-4">
+        <div className="grid min-h-0 gap-4 overflow-y-auto overflow-x-hidden px-4 py-4">
           <label className="grid gap-1.5 text-sm font-medium">
             {kind === "image" ? copy.imageModel : copy.videoModel}
             <ModelSelect
@@ -247,7 +253,7 @@ export function PanelGenerationDialog({
             preview={preview}
           />
         </div>
-        <DialogFooter className="rounded-b-lg">
+        <DialogFooter className="m-0 min-h-16 rounded-none border-t bg-background px-4 py-3">
           <Button
             disabled={isSubmitting}
             onClick={() => setOpen(false)}
@@ -338,7 +344,8 @@ export function BatchGenerationDialog({
   );
   const completedPanelIds = new Set(
     panels.flatMap((panel) => {
-      const assetId = kind === "image" ? panel.imageAssetId : panel.videoAssetId;
+      const assetId =
+        kind === "image" ? panel.imageAssetId : panel.videoAssetId;
       return assetId ? [panel.id] : [];
     }),
   );
@@ -428,7 +435,9 @@ export function BatchGenerationDialog({
               : undefined,
         })),
       });
-      toast.success(copy.batchGenerated.replace("{count}", String(result.count)));
+      toast.success(
+        copy.batchGenerated.replace("{count}", String(result.count)),
+      );
       setOpen(false);
       await onCompleted();
     } catch (error) {
@@ -495,8 +504,13 @@ export function BatchGenerationDialog({
                 (preflight[panel.id]?.issues ?? [])
                   .filter((issue) => issue.blocking)
                   .map((issue) => (
-                    <p className="py-1 text-xs text-destructive" key={`${panel.id}-${issue.code}`}>
-                      {copy.panel} {String(panel.panelIndex + 1).padStart(2, "0")} · {issue.message}
+                    <p
+                      className="py-1 text-xs text-destructive"
+                      key={`${panel.id}-${issue.code}`}
+                    >
+                      {copy.panel}{" "}
+                      {String(panel.panelIndex + 1).padStart(2, "0")} ·{" "}
+                      {issue.message}
                     </p>
                   )),
               )}
@@ -514,7 +528,10 @@ export function BatchGenerationDialog({
           </Button>
           <Button
             disabled={
-              isSubmitting || preflightLoading || !modelId || !readyTargets.length
+              isSubmitting ||
+              preflightLoading ||
+              !modelId ||
+              !readyTargets.length
             }
             onClick={() => void submit()}
             type="button"
@@ -553,7 +570,9 @@ function PromptPreview({
       <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium">
         <Eye className="size-4" />
         {text.finalPrompt}
-        {loading ? <LoaderCircle className="ml-auto size-4 animate-spin" /> : null}
+        {loading ? (
+          <LoaderCircle className="ml-auto size-4 animate-spin" />
+        ) : null}
       </summary>
       {loading ? (
         <p className="mt-3 text-xs text-muted-foreground">{text.compiling}</p>
@@ -579,7 +598,11 @@ function PromptPreview({
             <div className="space-y-1 border-y py-2">
               {preview.issues.map((issue) => (
                 <p
-                  className={issue.blocking ? "flex gap-2 text-xs text-destructive" : "flex gap-2 text-xs text-muted-foreground"}
+                  className={
+                    issue.blocking
+                      ? "flex gap-2 text-xs text-destructive"
+                      : "flex gap-2 text-xs text-muted-foreground"
+                  }
                   key={issue.code}
                 >
                   <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
@@ -593,14 +616,17 @@ function PromptPreview({
               {text.ready}
             </p>
           )}
-          <pre className="max-h-64 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words bg-muted/35 p-3 text-xs leading-5">
+          <pre className="max-h-64 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap wrap-break-word bg-muted/35 p-3 text-xs leading-5">
             {preview.finalPrompt}
           </pre>
           {preview.safetyRewrites.length ? (
             <div className="text-xs">
               <p className="font-medium">{text.safety}</p>
               {preview.safetyRewrites.map((rewrite, index) => (
-                <p className="mt-1 text-muted-foreground" key={`${rewrite.category}-${index}`}>
+                <p
+                  className="mt-1 text-muted-foreground"
+                  key={`${rewrite.category}-${index}`}
+                >
                   {rewrite.original} → {rewrite.replacement}
                 </p>
               ))}

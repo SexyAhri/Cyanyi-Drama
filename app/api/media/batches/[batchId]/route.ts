@@ -55,9 +55,12 @@ export async function POST(request: Request, context: Context) {
     const retried = [];
     for (const task of tasks) {
       if (task.status !== "failed") continue;
-      const queued: MediaTask = { ...transitionMediaTask(task, { type: "retry" }), queueJobId: undefined };
+      const queued: MediaTask = {
+        ...transitionMediaTask(task, { type: "retry" }),
+        queueJobId: task.id,
+      };
       await store.update(queued);
-      const job = await enqueueMediaJob({
+      await enqueueMediaJob({
         taskId: task.id,
         userId: user.id,
         projectId: task.projectId,
@@ -66,9 +69,7 @@ export async function POST(request: Request, context: Context) {
         kind: task.kind,
         maxAttempts: 1,
       });
-      const queuedWithJob = { ...queued, queueJobId: job.id };
-      await store.update(queuedWithJob);
-      retried.push(queuedWithJob);
+      retried.push(queued);
     }
     return attachSessionCookie(
       Response.json({ batchId, tasks: retried, summary: summarize(await store.list({ batchId, limit: 100 })) }, { status: 202 }),

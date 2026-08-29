@@ -178,7 +178,7 @@ export function ShotPromptDesignDialog({
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
       <DialogTrigger render={trigger} />
-      <DialogContent className="h-[calc(100dvh-1rem)] max-h-[54rem] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-lg p-0 sm:h-[min(92dvh,54rem)] sm:max-w-4xl">
+      <DialogContent className="h-[calc(100dvh-1rem)] max-h-216 grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-lg p-0 sm:h-[min(92dvh,54rem)] sm:max-w-4xl">
         <DialogHeader className="border-b px-5 py-4">
           <DialogTitle>
             {kind === "image" ? copy.imageTitle : copy.videoTitle}
@@ -252,7 +252,7 @@ export function ShotPromptDesignDialog({
               <label className="grid gap-1.5 text-sm font-medium">
                 {kind === "image" ? copy.imagePrompt : copy.videoPrompt}
                 <Textarea
-                  className="h-[24rem] min-h-56 resize-none overflow-y-auto field-sizing-fixed"
+                  className="h-96 min-h-56 resize-none overflow-y-auto field-sizing-fixed"
                   disabled={busy}
                   maxLength={12_000}
                   onChange={(event) => setPrompt(event.target.value)}

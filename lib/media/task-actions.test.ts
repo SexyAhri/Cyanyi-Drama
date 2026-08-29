@@ -97,11 +97,11 @@ describe("media task actions", () => {
 
     expect(retried).toMatchObject({
       id: failed.id,
-      queueJobId: "job-2",
+      queueJobId: failed.id,
       retryCount: 1,
       status: "queued",
     });
-    expect(mocks.update).toHaveBeenCalledTimes(2);
+    expect(mocks.update).toHaveBeenCalledTimes(1);
     expect(mocks.enqueueMediaJob).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: "project-a", taskId: failed.id }),
     );

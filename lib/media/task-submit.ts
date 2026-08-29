@@ -16,7 +16,9 @@ export async function enqueuePersistedMediaTask(
   let chargeReserved = false;
   try {
     chargeReserved = !!(await reserveMediaTaskCharge(userId, task));
-    const job = await enqueueMediaJob({
+    const queued = { ...task, queueJobId: task.id };
+    await store.update(queued);
+    await enqueueMediaJob({
       taskId: task.id,
       userId,
       projectId: task.projectId,
@@ -25,8 +27,6 @@ export async function enqueuePersistedMediaTask(
       kind: task.kind,
       maxAttempts: task.maxRetries + 1,
     });
-    const queued = { ...task, queueJobId: job.id };
-    await store.update(queued);
     return queued;
   } catch (error) {
     if (chargeReserved)
