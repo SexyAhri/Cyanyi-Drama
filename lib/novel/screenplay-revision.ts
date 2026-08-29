@@ -15,6 +15,7 @@ import {
 import { listProductionProps } from "@/lib/production/domain-store";
 import { loadApprovedWorldBible } from "@/lib/production/world-bible";
 import { decryptSecret } from "@/lib/server/crypto";
+import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { prisma } from "@/lib/server/prisma";
 import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
@@ -58,7 +59,7 @@ export async function reviseScreenplayClip(input: {
       },
     }),
     prisma.channel.findFirst({
-      where: { id: input.channelId, userId: input.userId },
+      where: accessibleChannelWhere(input.userId, input.channelId),
     }),
     prisma.providerModel.findFirst({
       where: {

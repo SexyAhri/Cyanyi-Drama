@@ -1,15 +1,14 @@
 services:
-  mysql:
-    image: mysql:8.4
+  postgres:
+    image: postgres:17-alpine
     environment:
-      MYSQL_DATABASE: cyanyi
-      MYSQL_USER: cyanyi
-      MYSQL_PASSWORD: cyanyi
-      MYSQL_ROOT_PASSWORD: root
+      POSTGRES_DB: cyanyi
+      POSTGRES_USER: cyanyi
+      POSTGRES_PASSWORD: cyanyi
     ports:
-      - "3306:3306"
+      - "5432:5432"
     volumes:
-      - cyanyi_mysql:/var/lib/mysql
+      - cyanyi_postgres:/var/lib/postgresql/data
 
   redis:
     image: redis:7-alpine
@@ -31,6 +30,6 @@ services:
       - cyanyi_minio:/data
 
 volumes:
-  cyanyi_mysql:
+  cyanyi_postgres:
   cyanyi_redis:
   cyanyi_minio:

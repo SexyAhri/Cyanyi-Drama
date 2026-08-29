@@ -13,6 +13,7 @@ import {
   reviseScreenplayClip,
 } from "@/lib/novel/screenplay-revision";
 import { decryptSecret, encryptSecret } from "@/lib/server/crypto";
+import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { prisma } from "@/lib/server/prisma";
 import { PROMPT_IDS, renderPrompt } from "@/lib/prompts";
 import { studioWorkflowAgentSchema } from "@/lib/prompts/schemas";
@@ -492,7 +493,11 @@ async function decideStudioAgentAction(
       operation: null,
       targetId: null,
     };
-  const target = findOperationTarget(state, decision.operation, decision.targetId);
+  const target = findOperationTarget(
+    state,
+    decision.operation,
+    decision.targetId,
+  );
   return target
     ? decision
     : {
@@ -525,7 +530,7 @@ async function resolveStudioAgentProvider(
       channelId: selection.channelId,
       modelId: selection.model,
       selected: true,
-      channel: { userId: input.userId },
+      channel: accessibleChannelWhere(input.userId),
     },
     select: {
       capabilitiesJson: true,
@@ -621,25 +626,25 @@ function buildOperationCandidates(state: AgentState) {
               summary: clip.summary,
             }))
         : operation.includes("media_task")
-        ? state.tasks
-            .filter((task) => findOperationTarget(state, operation, task.id))
-            .map((task) => ({
-              id: task.id,
-              status: task.status,
-              targetId: task.targetId ?? null,
-              targetType: task.targetType ?? null,
-              traceId: task.traceId,
-            }))
-        : state.workflows
-            .filter((workflow) =>
-              findOperationTarget(state, operation, workflow.id),
-            )
-            .map((workflow) => ({
-              id: workflow.id,
-              status: workflow.status,
-              traceId: workflow.traceId,
-              workflowType: workflow.workflowType,
-            })),
+          ? state.tasks
+              .filter((task) => findOperationTarget(state, operation, task.id))
+              .map((task) => ({
+                id: task.id,
+                status: task.status,
+                targetId: task.targetId ?? null,
+                targetType: task.targetType ?? null,
+                traceId: task.traceId,
+              }))
+          : state.workflows
+              .filter((workflow) =>
+                findOperationTarget(state, operation, workflow.id),
+              )
+              .map((workflow) => ({
+                id: workflow.id,
+                status: workflow.status,
+                traceId: workflow.traceId,
+                workflowType: workflow.workflowType,
+              })),
     ]),
   );
 }
@@ -710,13 +715,18 @@ function findClipFailureContext(
 ) {
   const artifact = artifacts.find((item) => {
     if (item.refId !== clipId || !isRecord(item.payload)) return false;
-    return item.payload.success === false || typeof item.payload.error === "string";
+    return (
+      item.payload.success === false || typeof item.payload.error === "string"
+    );
   });
   const workflow = artifact
     ? workflows.find((item) => item.id === artifact.runId)
-    : workflows.find((item) => JSON.stringify(item.error ?? {}).includes(clipId));
+    : workflows.find((item) =>
+        JSON.stringify(item.error ?? {}).includes(clipId),
+      );
   if (!artifact && !workflow) return undefined;
-  const payload = artifact && isRecord(artifact.payload) ? artifact.payload : {};
+  const payload =
+    artifact && isRecord(artifact.payload) ? artifact.payload : {};
   return {
     artifactCreatedAt: artifact?.createdAt.toISOString() ?? null,
     clipId,

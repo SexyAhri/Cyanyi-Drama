@@ -204,6 +204,7 @@ export function ChatShell({
         searchResults={searchResults}
         runtimeConnection={runtimeConnection}
         settings={settings}
+        user={user}
       />
     </SidebarProvider>
   );

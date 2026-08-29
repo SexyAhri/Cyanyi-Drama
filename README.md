@@ -7,7 +7,7 @@ Cyanyi Drama 是一个面向 AI 漫剧和短剧创作的智能工作台。
 ## 当前能力
 
 - ChatGPT 风格的聊天工作台、侧边栏、会话列表和设置中心
-- `/chat` 与漫剧项目双向导航，根路由默认进入聊天主界面
+- 公开产品首页，以及与项目数据串联的登录、注册和退出流程
 - 中文 / 英文界面基础支持
 - 文本聊天、图片生成、视频生成模式
 - 图片和视频生成工具卡，展示等待、执行、成功和失败状态
@@ -17,8 +17,9 @@ Cyanyi Drama 是一个面向 AI 漫剧和短剧创作的智能工作台。
 - 选中模型后自动根据所属渠道路由请求
 - 图片、视频媒体任务状态持久化和查询
 - 统一媒体任务系统：幂等创建、队列重试、进度、取消、事件记录和失败恢复
-- 匿名用户 Session，以及注册、登录、退出接口
-- API Key 加密保存，MySQL 数据库持久化
+- 匿名用户 Session、邮箱注册与可选 SMTP 验证码、登录和退出接口
+- API Key 与系统服务密钥加密保存，PostgreSQL 数据库持久化
+- 管理员统一维护系统渠道、登录服务、模型价格和易支付充值
 - 漫剧项目、项目配置和剧集数据持久化
 - 结构化角色、角色形象、场景、场景图和分镜草稿持久化
 - 工作流运行、步骤门禁、暂停、恢复、重试、取消和事件流水
@@ -69,7 +70,7 @@ Cyanyi Drama 的目标不是单纯提供一个聊天窗口，而是把 AI 能力
 | UI | React 19、shadcn/ui、Base UI、Tailwind CSS 4 |
 | AI Runtime | Vercel AI SDK 7、LangGraph |
 | 模型协议 | OpenAI Compatible、Anthropic、Google Gemini、Volcengine Ark |
-| 数据库 | Prisma ORM / MySQL 8.4 |
+| 数据库 | Prisma ORM / PostgreSQL 17 |
 | 队列与缓存 | Redis、BullMQ |
 | 对象存储 | S3 兼容存储（本地开发使用 MinIO） |
 | 认证 | HttpOnly Session Cookie |
@@ -82,7 +83,7 @@ Cyanyi Drama 的目标不是单纯提供一个聊天窗口，而是把 AI 能力
 ```bash
 pnpm install
 docker compose up -d
-pnpm db:push
+pnpm exec prisma migrate deploy
 pnpm dev
 ```
 
@@ -95,7 +96,7 @@ pnpm worker
 打开：
 
 ```text
-http://localhost:3000/chat
+http://localhost:3000
 ```
 
 运行检查：
@@ -124,29 +125,62 @@ APP_SECRET=change-me
 # 可选：AI SDK Gateway 凭据。
 AI_GATEWAY_API_KEY=
 
+# 可选：启用邮箱验证码注册。启用前必须配置 SMTP。
+REGISTRATION_ENABLED=true
+EMAIL_AUTH_ENABLED=true
+EMAIL_VERIFICATION_ENABLED=false
+EMAIL_SMTP_HOST=smtp.example.com
+EMAIL_SMTP_PORT=465
+EMAIL_SMTP_SECURE=true
+EMAIL_SMTP_USER=
+EMAIL_SMTP_PASSWORD=
+EMAIL_FROM=
+
+# 可选：GitHub / LinuxDO 登录。也可由管理员在设置页配置。
+GITHUB_OAUTH_ENABLED=false
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+LINUXDO_OAUTH_ENABLED=false
+LINUXDO_CLIENT_ID=
+LINUXDO_CLIENT_SECRET=
+LINUXDO_MINIMUM_TRUST_LEVEL=0
+
+# 可选：标准易支付。也可由管理员在设置页配置。
+EPAY_ENABLED=false
+EPAY_GATEWAY_URL=
+EPAY_MERCHANT_ID=
+EPAY_MERCHANT_KEY=
+EPAY_MINIMUM_AMOUNT=1
+EPAY_CREDIT_RATE=1
+
 # 可选：OpenAI Compatible 参考图编辑端点及 multipart 文件字段。
 OPENAI_COMPATIBLE_IMAGE_EDIT_PATH=images/edits
 OPENAI_COMPATIBLE_IMAGE_EDIT_FILE_FIELD=image[]
 ```
 
-也可以直接在设置中心填写服务商 Base URL 和 API Key。API Key 由服务端加密保存，不依赖浏览器 localStorage 作为唯一数据源。
+管理员也可以直接在设置中心填写服务商 Base URL、API Key、登录服务和支付服务配置。所有密钥由服务端加密保存且不会在读取接口中回显；普通用户只能调用已启用的系统渠道，不能查看或修改渠道配置。
 
 ## 用户身份和数据
 
-用户、Session、渠道、模型、项目和媒体任务统一保存到 MySQL，连接地址由 `DATABASE_URL` 配置。Redis 用于 BullMQ 队列、任务事件和分布式锁；媒体文件使用 S3 兼容对象存储，默认连接本地 MinIO。项目不使用本地数据库文件。
+用户、Session、渠道、模型、项目和媒体任务统一保存到 PostgreSQL，连接地址由 `DATABASE_URL` 配置。Redis 用于 BullMQ 队列、任务事件和分布式锁；媒体文件使用 S3 兼容对象存储，默认连接本地 MinIO。项目不使用本地数据库文件。
 
-系统首次访问时会自动创建匿名用户和 HttpOnly Session。账号接口如下：
+首页、登录页和注册页允许未登录访问；项目与创作工作区要求正式账号。业务接口在需要时会创建匿名用户和 HttpOnly Session，注册成功后把当前浏览器的匿名项目数据迁入正式账号。账号接口如下：
 
 - `GET /api/auth/session`：获取当前用户，没有 Session 时创建匿名用户
-- `POST /api/auth/register`：注册账号
+- `POST /api/auth/email-code`：发送邮箱注册验证码，默认关闭；启用后 60 秒内不可重发，每小时最多 5 次
+- `POST /api/auth/register`：注册账号；启用邮箱验证时必须提交 6 位 `verificationCode`
 - `POST /api/auth/login`：登录
 - `POST /api/auth/logout`：退出登录
+- `GET /api/auth/oauth/github/start`：开始 GitHub OAuth 登录
+- `GET /api/auth/oauth/linuxdo/start`：开始 LinuxDO OAuth 登录
 
-匿名用户注册后，已有渠道和媒体任务会尝试迁移到正式账号。
+验证码 10 分钟内有效、最多尝试 5 次且只能成功消费一次。匿名用户注册后，已有渠道、项目、资产、任务、费用记录和运行设置会迁移到正式账号。
 
-## 渠道和模型
+## 管理员、渠道和计费
 
-设置中心支持创建、复制、编辑和删除渠道。每个渠道包含：
+数据库中的 `User.role` 区分 `USER` 与 `ADMIN`。管理员设置页包含 SMTP 邮箱注册、GitHub OAuth、LinuxDO OAuth、系统渠道、模型价格和标准易支付；普通用户只显示项目偏好、运行设置和账户充值。OAuth state 只保存 SHA-256、10 分钟过期并原子消费；GitHub 只采用已验证邮箱，LinuxDO 可限制最低信任等级。
+
+系统渠道由管理员集中配置。每个渠道包含：
 
 - 渠道名称和协议类型
 - Base URL
@@ -154,12 +188,20 @@ OPENAI_COMPATIBLE_IMAGE_EDIT_FILE_FIELD=image[]
 - 从接口获取的模型列表
 - 选中的模型及其能力类型
 
-相关接口：
+管理接口：
 
 - `GET /api/channels`：读取当前用户的渠道和模型
 - `PUT /api/channels`：创建或更新渠道、Key 和模型选择
 - `DELETE /api/channels?id=...`：删除渠道
 - `POST /api/models`：从服务商接口获取模型列表
+- `GET/PUT /api/admin/settings`：读取或保存登录、SMTP、OAuth 和易支付设置
+- `GET/PUT/DELETE /api/billing/prices`：管理模型价格和计费单位
+
+账户接口：
+
+- `GET /api/user/balance`：读取当前账户余额、冻结额度和累计消费
+- `GET/POST /api/billing/topup`：读取充值配置和订单，或创建服务端签名的充值订单
+- `GET/POST /api/billing/topup/notify`：易支付异步通知、验签和幂等入账
 
 模型列表必须由实际渠道接口返回。调用文本、图片或视频模型时，系统会依据选中的模型自动选择对应渠道和 API Key。
 
@@ -257,7 +299,7 @@ docs/                      集成、工具扩展和项目说明
 - 扩充不同服务商端点的兼容性矩阵与真实模型集成测试
 - 根据视频原生声音能力完善对白、音效、配音和字幕的混合交付策略
 - 增加批量任务背压、并发预算、成本上限和更完整的交付 QC
-- 完善生产环境的 MySQL、Redis 和 S3 兼容存储部署方案
+- 完善生产环境的 PostgreSQL、Redis 和 S3 兼容存储部署方案
 
 ## 开发原则
 

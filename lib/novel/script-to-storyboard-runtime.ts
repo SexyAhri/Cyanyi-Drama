@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
+import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import {
   isRetryableStructuredProviderError,
   requestOpenAiStructured,
@@ -1168,7 +1169,7 @@ async function loadStoryboardContext(
       select: { id: true },
     }),
     prisma.channel.findFirst({
-      where: { id: input.channelId, userId },
+      where: accessibleChannelWhere(userId, input.channelId),
     }),
     prisma.providerModel.findFirst({
       where: {

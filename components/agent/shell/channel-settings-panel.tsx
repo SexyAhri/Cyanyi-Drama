@@ -61,6 +61,7 @@ type ChannelConfig = {
   apiKey: string;
   apiKeys: string[];
   apiKeyMode: "single" | "batch";
+  configuredApiKeyCount: number;
   modelIds: string[];
   modelOptions: ModelOption[];
   modelCapabilities: Record<string, ChannelCapability[]>;
@@ -74,6 +75,7 @@ type ApiChannel = {
   protocol: ChannelProtocol;
   baseUrl: string;
   apiKeys: string[];
+  apiKeyCount?: number;
   models?: Array<ModelOption & { selected?: boolean }>;
 };
 
@@ -230,6 +232,7 @@ export function ChannelSettingsPanel({
       apiKey: "",
       apiKeys: [""],
       apiKeyMode: "single",
+      configuredApiKeyCount: 0,
       modelIds: [],
       modelOptions: [],
       modelCapabilities: {},
@@ -257,6 +260,7 @@ export function ChannelSettingsPanel({
       name,
       apiKeys: [...channel.apiKeys],
       apiKeyMode: channel.apiKeyMode,
+      configuredApiKeyCount: 0,
       modelIds: [],
       modelOptions: [],
       modelCapabilities: {},
@@ -280,6 +284,9 @@ export function ChannelSettingsPanel({
       baseUrl: draft.baseUrl.trim(),
       apiKey: draft.apiKey.trim(),
       apiKeys: normalizeApiKeys(draft.apiKeys, draft.apiKey),
+      configuredApiKeyCount:
+        normalizeApiKeys(draft.apiKeys, draft.apiKey).length ||
+        draft.configuredApiKeyCount,
     };
 
     setChannels((current) => {
@@ -303,7 +310,9 @@ export function ChannelSettingsPanel({
           name: normalizedDraft.name,
           protocol: normalizedDraft.protocol,
           baseUrl: normalizedDraft.baseUrl,
-          apiKeys: normalizedDraft.apiKeys,
+          ...(normalizedDraft.apiKeys.length
+            ? { apiKeys: normalizedDraft.apiKeys }
+            : {}),
           models: normalizedDraft.modelOptions,
           modelIds: normalizedDraft.modelIds,
         }),
@@ -590,7 +599,14 @@ export function ChannelSettingsPanel({
 
                 <div className="grid gap-2">
                   <div className="flex items-center justify-between gap-3">
-                    <Label htmlFor="channel-api-key">API Key</Label>
+                    <div>
+                      <Label htmlFor="channel-api-key">API Key</Label>
+                      {draft.configuredApiKeyCount > 0 ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          已配置 {draft.configuredApiKeyCount} 个密钥，留空表示保留
+                        </p>
+                      ) : null}
+                    </div>
                     <div className="flex items-center gap-2">
                       <Select
                         onValueChange={(value) => {
@@ -1194,6 +1210,7 @@ function createInitialChannels(
     apiKey: runtimeConnection.apiKey,
     apiKeys: runtimeConnection.apiKey ? [runtimeConnection.apiKey] : [],
     apiKeyMode: "single",
+    configuredApiKeyCount: runtimeConnection.apiKey ? 1 : 0,
     modelIds: defaultModels.map((model) => model.id),
     modelOptions: defaultModels,
     modelCapabilities: Object.fromEntries(
@@ -1224,6 +1241,7 @@ function toChannelConfig(channel: ApiChannel): ChannelConfig {
     apiKey: channel.apiKeys[0] ?? "",
     apiKeys: normalizeApiKeys(channel.apiKeys, channel.apiKeys[0] ?? ""),
     apiKeyMode: channel.apiKeys.length > 1 ? "batch" : "single",
+    configuredApiKeyCount: channel.apiKeyCount ?? 0,
     modelIds: modelOptions
       .filter(
         (model) => (model as ModelOption & { selected?: boolean }).selected,

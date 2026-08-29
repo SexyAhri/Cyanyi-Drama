@@ -67,7 +67,7 @@ export function useRuntimeConnection(initialModels: ModelOption[]) {
       }
 
       setConnection({
-        apiKey: stored.apiKey ?? "",
+        apiKey: "",
         baseUrl: stored.baseUrl ?? "",
         protocol: stored.protocol ?? "openai-compatible",
         status: "idle",
@@ -78,7 +78,14 @@ export function useRuntimeConnection(initialModels: ModelOption[]) {
       }
 
       if (stored.channelRoutes) {
-        setChannelRoutes(stored.channelRoutes);
+        setChannelRoutes(
+          Object.fromEntries(
+            Object.entries(stored.channelRoutes).map(([id, route]) => [
+              id,
+              { ...route, apiKey: "", apiKeys: [] },
+            ]),
+          ),
+        );
       }
 
       if (
@@ -167,12 +174,17 @@ export function useRuntimeConnection(initialModels: ModelOption[]) {
     window.localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
-        apiKey: connection.apiKey,
+        apiKey: "",
         baseUrl: connection.baseUrl,
         protocol: connection.protocol,
         modelId: selectedModel,
         models,
-        channelRoutes,
+        channelRoutes: Object.fromEntries(
+          Object.entries(channelRoutes).map(([id, route]) => [
+            id,
+            { ...route, apiKey: "", apiKeys: [] },
+          ]),
+        ),
       } satisfies StoredRuntimeConnection),
     );
   }, [
@@ -313,8 +325,8 @@ export function useRuntimeConnection(initialModels: ModelOption[]) {
         channelName: update.channelName,
         protocol: update.protocol,
         baseUrl: update.baseUrl,
-        apiKey: update.apiKey,
-        apiKeys: update.apiKeys,
+        apiKey: "",
+        apiKeys: [],
       },
     }));
   }, []);

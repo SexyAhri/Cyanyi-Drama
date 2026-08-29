@@ -56,6 +56,9 @@ export type ShellCopy = {
   searchPlaceholder: string;
   selectModel: string;
   settings: string;
+  settingsAccount: string;
+  settingsAccountRedirecting: string;
+  settingsAdmin: string;
   settingsChannels: string;
   settingsChannelsDescription: string;
   settingsChannelEndpoint: string;
@@ -237,6 +240,9 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     searchPlaceholder: "Search by title",
     selectModel: "Select model",
     settings: "Settings",
+    settingsAccount: "Account",
+    settingsAccountRedirecting: "Opening payment...",
+    settingsAdmin: "Administration",
     settingsChannels: "Channels",
     settingsChannelsDescription:
       "Configure the runtime connection used by chat and media generation.",
@@ -422,6 +428,9 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     searchPlaceholder: "按标题搜索",
     selectModel: "选择模型",
     settings: "设置",
+    settingsAccount: "账户",
+    settingsAccountRedirecting: "正在跳转支付...",
+    settingsAdmin: "管理员设置",
     settingsChannels: "渠道",
     settingsChannelsDescription: "配置聊天和媒体生成使用的运行时连接。",
     settingsChannelEndpoint: "接口地址",

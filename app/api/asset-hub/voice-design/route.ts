@@ -13,6 +13,7 @@ import { createDatabaseMediaTaskStore } from "@/lib/media/task-store";
 import { createBailianVoiceDesign } from "@/lib/providers/voice-design";
 import { decryptSecret } from "@/lib/server/crypto";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
+import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { prisma } from "@/lib/server/prisma";
 
 export async function POST(request: Request) {
@@ -25,8 +26,7 @@ export async function POST(request: Request) {
   const language = body.language === "en" ? "en" : "zh";
   const channel = await prisma.channel.findFirst({
     where: {
-      id: channelId,
-      userId: user.id,
+      ...accessibleChannelWhere(user.id, channelId),
       providerKey: "bailian",
       protocol: "openai-compatible",
     },

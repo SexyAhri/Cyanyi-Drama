@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/server/auth", () => ({
+  AdminRequiredError: class AdminRequiredError extends Error {},
+  requireAdmin: vi.fn().mockResolvedValue({ id: "admin-1", role: "ADMIN" }),
+}));
+
 import { POST } from "./route";
 
 describe("models route", () => {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { prisma } from "@/lib/server/prisma";
+import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { createMediaTask } from "./task-contract";
 import { createDatabaseMediaTaskStore } from "./task-store";
 import { enqueuePersistedMediaTask } from "./task-submit";
@@ -44,7 +45,7 @@ export async function createProjectImageTask(
   input: CreateProjectImageTaskInput,
 ) {
   const channel = await prisma.channel.findFirst({
-    where: { id: input.channelId, userId: input.userId },
+    where: accessibleChannelWhere(input.userId, input.channelId),
   });
   if (
     !channel ||
@@ -152,7 +153,7 @@ export async function createStoryboardPanelImageTask(input: {
   mediaDefaults?: MediaGenerationDefaults;
 }) {
   const channel = await prisma.channel.findFirst({
-    where: { id: input.channelId, userId: input.userId },
+    where: accessibleChannelWhere(input.userId, input.channelId),
     select: { id: true, protocol: true, providerKey: true },
   });
   if (
@@ -270,7 +271,7 @@ export async function createStoryboardPanelVideoTask(input: {
   lastFramePanelId?: string;
 }) {
   const channel = await prisma.channel.findFirst({
-    where: { id: input.channelId, userId: input.userId },
+    where: accessibleChannelWhere(input.userId, input.channelId),
     select: { id: true, protocol: true, providerKey: true },
   });
   if (

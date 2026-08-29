@@ -46,6 +46,8 @@ export type RuntimeConnectionSettings = {
 export type ShellUser = {
   id: string;
   name: string;
+  email?: string | null;
+  role: "USER" | "ADMIN";
 };
 
 export type ShellNavItem = {

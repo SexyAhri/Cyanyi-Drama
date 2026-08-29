@@ -50,6 +50,7 @@ import {
   type MediaTaskStore,
 } from "@/lib/media/task-store";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
+import { resolveChannelRuntime } from "@/lib/server/channel-runtime";
 import { getProject } from "@/lib/projects/queries";
 import { enqueueMediaJob } from "@/lib/queue/media-queue";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
@@ -301,18 +302,44 @@ function hasGatewayCredentials() {
   );
 }
 
-function resolveLanguageModel(body: ChatRequestBody) {
-  const model = body.model || body.metadata?.model || DEFAULT_MODEL;
+async function resolveLanguageModel(
+  body: ChatRequestBody,
+  user: { id: string; role: "USER" | "ADMIN" },
+) {
+  const requestedModel = body.model || body.metadata?.model || DEFAULT_MODEL;
   const route =
     (body.metadata?.modelKey
       ? body.metadata?.modelRoutes?.[body.metadata.modelKey]
-      : undefined) || body.metadata?.modelRoutes?.[model];
+      : undefined) || body.metadata?.modelRoutes?.[requestedModel];
+  const model = route?.model || requestedModel;
+  const channelId = route?.channelId || body.metadata?.channelId;
+  if (channelId) {
+    const channel = await resolveChannelRuntime(user.id, channelId, model);
+    const protocol = normalizeChannelProtocol(channel.protocol);
+    return {
+      languageModel: createLanguageModel(
+        protocol,
+        channel.apiKey,
+        channel.baseUrl,
+        model,
+      ),
+      model,
+      runtime: protocol,
+      providerRuntime: {
+        apiKey: channel.apiKey,
+        baseUrl: channel.baseUrl,
+        protocol,
+        channelId,
+      },
+      hasCredentials: true,
+    };
+  }
   const protocol =
     route?.protocol || body.metadata?.protocol || "openai-compatible";
   const baseUrl = (route?.baseUrl || body.metadata?.baseUrl)?.trim();
   const apiKey = (route?.apiKey || body.metadata?.apiKey)?.trim();
 
-  if (baseUrl && apiKey) {
+  if (user.role === "ADMIN" && baseUrl && apiKey) {
     const languageModel = createLanguageModel(protocol, apiKey, baseUrl, model);
 
     return {
@@ -323,7 +350,7 @@ function resolveLanguageModel(body: ChatRequestBody) {
         apiKey,
         baseUrl,
         protocol,
-        channelId: body.metadata?.channelId,
+        channelId,
       },
       hasCredentials: true,
     };
@@ -333,7 +360,7 @@ function resolveLanguageModel(body: ChatRequestBody) {
     languageModel: gateway(model),
     model,
     runtime: "ai-sdk-gateway",
-    providerRuntime: { protocol, channelId: body.metadata?.channelId },
+    providerRuntime: { protocol, channelId },
     hasCredentials: hasGatewayCredentials(),
   };
 }
@@ -3947,7 +3974,17 @@ export async function POST(request: Request) {
     runtimeSettings,
   );
   const modelRoutes = body.metadata?.modelRoutes;
-  const resolved = resolveLanguageModel(body);
+  let resolved;
+  try {
+    resolved = await resolveLanguageModel(body, user);
+  } catch (error) {
+    return attachSessionCookie(
+      createAgentEventStreamResponse(
+        createRuntimeErrorEvents(toErrorMessage(error)),
+      ),
+      sessionId,
+    );
+  }
   const messages = normalizeMessages(body.messages, content, composer);
   const requestedMediaToolIntent =
     composer?.mode === "chat"
@@ -4066,6 +4103,17 @@ export async function POST(request: Request) {
       sessionId,
     );
   }
+}
+
+function normalizeChannelProtocol(value: string): ChannelProtocol {
+  if (
+    value === "anthropic" ||
+    value === "google-gemini" ||
+    value === "volcengine-ark"
+  ) {
+    return value;
+  }
+  return "openai-compatible";
 }
 
 function applyRuntimeDefaultsToComposer(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { RotateCcw, Save, Settings } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,18 @@ import type {
   ChannelModelUpdate,
   ModelOption,
   RuntimeConnectionSettings,
+  ShellUser,
 } from "./chat-shell-types";
+import {
+  ACCOUNT_SETTINGS_FORM_ID,
+  AccountSettingsPanel,
+  type AccountSettingsPanelStatus,
+} from "./account-settings-panel";
+import {
+  ADMIN_SETTINGS_FORM_ID,
+  AdminSettingsPanel,
+  type AdminSettingsPanelStatus,
+} from "./admin-settings-panel";
 import { ChannelSettingsPanel } from "./channel-settings-panel";
 import { PreferencesSettingsPanel } from "./preferences-settings-panel";
 import {
@@ -29,7 +40,7 @@ import {
 } from "./runtime-settings-panel";
 import type { ShellSettings } from "./shell-settings";
 
-type SettingsTab = "channels" | "preferences" | "runtime";
+type SettingsTab = "preferences" | "runtime" | "account" | "channels" | "admin";
 
 type AgentSettingsDialogProps = {
   copy: ShellCopy;
@@ -43,6 +54,7 @@ type AgentSettingsDialogProps = {
   open: boolean;
   runtimeConnection: RuntimeConnectionSettings;
   settings: ShellSettings;
+  user?: ShellUser | null;
 };
 
 export function AgentSettingsDialog({
@@ -57,11 +69,26 @@ export function AgentSettingsDialog({
   open,
   runtimeConnection,
   settings,
+  user,
 }: AgentSettingsDialogProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>("channels");
+  const [activeTab, setActiveTab] = useState<SettingsTab>("preferences");
   const [runtimeStatus, setRuntimeStatus] =
     useState<RuntimeSettingsPanelStatus>({ loading: true, saving: false });
+  const [accountStatus, setAccountStatus] =
+    useState<AccountSettingsPanelStatus>({ loading: true, submitting: false });
+  const [adminStatus, setAdminStatus] = useState<AdminSettingsPanelStatus>({
+    loading: true,
+    saving: false,
+  });
+  const isAdmin = user?.role === "ADMIN";
   const runtimeBusy = runtimeStatus.loading || runtimeStatus.saving;
+  const adminBusy = adminStatus.loading || adminStatus.saving;
+
+  useEffect(() => {
+    if (!isAdmin && (activeTab === "channels" || activeTab === "admin")) {
+      setActiveTab("preferences");
+    }
+  }, [activeTab, isAdmin]);
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -85,30 +112,28 @@ export function AgentSettingsDialog({
             className="min-w-0 max-w-full shrink-0 justify-start gap-5 overflow-x-auto border-b px-0 pb-0"
             variant="line"
           >
-            <TabsTrigger className="flex-none px-0 pb-3" value="channels">
-              {copy.settingsChannels}
-            </TabsTrigger>
             <TabsTrigger className="flex-none px-0 pb-3" value="preferences">
               {copy.settingsPreferences}
             </TabsTrigger>
             <TabsTrigger className="flex-none px-0 pb-3" value="runtime">
               {copy.settingsRuntime}
             </TabsTrigger>
+            <TabsTrigger className="flex-none px-0 pb-3" value="account">
+              {copy.settingsAccount}
+            </TabsTrigger>
+            {isAdmin ? (
+              <>
+                <TabsTrigger className="flex-none px-0 pb-3" value="channels">
+                  {copy.settingsChannels}
+                </TabsTrigger>
+                <TabsTrigger className="flex-none px-0 pb-3" value="admin">
+                  {copy.settingsAdmin}
+                </TabsTrigger>
+              </>
+            ) : null}
           </TabsList>
 
           <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pt-4">
-            <TabsContent className="mt-0 grid gap-3" value="channels">
-              <ChannelSettingsPanel
-                copy={copy}
-                models={models}
-                onModelsChange={onModelsChange}
-                onRefreshModels={onTestRuntimeConnection}
-                onRuntimeConnectionChange={onRuntimeConnectionChange}
-                onRuntimeConnectionClear={onRuntimeConnectionClear}
-                runtimeConnection={runtimeConnection}
-              />
-            </TabsContent>
-
             <TabsContent className="mt-0 grid gap-3" value="preferences">
               <PreferencesSettingsPanel
                 copy={copy}
@@ -126,6 +151,36 @@ export function AgentSettingsDialog({
               />
             </TabsContent>
 
+            <TabsContent className="mt-0" value="account">
+              <AccountSettingsPanel
+                formId={ACCOUNT_SETTINGS_FORM_ID}
+                onStatusChange={setAccountStatus}
+                user={user}
+              />
+            </TabsContent>
+
+            {isAdmin ? (
+              <>
+                <TabsContent className="mt-0 grid gap-3" value="channels">
+                  <ChannelSettingsPanel
+                    copy={copy}
+                    models={models}
+                    onModelsChange={onModelsChange}
+                    onRefreshModels={onTestRuntimeConnection}
+                    onRuntimeConnectionChange={onRuntimeConnectionChange}
+                    onRuntimeConnectionClear={onRuntimeConnectionClear}
+                    runtimeConnection={runtimeConnection}
+                  />
+                </TabsContent>
+
+                <TabsContent className="mt-0" value="admin">
+                  <AdminSettingsPanel
+                    formId={ADMIN_SETTINGS_FORM_ID}
+                    onStatusChange={setAdminStatus}
+                  />
+                </TabsContent>
+              </>
+            ) : null}
           </div>
         </Tabs>
 
@@ -152,6 +207,21 @@ export function AgentSettingsDialog({
                   : copy.settingsSave}
               </Button>
             </>
+          ) : activeTab === "admin" && isAdmin ? (
+            <Button
+              disabled={adminBusy}
+              form={ADMIN_SETTINGS_FORM_ID}
+              type="submit"
+            >
+              <Save />
+              {adminStatus.saving
+                ? copy.settingsRuntimeSaving
+                : copy.settingsSave}
+            </Button>
+          ) : activeTab === "account" && accountStatus.submitting ? (
+            <Button disabled type="button">
+              {copy.settingsAccountRedirecting}
+            </Button>
           ) : (
             <Button onClick={() => onOpenChange(false)} type="button">
               {copy.settingsFinish}

@@ -1,4 +1,5 @@
 import { decryptSecret } from "@/lib/server/crypto";
+import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/server/prisma";
 import type { MediaAsset, MediaTaskKind } from "@/lib/media/task-contract";
@@ -37,7 +38,7 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
   if (task.cancelRequestedAt || task.status === "canceled") return false;
 
   const channel = await prisma.channel.findFirst({
-    where: { id: task.channelId, userId },
+    where: accessibleChannelWhere(userId, task.channelId),
   });
   if (!channel) throw new Error("MEDIA_TASK_CHANNEL_NOT_FOUND");
   const payload = task.payload as { request?: TaskRequest };

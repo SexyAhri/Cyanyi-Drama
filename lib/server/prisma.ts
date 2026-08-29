@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 
 const DEFAULT_DEVELOPMENT_DATABASE_URL =
-  "mysql://cyanyi:cyanyi@localhost:3306/cyanyi";
+  "postgresql://cyanyi:cyanyi@localhost:5432/cyanyi";
 
 // Local Docker Compose provides these credentials. Production deployments must
 // provide their own DATABASE_URL explicitly.
@@ -26,12 +26,15 @@ export const prisma =
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 export function isPrismaConfigured() {
-  return Boolean(process.env.DATABASE_URL?.startsWith("mysql://"));
+  return Boolean(
+    process.env.DATABASE_URL?.startsWith("postgresql://") ||
+      process.env.DATABASE_URL?.startsWith("postgres://"),
+  );
 }
 
 export async function assertPrismaConfigured() {
   if (!isPrismaConfigured())
     throw new Error(
-      "DATABASE_URL must be configured with a MySQL connection string.",
+      "DATABASE_URL must be configured with a PostgreSQL connection string.",
     );
 }

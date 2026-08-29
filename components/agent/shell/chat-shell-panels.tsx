@@ -26,6 +26,7 @@ import type {
   ChannelModelUpdate,
   RuntimeConnectionSettings,
   ShellThread,
+  ShellUser,
 } from "./chat-shell-types";
 import type { ShellSettings } from "./shell-settings";
 
@@ -49,6 +50,7 @@ type ChatShellPanelsProps = {
   searchResults: ShellThread[];
   runtimeConnection: RuntimeConnectionSettings;
   settings: ShellSettings;
+  user?: ShellUser | null;
 };
 
 export function ChatShellPanels({
@@ -69,6 +71,7 @@ export function ChatShellPanels({
   searchResults,
   runtimeConnection,
   settings,
+  user,
 }: ChatShellPanelsProps) {
   return (
     <>
@@ -139,6 +142,7 @@ export function ChatShellPanels({
         open={openPanel === "settings"}
         runtimeConnection={runtimeConnection}
         settings={settings}
+        user={user}
       />
     </>
   );

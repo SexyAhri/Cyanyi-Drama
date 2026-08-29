@@ -1,6 +1,15 @@
 import { randomUUID } from "node:crypto";
 
-import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
+import {
+  AdminRequiredError,
+  attachSessionCookie,
+  ensureAnonymousUser,
+  requireAdmin,
+} from "@/lib/server/auth";
+import {
+  accessibleChannelWhere,
+  manageableChannelWhere,
+} from "@/lib/server/channel-access";
 import { decryptSecret, encryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
 import {
@@ -31,8 +40,11 @@ type ChannelInput = {
 
 export async function GET() {
   const { user, sessionId } = await ensureAnonymousUser();
+  const isAdmin = user.role === "ADMIN";
   const channels = await prisma.channel.findMany({
-    where: { userId: user.id },
+    where: isAdmin
+      ? manageableChannelWhere(user.id)
+      : accessibleChannelWhere(user.id),
     orderBy: { createdAt: "asc" },
     include: { models: { orderBy: { createdAt: "asc" } } },
   });
@@ -43,10 +55,9 @@ export async function GET() {
         name: channel.name,
         providerKey: channel.providerKey,
         protocol: channel.protocol,
-        baseUrl: channel.baseUrl,
-        apiKeys: JSON.parse(
-          decryptSecret(channel.encryptedApiKeys),
-        ) as string[],
+        baseUrl: isAdmin ? channel.baseUrl : "",
+        apiKeys: [],
+        apiKeyCount: encryptedKeyCount(channel.encryptedApiKeys),
         models: channel.models.map((model) => ({
           ...normalizeStoredModel(model, channel.protocol),
           selected: model.selected,
@@ -61,7 +72,13 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  const { user, sessionId } = await ensureAnonymousUser();
+  let user;
+  try {
+    user = await requireAdmin();
+  } catch (error) {
+    return channelAdminError(error);
+  }
+  const sessionId = null;
   const body = (await request.json()) as ChannelInput;
   const name = body.name?.trim();
   const baseUrl = body.baseUrl?.trim();
@@ -71,7 +88,7 @@ export async function PUT(request: Request) {
   const apiKeys = [
     ...new Set((body.apiKeys ?? []).map((key) => key.trim()).filter(Boolean)),
   ];
-  if (!name || !baseUrl || !protocol || apiKeys.length === 0)
+  if (!name || !baseUrl || !protocol)
     return Response.json(
       { message: "渠道名称、协议、Base URL 和 API Key 不能为空" },
       { status: 400 },
@@ -102,22 +119,32 @@ export async function PUT(request: Request) {
       sessionId,
     );
   }
-  const channel = await prisma.$transaction(async (tx) => {
-    const existing = await tx.channel.findFirst({
-      where: { id, userId: user.id },
-    });
-    const saved = existing
-      ? await tx.channel.update({
+  let channel;
+  try {
+    channel = await prisma.$transaction(async (tx) => {
+      const existing = await tx.channel.findFirst({
+        where: manageableChannelWhere(user.id, id),
+      });
+      if (!existing && apiKeys.length === 0) {
+        throw new Error("CHANNEL_API_KEYS_REQUIRED");
+      }
+      const encryptedApiKeys = apiKeys.length
+        ? encryptSecret(JSON.stringify(apiKeys))
+        : undefined;
+      const saved = existing
+        ? await tx.channel.update({
           where: { id },
           data: {
             name,
             providerKey,
             protocol,
             baseUrl,
-            encryptedApiKeys: encryptSecret(JSON.stringify(apiKeys)),
+            ...(encryptedApiKeys ? { encryptedApiKeys } : {}),
+            scope: "SYSTEM",
+            enabled: true,
           },
-        })
-      : await tx.channel.create({
+          })
+        : await tx.channel.create({
           data: {
             id,
             userId: user.id,
@@ -125,26 +152,28 @@ export async function PUT(request: Request) {
             providerKey,
             protocol,
             baseUrl,
-            encryptedApiKeys: encryptSecret(JSON.stringify(apiKeys)),
+            encryptedApiKeys: encryptedApiKeys!,
+            scope: "SYSTEM",
+            enabled: true,
           },
-        });
-    if (body.models) {
-      await tx.providerModel.deleteMany({
+          });
+      if (body.models) {
+        await tx.providerModel.deleteMany({
         where: {
           channelId: id,
           id: { notIn: models.map((model) => model.id) },
         },
-      });
-      for (const model of models) {
-        const modelId = model.modelId?.trim() || model.id.trim();
-        if (!modelId || !model.name.trim()) continue;
-        const metadata = normalizeModelMetadata(
-          modelId,
-          protocol,
-          model.type,
-          model.capabilities,
-        );
-        await tx.providerModel.upsert({
+        });
+        for (const model of models) {
+          const modelId = model.modelId?.trim() || model.id.trim();
+          if (!modelId || !model.name.trim()) continue;
+          const metadata = normalizeModelMetadata(
+            modelId,
+            protocol,
+            model.type,
+            model.capabilities,
+          );
+          await tx.providerModel.upsert({
           where: { channelId_modelId: { channelId: id, modelId } },
           create: {
             id: model.id || `${id}::${modelId}`,
@@ -162,11 +191,20 @@ export async function PUT(request: Request) {
             capabilitiesJson: JSON.stringify(metadata.capabilities),
             selected: selectedIds.has(model.id) || selectedIds.has(modelId),
           },
-        });
+          });
+        }
       }
+      return saved;
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "CHANNEL_API_KEYS_REQUIRED") {
+      return Response.json(
+        { message: "新建渠道时至少需要一个 API Key" },
+        { status: 400 },
+      );
     }
-    return saved;
-  });
+    throw error;
+  }
   return attachSessionCookie(
     Response.json({
       channel: {
@@ -175,7 +213,8 @@ export async function PUT(request: Request) {
         providerKey,
         protocol,
         baseUrl,
-        apiKeys,
+        apiKeys: [],
+        apiKeyCount: apiKeys.length || undefined,
         models,
       },
     }),
@@ -323,13 +362,39 @@ function providerKeyForProtocol(protocol?: string) {
 }
 
 export async function DELETE(request: Request) {
-  const { user, sessionId } = await ensureAnonymousUser();
+  let user;
+  try {
+    user = await requireAdmin();
+  } catch (error) {
+    return channelAdminError(error);
+  }
+  const sessionId = null;
   const id = new URL(request.url).searchParams.get("id");
   if (!id)
     return Response.json(
       { message: "Channel id is required." },
       { status: 400 },
     );
-  await prisma.channel.deleteMany({ where: { id, userId: user.id } });
+  await prisma.channel.deleteMany({
+    where: manageableChannelWhere(user.id, id),
+  });
   return attachSessionCookie(Response.json({ ok: true }), sessionId);
+}
+
+function encryptedKeyCount(value: string) {
+  try {
+    const payload = JSON.parse(decryptSecret(value)) as unknown;
+    return Array.isArray(payload)
+      ? payload.filter((item) => typeof item === "string" && item.trim()).length
+      : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function channelAdminError(error: unknown) {
+  return Response.json(
+    { message: "仅管理员可以管理模型渠道" },
+    { status: error instanceof AdminRequiredError ? 403 : 500 },
+  );
 }

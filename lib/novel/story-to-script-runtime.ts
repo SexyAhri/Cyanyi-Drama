@@ -1,4 +1,5 @@
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
+import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import {
   requestOpenAiStructured,
   type PromptExecutionTrace,
@@ -660,7 +661,7 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
         select: { novelText: true },
       }),
       prisma.channel.findFirst({
-        where: { id: input.channelId, userId },
+        where: accessibleChannelWhere(userId, input.channelId),
       }),
       prisma.providerModel.findFirst({
         where: {

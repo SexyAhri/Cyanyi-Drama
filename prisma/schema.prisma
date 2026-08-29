@@ -3,16 +3,28 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum ChannelScope {
+  USER
+  SYSTEM
 }
 
 model User {
   id                             String                   @id @default(uuid())
   email                          String?                  @unique
   passwordHash                   String?                  @map("password_hash")
+  emailVerifiedAt                DateTime?                @map("email_verified_at")
   displayName                    String                   @map("display_name")
   anonymous                      Boolean                  @default(false)
+  role                           UserRole                 @default(USER)
   createdAt                      DateTime                 @default(now()) @map("created_at")
   updatedAt                      DateTime                 @updatedAt @map("updated_at")
   sessions                       Session[]
@@ -33,6 +45,8 @@ model User {
   approvedProductionDeliverables ProductionDeliverable[]  @relation("ProductionDeliverableApprover")
   productionApprovalDecisions    ProductionApprovalGate[] @relation("ProductionApprovalDecider")
   runtimeSettings                UserRuntimeSettings?
+  externalIdentities             ExternalIdentity[]
+  paymentOrders                  PaymentOrder[]
 
   @@map("users")
 }
@@ -71,6 +85,85 @@ model Session {
   @@map("sessions")
 }
 
+model EmailVerification {
+  id           String    @id @default(uuid())
+  email        String
+  purpose      String
+  codeHash     String    @map("code_hash")
+  attemptCount Int       @default(0) @map("attempt_count")
+  expiresAt    DateTime  @map("expires_at")
+  consumedAt   DateTime? @map("consumed_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([email, purpose, createdAt])
+  @@index([expiresAt])
+  @@map("email_verifications")
+}
+
+model ExternalIdentity {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  provider       String   @db.VarChar(32)
+  providerUserId String   @map("provider_user_id") @db.VarChar(191)
+  username       String?
+  profileJson    Json?    @map("profile_json")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@unique([userId, provider])
+  @@index([userId])
+  @@map("external_identities")
+}
+
+model AuthFlow {
+  id              String    @id @default(uuid())
+  tokenHash       String    @unique @map("token_hash") @db.VarChar(64)
+  provider        String    @db.VarChar(32)
+  intent          String    @default("login") @db.VarChar(32)
+  redirectPath    String    @default("/chat") @map("redirect_path") @db.VarChar(512)
+  anonymousUserId String?   @map("anonymous_user_id")
+  expiresAt       DateTime  @map("expires_at")
+  consumedAt      DateTime? @map("consumed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  @@index([provider, expiresAt])
+  @@index([expiresAt, consumedAt])
+  @@map("auth_flows")
+}
+
+model SystemSettings {
+  id                           String   @id @default("global") @db.VarChar(32)
+  registrationEnabled          Boolean  @default(true) @map("registration_enabled")
+  emailAuthEnabled             Boolean  @default(true) @map("email_auth_enabled")
+  emailVerificationEnabled     Boolean  @default(false) @map("email_verification_enabled")
+  smtpHost                     String?  @map("smtp_host")
+  smtpPort                     Int      @default(465) @map("smtp_port")
+  smtpSecure                   Boolean  @default(true) @map("smtp_secure")
+  smtpUsername                 String?  @map("smtp_username")
+  smtpPasswordEncrypted        String?  @map("smtp_password_encrypted") @db.Text
+  smtpFrom                     String?  @map("smtp_from")
+  githubEnabled                Boolean  @default(false) @map("github_enabled")
+  githubClientId               String?  @map("github_client_id")
+  githubClientSecretEncrypted  String?  @map("github_client_secret_encrypted") @db.Text
+  linuxdoEnabled               Boolean  @default(false) @map("linuxdo_enabled")
+  linuxdoClientId              String?  @map("linuxdo_client_id")
+  linuxdoClientSecretEncrypted String?  @map("linuxdo_client_secret_encrypted") @db.Text
+  linuxdoMinimumTrustLevel     Int      @default(0) @map("linuxdo_minimum_trust_level")
+  epayEnabled                  Boolean  @default(false) @map("epay_enabled")
+  epayGatewayUrl               String?  @map("epay_gateway_url")
+  epayMerchantId               String?  @map("epay_merchant_id")
+  epayMerchantKeyEncrypted     String?  @map("epay_merchant_key_encrypted") @db.Text
+  epayMethods                  Json?    @map("epay_methods")
+  epayMinimumAmount            Decimal  @default(1) @map("epay_minimum_amount") @db.Decimal(18, 6)
+  epayCreditRate               Decimal  @default(1) @map("epay_credit_rate") @db.Decimal(18, 6)
+  createdAt                    DateTime @default(now()) @map("created_at")
+  updatedAt                    DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
+
 model Channel {
   id               String          @id
   userId           String          @map("user_id")
@@ -79,12 +172,15 @@ model Channel {
   protocol         String
   baseUrl          String          @map("base_url")
   encryptedApiKeys String          @map("encrypted_api_keys") @db.Text
+  scope            ChannelScope    @default(SYSTEM)
+  enabled          Boolean         @default(true)
   createdAt        DateTime        @default(now()) @map("created_at")
   updatedAt        DateTime        @updatedAt @map("updated_at")
   user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   models           ProviderModel[]
 
   @@index([userId, createdAt])
+  @@index([scope, enabled])
   @@map("channels")
 }
 
@@ -163,7 +259,7 @@ model Episode {
   episodeNumber          Int                     @map("episode_number")
   name                   String
   description            String?                 @db.Text
-  novelText              String?                 @map("novel_text") @db.LongText
+  novelText              String?                 @map("novel_text") @db.Text
   createdAt              DateTime                @default(now()) @map("created_at")
   updatedAt              DateTime                @updatedAt @map("updated_at")
   project                Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -585,8 +681,8 @@ model EpisodeAudioTrack {
 model EditorProject {
   id            String      @id
   episodeId     String      @unique @map("episode_id")
-  timelineJson  String      @map("timeline_json") @db.LongText
-  subtitleJson  String?     @map("subtitle_json") @db.LongText
+  timelineJson  String      @map("timeline_json") @db.Text
+  subtitleJson  String?     @map("subtitle_json") @db.Text
   renderStatus  String      @default("draft") @map("render_status")
   renderTaskId  String?     @map("render_task_id")
   outputAssetId String?     @map("output_asset_id")
@@ -1048,7 +1144,7 @@ model WorkflowStepAttempt {
   modelKey     String?   @map("model_key")
   inputHash    String?   @map("input_hash")
   input        Json?
-  outputText   String?   @map("output_text") @db.MediumText
+  outputText   String?   @map("output_text") @db.Text
   usageJson    Json?     @map("usage_json")
   errorCode    String?   @map("error_code")
   errorMessage String?   @map("error_message") @db.Text
@@ -1094,4 +1190,26 @@ model ModelPrice {
   @@unique([provider, model, capability, unit])
   @@index([provider, model, active])
   @@map("model_prices")
+}
+
+model PaymentOrder {
+  id              String    @id @default(uuid())
+  userId          String    @map("user_id")
+  tradeNo         String    @unique @map("trade_no") @db.VarChar(64)
+  provider        String    @default("epay") @db.VarChar(32)
+  paymentMethod   String    @map("payment_method") @db.VarChar(32)
+  amount          Decimal   @db.Decimal(18, 6)
+  creditAmount    Decimal   @map("credit_amount") @db.Decimal(18, 6)
+  status          String    @default("pending") @db.VarChar(32)
+  providerTradeNo String?   @map("provider_trade_no") @db.VarChar(191)
+  notifyPayload   Json?     @map("notify_payload")
+  expiresAt       DateTime? @map("expires_at")
+  paidAt          DateTime? @map("paid_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@map("payment_orders")
 }

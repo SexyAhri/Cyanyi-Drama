@@ -148,7 +148,7 @@ export async function reserveMediaTaskCharge(userId: string, task: MediaTask) {
   if (!prices.length) return null;
   const components = prices
     .map((price) => {
-      const quantity = quantityForUnit(price.unit, task.request);
+      const quantity = quantityForBillingUnit(price.unit, task.request);
       return {
         unit: price.unit,
         quantity,
@@ -454,8 +454,12 @@ export async function reconcileUserFrozenAmount(userId: string) {
   );
 }
 
-function quantityForUnit(unit: string, request: Record<string, unknown>) {
-  if (unit === "request" || unit === "image" || unit === "task") return 1;
+export function quantityForBillingUnit(
+  unit: string,
+  request: Record<string, unknown>,
+) {
+  if (unit === "request" || unit === "task") return 1;
+  if (unit === "image") return positiveInteger(request.count ?? request.n, 1);
   if (unit === "character") return textLength(request);
   if (unit === "1k_character")
     return Math.max(1, Math.ceil(textLength(request) / 1000));
@@ -463,6 +467,13 @@ function quantityForUnit(unit: string, request: Record<string, unknown>) {
   if (unit === "second") return seconds;
   if (unit === "minute") return Math.max(1, seconds / 60);
   return 1;
+}
+
+function positiveInteger(value: unknown, fallback: number) {
+  const parsed = typeof value === "string" ? Number(value) : value;
+  return typeof parsed === "number" && Number.isFinite(parsed) && parsed > 0
+    ? Math.max(1, Math.floor(parsed))
+    : fallback;
 }
 
 function textLength(request: Record<string, unknown>) {

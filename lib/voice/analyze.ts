@@ -1,4 +1,5 @@
 import { decryptSecret } from "@/lib/server/crypto";
+import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { prisma } from "@/lib/server/prisma";
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import {
@@ -74,7 +75,7 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
     throw new VoiceAnalyzeError("请先生成分镜后再分析台词");
 
   const channel = await prisma.channel.findFirst({
-    where: { id: input.channelId, userId: input.userId },
+    where: accessibleChannelWhere(input.userId, input.channelId),
     select: { protocol: true, baseUrl: true, encryptedApiKeys: true },
   });
   if (
@@ -162,39 +163,40 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
       throw new VoiceAnalyzeError(
         `剧本台词校验失败：${issues.map((item) => item.code).join(",")}`,
       );
-  } else try {
-    const analyzed = await requestVoiceAnalysis({
-      baseUrl: channel.baseUrl,
-      apiKeys: keys,
-      model: input.model,
-      locale: input.locale ?? "zh",
-      sourceText: episode.novelText,
-      characters: voiceCharacterContext,
-      panels: panelContext,
-      structuredOutputMode: supportsStoredStructuredOutputs(
-        model.capabilitiesJson,
-      )
-        ? "json_schema"
-        : "json_object",
-      ...structuredRequestOptions(runtimeSettings),
-    });
-    analyzedData = analyzed.data;
-    trace = analyzed.trace;
-  } catch (error) {
-    if (isRetryableStructuredProviderError(error)) {
-      analyzedData = buildDeterministicVoiceAnalysis({
+  } else
+    try {
+      const analyzed = await requestVoiceAnalysis({
+        baseUrl: channel.baseUrl,
+        apiKeys: keys,
+        model: input.model,
+        locale: input.locale ?? "zh",
         sourceText: episode.novelText,
         characters: voiceCharacterContext,
         panels: panelContext,
+        structuredOutputMode: supportsStoredStructuredOutputs(
+          model.capabilitiesJson,
+        )
+          ? "json_schema"
+          : "json_object",
+        ...structuredRequestOptions(runtimeSettings),
       });
-      fallbackReason = structuredProviderFailureCode(error);
-    } else {
-      throw new VoiceAnalyzeError(
-        error instanceof Error ? error.message : "台词分析失败",
-        502,
-      );
+      analyzedData = analyzed.data;
+      trace = analyzed.trace;
+    } catch (error) {
+      if (isRetryableStructuredProviderError(error)) {
+        analyzedData = buildDeterministicVoiceAnalysis({
+          sourceText: episode.novelText,
+          characters: voiceCharacterContext,
+          panels: panelContext,
+        });
+        fallbackReason = structuredProviderFailureCode(error);
+      } else {
+        throw new VoiceAnalyzeError(
+          error instanceof Error ? error.message : "台词分析失败",
+          502,
+        );
+      }
     }
-  }
   const panelIds = new Map(
     episode.storyboard.panels.map((panel) => [panel.panelIndex, panel.id]),
   );
@@ -267,9 +269,12 @@ export function buildDeterministicVoiceAnalysis(input: {
     const end = match.end;
     const before = input.sourceText.slice(Math.max(0, start - 240), start);
     const after = input.sourceText.slice(end, end + 160);
-    const speaker = match.speaker ?? inferDialogueSpeaker(speakers, before, after);
+    const speaker =
+      match.speaker ?? inferDialogueSpeaker(speakers, before, after);
     const matchedPanelIndex = input.panels.find((panel) =>
-      `${panel.description}\n${panel.subtitleText}\n${panel.sourceEvidence?.join("\n") ?? ""}`.includes(content),
+      `${panel.description}\n${panel.subtitleText}\n${panel.sourceEvidence?.join("\n") ?? ""}`.includes(
+        content,
+      ),
     )?.panelIndex;
     return {
       speaker: speaker ?? "旁白",
@@ -313,7 +318,7 @@ export function buildScreenplayVoiceAnalysis(input: {
         const speaker =
           content.type === "dialogue"
             ? content.character
-            : content.character ?? "旁白";
+            : (content.character ?? "旁白");
         const delivery =
           content.type === "dialogue"
             ? ("dialogue" as const)
@@ -328,13 +333,15 @@ export function buildScreenplayVoiceAnalysis(input: {
         );
         const segments = performedSegments.length
           ? performedSegments
-          : [{
-              content: spokenContent,
-              panelIndex: findDialoguePanel(
-                spokenContent,
-                clipPanels.length ? clipPanels : input.panels,
-              ),
-            }];
+          : [
+              {
+                content: spokenContent,
+                panelIndex: findDialoguePanel(
+                  spokenContent,
+                  clipPanels.length ? clipPanels : input.panels,
+                ),
+              },
+            ];
         return segments.map((segment) => ({
           speaker,
           content: segment.content,
@@ -400,14 +407,18 @@ function findDialoguePanel(
     sourceEvidence?: string[];
   }>,
 ) {
-  return panels.find((panel) => {
-    const performed = panel.lipSyncText ?? panel.voiceoverText;
-    return (
-      performed === content ||
-      (performed ? content.startsWith(performed) : false) ||
-      `${panel.description}\n${panel.subtitleText}\n${panel.sourceEvidence?.join("\n") ?? ""}`.includes(content)
-    );
-  })?.panelIndex ?? null;
+  return (
+    panels.find((panel) => {
+      const performed = panel.lipSyncText ?? panel.voiceoverText;
+      return (
+        performed === content ||
+        (performed ? content.startsWith(performed) : false) ||
+        `${panel.description}\n${panel.subtitleText}\n${panel.sourceEvidence?.join("\n") ?? ""}`.includes(
+          content,
+        )
+      );
+    })?.panelIndex ?? null
+  );
 }
 
 function extractDirectSpeech(
@@ -419,13 +430,11 @@ function extractDirectSpeech(
     index: number;
     end: number;
     speaker?: string;
-  }> = [...sourceText.matchAll(/[“\"]([^”\"\r\n]+)[”\"]/g)].map(
-    (match) => ({
-      content: match[1],
-      index: match.index ?? 0,
-      end: (match.index ?? 0) + match[0].length,
-    }),
-  );
+  }> = [...sourceText.matchAll(/[“\"]([^”\"\r\n]+)[”\"]/g)].map((match) => ({
+    content: match[1],
+    index: match.index ?? 0,
+    end: (match.index ?? 0) + match[0].length,
+  }));
   const speechVerb =
     "说(?:道)?|问(?:道)?|答(?:道)?|回答|回应|喊(?:道)?|喝(?:道)?|叹(?:道)?|开口|低声(?:说)?|轻声(?:说)?|安慰|劝(?:说|慰)?|安抚|鼓励";
   for (const candidate of speakers) {
@@ -467,7 +476,9 @@ function inferDialogueSpeaker(
       new RegExp(`${name}[^。！？!?“”\"]{0,28}(?:${speechVerb})[：:，,\s]*$`),
     );
     const afterMatch = after.match(
-      new RegExp(`^[。！？!?，,\s]*(?:${name}[^。！？!?]{0,28}(?:${speechVerb})|(?:${speechVerb})[^。！？!?]{0,12}${name})`),
+      new RegExp(
+        `^[。！？!?，,\s]*(?:${name}[^。！？!?]{0,28}(?:${speechVerb})|(?:${speechVerb})[^。！？!?]{0,12}${name})`,
+      ),
     );
     return beforeMatch || afterMatch ? [candidate.canonicalName] : [];
   });
@@ -543,9 +554,7 @@ function requestVoiceAnalysis(input: {
           typeof value === "object" &&
           typeof (value as { speakingCharacter?: unknown })
             .speakingCharacter === "string"
-            ? [
-                (value as { speakingCharacter: string }).speakingCharacter,
-              ]
+            ? [(value as { speakingCharacter: string }).speakingCharacter]
             : [],
         ),
         panelIndices: input.panels.flatMap((value) =>

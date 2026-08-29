@@ -5,6 +5,7 @@ import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import { assetVisualDesignSchema } from "@/lib/prompts/schemas";
 import { decryptSecret } from "@/lib/server/crypto";
+import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { prisma } from "@/lib/server/prisma";
 import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
@@ -190,7 +191,7 @@ async function resolveDesignProvider(input: {
   model: string;
 }) {
   const channel = await prisma.channel.findFirst({
-    where: { id: input.channelId, userId: input.userId },
+    where: accessibleChannelWhere(input.userId, input.channelId),
   });
   if (!channel) throw new ProjectAssetError("分析渠道不存在", 404);
   if (

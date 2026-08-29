@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/server/prisma";
+import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { stableSpanId, type TraceContext } from "./trace-context";
 
 export async function resolveWorkflowTraceParent(input: {
@@ -59,7 +60,7 @@ export async function getExecutionTrace(userId: string, traceId: string) {
       take: 500,
     }),
     prisma.channel.findMany({
-      where: { userId },
+      where: accessibleChannelWhere(userId),
       select: { id: true, name: true },
       take: 500,
     }),

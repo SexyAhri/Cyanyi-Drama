@@ -3,7 +3,13 @@ import {
   listModelPrices,
   upsertModelPrice,
 } from "@/lib/billing/service";
-import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
+import {
+  AdminRequiredError,
+  attachSessionCookie,
+  ensureAnonymousUser,
+  requireAdmin,
+} from "@/lib/server/auth";
+import { prisma } from "@/lib/server/prisma";
 
 export async function GET() {
   const { sessionId } = await ensureAnonymousUser();
@@ -12,12 +18,12 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  const { sessionId } = await ensureAnonymousUser();
-  if (process.env.BILLING_ALLOW_PRICE_ADMIN !== "true")
-    return attachSessionCookie(
-      Response.json({ message: "价格管理未启用" }, { status: 403 }),
-      sessionId,
-    );
+  try {
+    await requireAdmin();
+  } catch (error) {
+    return priceAdminError(error);
+  }
+  const sessionId = null;
   const body = (await request.json().catch(() => ({}))) as Record<
     string,
     unknown
@@ -51,4 +57,23 @@ export async function PUT(request: Request) {
       sessionId,
     );
   }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    await requireAdmin();
+  } catch (error) {
+    return priceAdminError(error);
+  }
+  const id = new URL(request.url).searchParams.get("id")?.trim();
+  if (!id) return Response.json({ message: "价格 ID 不能为空" }, { status: 400 });
+  await prisma.modelPrice.deleteMany({ where: { id } });
+  return Response.json({ ok: true });
+}
+
+function priceAdminError(error: unknown) {
+  return Response.json(
+    { message: "仅管理员可以管理模型价格" },
+    { status: error instanceof AdminRequiredError ? 403 : 500 },
+  );
 }

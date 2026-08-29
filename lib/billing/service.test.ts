@@ -17,6 +17,7 @@ vi.mock("@/lib/server/prisma", () => ({
 import {
   classifyPendingMediaCharge,
   getUserBalance,
+  quantityForBillingUnit,
   settleMediaTaskCharge,
 } from "./service";
 
@@ -43,6 +44,13 @@ describe("billing reconciliation", () => {
         now,
       }),
     ).toBe("release");
+  });
+
+  it("bills image units by the requested output count", () => {
+    expect(quantityForBillingUnit("image", { count: 4 })).toBe(4);
+    expect(quantityForBillingUnit("image", { n: "3" })).toBe(3);
+    expect(quantityForBillingUnit("image", { count: 0 })).toBe(1);
+    expect(quantityForBillingUnit("request", { count: 4 })).toBe(1);
   });
 
   it("reads the balance created by a concurrent first request", async () => {

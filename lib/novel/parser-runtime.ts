@@ -1,4 +1,5 @@
 import { decryptSecret } from "@/lib/server/crypto";
+import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { prisma } from "@/lib/server/prisma";
 import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
@@ -190,7 +191,7 @@ async function requestNovelParse(
   },
 ) {
   const channel = await prisma.channel.findFirst({
-    where: { id: input.channelId, userId },
+    where: accessibleChannelWhere(userId, input.channelId),
   });
   if (!channel) throw new Error("NOVEL_CHANNEL_NOT_FOUND");
   const configuredModel = await prisma.providerModel.findFirst({

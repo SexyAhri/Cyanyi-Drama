@@ -20,6 +20,7 @@
 # production
 /build
 /.media/
+/.backups/
 /docs/benchmarks/
 /scripts/prompt-benchmark.ts
 

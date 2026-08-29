@@ -1,4 +1,5 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
+import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { createDatabaseMediaTaskStore } from "@/lib/media/task-store";
 import { createMediaTask, type MediaTaskKind } from "@/lib/media/task-contract";
 import { enqueuePersistedMediaTask } from "@/lib/media/task-submit";
@@ -38,7 +39,7 @@ export async function POST(request: Request) {
   }
 
   const channel = await prisma.channel.findFirst({
-    where: { id: channelId, userId: user.id },
+    where: accessibleChannelWhere(user.id, channelId),
     select: { protocol: true, providerKey: true },
   });
   if (

@@ -3,7 +3,12 @@ import {
   getUserBalance,
   BillingError,
 } from "@/lib/billing/service";
-import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
+import {
+  AdminRequiredError,
+  attachSessionCookie,
+  ensureAnonymousUser,
+  requireAdmin,
+} from "@/lib/server/auth";
 
 export async function GET() {
   const { user, sessionId } = await ensureAnonymousUser();
@@ -12,19 +17,26 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const { user, sessionId } = await ensureAnonymousUser();
-  if (process.env.BILLING_ALLOW_MANUAL_CREDIT !== "true")
-    return attachSessionCookie(
-      Response.json({ message: "手动充值未启用" }, { status: 403 }),
-      sessionId,
+  let admin;
+  try {
+    admin = await requireAdmin();
+  } catch (error) {
+    return Response.json(
+      { message: "仅管理员可以手动调整余额" },
+      { status: error instanceof AdminRequiredError ? 403 : 500 },
     );
+  }
+  const sessionId = null;
   const body = (await request.json().catch(() => ({}))) as Record<
     string,
     unknown
   >;
   try {
     const transaction = await creditUserBalance({
-      userId: user.id,
+      userId:
+        typeof body.userId === "string" && body.userId.trim()
+          ? body.userId.trim()
+          : admin.id,
       amount:
         typeof body.amount === "number" || typeof body.amount === "string"
           ? body.amount

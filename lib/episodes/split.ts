@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import { decryptSecret } from "@/lib/server/crypto";
+import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import { episodeSplitSchema } from "@/lib/prompts/schemas";
@@ -350,7 +351,7 @@ async function resolveProvider(input: {
   model: string;
 }) {
   const channel = await prisma.channel.findFirst({
-    where: { id: input.channelId, userId: input.userId },
+    where: accessibleChannelWhere(input.userId, input.channelId),
   });
   if (!channel) throw new EpisodeSplitError("分析渠道不存在", 404);
   if (

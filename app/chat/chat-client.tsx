@@ -37,7 +37,12 @@ export function ChatClient({
       appVersion={appVersion}
       locale="zh-CN"
       onLogout={() => void logout()}
-      user={{ id: user.id, name: user.displayName }}
+      user={{
+        id: user.id,
+        name: user.displayName,
+        email: user.email,
+        role: user.role,
+      }}
     />
   );
 }

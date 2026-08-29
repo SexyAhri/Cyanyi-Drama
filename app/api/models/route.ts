@@ -6,6 +6,7 @@ import {
   AUTODL_COMFYUI_WORKFLOWS,
   autoDlModelCapabilities,
 } from "@/lib/providers/media/autodl-comfyui-workflows";
+import { AdminRequiredError, requireAdmin } from "@/lib/server/auth";
 
 type ModelsRequestBody = {
   apiKey?: string;
@@ -28,6 +29,14 @@ type OpenAIModelsResponse = {
 };
 
 export async function POST(request: Request) {
+  try {
+    await requireAdmin();
+  } catch (error) {
+    return Response.json(
+      { message: "仅管理员可以读取上游模型列表" },
+      { status: error instanceof AdminRequiredError ? 403 : 500 },
+    );
+  }
   const body = (await request.json()) as ModelsRequestBody;
   const baseUrl = body.baseUrl?.trim();
   const apiKey = body.apiKey?.trim();
