@@ -286,6 +286,13 @@ function toProject(row: ProjectWithRelations): ProjectRecord {
       videoRatio: config?.videoRatio ?? "9:16",
       videoResolution: config?.videoResolution ?? "720p",
       artStyle: config?.artStyle ?? "american-comic",
+      visualEra:
+        config?.visualEra === "premodern" ||
+        config?.visualEra === "contemporary" ||
+        config?.visualEra === "custom"
+          ? config.visualEra
+          : "source",
+      visualEraCustom: config?.visualEraCustom ?? null,
       ttsRate: config?.ttsRate ?? "+50%",
       workflowMode: config?.workflowMode ?? "novel-promotion",
       globalAssetText: config?.globalAssetText ?? null,

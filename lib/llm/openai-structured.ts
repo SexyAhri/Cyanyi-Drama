@@ -46,6 +46,8 @@ export async function requestOpenAiStructured<T>(input: {
   timeoutMs?: number;
   stream?: boolean;
   maxTransportAttempts?: number;
+  onOutputStart?: () => void;
+  onTextDelta?: (delta: string) => void;
 }) {
   let tokenUsage: PromptTokenUsage | null = null;
   let apiKeyIndex = 0;
@@ -78,6 +80,8 @@ export async function requestOpenAiStructured<T>(input: {
             timeoutMs: input.timeoutMs,
             stream: input.stream,
             maxTransportAttempts: input.maxTransportAttempts,
+            onOutputStart: input.onOutputStart,
+            onTextDelta: input.onTextDelta,
           });
           apiKeyIndex = candidateIndex;
           tokenUsage = addTokenUsage(tokenUsage, response.tokenUsage);
@@ -124,12 +128,15 @@ async function requestText(input: {
   timeoutMs?: number;
   stream?: boolean;
   maxTransportAttempts?: number;
+  onOutputStart?: () => void;
+  onTextDelta?: (delta: string) => void;
 }) {
   let lastError: unknown;
   const startedAt = Date.now();
   const maxAttempts = normalizeTransportAttempts(input.maxTransportAttempts);
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
+      input.onOutputStart?.();
       return await requestTextAttempt(input);
     } catch (error) {
       lastError = error;
@@ -168,6 +175,8 @@ async function requestTextAttempt(input: {
   timeoutMs?: number;
   stream?: boolean;
   maxTransportAttempts?: number;
+  onOutputStart?: () => void;
+  onTextDelta?: (delta: string) => void;
 }) {
   const timeoutMs = input.timeoutMs ?? 120_000;
   let response: Response;
@@ -205,7 +214,12 @@ async function requestTextAttempt(input: {
     });
   }
   try {
-    responseText = await readResponseText(response);
+    responseText = await readResponseText(
+      response,
+      response.headers.get("content-type")?.includes("text/event-stream")
+        ? input.onTextDelta
+        : undefined,
+    );
   } catch (error) {
     throw buildProviderRequestError({
       error,
@@ -222,8 +236,10 @@ async function requestTextAttempt(input: {
   try {
     if (isEventStreamResponse(response, responseText))
       return parseOpenAiEventStream(responseText);
+    const text = extractText(payload);
+    input.onTextDelta?.(text);
     return {
-      text: extractText(payload),
+      text,
       tokenUsage: normalizeTokenUsage(payload),
     };
   } catch (error) {
@@ -302,19 +318,35 @@ class ResponseBodyReadError extends Error {
   }
 }
 
-async function readResponseText(response: Response) {
+async function readResponseText(
+  response: Response,
+  onTextDelta?: (delta: string) => void,
+) {
   if (!response.body) return response.text();
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let text = "";
+  let eventBuffer = "";
+  const append = (value: string) => {
+    text += value;
+    if (onTextDelta) {
+      eventBuffer += value;
+      eventBuffer = emitCompleteEventStreamDeltas(eventBuffer, onTextDelta);
+    }
+  };
   try {
     while (true) {
       const chunk = await reader.read();
-      if (chunk.done) return text + decoder.decode();
-      text += decoder.decode(chunk.value, { stream: true });
+      if (chunk.done) {
+        append(decoder.decode());
+        if (onTextDelta) emitEventStreamDelta(eventBuffer, onTextDelta);
+        return text;
+      }
+      append(decoder.decode(chunk.value, { stream: true }));
     }
   } catch (error) {
-    text += decoder.decode();
+    append(decoder.decode());
+    if (onTextDelta) emitEventStreamDelta(eventBuffer, onTextDelta);
     if (isCompleteInterruptedResponse(response, text)) return text;
     throw new ResponseBodyReadError(
       error,
@@ -323,6 +355,28 @@ async function readResponseText(response: Response) {
   } finally {
     reader.releaseLock();
   }
+}
+
+function emitCompleteEventStreamDeltas(
+  buffer: string,
+  onTextDelta: (delta: string) => void,
+) {
+  const events = buffer.split(/\r?\n\r?\n/);
+  const remainder = events.pop() ?? "";
+  for (const event of events) emitEventStreamDelta(event, onTextDelta);
+  return remainder;
+}
+
+function emitEventStreamDelta(
+  event: string,
+  onTextDelta: (delta: string) => void,
+) {
+  const data = eventStreamData(event);
+  if (!data || data === "[DONE]") return;
+  const payload = parseJsonText(data);
+  if (isRecord(payload) && payload.error) return;
+  const delta = extractStreamText(payload);
+  if (delta) onTextDelta(delta);
 }
 
 function isCompleteInterruptedResponse(response: Response, text: string) {
@@ -512,12 +566,7 @@ function parseOpenAiEventStream(text: string) {
   let content = "";
   let tokenUsage: PromptTokenUsage | null = null;
   for (const event of text.split(/\r?\n\r?\n/)) {
-    const data = event
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart())
-      .join("\n")
-      .trim();
+    const data = eventStreamData(event);
     if (!data || data === "[DONE]") continue;
     const payload = parseJsonText(data);
     if (isRecord(payload) && payload.error)
@@ -529,6 +578,15 @@ function parseOpenAiEventStream(text: string) {
   }
   if (!content) throw new Error("STRUCTURED_PROVIDER_TEXT_MISSING");
   return { text: content, tokenUsage };
+}
+
+function eventStreamData(event: string) {
+  return event
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n")
+    .trim();
 }
 
 function extractStreamText(payload: unknown) {

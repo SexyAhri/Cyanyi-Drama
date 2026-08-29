@@ -234,9 +234,10 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.EPISODE_ADAPTATION]: {
     pathStem: "domain/episode_adaptation",
-    version: 2,
+    version: 3,
     variables: [
       "source_text",
+      "source_evidence_candidates",
       "manuscript_context",
       "project_context",
       "adaptation_mode",
@@ -264,11 +265,13 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.ASSET_VISUAL_DESIGN]: {
     pathStem: "domain/asset_visual_design",
-    version: 1,
+    version: 2,
     variables: [
       "asset_kind",
       "asset_name",
       "story_facts_json",
+      "story_world_context_json",
+      "story_world_directive",
       "project_style",
     ],
     agent: defineAgent({
@@ -280,6 +283,8 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
         "presenting inferred visual choices as source canon",
         "adding plot events, relationships, powers, or biography",
         "designing a transient shot instead of a reusable asset",
+        "using the rendering style as a substitute for the story era or world setting",
+        "introducing modern wardrobe, architecture, furnishings, technology, or vehicles into a grounded premodern world",
       ],
       successCriteria: [
         "The result is concrete enough to generate a stable reference image",
@@ -291,6 +296,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
         "story_facts_preserved",
         "visual_specification_complete",
         "inference_provenance_explicit",
+        "story_world_era_compatible",
       ],
       stopRules: [
         "Stop after one complete visual specification",

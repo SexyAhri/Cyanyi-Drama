@@ -3,12 +3,19 @@ Create a concrete, reusable visual specification for one production asset from t
 Asset type: {{asset_kind}}
 Asset name: {{asset_name}}
 Project art style: {{project_style}}
+Story world and era hard constraint: {{story_world_directive}}
 Story facts JSON:
 {{story_facts_json}}
+Project narrative context JSON:
+{{story_world_context_json}}
 
 The project art style is the highest-priority, project-wide hard constraint. Do not switch styles because of the asset type, genre, era, or supplied description, and do not propose or adopt another style in inferenceNotes.
 
+Art style and the selected visual adaptation world are independent constraints. Art style controls linework, rendering, material depiction, color treatment, and lighting. The project-selected visual era/adaptation world controls wardrobe cuts, hair arrangement, footwear, architecture, furnishings, craft, props, and technology. When the project follows the source, infer era from narrative context. When the project explicitly selects premodern Eastern, contemporary adaptation, or a custom world, that selection takes visual priority and may change the source era's visual shell, but it must not change identities, relationships, abilities, events, or outcomes. Never interpret labels such as Chinese animation, Japanese anime, or live-action realism as an era.
+
 Preserve every supplied story fact. You may professionally infer appearance, wardrobe, material, palette, and presentation choices that the source does not specify, but you must not add plot, identity, relationships, abilities, or biography. Record inferred choices in inferenceNotes instead of presenting them as source canon. The result must support a standard reference image and serve as a continuity constraint in every downstream shot. Do not design a transient action or story moment.
+
+Every inference must be compatible with the project-selected visual adaptation world. Only when the project follows the source and the text establishes an ancient, cultivation, xianxia, wuxia, or other premodern world, or when the project explicitly selects a premodern Eastern world, use era-compatible layered robes, hair arrangements, footwear, accessories, architecture, materials, and craft, and exclude modern business clothing, contemporary interiors, infrastructure, technology, and vehicles. Do not apply those modern-element exclusions when the project selects a contemporary adaptation or a custom modern world. The negativePrompt must explicitly exclude elements that conflict with the currently selected adaptation world.
 
 For a character, specify facial impression, hair, body proportions, layered wardrobe and materials, footwear, accessories, and stable identifiers. For a location, specify spatial structure, scale, architectural or natural materials, foreground/midground/background, primary light sources, and repeatable anchors. For a prop, specify silhouette, proportions, materials, surface finish, colors, ornament, and stable identifiers.
 

@@ -4,7 +4,7 @@ import { prisma } from "@/lib/server/prisma";
 import { getProject } from "@/lib/projects/queries";
 
 type RouteContext = { params: Promise<{ projectId: string }> };
-const fields = ["analysisModel", "characterModel", "locationModel", "storyboardModel", "editModel", "videoModel", "audioModel", "videoRatio", "videoResolution", "artStyle", "ttsRate", "workflowMode", "globalAssetText", "capabilityOverrides"] as const;
+const fields = ["analysisModel", "characterModel", "locationModel", "storyboardModel", "editModel", "videoModel", "audioModel", "videoRatio", "videoResolution", "artStyle", "visualEra", "visualEraCustom", "ttsRate", "workflowMode", "globalAssetText", "capabilityOverrides"] as const;
 
 export async function GET(_request: Request, context: RouteContext) {
   const { user, sessionId } = await ensureAnonymousUser();
@@ -25,6 +25,17 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (field === "artStyle" && !isProjectArtStyleId(body[field]))
       return attachSessionCookie(
         Response.json({ message: "不支持的项目画风" }, { status: 400 }),
+        sessionId,
+      );
+    if (
+      field === "visualEra" &&
+      body[field] !== "source" &&
+      body[field] !== "premodern" &&
+      body[field] !== "contemporary" &&
+      body[field] !== "custom"
+    )
+      return attachSessionCookie(
+        Response.json({ message: "不支持的视觉时代设置" }, { status: 400 }),
         sessionId,
       );
     if (field === "capabilityOverrides") {

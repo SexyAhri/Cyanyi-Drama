@@ -131,6 +131,8 @@ export async function updateStudioProjectConfig(
       | "audioModel"
       | "videoRatio"
       | "artStyle"
+      | "visualEra"
+      | "visualEraCustom"
       | "ttsRate"
     >
   >,
@@ -491,14 +493,92 @@ export async function adaptStudioEpisode(
     instructions?: string;
     locale: "en" | "zh";
   },
+  callbacks?: {
+    onReset?: () => void;
+    onContent?: (content: string) => void;
+  },
 ) {
-  return request<{ source: EpisodeSourceVersionRecord }>(
+  const response = await fetch(
     `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/sources`,
     {
       body: JSON.stringify(input),
-      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      headers: {
+        Accept: "application/x-ndjson",
+        "Content-Type": "application/json",
+      },
       method: "POST",
     },
+  ).catch(() => {
+    throw new StudioApiError(studioRequestFallback(), 0);
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as Record<
+      string,
+      unknown
+    > | null;
+    const message = typeof body?.message === "string" ? body.message.trim() : "";
+    throw new StudioApiError(
+      isRuntimeLocaleCompatible(message) ? message : studioRequestFallback(),
+      response.status,
+    );
+  }
+  if (!response.body) throw new StudioApiError(studioRequestFallback(), 0);
+
+  let source: EpisodeSourceVersionRecord | undefined;
+  let content = "";
+  for await (const event of readJsonLineStream(response.body)) {
+    if (event.type === "reset") {
+      content = "";
+      callbacks?.onReset?.();
+    }
+    if (event.type === "delta" && typeof event.delta === "string") {
+      content += event.delta;
+      callbacks?.onContent?.(content);
+    }
+    if (event.type === "completed" && isEpisodeSourceRecord(event.source))
+      source = event.source;
+    if (event.type === "failed")
+      throw new StudioApiError(
+        typeof event.message === "string" && event.message.trim()
+          ? event.message
+          : studioRequestFallback(),
+        500,
+      );
+  }
+  if (!source) throw new StudioApiError(studioRequestFallback(), 0);
+  return { source };
+}
+
+async function* readJsonLineStream(stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed) yield JSON.parse(trimmed) as Record<string, unknown>;
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) yield JSON.parse(buffer) as Record<string, unknown>;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function isEpisodeSourceRecord(value: unknown): value is EpisodeSourceVersionRecord {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    typeof (value as { id?: unknown }).id === "string" &&
+    typeof (value as { content?: unknown }).content === "string"
   );
 }
 

@@ -55,6 +55,7 @@ type AgentSettingsDialogProps = {
   runtimeConnection: RuntimeConnectionSettings;
   settings: ShellSettings;
   user?: ShellUser | null;
+  showProjectVisualWorld?: boolean;
 };
 
 export function AgentSettingsDialog({
@@ -70,6 +71,7 @@ export function AgentSettingsDialog({
   runtimeConnection,
   settings,
   user,
+  showProjectVisualWorld = false,
 }: AgentSettingsDialogProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>("preferences");
   const [runtimeStatus, setRuntimeStatus] =
@@ -140,6 +142,7 @@ export function AgentSettingsDialog({
                 models={models}
                 onChange={onSettingsChange}
                 settings={settings}
+                showProjectVisualWorld={showProjectVisualWorld}
               />
             </TabsContent>
 

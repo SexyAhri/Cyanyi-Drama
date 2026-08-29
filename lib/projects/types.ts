@@ -9,6 +9,8 @@ export type ProjectConfig = {
   videoRatio: string;
   videoResolution: string;
   artStyle: string;
+  visualEra: "source" | "premodern" | "contemporary" | "custom";
+  visualEraCustom: string | null;
   ttsRate: string;
   workflowMode: string;
   globalAssetText: string | null;

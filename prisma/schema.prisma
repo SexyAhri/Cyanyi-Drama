@@ -243,6 +243,8 @@ model ProjectConfig {
   videoRatio              String   @default("9:16") @map("video_ratio")
   videoResolution         String   @default("720p") @map("video_resolution")
   artStyle                String   @default("american-comic") @map("art_style")
+  visualEra               String   @default("source") @map("visual_era") @db.VarChar(32)
+  visualEraCustom         String?  @map("visual_era_custom") @db.Text
   ttsRate                 String   @default("+50%") @map("tts_rate")
   workflowMode            String   @default("novel-promotion") @map("workflow_mode")
   globalAssetText         String?  @map("global_asset_text") @db.Text

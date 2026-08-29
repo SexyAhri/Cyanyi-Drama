@@ -103,6 +103,8 @@ describe("studio asset view model", () => {
 
   it("compiles a persisted visual profile ahead of story metadata", () => {
     const catalog = createCatalog();
+    catalog.characters[0].appearances[0].description =
+      "Legacy prompt with a modern business suit";
     catalog.characters[0].visualProfile = {
       version: 1,
       source: "model",
@@ -129,6 +131,7 @@ describe("studio asset view model", () => {
     expect(character.generationPrompt).toContain(
       "一致性规则：Keep the clasp；Keep the angular face",
     );
+    expect(character.generationPrompt).not.toContain("modern business suit");
   });
 
   it("places the selected project art style ahead of asset details", () => {

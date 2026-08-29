@@ -375,6 +375,42 @@ describe("OpenAI structured requests", () => {
     });
   });
 
+  it("forwards structured response deltas while preserving final validation", async () => {
+    const outputStarts = vi.fn();
+    const deltas: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          [
+            'data: {"choices":[{"delta":{"content":"{\\"value\\":"}}]}',
+            'data: {"choices":[{"delta":{"content":"7}"}}]}',
+            "data: [DONE]",
+            "",
+          ].join("\n\n"),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      ),
+    );
+
+    const result = await requestOpenAiStructured({
+      baseUrl: "https://provider.test/v1",
+      apiKeys: ["test-key"],
+      model: "test-model",
+      prompt: renderPrompt({
+        id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+        variables: { source_text: "source", character_library: "[]" },
+      }),
+      schema,
+      onOutputStart: outputStarts,
+      onTextDelta: (delta) => deltas.push(delta),
+    });
+
+    expect(outputStarts).toHaveBeenCalledTimes(1);
+    expect(deltas).toEqual(['{"value":', "7}"]);
+    expect(result.data).toEqual({ value: 7 });
+  });
+
   it("attaches owned visual references to the first user message", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse('{"value":7}'),

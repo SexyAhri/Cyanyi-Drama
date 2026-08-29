@@ -88,6 +88,8 @@ export function WorkspaceTopbar({
       audioModel: selectedModel(projectConfig.audioModel),
       videoRatio: projectConfig.videoRatio,
       artStyle: projectConfig.artStyle,
+      visualEra: projectConfig.visualEra,
+      visualEraCustom: projectConfig.visualEraCustom ?? "",
       ttsRate: projectConfig.ttsRate,
     }));
   }, [projectConfig, runtime.models]);
@@ -114,6 +116,10 @@ export function WorkspaceTopbar({
     if (next.videoRatio !== previous.videoRatio)
       patch.videoRatio = next.videoRatio;
     if (next.artStyle !== previous.artStyle) patch.artStyle = next.artStyle;
+    if (next.visualEra !== previous.visualEra)
+      patch.visualEra = next.visualEra;
+    if (next.visualEraCustom !== previous.visualEraCustom)
+      patch.visualEraCustom = next.visualEraCustom.trim() || null;
     if (next.ttsRate !== previous.ttsRate) patch.ttsRate = next.ttsRate;
     setSettings(next);
     if (!Object.keys(patch).length) return;
@@ -270,6 +276,7 @@ export function WorkspaceTopbar({
         open={settingsOpen}
         runtimeConnection={runtime.connection}
         settings={settings}
+        showProjectVisualWorld
       />
     </>
   );

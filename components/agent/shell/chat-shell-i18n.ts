@@ -159,6 +159,13 @@ export type ShellCopy = {
   settingsArtStyleJapaneseAnime: string;
   settingsArtStyleStylized3d: string;
   settingsArtStyleRealistic: string;
+  settingsVisualEra: string;
+  settingsVisualEraSource: string;
+  settingsVisualEraPremodern: string;
+  settingsVisualEraContemporary: string;
+  settingsVisualEraCustom: string;
+  settingsVisualEraCustomPrompt: string;
+  settingsVisualEraCustomPlaceholder: string;
   settingsTtsRate: string;
   settingsTtsRateNormal: string;
   settingsTtsRateSlightlyFast: string;
@@ -352,6 +359,14 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsArtStyleJapaneseAnime: "Japanese anime",
     settingsArtStyleStylized3d: "Stylized 3D animation",
     settingsArtStyleRealistic: "Live-action realism",
+    settingsVisualEra: "Visual era / adaptation world",
+    settingsVisualEraSource: "Follow source",
+    settingsVisualEraPremodern: "Premodern Eastern",
+    settingsVisualEraContemporary: "Contemporary adaptation",
+    settingsVisualEraCustom: "Custom world",
+    settingsVisualEraCustomPrompt: "Custom visual-world rules",
+    settingsVisualEraCustomPlaceholder:
+      "For example: retro-futurist 1990s city; preserve cultivation ranks but modernize wardrobe, buildings, and transport.",
     settingsTtsRate: "TTS speed",
     settingsTtsRateNormal: "Normal (1.0x)",
     settingsTtsRateSlightlyFast: "Slightly fast (1.2x)",
@@ -537,6 +552,14 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsArtStyleJapaneseAnime: "日系动画",
     settingsArtStyleStylized3d: "风格化 3D 动画",
     settingsArtStyleRealistic: "写实影视",
+    settingsVisualEra: "视觉时代 / 改编世界",
+    settingsVisualEraSource: "跟随原作",
+    settingsVisualEraPremodern: "古代东方",
+    settingsVisualEraContemporary: "现代都市改编",
+    settingsVisualEraCustom: "自定义世界",
+    settingsVisualEraCustomPrompt: "自定义视觉世界规则",
+    settingsVisualEraCustomPlaceholder:
+      "例如：九十年代复古未来都市；保留修炼境界，但服装、建筑和交通工具现代化。",
     settingsTtsRate: "TTS 语速",
     settingsTtsRateNormal: "正常速度 (1.0x)",
     settingsTtsRateSlightlyFast: "轻微加速 (1.2x)",

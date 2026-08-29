@@ -12,13 +12,16 @@ Project adaptation constraints:
 Source:
 {{source_text}}
 
+Ready-to-use verbatim source-evidence candidates:
+{{source_evidence_candidates}}
+
 Requirements:
 1. faithful only cleans expression and paragraphs; polish may improve readability, action, and dialogue rhythm; drama may compress repetition, surface conflict earlier, and strengthen the episode hook.
 2. No mode may add or change events, identities, relationships, power levels, techniques, abilities, prop ownership, chronology, winners, injuries, deaths, secrets, or outcomes.
 3. Explicit internal narration may become visible action or natural dialogue, but characters must not gain information they do not yet know in the source.
 4. Project art style, aspect ratio, and model settings affect downstream visual production only and must not become story facts.
-5. Regenerate summary only after reading the complete source. It must cover the setup, central conflict, major progression or turn, and the ending state or hook; do not merely excerpt or paraphrase the opening paragraph.
-6. Every sourceEvidence item must be copied verbatim from the source to demonstrate preservation of major facts.
+5. Regenerate summary only after reading the complete source. It must cover the setup, central conflict, major progression or turn, and the ending state or hook; do not merely excerpt or paraphrase the opening paragraph. When the source is long enough, write 180–300 characters; summarize shorter sources proportionally but completely.
+6. Choose 3–6 sourceEvidence items from the candidates above to demonstrate preservation of major facts from the beginning, middle, and ending. The candidates are contiguous verbatim source slices; do not paraphrase, insert or remove characters, alter punctuation, add quotation marks, or use ellipses.
 
 Return only this JSON shape:
 {

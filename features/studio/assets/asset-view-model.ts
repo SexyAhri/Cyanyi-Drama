@@ -233,7 +233,7 @@ function buildGenerationPrompt(input: {
     : [`${kindLabel}名称：${input.name.trim()}`];
   const profile = compileAssetVisualProfile(input.visualProfile);
   if (profile) lines.push("已锁定视觉设定：", profile);
-  if (input.visualDescription?.trim())
+  if (!input.visualProfile && input.visualDescription?.trim())
     lines.push(`视觉设定：${input.visualDescription.trim()}`);
   if (input.description?.trim())
     lines.push(`${kindLabel}描述：${input.description.trim()}`);

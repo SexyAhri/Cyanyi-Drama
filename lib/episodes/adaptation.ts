@@ -17,6 +17,10 @@ export type EpisodeAdaptationMode =
   | "drama"
   | "custom";
 
+export type EpisodeAdaptationProgress =
+  | { type: "reset" }
+  | { type: "delta"; delta: string };
+
 const MAX_ADAPTATION_SOURCE_CHARS = 500_000;
 
 export async function listEpisodeSources(input: {
@@ -50,6 +54,7 @@ export async function adaptEpisodeSource(input: {
   mode: EpisodeAdaptationMode;
   instructions?: string;
   locale?: PromptLocale;
+  onProgress?: (progress: EpisodeAdaptationProgress) => void;
 }) {
   const episode = await ensureEpisodeSourceVersions(input);
   const original = await prisma.episodeSourceVersion.findFirst({
@@ -65,6 +70,7 @@ export async function adaptEpisodeSource(input: {
     );
 
   const provider = await resolveEpisodeTextProvider(input);
+  let preview = createJsonStringFieldStream("adaptedText");
   const result = await requestOpenAiStructured({
     ...provider,
     prompt: renderPrompt({
@@ -72,6 +78,9 @@ export async function adaptEpisodeSource(input: {
       locale: input.locale,
       variables: {
         source_text: original.content,
+        source_evidence_candidates: JSON.stringify(
+          buildSourceEvidenceCandidates(original.content),
+        ),
         manuscript_context: JSON.stringify({
           title: original.manuscript?.title ?? "",
           author: original.manuscript?.author ?? "",
@@ -91,6 +100,15 @@ export async function adaptEpisodeSource(input: {
       ...validateAdaptationSummary(data.summary, original.content),
     ],
     temperature: 0.2,
+    onOutputStart: () => {
+      preview = createJsonStringFieldStream("adaptedText");
+      input.onProgress?.({ type: "reset" });
+    },
+    onTextDelta: (delta) => {
+      const contentDelta = preview.push(delta);
+      if (contentDelta)
+        input.onProgress?.({ type: "delta", delta: contentDelta });
+    },
   });
 
   const latest = await prisma.episodeSourceVersion.findFirst({
@@ -187,6 +205,26 @@ export function validateSourceEvidence(evidence: string[], source: string) {
   );
 }
 
+export function buildSourceEvidenceCandidates(source: string) {
+  const segments = (source.match(/[^。！？!?\r\n]+[。！？!?]?/gu) ?? [])
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length >= 10);
+  if (!segments.length) {
+    const fallback = source.trim().slice(0, 40);
+    return fallback ? [fallback] : [];
+  }
+  const candidates: string[] = [];
+  const count = Math.min(8, segments.length);
+  for (let index = 0; index < count; index += 1) {
+    const segmentIndex = Math.round(
+      (index * (segments.length - 1)) / Math.max(1, count - 1),
+    );
+    const quote = segments[segmentIndex].slice(0, 40);
+    if (!candidates.includes(quote)) candidates.push(quote);
+  }
+  return candidates;
+}
+
 export function validateAdaptationSummary(summary: string, source: string) {
   const normalized = summary.replace(/\s+/gu, "").trim();
   const sourceLength = source.replace(/\s+/gu, "").length;
@@ -205,6 +243,147 @@ export function validateAdaptationSummary(summary: string, source: string) {
             "summary must be regenerated from the complete source and cover setup, conflict, turning point, and ending state",
         },
       ];
+}
+
+export function extractPartialJsonStringField(raw: string, field: string) {
+  const valueStart = findJsonStringFieldValue(raw, field);
+  if (valueStart === null) return null;
+  return readJsonString(raw, valueStart).value;
+}
+
+export function createJsonStringFieldStream(field: string) {
+  let prefix = "";
+  let started = false;
+  let completed = false;
+  let escaped = false;
+  let unicode: string | null = null;
+  const marker = new RegExp(`"${escapeRegExp(field)}"\\s*:\\s*"`, "u");
+
+  return {
+    push(chunk: string) {
+      if (completed || !chunk) return "";
+      let input = chunk;
+      if (!started) {
+        prefix += chunk;
+        const match = marker.exec(prefix);
+        if (!match) return "";
+        started = true;
+        input = prefix.slice((match.index ?? 0) + match[0].length);
+        prefix = "";
+      }
+
+      let output = "";
+      for (const current of input) {
+        if (unicode !== null) {
+          if (!/[0-9a-f]/iu.test(current)) {
+            completed = true;
+            break;
+          }
+          unicode += current;
+          if (unicode.length === 4) {
+            output += String.fromCharCode(Number.parseInt(unicode, 16));
+            unicode = null;
+            escaped = false;
+          }
+          continue;
+        }
+        if (escaped) {
+          if (current === "u") {
+            unicode = "";
+            continue;
+          }
+          output += decodeJsonEscape(current);
+          escaped = false;
+          continue;
+        }
+        if (current === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (current === '"') {
+          completed = true;
+          break;
+        }
+        output += current;
+      }
+      return output;
+    },
+  };
+}
+
+function decodeJsonEscape(value: string) {
+  return value === "n"
+    ? "\n"
+    : value === "r"
+      ? "\r"
+      : value === "t"
+        ? "\t"
+        : value === "b"
+          ? "\b"
+          : value === "f"
+            ? "\f"
+            : value;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function findJsonStringFieldValue(raw: string, field: string) {
+  let index = 0;
+  while (index < raw.length) {
+    if (raw[index] !== '"') {
+      index += 1;
+      continue;
+    }
+    const token = readJsonString(raw, index + 1);
+    if (!token.complete) return null;
+    let cursor = token.end + 1;
+    while (/\s/u.test(raw[cursor] ?? "")) cursor += 1;
+    if (token.value === field && raw[cursor] === ":") {
+      cursor += 1;
+      while (/\s/u.test(raw[cursor] ?? "")) cursor += 1;
+      return raw[cursor] === '"' ? cursor + 1 : null;
+    }
+    index = token.end + 1;
+  }
+  return null;
+}
+
+function readJsonString(raw: string, start: number) {
+  let value = "";
+  for (let index = start; index < raw.length; index += 1) {
+    const current = raw[index];
+    if (current === '"') return { value, end: index, complete: true };
+    if (current !== "\\") {
+      value += current;
+      continue;
+    }
+    const escaped = raw[index + 1];
+    if (!escaped) return { value, end: raw.length, complete: false };
+    if (escaped === "u") {
+      const hex = raw.slice(index + 2, index + 6);
+      if (!/^[0-9a-f]{4}$/iu.test(hex))
+        return { value, end: raw.length, complete: false };
+      value += String.fromCharCode(Number.parseInt(hex, 16));
+      index += 5;
+      continue;
+    }
+    value +=
+      escaped === "n"
+        ? "\n"
+        : escaped === "r"
+          ? "\r"
+          : escaped === "t"
+            ? "\t"
+            : escaped === "b"
+              ? "\b"
+              : escaped === "f"
+                ? "\f"
+                : escaped;
+    index += 1;
+  }
+  return { value, end: raw.length, complete: false };
 }
 
 async function ensureEpisodeSourceVersions(input: {

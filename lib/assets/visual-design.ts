@@ -15,6 +15,13 @@ import type {
   AssetVisualProfile,
   AssetVisualProfileSpec,
 } from "./visual-profile";
+import {
+  findVisualProfileStoryWorldConflicts,
+  getStoryWorldDirective,
+  loadProjectAssetStoryWorldContext,
+  storyWorldContextForPrompt,
+  type AssetStoryWorldContext,
+} from "./story-world";
 
 export type VisualDesignTargetType = "character" | "location" | "prop";
 
@@ -30,6 +37,12 @@ export async function generateProjectAssetVisualProfile(input: {
   locale?: PromptLocale;
 }) {
   const context = await loadVisualDesignContext(input);
+  const storyWorld = await loadProjectAssetStoryWorldContext({
+    userId: input.userId,
+    projectId: input.projectId,
+    assetName: context.name,
+    assetFacts: context.facts,
+  });
   const provider = await resolveDesignProvider(input);
   const prompt = renderPrompt({
     id: PROMPT_IDS.ASSET_VISUAL_DESIGN,
@@ -38,6 +51,15 @@ export async function generateProjectAssetVisualProfile(input: {
       asset_kind: localizedKind(input.targetType, input.locale),
       asset_name: context.name,
       story_facts_json: JSON.stringify(context.facts, null, 2),
+      story_world_context_json: JSON.stringify(
+        storyWorldContextForPrompt(storyWorld),
+        null,
+        2,
+      ),
+      story_world_directive: getStoryWorldDirective(
+        storyWorld.lock,
+        input.locale === "en" ? "en" : "zh",
+      ),
       project_style: getProjectArtStyleDirective(
         context.artStyle,
         input.locale === "en" ? "en" : "zh",
@@ -50,11 +72,13 @@ export async function generateProjectAssetVisualProfile(input: {
     schema: assetVisualDesignSchema,
     temperature: 0.35,
   });
+  assertStoryWorldCompatibility(result.data, storyWorld);
   const profile = await persistVisualProfile({
     ...input,
     source: "model",
     spec: result.data,
     projectArtStyle: context.artStyle,
+    storyWorld: storyWorld.lock,
     promptTrace: result.trace,
   });
   return {
@@ -75,14 +99,22 @@ export async function saveProjectAssetVisualProfile(input: {
   spec: AssetVisualProfileSpec;
 }) {
   const context = await loadVisualDesignContext(input);
+  const storyWorld = await loadProjectAssetStoryWorldContext({
+    userId: input.userId,
+    projectId: input.projectId,
+    assetName: context.name,
+    assetFacts: context.facts,
+  });
   const parsed = assetVisualDesignSchema.safeParse(input.spec);
   if (!parsed.success)
     throw new ProjectAssetError("视觉设定字段不完整", 400);
+  assertStoryWorldCompatibility(parsed.data, storyWorld);
   return persistVisualProfile({
     ...input,
     source: "manual",
     spec: parsed.data,
     projectArtStyle: context.artStyle,
+    storyWorld: storyWorld.lock,
   });
 }
 
@@ -152,6 +184,7 @@ async function persistVisualProfile(input: {
   source: "model" | "manual";
   spec: VisualDesignResult;
   projectArtStyle?: string;
+  storyWorld?: AssetVisualProfile["storyWorld"];
   model?: string;
   promptTrace?: Record<string, unknown>;
 }) {
@@ -164,6 +197,7 @@ async function persistVisualProfile(input: {
     ...(input.projectArtStyle
       ? { projectArtStyle: input.projectArtStyle }
       : {}),
+    ...(input.storyWorld ? { storyWorld: input.storyWorld } : {}),
     ...(input.promptTrace ? { promptTrace: input.promptTrace } : {}),
   };
   const data = { visualProfileJson: JSON.stringify(profile) };
@@ -183,6 +217,18 @@ async function persistVisualProfile(input: {
       data,
     });
   return profile;
+}
+
+function assertStoryWorldCompatibility(
+  spec: AssetVisualProfileSpec,
+  storyWorld: AssetStoryWorldContext,
+) {
+  const conflicts = findVisualProfileStoryWorldConflicts(spec, storyWorld);
+  if (!conflicts.length) return;
+  throw new ProjectAssetError(
+    `视觉设定与故事时代冲突：检测到${conflicts.join("、")}。请按项目故事世界重新设计，不能用画风替代时代设定。`,
+    422,
+  );
 }
 
 async function resolveDesignProvider(input: {

@@ -20,6 +20,11 @@ import {
   getProjectArtStyleLabel,
 } from "@/lib/projects/art-style";
 import type { MediaGenerationDefaults } from "@/lib/settings/runtime-contract";
+import {
+  findStoryWorldTextConflicts,
+  getStoryWorldDirective,
+  loadProjectAssetStoryWorldContext,
+} from "@/lib/assets/story-world";
 
 export type ProjectAssetTarget = "character" | "location" | "prop";
 
@@ -80,6 +85,22 @@ export async function createProjectImageTask(
         entity: { id: existing.targetId, entityType: existing.targetType },
       };
   }
+  const assetTarget = await loadAssetTargetContext(input);
+  const storyWorld = await loadProjectAssetStoryWorldContext({
+    userId: input.userId,
+    projectId: input.projectId,
+    assetName: assetTarget.name,
+    assetFacts: assetTarget.facts,
+  });
+  const storyWorldConflicts = findStoryWorldTextConflicts(
+    input.prompt,
+    storyWorld,
+  );
+  if (storyWorldConflicts.length)
+    throw new ProjectAssetTaskError(
+      `当前视觉设定与故事时代冲突：检测到${storyWorldConflicts.join("、")}。请先重新进行 AI 视觉设计，再提交生图。`,
+      422,
+    );
   const explicitReferenceImages = input.referenceAssetIds?.length
     ? await findExplicitReferenceImages(input)
     : [];
@@ -108,7 +129,10 @@ export async function createProjectImageTask(
     model: input.model,
     request: {
       prompt: applyProjectArtStyle(
-        withAssetContinuityRequirements(input.targetType, input.prompt),
+        [
+          getStoryWorldDirective(storyWorld.lock, "zh"),
+          withAssetContinuityRequirements(input.targetType, input.prompt),
+        ].join("\n"),
         artStyle,
         "zh",
       ),
@@ -935,6 +959,49 @@ async function loadProjectArtStyle(projectId: string) {
     select: { artStyle: true },
   });
   return config?.artStyle ?? "american-comic";
+}
+
+async function loadAssetTargetContext(input: CreateProjectImageTaskInput) {
+  if (input.targetType === "character") {
+    const target = await prisma.novelCharacter.findFirst({
+      where: {
+        id: input.targetId,
+        projectId: input.projectId,
+        project: { userId: input.userId },
+      },
+      select: { name: true, introduction: true, profileJson: true },
+    });
+    if (!target) throw new ProjectAssetTaskError("目标资产不存在", 404);
+    return {
+      name: target.name,
+      facts: [target.introduction, target.profileJson].filter(Boolean),
+    };
+  }
+  if (input.targetType === "location") {
+    const target = await prisma.novelLocation.findFirst({
+      where: {
+        id: input.targetId,
+        projectId: input.projectId,
+        project: { userId: input.userId },
+      },
+      select: { name: true, summary: true },
+    });
+    if (!target) throw new ProjectAssetTaskError("目标资产不存在", 404);
+    return { name: target.name, facts: target.summary };
+  }
+  const target = await prisma.novelProp.findFirst({
+    where: {
+      id: input.targetId,
+      projectId: input.projectId,
+      project: { userId: input.userId },
+    },
+    select: { name: true, summary: true, metadataJson: true },
+  });
+  if (!target) throw new ProjectAssetTaskError("目标资产不存在", 404);
+  return {
+    name: target.name,
+    facts: [target.summary, target.metadataJson].filter(Boolean),
+  };
 }
 
 async function createTargetEntity(input: CreateProjectImageTaskInput) {

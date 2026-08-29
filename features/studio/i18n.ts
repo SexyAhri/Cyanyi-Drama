@@ -98,6 +98,8 @@ const copy = {
     adaptationInstructions: "补充要求",
     adaptationInstructionsPlaceholder: "可选；不得要求新增或改变原文事实",
     adapting: "正在改编",
+    adaptationStreaming: "正在实时生成改编稿",
+    adaptationFailed: "改编失败，未创建新版本",
     adaptationCreated: "改编稿已生成，确认后再设为生产稿",
     sourceReadOnly: "非生产版本为只读",
     save: "保存",
@@ -396,6 +398,8 @@ const copy = {
     adaptationInstructionsPlaceholder:
       "Optional; directions cannot add or alter source facts",
     adapting: "Adapting",
+    adaptationStreaming: "Generating the adaptation live",
+    adaptationFailed: "Adaptation failed; no new version was created",
     adaptationCreated: "Adaptation created; review it before using it for production",
     sourceReadOnly: "Non-production versions are read-only",
     save: "Save",

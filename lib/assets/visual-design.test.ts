@@ -6,6 +6,7 @@ const characterFindFirst = vi.hoisted(() => vi.fn());
 const characterUpdateMany = vi.hoisted(() => vi.fn());
 const channelFindFirst = vi.hoisted(() => vi.fn());
 const providerModelFindFirst = vi.hoisted(() => vi.fn());
+const episodeFindMany = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/llm/openai-structured", () => ({ requestOpenAiStructured }));
 vi.mock("@/lib/server/crypto", () => ({
@@ -32,6 +33,7 @@ vi.mock("@/lib/server/prisma", () => ({
     novelProp: { findFirst: vi.fn(), updateMany: vi.fn() },
     channel: { findFirst: channelFindFirst },
     providerModel: { findFirst: providerModelFindFirst },
+    episode: { findMany: episodeFindMany },
   },
 }));
 
@@ -54,7 +56,22 @@ const spec = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  projectFindFirst.mockResolvedValue({ config: { artStyle: "ink animation" } });
+  projectFindFirst.mockResolvedValue({
+    name: "玄天战尊",
+    description: null,
+    config: {
+      artStyle: "ink animation",
+      globalAssetText: null,
+      visualEra: "source",
+      visualEraCustom: null,
+    },
+    manuscripts: [
+      {
+        title: "玄天战尊",
+        synopsis: "大秦王朝的少年凭借秘籍修炼，逐步突破淬体境界。",
+      },
+    ],
+  });
   characterFindFirst.mockResolvedValue({
     name: "Lin",
     aliases: '["Master Lin"]',
@@ -69,6 +86,13 @@ beforeEach(() => {
   providerModelFindFirst.mockResolvedValue({
     capabilitiesJson: JSON.stringify({ supportsStructuredOutputs: true }),
   });
+  episodeFindMany.mockResolvedValue([
+    {
+      description: "韩子枫将古籍交给儿子。",
+      novelText: "韩子枫曾是韩家庄的天才，如今身受重伤。",
+      sourceVersions: [],
+    },
+  ]);
   requestOpenAiStructured.mockResolvedValue({
     data: spec,
     trace: { promptId: "asset_visual_design", version: 1 },
@@ -91,6 +115,8 @@ describe("asset visual design", () => {
     expect(request.prompt.text).toContain('"realm": "Core Formation"');
     expect(request.prompt.text).toContain("ink animation");
     expect(request.prompt.text).toContain("最高优先级");
+    expect(request.prompt.text).toContain("古代东方修炼世界");
+    expect(request.prompt.text).toContain("画风与视觉改编世界是两套独立约束");
     expect(result.profile).toMatchObject({
       source: "model",
       model: "analysis-model",
@@ -102,8 +128,35 @@ describe("asset visual design", () => {
     expect(stored).toMatchObject({
       source: "model",
       projectArtStyle: "ink animation",
+      storyWorld: {
+        setting: "premodern_cultivation",
+      },
       spec,
     });
+  });
+
+  it("rejects modern wardrobe returned for a premodern cultivation character", async () => {
+    requestOpenAiStructured.mockResolvedValueOnce({
+      data: {
+        ...spec,
+        shapeAndStructure: "Middle-aged man with a modern crew cut",
+        surfaceAndStyling: "White dress shirt, business suit, and slacks",
+      },
+      trace: { promptId: "asset_visual_design", version: 2 },
+    });
+
+    await expect(
+      generateProjectAssetVisualProfile({
+        userId: "user-1",
+        projectId: "project-1",
+        targetType: "character",
+        targetId: "character-1",
+        channelId: "channel-1",
+        model: "analysis-model",
+        locale: "zh",
+      }),
+    ).rejects.toThrow("视觉设定与故事时代冲突");
+    expect(characterUpdateMany).not.toHaveBeenCalled();
   });
 
   it("validates and records manual revisions separately", async () => {

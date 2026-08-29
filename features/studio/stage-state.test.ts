@@ -185,6 +185,8 @@ function snapshot(input?: {
         videoRatio: "9:16",
         videoResolution: "720p",
         artStyle: "comic",
+        visualEra: "source",
+        visualEraCustom: null,
         ttsRate: "+0%",
         workflowMode: "novel-promotion",
         globalAssetText: null,

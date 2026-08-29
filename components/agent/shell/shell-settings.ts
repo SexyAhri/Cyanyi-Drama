@@ -10,6 +10,8 @@ export type ShellSettings = {
   lipSyncModel: string;
   videoRatio: string;
   artStyle: string;
+  visualEra: "source" | "premodern" | "contemporary" | "custom";
+  visualEraCustom: string;
   ttsRate: string;
 };
 
@@ -26,6 +28,8 @@ export function createDefaultShellSettings(modelId: string): ShellSettings {
     lipSyncModel: modelId,
     videoRatio: "9:16",
     artStyle: "american-comic",
+    visualEra: "source",
+    visualEraCustom: "",
     ttsRate: "+0%",
   };
 }

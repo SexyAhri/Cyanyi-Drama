@@ -5,12 +5,14 @@ import {
   Ban,
   BookOpenText,
   Braces,
+  CircleAlert,
   FilePenLine,
   LoaderCircle,
   Pause,
   Play,
   RotateCcw,
   Save,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -30,6 +32,7 @@ import { cn } from "@/lib/utils";
 
 import {
   activateStudioEpisodeSource,
+  adaptStudioEpisode,
   controlStudioWorkflow,
   loadStudioEpisodeSources,
   loadStudioProductionData,
@@ -52,7 +55,17 @@ import type {
 } from "../types";
 import { workflowStepLabel } from "../workflow-labels";
 import { StatusIndicator } from "../components/status-indicator";
-import { AdaptationDialog } from "./adaptation-dialog";
+import {
+  AdaptationDialog,
+  type AdaptationRequest,
+} from "./adaptation-dialog";
+
+type AdaptationDraft = {
+  episodeId: string;
+  status: "running" | "failed";
+  content: string;
+  error?: string;
+};
 
 export function WritingWorkspace({
   analysisModelId,
@@ -91,6 +104,9 @@ export function WritingWorkspace({
   const [isLoadingSources, setIsLoadingSources] = useState(true);
   const [isActivatingSource, setIsActivatingSource] = useState(false);
   const [sourceRevision, setSourceRevision] = useState(0);
+  const [adaptationDraft, setAdaptationDraft] =
+    useState<AdaptationDraft | null>(null);
+  const episodeIdRef = useRef(episode.id);
   const [sourceCatalog, setSourceCatalog] = useState<
     Awaited<ReturnType<typeof loadStudioEpisodeSources>> | null
   >(null);
@@ -117,8 +133,10 @@ export function WritingWorkspace({
   }, [episode.id, episode.novelText]);
 
   useEffect(() => {
+    episodeIdRef.current = episode.id;
     setTab(episode.activeSourceKind);
     setSelectedSourceIds({});
+    setAdaptationDraft(null);
   }, [episode.id, episode.activeSourceKind]);
 
   useEffect(() => {
@@ -205,6 +223,10 @@ export function WritingWorkspace({
   const displayedSourceText = selectedSourceIsActive
     ? novelText
     : (selectedSource?.content ?? "");
+  const displayedTextLength =
+    tab === "adapted" && adaptationDraft?.episodeId === episode.id
+      ? adaptationDraft.content.length
+      : displayedSourceText.length;
 
   async function saveSource() {
     setIsSaving(true);
@@ -249,10 +271,50 @@ export function WritingWorkspace({
     }
   }
 
-  async function handleAdaptationCreated(source: EpisodeSourceVersionRecord) {
-    setSelectedSourceIds((current) => ({ ...current, adapted: source.id }));
+  function startAdaptation(input: AdaptationRequest) {
+    const requestEpisodeId = episode.id;
     setTab("adapted");
-    setSourceRevision((current) => current + 1);
+    setAdaptationDraft({
+      episodeId: requestEpisodeId,
+      status: "running",
+      content: "",
+    });
+    void adaptStudioEpisode(snapshot.project.id, requestEpisodeId, input, {
+      onReset: () =>
+        setAdaptationDraft((current) =>
+          current?.episodeId === requestEpisodeId
+            ? { ...current, status: "running", content: "", error: undefined }
+            : current,
+        ),
+      onContent: (content) =>
+        setAdaptationDraft((current) =>
+          current?.episodeId === requestEpisodeId
+            ? { ...current, status: "running", content, error: undefined }
+            : current,
+        ),
+    })
+      .then(async (result) => {
+        if (episodeIdRef.current !== requestEpisodeId) return;
+        setSelectedSourceIds((current) => ({
+          ...current,
+          adapted: result.source.id,
+        }));
+        setAdaptationDraft(null);
+        setSourceRevision((current) => current + 1);
+        toast.success(copy.adaptationCreated);
+        await onRefresh();
+      })
+      .catch((error: unknown) => {
+        if (episodeIdRef.current !== requestEpisodeId) return;
+        const message =
+          error instanceof Error ? error.message : copy.actionFailed;
+        setAdaptationDraft((current) =>
+          current?.episodeId === requestEpisodeId
+            ? { ...current, status: "failed", error: message }
+            : current,
+        );
+        toast.error(message);
+      });
   }
 
   async function startWorkflow() {
@@ -310,17 +372,22 @@ export function WritingWorkspace({
           {tab !== "screenplay" ? (
             <>
               <span className="font-mono">
-                {displayedSourceText.length.toLocaleString()} {copy.wordCount}
+                {displayedTextLength.toLocaleString()} {copy.wordCount}
               </span>
               <span aria-hidden>·</span>
               <span>
-                {selectedSourceIsActive
+                {adaptationDraft?.episodeId === episode.id && tab === "adapted"
+                  ? adaptationDraft.status === "running"
+                    ? copy.adaptationStreaming
+                    : copy.adaptationFailed
+                  : selectedSourceIsActive
                   ? isDirty
                     ? copy.unsavedChanges
                     : copy.productionSource
                   : copy.sourceReadOnly}
               </span>
-              {selectedSourceIsActive ? (
+              {selectedSourceIsActive &&
+              !(tab === "adapted" && adaptationDraft?.episodeId === episode.id) ? (
                 <Button
                   disabled={!isDirty || isSaving || workflowActive}
                   onClick={() => void saveSource()}
@@ -337,12 +404,15 @@ export function WritingWorkspace({
               ) : null}
               <AdaptationDialog
                 defaultModelId={analysisModelId}
-                disabled={isSaving || workflowActive || !sourceCatalog?.sources.length}
-                episodeId={episode.id}
+                disabled={
+                  isSaving ||
+                  workflowActive ||
+                  adaptationDraft?.status === "running" ||
+                  !sourceCatalog?.sources.length
+                }
                 locale={locale}
                 models={models}
-                onCreated={handleAdaptationCreated}
-                projectId={snapshot.project.id}
+                onStart={startAdaptation}
               />
             </>
           ) : null}
@@ -405,6 +475,11 @@ export function WritingWorkspace({
               >
                 <SourceVersionPane
                   activeSourceId={sourceCatalog?.activeSourceId ?? null}
+                  adaptationDraft={
+                    kind === "adapted" && adaptationDraft?.episodeId === episode.id
+                      ? adaptationDraft
+                      : null
+                  }
                   displayedText={isActive ? novelText : (source?.content ?? "")}
                   isActivating={isActivatingSource}
                   isLoading={isLoadingSources}
@@ -414,6 +489,7 @@ export function WritingWorkspace({
                   manuscriptSynopsis={sourceCatalog?.manuscript?.synopsis}
                   onActivate={(next) => void activateSource(next)}
                   onChange={setNovelText}
+                  onDismissAdaptation={() => setAdaptationDraft(null)}
                   onSelect={(sourceId) =>
                     setSelectedSourceIds((current) => ({
                       ...current,
@@ -535,6 +611,7 @@ export function WritingWorkspace({
 
 function SourceVersionPane({
   activeSourceId,
+  adaptationDraft,
   displayedText,
   isActivating,
   isLoading,
@@ -544,12 +621,14 @@ function SourceVersionPane({
   manuscriptSynopsis,
   onActivate,
   onChange,
+  onDismissAdaptation,
   onSelect,
   source,
   versions,
   workflowActive,
 }: {
   activeSourceId: string | null;
+  adaptationDraft: AdaptationDraft | null;
   displayedText: string;
   isActivating: boolean;
   isLoading: boolean;
@@ -559,12 +638,21 @@ function SourceVersionPane({
   manuscriptSynopsis?: string | null;
   onActivate: (source: EpisodeSourceVersionRecord) => void;
   onChange: (value: string) => void;
+  onDismissAdaptation: () => void;
   onSelect: (sourceId: string) => void;
   source?: EpisodeSourceVersionRecord;
   versions: EpisodeSourceVersionRecord[];
   workflowActive: boolean;
 }) {
   const copy = getStudioCopy(locale);
+  if (adaptationDraft)
+    return (
+      <StreamingAdaptationPane
+        draft={adaptationDraft}
+        locale={locale}
+        onDismiss={onDismissAdaptation}
+      />
+    );
   if (isLoading)
     return (
       <div className="flex min-h-80 items-center justify-center text-muted-foreground">
@@ -654,6 +742,70 @@ function SourceVersionPane({
         onChange={(event) => onChange(event.target.value)}
         placeholder={copy.novelTextPlaceholder}
         value={displayedText}
+      />
+    </div>
+  );
+}
+
+function StreamingAdaptationPane({
+  draft,
+  locale,
+  onDismiss,
+}: {
+  draft: AdaptationDraft;
+  locale: StudioLocale;
+  onDismiss: () => void;
+}) {
+  const copy = getStudioCopy(locale);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (draft.status !== "running" || !textareaRef.current) return;
+    textareaRef.current.scrollTop = textareaRef.current.scrollHeight;
+  }, [draft.content, draft.status]);
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex min-h-12 items-center gap-2 border-y py-3 text-sm">
+        {draft.status === "running" ? (
+          <LoaderCircle className="size-4 animate-spin text-primary" />
+        ) : (
+          <CircleAlert className="size-4 text-destructive" />
+        )}
+        <span className="font-medium">
+          {draft.status === "running"
+            ? copy.adaptationStreaming
+            : copy.adaptationFailed}
+        </span>
+        <span className="ml-auto font-mono text-xs text-muted-foreground">
+          {draft.content.length.toLocaleString()} {copy.wordCount}
+        </span>
+        {draft.status === "failed" ? (
+          <Button
+            aria-label={copy.close}
+            onClick={onDismiss}
+            size="icon-sm"
+            title={copy.close}
+            type="button"
+            variant="ghost"
+          >
+            <X className="size-4" />
+          </Button>
+        ) : null}
+      </div>
+      {draft.status === "failed" && draft.error ? (
+        <p className="border-b py-3 text-sm leading-6 text-destructive">
+          {draft.error}
+        </p>
+      ) : null}
+      <Textarea
+        aria-busy={draft.status === "running"}
+        aria-label={copy.adaptedSource}
+        className="mt-4 h-[min(56dvh,42rem)] min-h-80 resize-y overflow-y-auto rounded-md bg-card p-4 leading-7 field-sizing-fixed xl:min-h-0 xl:flex-1 xl:resize-none"
+        placeholder={copy.adapting}
+        readOnly
+        ref={textareaRef}
+        value={draft.content}
       />
     </div>
   );

@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -24,6 +25,7 @@ type PreferencesSettingsPanelProps = {
   models: ModelOption[];
   onChange: (settings: ShellSettings) => void;
   settings: ShellSettings;
+  showProjectVisualWorld?: boolean;
 };
 
 type ModelType = "llm" | "image" | "video" | "audio" | "lipsync";
@@ -93,7 +95,16 @@ export function PreferencesSettingsPanel({
   models,
   onChange,
   settings,
+  showProjectVisualWorld = false,
 }: PreferencesSettingsPanelProps) {
+  const [visualEraCustomDraft, setVisualEraCustomDraft] = useState(
+    settings.visualEraCustom,
+  );
+
+  useEffect(() => {
+    setVisualEraCustomDraft(settings.visualEraCustom);
+  }, [settings.visualEraCustom]);
+
   function update(patch: Partial<ShellSettings>) {
     onChange({ ...settings, ...patch });
   }
@@ -121,7 +132,7 @@ export function PreferencesSettingsPanel({
         description={copy.settingsCreativeDefaultsDescription}
         title={copy.settingsCreativeDefaults}
       >
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <SelectField
             label={copy.settingsVideoRatio}
             onChange={(value) => update({ videoRatio: value })}
@@ -137,6 +148,29 @@ export function PreferencesSettingsPanel({
             }))}
             value={settings.artStyle}
           />
+          {showProjectVisualWorld ? (
+            <SelectField
+              label={copy.settingsVisualEra}
+              onChange={(value) =>
+                update({
+                  visualEra: value as ShellSettings["visualEra"],
+                })
+              }
+              options={[
+                { label: copy.settingsVisualEraSource, value: "source" },
+                {
+                  label: copy.settingsVisualEraPremodern,
+                  value: "premodern",
+                },
+                {
+                  label: copy.settingsVisualEraContemporary,
+                  value: "contemporary",
+                },
+                { label: copy.settingsVisualEraCustom, value: "custom" },
+              ]}
+              value={settings.visualEra}
+            />
+          ) : null}
           <SelectField
             label={copy.settingsTtsRate}
             onChange={(value) => update({ ttsRate: value })}
@@ -147,6 +181,26 @@ export function PreferencesSettingsPanel({
             value={settings.ttsRate}
           />
         </div>
+        {showProjectVisualWorld && settings.visualEra === "custom" ? (
+          <div className="grid gap-1.5">
+            <Label className="text-xs" htmlFor="project-visual-era-custom">
+              {copy.settingsVisualEraCustomPrompt}
+            </Label>
+            <Textarea
+              id="project-visual-era-custom"
+              maxLength={2_000}
+              onChange={(event) =>
+                setVisualEraCustomDraft(event.target.value)
+              }
+              onBlur={() => {
+                if (visualEraCustomDraft !== settings.visualEraCustom)
+                  update({ visualEraCustom: visualEraCustomDraft });
+              }}
+              placeholder={copy.settingsVisualEraCustomPlaceholder}
+              value={visualEraCustomDraft}
+            />
+          </div>
+        ) : null}
       </SettingsSection>
     </div>
   );
