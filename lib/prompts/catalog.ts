@@ -232,6 +232,44 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       qualityGates: ["schema_valid", "source_boundaries_locatable", "full_source_coverage"],
     }),
   },
+  [PROMPT_IDS.ASSET_VISUAL_DESIGN]: {
+    pathStem: "domain/asset_visual_design",
+    version: 1,
+    variables: [
+      "asset_kind",
+      "asset_name",
+      "story_facts_json",
+      "project_style",
+    ],
+    agent: defineAgent({
+      id: "asset_visual_designer",
+      responsibility:
+        "Turn approved story facts into a concrete, reusable visual specification for one production asset.",
+      prohibited: [
+        "changing or contradicting supplied story facts",
+        "presenting inferred visual choices as source canon",
+        "adding plot events, relationships, powers, or biography",
+        "designing a transient shot instead of a reusable asset",
+      ],
+      successCriteria: [
+        "The result is concrete enough to generate a stable reference image",
+        "Every inferred choice is compatible with supplied facts and project style",
+        "Continuity rules identify the traits that downstream shots must preserve",
+      ],
+      qualityGates: [
+        "schema_valid",
+        "story_facts_preserved",
+        "visual_specification_complete",
+        "inference_provenance_explicit",
+      ],
+      stopRules: [
+        "Stop after one complete visual specification",
+        "Do not infer a fact when it would contradict or materially extend the story",
+      ],
+      contextPolicy: { scope: "project", trust: "untrusted" },
+      evidencePolicy: { required: true, mode: "input_references" },
+    }),
+  },
   [PROMPT_IDS.STORY_SCREENPLAY_REVISION]: {
     pathStem: "domain/story_screenplay_revision",
     version: 1,

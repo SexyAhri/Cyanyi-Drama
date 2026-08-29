@@ -139,4 +139,38 @@ describe("screenplay dialogue normalization", () => {
       ]),
     );
   });
+
+  it("demotes action text emitted as dialogue after a shouted sound", () => {
+    const source =
+      "海宏赡厉喝一声，身前的平静海潮顿时骇浪升起，向着九炎天龙席卷而去。";
+    const screenplay = normalizeScreenplayDialogue({
+      clipId: "clip-1",
+      originalText: source,
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "虚空", time: "日" },
+          description: "",
+          characters: ["海宏赡", "九炎天龙"],
+          content: [
+            {
+              type: "dialogue" as const,
+              character: "海宏赡",
+              parenthetical: null,
+              lines:
+                "身前的平静海潮顿时骇浪升起，向着九炎天龙席卷而去。",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(screenplay.scenes[0].content).toContainEqual({
+      type: "action",
+      text: "身前的平静海潮顿时骇浪升起，向着九炎天龙席卷而去。",
+    });
+    expect(screenplay.scenes[0].content).not.toContainEqual(
+      expect.objectContaining({ type: "dialogue" }),
+    );
+  });
 });

@@ -137,7 +137,9 @@ export type ShellCopy = {
   settingsArtStyle: string;
   settingsArtStyleAmericanComic: string;
   settingsArtStyleChineseComic: string;
+  settingsArtStyleChineseInk: string;
   settingsArtStyleJapaneseAnime: string;
+  settingsArtStyleStylized3d: string;
   settingsArtStyleRealistic: string;
   settingsTtsRate: string;
   settingsTtsRateNormal: string;
@@ -305,10 +307,12 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
       "Project defaults shared by image, video, and TTS generation.",
     settingsVideoRatio: "Video ratio",
     settingsArtStyle: "Art style",
-    settingsArtStyleAmericanComic: "Comic style",
-    settingsArtStyleChineseComic: "Chinese comic",
+    settingsArtStyleAmericanComic: "American comic",
+    settingsArtStyleChineseComic: "Chinese animation",
+    settingsArtStyleChineseInk: "Chinese ink animation",
     settingsArtStyleJapaneseAnime: "Japanese anime",
-    settingsArtStyleRealistic: "Realistic",
+    settingsArtStyleStylized3d: "Stylized 3D animation",
+    settingsArtStyleRealistic: "Live-action realism",
     settingsTtsRate: "TTS speed",
     settingsTtsRateNormal: "Normal (1.0x)",
     settingsTtsRateSlightlyFast: "Slightly fast (1.2x)",
@@ -472,10 +476,12 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
       "图片、视频和 TTS 生成共用的项目默认配置。",
     settingsVideoRatio: "视频比例",
     settingsArtStyle: "艺术风格",
-    settingsArtStyleAmericanComic: "漫画风",
-    settingsArtStyleChineseComic: "精致国漫",
-    settingsArtStyleJapaneseAnime: "日系动漫风",
-    settingsArtStyleRealistic: "真人风格",
+    settingsArtStyleAmericanComic: "美式漫画",
+    settingsArtStyleChineseComic: "国漫影视动画",
+    settingsArtStyleChineseInk: "中国水墨动画",
+    settingsArtStyleJapaneseAnime: "日系动画",
+    settingsArtStyleStylized3d: "风格化 3D 动画",
+    settingsArtStyleRealistic: "写实影视",
     settingsTtsRate: "TTS 语速",
     settingsTtsRateNormal: "正常速度 (1.0x)",
     settingsTtsRateSlightlyFast: "轻微加速 (1.2x)",

@@ -6,7 +6,9 @@ import {
   buildPostMasterPackage,
   findTimelineAsset,
   moveTimelineTrack,
+  reorderTimelineTrack,
   updateTimelineDuration,
+  updateTimelineTrackSettings,
 } from "./delivery-view-model";
 
 describe("delivery view model", () => {
@@ -24,6 +26,30 @@ describe("delivery view model", () => {
     const next = updateTimelineDuration(timeline(), "panel-1", 40);
     expect(next.tracks.map((track) => track.duration)).toEqual([30, 3]);
     expect(next.duration).toBe(33);
+  });
+
+  it("supports direct drag reordering between arbitrary tracks", () => {
+    const next = reorderTimelineTrack(timeline(), "panel-1", "panel-2");
+    expect(next.tracks.map((track) => track.id)).toEqual([
+      "panel-2",
+      "panel-1",
+    ]);
+    expect(next.tracks[1]).toMatchObject({ start: 3, end: 5 });
+  });
+
+  it("stores bounded source, volume, and fade settings", () => {
+    const next = updateTimelineTrackSettings(timeline(), "panel-1", {
+      sourceStart: 2.5,
+      volume: 3,
+      transition: "fade",
+      transitionDuration: 9,
+    });
+    expect(next.tracks[0]).toMatchObject({
+      sourceStart: 2.5,
+      volume: 2,
+      transition: "fade",
+      transitionDuration: 1,
+    });
   });
 
   it("uses lip sync media before video and image", () => {

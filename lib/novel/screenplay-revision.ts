@@ -133,6 +133,7 @@ export async function reviseScreenplayClip(input: {
       normalizeScreenplayProviderPayload(value, {
         clipText: clip.content,
         characters: canonical.characters,
+        sourceEvents,
       }),
     validate: (data) =>
       validateScreenplayConversion(

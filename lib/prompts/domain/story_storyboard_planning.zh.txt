@@ -6,7 +6,7 @@
 3. 规划镜头前先在内部建立按剧本顺序排列的 spoken checklist，逐项列出每句 dialogue/voiceover 的类型、说话人和完整原文；输出完成后再逐项核对。每项必须按原顺序、原字句恰好覆盖一次，不得新增、漏掉、换序或重复。长台词允许在自然标点处分到相邻镜头，但相邻片段拼接后必须与该项原文完全一致。
 4. durationSeconds 为 1 到 15 的整数。每个有声音文本的镜头必须先计算 minimumSeconds=ceil(中文字数/4.2 + 英文词数/2.6 + 逗号句号问号感叹号分号冒号及省略号数量*0.18)，再令 durationSeconds 不小于 minimumSeconds。若 minimumSeconds>15，或动作和台词无法自然同镜完成，必须先按自然标点拆成多个相邻镜头再分别计算，绝对不得加速硬塞。
 5. sceneNumber 必须对应剧本场次。场景或时间变化必须切镜，不能用连续动作伪装成一个跨场景长镜头。
-6. 每镜必须写 startState 与 endState，明确 body、hands、gaze、screenDirection、props。全部镜头起草完后必须做一次连续性回填：只要 sceneNumber 与前镜相同，就把前镜 endState.hands、endState.screenDirection、endState.props 三个完整字符串逐字复制到本镜对应 startState 字段；不得调换人物顺序、改写同义词、增删“未指定”或自行重置，再在本镜 endState 中推进。
+6. 每镜必须写 startState 与 endState，明确 body、hands、gaze、screenDirection、props；body 必须逐一使用当前 panel.characters 中的角色名称描述当前人物，禁止沿用上一镜的角色、泛称或身份。全部镜头起草完后必须做一次连续性回填：仅当 sceneNumber 与前镜相同且 panel.characters 规范化后的角色集合完全一致时，才把前镜 endState.hands、endState.screenDirection、endState.props 三个完整字符串逐字复制到本镜对应 startState 字段；角色集合变化时必须按当前角色重新建立状态，不得继承上一镜状态。不得调换人物顺序、改写同义词、增删“未指定”或自行重置，再在本镜 endState 中推进。
 7. motionTimeline 是关键动作节拍，不要求逐秒罗列。它必须从 0 秒开始，连续、不重叠、不留空地覆盖 durationSeconds；普通动作写 1-3 个关键节拍，复杂动作才增加节拍。普通叙事、对白、建立镜头不要输出 phase；只有 actionDesign 动作才可输出 phase，且只能原样使用 anticipation、charge、release、travel、impact、aftermath，禁止 setup、dialogue、action、reaction、hold、recovery 等其他值。
 8. 每个状态变化链必须覆盖“前一状态 → 执行动作 → 完成状态”。人物位置、手部占用、视线、道具状态、运动方向和轴线必须连续。
 9. 剧本包含 actionDesign 时，要为动作覆盖起手、蓄力、释放/交锋、命中、受力与收势所需镜头。motionTimeline 可用 phase 标出阶段；不能只写“激烈打斗”或“释放酷炫特效”，必须说明谁从何姿态、向何方向、以何动作作用于谁，以及对手和环境如何响应。

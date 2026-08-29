@@ -14,6 +14,10 @@ import {
 import type { ShellCopy } from "./chat-shell-i18n";
 import type { ShellSettings } from "./shell-settings";
 import type { ModelOption } from "./chat-shell-types";
+import {
+  PROJECT_ART_STYLES,
+  type ProjectArtStyleId,
+} from "@/lib/projects/art-style";
 
 type PreferencesSettingsPanelProps = {
   copy: ShellCopy;
@@ -63,12 +67,19 @@ const ratioOptions: SelectOption[] = [
   "21:9",
 ].map((value) => ({ label: value, value }));
 
-const artStyleOptions: Array<{ label: keyof ShellCopy; value: string }> = [
-  { label: "settingsArtStyleAmericanComic", value: "american-comic" },
-  { label: "settingsArtStyleChineseComic", value: "chinese-comic" },
-  { label: "settingsArtStyleJapaneseAnime", value: "japanese-anime" },
-  { label: "settingsArtStyleRealistic", value: "realistic" },
-];
+const artStyleLabels: Record<ProjectArtStyleId, keyof ShellCopy> = {
+  "chinese-comic": "settingsArtStyleChineseComic",
+  "chinese-ink": "settingsArtStyleChineseInk",
+  "american-comic": "settingsArtStyleAmericanComic",
+  "japanese-anime": "settingsArtStyleJapaneseAnime",
+  "stylized-3d": "settingsArtStyleStylized3d",
+  realistic: "settingsArtStyleRealistic",
+};
+
+const artStyleOptions = PROJECT_ART_STYLES.map(({ id }) => ({
+  label: artStyleLabels[id],
+  value: id,
+}));
 
 const ttsRateOptions: Array<{ label: keyof ShellCopy; value: string }> = [
   { label: "settingsTtsRateNormal", value: "+0%" },
@@ -232,6 +243,7 @@ function SelectField({
   options: SelectOption[];
   value: string;
 }) {
+  const selectedOption = options.find((option) => option.value === value);
   return (
     <div className="grid min-w-0 gap-1.5">
       <Label className="truncate text-xs" title={label}>
@@ -239,7 +251,7 @@ function SelectField({
       </Label>
       <Select onValueChange={(next) => next && onChange(next)} value={value}>
         <SelectTrigger className="h-9 w-full text-sm">
-          <SelectValue />
+          <SelectValue>{selectedOption?.label}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           {options.map((option) => (

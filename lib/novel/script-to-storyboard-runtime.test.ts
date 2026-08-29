@@ -51,6 +51,10 @@ vi.mock("@/lib/server/prisma", () => ({
 
 import { PROMPT_IDS } from "@/lib/prompts";
 import {
+  storyboardPlanningSchema,
+  storyboardRefinementSchema,
+} from "@/lib/prompts/schemas";
+import {
   validateActingCoverage,
   validateCinematographyCoverage,
   validateContinuityReview,
@@ -60,6 +64,8 @@ import {
 import {
   buildDeterministicStoryboardPhases,
   buildEpisodeStoryboard,
+  normalizeStoryboardPlanningProviderPayload,
+  normalizeStoryboardRefinementProviderPayload,
   StoryboardBatchError,
 } from "./script-to-storyboard-runtime";
 
@@ -204,6 +210,14 @@ describe("script-to-storyboard runtime", () => {
   it.each([
     ["STRUCTURED_PROVIDER_FAILED:524:Provider gateway timeout", "PROVIDER_HTTP_524"],
     ["STRUCTURED_PROVIDER_TIMEOUT:120000", "PROVIDER_TIMEOUT"],
+    [
+      "STRUCTURED_SEMANTIC_INVALID:panels: [SPOKEN_SEQUENCE_MISMATCH] expected voiceover",
+      "STRUCTURED_SEMANTIC_INVALID",
+    ],
+    [
+      "STRUCTURED_SCHEMA_INVALID:panels.0.startState.props: expected string",
+      "STRUCTURED_SCHEMA_INVALID",
+    ],
   ])(
     "persists a valid deterministic storyboard after %s",
     async (message, fallbackReason) => {
@@ -277,6 +291,38 @@ describe("script-to-storyboard runtime", () => {
       where: { id: "clip-1" },
       data: { status: "storyboard_failed" },
     });
+  });
+
+  it("normalizes continuity prop arrays before planning schema parsing", () => {
+    const raw = planning();
+    raw.panels[0].startState.props = ["长剑", "护符"] as unknown as string;
+    raw.panels[0].endState.props = [] as unknown as string;
+
+    const normalized = normalizeStoryboardPlanningProviderPayload(raw);
+
+    expect(normalized).toMatchObject({
+      panels: [
+        expect.objectContaining({
+          startState: expect.objectContaining({ props: "长剑、护符" }),
+          endState: expect.objectContaining({ props: "无" }),
+        }),
+      ],
+    });
+    expect(storyboardPlanningSchema.safeParse(normalized).success).toBe(true);
+  });
+
+  it("removes only the known extra clipId from refinement payloads", () => {
+    const raw = { clipId: "clip-1", ...planning() };
+    const normalized = normalizeStoryboardRefinementProviderPayload(raw);
+
+    expect(normalized).toEqual(planning());
+    expect(storyboardRefinementSchema.safeParse(normalized).success).toBe(true);
+
+    const unexpected = { ...raw, summary: "extra" };
+    expect(normalizeStoryboardRefinementProviderPayload(unexpected)).toBe(
+      unexpected,
+    );
+    expect(storyboardRefinementSchema.safeParse(unexpected).success).toBe(false);
   });
 
   it("splits long fallback scenes into video-sized shots with complete beats", () => {

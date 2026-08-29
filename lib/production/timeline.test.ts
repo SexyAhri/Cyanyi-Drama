@@ -14,7 +14,7 @@ describe("production timeline", () => {
     ]);
 
     expect(timeline).toEqual({
-      version: 1,
+      version: 2,
       duration: 4.5,
       tracks: [
         expect.objectContaining({ id: "panel-2", start: 0, end: 3 }),
@@ -48,8 +48,48 @@ describe("production timeline", () => {
         ],
       }),
     ).toEqual([
-      { id: "panel-1", duration: 2 },
-      { id: "panel-2", duration: 30 },
+      {
+        id: "panel-1",
+        duration: 2,
+        sourceStart: 0,
+        transition: "cut",
+        transitionDuration: 0.35,
+        volume: 1,
+      },
+      {
+        id: "panel-2",
+        duration: 30,
+        sourceStart: 0,
+        transition: "cut",
+        transitionDuration: 0.35,
+        volume: 1,
+      },
+    ]);
+  });
+
+  it("preserves and bounds advanced edit settings from saved timelines", () => {
+    expect(
+      parseTimelineSequence({
+        tracks: [
+          {
+            id: "panel-1",
+            duration: 4,
+            sourceStart: 3.5,
+            volume: 4,
+            transition: "fade",
+            transitionDuration: 9,
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        id: "panel-1",
+        duration: 4,
+        sourceStart: 3.5,
+        transition: "fade",
+        transitionDuration: 2,
+        volume: 2,
+      },
     ]);
   });
 

@@ -274,17 +274,18 @@ model MediaAsset {
 }
 
 model NovelCharacter {
-  id           String                @id
-  projectId    String                @map("project_id")
-  name         String
-  aliases      String?               @db.Text
-  profileJson  String?               @map("profile_json") @db.Text
-  introduction String?               @db.Text
-  confirmed    Boolean               @default(false)
-  createdAt    DateTime              @default(now()) @map("created_at")
-  updatedAt    DateTime              @updatedAt @map("updated_at")
-  project      Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  appearances  CharacterAppearance[]
+  id                String                @id
+  projectId         String                @map("project_id")
+  name              String
+  aliases           String?               @db.Text
+  profileJson       String?               @map("profile_json") @db.Text
+  visualProfileJson String?               @map("visual_profile_json") @db.Text
+  introduction      String?               @db.Text
+  confirmed         Boolean               @default(false)
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+  project           Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  appearances       CharacterAppearance[]
 
   @@unique([projectId, name])
   @@index([projectId, updatedAt])
@@ -311,16 +312,17 @@ model CharacterAppearance {
 }
 
 model NovelLocation {
-  id              String          @id
-  projectId       String          @map("project_id")
-  name            String
-  summary         String?         @db.Text
-  selectedImageId String?         @map("selected_image_id")
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @updatedAt @map("updated_at")
-  project         Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  images          LocationImage[] @relation("LocationImages")
-  selectedImage   LocationImage?  @relation("SelectedLocationImage", fields: [selectedImageId], references: [id], onDelete: SetNull)
+  id                String          @id
+  projectId         String          @map("project_id")
+  name              String
+  summary           String?         @db.Text
+  visualProfileJson String?         @map("visual_profile_json") @db.Text
+  selectedImageId   String?         @map("selected_image_id")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+  project           Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  images            LocationImage[] @relation("LocationImages")
+  selectedImage     LocationImage?  @relation("SelectedLocationImage", fields: [selectedImageId], references: [id], onDelete: SetNull)
 
   @@unique([projectId, name])
   @@index([projectId, updatedAt])
@@ -329,14 +331,15 @@ model NovelLocation {
 }
 
 model NovelProp {
-  id           String   @id
-  projectId    String   @map("project_id")
-  name         String
-  summary      String?  @db.Text
-  metadataJson String?  @map("metadata_json") @db.Text
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id                String   @id
+  projectId         String   @map("project_id")
+  name              String
+  summary           String?  @db.Text
+  metadataJson      String?  @map("metadata_json") @db.Text
+  visualProfileJson String?  @map("visual_profile_json") @db.Text
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, name])
   @@index([projectId, updatedAt])

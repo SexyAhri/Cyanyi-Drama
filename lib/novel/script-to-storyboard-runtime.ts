@@ -20,7 +20,10 @@ import {
 import {
   buildSourceEvents,
   estimateSpeechDurationSeconds,
-  normalizeScreenplaySourceContract,
+  normalizeReusableScreenplaySourceContract,
+  normalizeStoryboardPlanningContract,
+  normalizeStoryboardRefinementContract,
+  sameStoryboardCharacterSet,
   validateActingCoverage,
   validateCinematographyCoverage,
   validateContinuityReview,
@@ -46,6 +49,7 @@ import {
   normalizeStoryboardDialogueTiming,
   STORYBOARD_DIALOGUE_TIMING_VERSION,
 } from "./storyboard-dialogue-timing";
+import { normalizeScreenplayDialogue } from "./screenplay-dialogue";
 import { mapWithConcurrency } from "./story-to-script-runtime";
 
 type StoryboardPlanning = z.infer<typeof storyboardPlanningSchema>;
@@ -236,7 +240,11 @@ export async function buildEpisodeStoryboard(
         };
       } catch (error) {
         await hooks.assertActive();
-        if (clipContext && isRetryableStructuredProviderError(error)) {
+        if (
+          clipContext &&
+          (isRetryableStructuredProviderError(error) ||
+            isStructuredModelContractError(error))
+        ) {
           const fallback = buildDeterministicStoryboardPhases(clipContext);
           const fallbackReason = structuredProviderFailureCode(error);
           await hooks.persistArtifact(
@@ -409,6 +417,10 @@ async function runPlanningPhase(
       world_bible_json: context.worldBibleText,
     },
   });
+  const normalize = (data: StoryboardPlanning) =>
+    normalizeStoryboardDialogueTiming(
+      normalizeStoryboardPlanningContract(data, validationContext),
+    );
   return resolvePhase({
     artifactType: "storyboard.clip.phase1",
     traceRefId: `${context.clip.id}:phase1`,
@@ -423,7 +435,7 @@ async function runPlanningPhase(
       dialogueTimingVersion: STORYBOARD_DIALOGUE_TIMING_VERSION,
     }),
     schema: storyboardPlanningSchema,
-    normalize: normalizeStoryboardDialogueTiming,
+    normalize,
     validate: (data) => validateStoryboardPlanning(data, validationContext),
     hooks,
     request: () =>
@@ -431,12 +443,41 @@ async function runPlanningPhase(
         ...context.provider,
         prompt,
         schema: storyboardPlanningSchema,
+        normalizeRaw: normalizeStoryboardPlanningProviderPayload,
         validate: (data) =>
-          validateStoryboardPlanning(data, validationContext).filter(
+          validateStoryboardPlanning(normalize(data), validationContext).filter(
             (issue) => issue.code !== "DIALOGUE_DURATION_OVERFLOW",
           ),
       }),
   });
+}
+
+export function normalizeStoryboardPlanningProviderPayload(value: unknown) {
+  if (!isRecord(value) || !Array.isArray(value.panels)) return value;
+  return {
+    ...value,
+    panels: value.panels.map((panel) => {
+      if (!isRecord(panel)) return panel;
+      return {
+        ...panel,
+        startState: normalizeStoryboardContinuityStatePayload(
+          panel.startState,
+        ),
+        endState: normalizeStoryboardContinuityStatePayload(panel.endState),
+      };
+    }),
+  };
+}
+
+function normalizeStoryboardContinuityStatePayload(value: unknown) {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.props) ||
+    !value.props.every((item) => typeof item === "string")
+  )
+    return value;
+  const props = value.props.map((item) => item.trim()).filter(Boolean);
+  return { ...value, props: props.join("、") || "无" };
 }
 
 function storyboardProductionContextText(context: ClipContext) {
@@ -532,6 +573,8 @@ async function runRefinementPhase(
       acting_json: JSON.stringify(acting.directions),
     },
   });
+  const normalize = (data: StoryboardRefinement) =>
+    normalizeStoryboardRefinementContract(data, planning.panels);
   return resolvePhase({
     artifactType: "storyboard.clip.phase3",
     traceRefId: `${context.clip.id}:phase3`,
@@ -543,6 +586,7 @@ async function runRefinementPhase(
       acting,
     }),
     schema: storyboardRefinementSchema,
+    normalize,
     validate: (data) => validateStoryboardRefinement(data, planning.panels),
     hooks,
     request: () =>
@@ -550,9 +594,25 @@ async function runRefinementPhase(
         ...context.provider,
         prompt,
         schema: storyboardRefinementSchema,
-        validate: (data) => validateStoryboardRefinement(data, planning.panels),
+        normalizeRaw: normalizeStoryboardRefinementProviderPayload,
+        validate: (data) =>
+          validateStoryboardRefinement(normalize(data), planning.panels),
       }),
   });
+}
+
+export function normalizeStoryboardRefinementProviderPayload(value: unknown) {
+  if (!isRecord(value) || !Array.isArray(value.panels)) return value;
+  const keys = Object.keys(value);
+  if (
+    keys.length !== 2 ||
+    !keys.includes("clipId") ||
+    !keys.includes("panels")
+  )
+    return value;
+  const normalized = { ...value };
+  delete normalized.clipId;
+  return normalized;
 }
 
 async function runContinuityPhase(
@@ -836,6 +896,7 @@ export function buildDeterministicStoryboardPhases(
     const previous = panels[index - 1];
     if (
       previous?.sceneNumber === panel.sceneNumber &&
+      sameStoryboardCharacterSet(previous.characters, panel.characters) &&
       previous.endState &&
       panel.startState
     )
@@ -1189,12 +1250,14 @@ function parseScreenplay(
     );
     if (!parsed.success) throw new Error("invalid screenplay");
     const sourceEvents = buildSourceEvents(clip.content);
-    const screenplay = normalizeScreenplaySourceContract(parsed.data, {
-      clipId: clip.id,
-      clipText: clip.content,
-      sourceEvents,
-      knowledgeText,
-    });
+    const screenplay = normalizeScreenplayDialogue(
+      normalizeReusableScreenplaySourceContract(parsed.data, {
+        clipId: clip.id,
+        clipText: clip.content,
+        sourceEvents,
+        knowledgeText,
+      }),
+    );
     if (
       validateScreenplayConversion(screenplay, {
         clipId: clip.id,
@@ -1229,11 +1292,22 @@ function parseApiKeys(value: string) {
 
 function structuredProviderFailureCode(error: unknown) {
   const message = error instanceof Error ? error.message : "";
+  const contract = message.match(
+    /^(STRUCTURED_(?:JSON|SCHEMA|SEMANTIC)_INVALID):/,
+  )?.[1];
+  if (contract) return contract;
   const status = message.match(/^STRUCTURED_PROVIDER_FAILED:(\d{3}):/)?.[1];
   if (status) return `PROVIDER_HTTP_${status}`;
   if (message.startsWith("STRUCTURED_PROVIDER_TIMEOUT:"))
     return "PROVIDER_TIMEOUT";
   return "PROVIDER_TEMPORARY_FAILURE";
+}
+
+function isStructuredModelContractError(error: unknown) {
+  return (
+    error instanceof Error &&
+    /^STRUCTURED_(?:JSON|SCHEMA|SEMANTIC)_INVALID:/.test(error.message)
+  );
 }
 
 function required<T>(value: T | undefined, phase: string): T {

@@ -101,6 +101,7 @@ export type ProductionPropRecord = {
   name: string;
   summary: string | null;
   metadata: Record<string, unknown>;
+  visualProfile?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 };
@@ -169,6 +170,10 @@ export type EditorTimelineTrack = {
   imageAssetId: string | null;
   videoAssetId: string | null;
   lipSyncAssetId: string | null;
+  sourceStart?: number;
+  volume?: number;
+  transition?: "cut" | "fade";
+  transitionDuration?: number;
 };
 
 export type EditorTimeline = {

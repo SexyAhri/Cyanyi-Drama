@@ -123,4 +123,50 @@ describe("screenplay provider normalization", () => {
       text: source,
     });
   });
+
+  it("restores deterministic coverage evidence before schema validation", () => {
+    const source = "海潮翻涌。龙炎升腾。";
+    const sourceEvents = [
+      { eventId: "E001", evidence: "海潮翻涌。" },
+      { eventId: "E002", evidence: "龙炎升腾。" },
+    ];
+    const normalized = normalizeScreenplayProviderPayload(
+      {
+        clipId: "clip-1",
+        originalText: source,
+        coverage: [
+          {
+            eventId: "E001",
+            evidence: "   ",
+            modes: ["visual"],
+            reason: null,
+            ignoredCoverageField: true,
+          },
+          {
+            eventId: "E002",
+            evidence: "模型改写的证据",
+            modes: ["visual"],
+            reason: null,
+          },
+        ],
+        scenes: [
+          {
+            sceneNumber: 0,
+            heading: { intExt: "EXT", location: "虚空", time: "日" },
+            description: "",
+            characters: [],
+            content: [{ type: "action", text: source }],
+          },
+        ],
+      },
+      { clipText: source, characters: [], sourceEvents },
+    );
+
+    const parsed = screenplayConversionSchema.parse(normalized);
+    expect(parsed.coverage?.map((item) => item.evidence)).toEqual([
+      "海潮翻涌。",
+      "龙炎升腾。",
+    ]);
+    expect(parsed.coverage?.[0]).not.toHaveProperty("ignoredCoverageField");
+  });
 });

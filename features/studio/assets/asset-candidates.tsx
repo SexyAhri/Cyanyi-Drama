@@ -6,9 +6,20 @@ import {
   ImageIcon,
   LoaderCircle,
   Maximize2,
+  Trash2,
 } from "lucide-react";
 import { useState } from "react";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -31,19 +42,25 @@ import type {
 } from "./asset-view-model";
 
 export function AssetCandidateGrid({
+  deletingAssetId,
   entity,
   isSelecting,
   locale,
+  onDelete,
   onSelect,
   tasks,
 }: {
+  deletingAssetId: string;
   entity: StudioAssetEntity;
   isSelecting: boolean;
   locale: StudioLocale;
+  onDelete: (candidate: StudioAssetCandidate) => Promise<boolean>;
   onSelect: (candidate: StudioAssetCandidate) => void;
   tasks: MediaTask[];
 }) {
   const copy = getStudioCopy(locale);
+  const [deleteTarget, setDeleteTarget] =
+    useState<StudioAssetCandidate | null>(null);
   const [previewTarget, setPreviewTarget] =
     useState<StudioAssetCandidate | null>(null);
   const visibleTasks = tasks.filter((task) => {
@@ -78,9 +95,11 @@ export function AssetCandidateGrid({
           return (
             <Candidate
               candidate={candidate}
+              deletingAssetId={deletingAssetId}
               isSelecting={isSelecting}
               key={candidate.id}
               locale={locale}
+              onDelete={() => setDeleteTarget(candidate)}
               onPreview={() => setPreviewTarget(candidate)}
               onSelect={onSelect}
               task={task}
@@ -104,27 +123,71 @@ export function AssetCandidateGrid({
           url={previewTarget.url}
         />
       ) : null}
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (!open && !deletingAssetId) setDeleteTarget(null);
+        }}
+        open={Boolean(deleteTarget)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{copy.deleteMediaTitle}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget?.selected
+                ? copy.deleteSelectedAssetDescription
+                : copy.deleteMediaDescription}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(deletingAssetId)}>
+              {copy.cancel}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={Boolean(deletingAssetId)}
+              onClick={async (event) => {
+                event.preventDefault();
+                if (!deleteTarget) return;
+                if (await onDelete(deleteTarget)) setDeleteTarget(null);
+              }}
+              variant="destructive"
+            >
+              {deletingAssetId ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : (
+                <Trash2 className="size-4" />
+              )}
+              {deletingAssetId ? copy.deleting : copy.deleteMedia}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
 
 function Candidate({
   candidate,
+  deletingAssetId,
   isSelecting,
   locale,
+  onDelete,
   onPreview,
   onSelect,
   task,
 }: {
   candidate: StudioAssetCandidate;
+  deletingAssetId: string;
   isSelecting: boolean;
   locale: StudioLocale;
+  onDelete: () => void;
   onPreview: () => void;
   onSelect: (candidate: StudioAssetCandidate) => void;
   task?: MediaTask;
 }) {
   const copy = getStudioCopy(locale);
   const status = task?.status ?? (candidate.url ? "succeeded" : "queued");
+  const active = task && ["queued", "running"].includes(task.status);
+  const deleteBusy = candidate.assetId === deletingAssetId;
   return (
     <figure
       className={cn(
@@ -215,6 +278,30 @@ function Candidate({
                 <Download className="size-3.5" />
               </TooltipTrigger>
               <TooltipContent>{copy.download}</TooltipContent>
+            </Tooltip>
+          ) : null}
+          {candidate.assetId ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label={copy.deleteMedia}
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    disabled={Boolean(deletingAssetId) || Boolean(active)}
+                    onClick={onDelete}
+                    size="icon-sm"
+                    type="button"
+                    variant="ghost"
+                  />
+                }
+              >
+                {deleteBusy ? (
+                  <LoaderCircle className="size-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="size-3.5" />
+                )}
+              </TooltipTrigger>
+              <TooltipContent>{copy.deleteMedia}</TooltipContent>
             </Tooltip>
           ) : null}
         </div>

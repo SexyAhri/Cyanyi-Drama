@@ -5,7 +5,6 @@ import {
   Ban,
   BookOpenText,
   Braces,
-  FileCheck2,
   LoaderCircle,
   Pause,
   Play,
@@ -42,8 +41,6 @@ import type {
 } from "../types";
 import { workflowStepLabel } from "../workflow-labels";
 import { StatusIndicator } from "../components/status-indicator";
-import { getProductionCopy } from "../production/copy";
-import { DepartmentDeliverablesWorkspace } from "../production/department-deliverables";
 
 export function WritingWorkspace({
   analysisModelId,
@@ -65,10 +62,7 @@ export function WritingWorkspace({
   snapshot: WorkspaceSnapshot;
 }) {
   const copy = getStudioCopy(locale);
-  const productionCopy = getProductionCopy(locale);
-  const [tab, setTab] = useState<"source" | "screenplay" | "deliverables">(
-    "source",
-  );
+  const [tab, setTab] = useState<"source" | "screenplay">("source");
   const [novelText, setNovelText] = useState(episode.novelText ?? "");
   const [savedText, setSavedText] = useState(episode.novelText ?? "");
   const serverTextRef = useRef({
@@ -134,7 +128,6 @@ export function WritingWorkspace({
   }, [clips, onContextChange, selectedClipId]);
 
   useEffect(() => {
-    if (tab === "deliverables") return;
     onContextChange(
       selectedClip
         ? {
@@ -148,7 +141,7 @@ export function WritingWorkspace({
           }
         : undefined,
     );
-  }, [onContextChange, selectedClip, tab]);
+  }, [onContextChange, selectedClip]);
 
   async function saveSource() {
     setIsSaving(true);
@@ -246,30 +239,17 @@ export function WritingWorkspace({
       </header>
 
       <div
-        className={cn(
-          "grid min-w-0 xl:min-h-0 xl:flex-1 xl:overflow-hidden",
-          tab !== "deliverables" &&
-            "xl:grid-cols-[minmax(0,1fr)_19rem]",
-        )}
+        className="grid min-w-0 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_19rem] xl:overflow-hidden"
       >
         <Tabs
-          className={cn(
-            "min-w-0 py-5 xl:min-h-0 xl:overflow-hidden",
-            tab !== "deliverables" && "xl:pr-7",
-          )}
-          onValueChange={(value) =>
-            setTab(value as "source" | "screenplay" | "deliverables")
-          }
+          className="min-w-0 py-5 xl:min-h-0 xl:overflow-hidden xl:pr-7"
+          onValueChange={(value) => setTab(value as "source" | "screenplay")}
           value={tab}
         >
           <TabsList variant="line">
             <TabsTrigger value="source">
               <BookOpenText className="size-4" />
               {copy.sourceText}
-            </TabsTrigger>
-            <TabsTrigger value="deliverables">
-              <FileCheck2 className="size-4" />
-              {productionCopy.deliverables}
             </TabsTrigger>
             <TabsTrigger value="screenplay">
               <Braces className="size-4" />
@@ -299,22 +279,8 @@ export function WritingWorkspace({
               selectedClipId={selectedClip?.id}
             />
           </TabsContent>
-          <TabsContent className="mt-4 xl:min-h-0 xl:overflow-hidden" value="deliverables">
-            {tab === "deliverables" ? (
-              <DepartmentDeliverablesWorkspace
-                defaultType="screenplay_lock"
-                departments={["development", "script"]}
-                episodeId={episode.id}
-                locale={locale}
-                onContextChange={onContextChange}
-                projectId={snapshot.project.id}
-                title={productionCopy.scriptDepartment}
-              />
-            ) : null}
-          </TabsContent>
         </Tabs>
 
-        {tab !== "deliverables" ? (
           <aside className="border-t py-5 xl:min-h-0 xl:overflow-y-auto xl:border-t-0 xl:border-l xl:pl-6">
             <div className="xl:sticky xl:top-0">
               <div className="flex items-center gap-2">
@@ -404,7 +370,6 @@ export function WritingWorkspace({
               ) : null}
             </div>
           </aside>
-        ) : null}
       </div>
     </div>
   );

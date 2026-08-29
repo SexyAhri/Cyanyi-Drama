@@ -47,7 +47,6 @@ import { StageNavigation } from "./stage-navigation";
 import { StageOverview } from "./stage-overview";
 import { WorkspaceTopbar } from "./workspace-topbar";
 import { WritingWorkspace } from "../writing/writing-workspace";
-import { ProductionControlWorkspace } from "../production-control/production-control-workspace";
 import { updateStudioProjectConfig } from "../api";
 
 export function WorkspacePage({ projectId }: { projectId: string }) {
@@ -74,7 +73,6 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
 
   const requestedEpisodeId = searchParams.get("episode") ?? undefined;
   const requestedStage = searchParams.get("stage") as StudioStageId | null;
-  const productionView = searchParams.get("view") === "production";
   const activeStage =
     requestedStage && STUDIO_STAGE_IDS.includes(requestedStage)
       ? requestedStage
@@ -254,13 +252,10 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
           onLocaleChange={toggleLocale}
           onOpenActivity={() => setActivityOpen(true)}
           onOpenEpisodes={() => setEpisodesOpen(true)}
-          onOpenProduction={() => {
-            const params = new URLSearchParams(searchParams.toString());
-            if (productionView) params.delete("view");
-            else params.set("view", "production");
-            router.replace(`${pathname}?${params}`, { scroll: false });
-          }}
+          onProjectConfigChange={() => refresh()}
           onRefresh={() => void refresh()}
+          projectConfig={snapshot.project.config}
+          projectId={projectId}
           projectName={snapshot.project.name}
         />
 
@@ -283,15 +278,7 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
                 : "min-w-0 flex-1 overflow-y-auto"
             }
           >
-            {productionView ? (
-              <ProductionControlWorkspace
-                episode={selectedEpisode}
-                locale={locale}
-                onRefresh={() => refresh()}
-                snapshot={snapshot}
-                stages={stages}
-              />
-            ) : selectedStage?.id === "writing" && selectedEpisode ? (
+            {selectedStage?.id === "writing" && selectedEpisode ? (
               <WritingWorkspace
                 analysisModelId={analysisModelId}
                 episode={selectedEpisode}
@@ -305,7 +292,6 @@ export function WorkspacePage({ projectId }: { projectId: string }) {
             ) : selectedStage?.id === "assets" ? (
               <AssetsWorkspace
                 analysisModels={analysisModels}
-                episode={selectedEpisode}
                 imageModels={imageModels}
                 locale={locale}
                 onContextChange={setSelection}

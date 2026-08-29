@@ -26,6 +26,21 @@ export function moveTimelineTrack(
   return rebuildTimeline(tracks);
 }
 
+export function reorderTimelineTrack(
+  timeline: EditorTimeline,
+  trackId: string,
+  targetId: string,
+) {
+  const fromIndex = timeline.tracks.findIndex((track) => track.id === trackId);
+  const targetIndex = timeline.tracks.findIndex((track) => track.id === targetId);
+  if (fromIndex < 0 || targetIndex < 0 || fromIndex === targetIndex)
+    return timeline;
+  const tracks = [...timeline.tracks];
+  const [moved] = tracks.splice(fromIndex, 1);
+  tracks.splice(targetIndex, 0, moved);
+  return rebuildTimeline(tracks);
+}
+
 export function updateTimelineDuration(
   timeline: EditorTimeline,
   trackId: string,
@@ -35,6 +50,44 @@ export function updateTimelineDuration(
     timeline.tracks.map((track) =>
       track.id === trackId
         ? { ...track, duration: Math.min(30, Math.max(0.5, duration)) }
+        : track,
+    ),
+  );
+}
+
+export function updateTimelineTrackSettings(
+  timeline: EditorTimeline,
+  trackId: string,
+  input: Partial<
+    Pick<
+      EditorTimeline["tracks"][number],
+      "sourceStart" | "transition" | "transitionDuration" | "volume"
+    >
+  >,
+) {
+  return rebuildTimeline(
+    timeline.tracks.map((track) =>
+      track.id === trackId
+        ? {
+            ...track,
+            ...(input.sourceStart === undefined
+              ? {}
+              : { sourceStart: Math.min(300, Math.max(0, input.sourceStart)) }),
+            ...(input.volume === undefined
+              ? {}
+              : { volume: Math.min(2, Math.max(0, input.volume)) }),
+            ...(input.transition === undefined
+              ? {}
+              : { transition: input.transition }),
+            ...(input.transitionDuration === undefined
+              ? {}
+              : {
+                  transitionDuration: Math.min(
+                    Math.max(0.1, track.duration / 2),
+                    Math.max(0.1, input.transitionDuration),
+                  ),
+                }),
+          }
         : track,
     ),
   );
@@ -182,5 +235,5 @@ function rebuildTimeline(tracks: EditorTimeline["tracks"]) {
     cursor = next.end;
     return next;
   });
-  return { version: 1, duration: cursor, tracks: nextTracks };
+  return { version: 2, duration: cursor, tracks: nextTracks };
 }

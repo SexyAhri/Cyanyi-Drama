@@ -1,5 +1,9 @@
 import type { MediaTask } from "@/lib/media/task-contract";
-import type { EpisodeRecord, ProjectRecord } from "@/lib/projects/types";
+import type {
+  EpisodeRecord,
+  ProjectConfig,
+  ProjectRecord,
+} from "@/lib/projects/types";
 
 import type {
   EpisodeSplitResult,
@@ -22,6 +26,7 @@ import type {
   WorkflowRunSummary,
   WorkspaceSnapshot,
 } from "./types";
+import type { StoryboardPromptPreview } from "@/lib/media/project-asset-tasks";
 import type {
   NovelCharacterRecord,
   NovelLocationRecord,
@@ -105,9 +110,23 @@ export async function updateStudioEpisode(
 
 export async function updateStudioProjectConfig(
   projectId: string,
-  input: { analysisModel: string },
+  input: Partial<
+    Pick<
+      ProjectConfig,
+      | "analysisModel"
+      | "characterModel"
+      | "locationModel"
+      | "storyboardModel"
+      | "editModel"
+      | "videoModel"
+      | "audioModel"
+      | "videoRatio"
+      | "artStyle"
+      | "ttsRate"
+    >
+  >,
 ) {
-  return request<{ config: { analysisModel: string | null } }>(
+  return request<{ config: ProjectConfig }>(
     `/api/projects/${encodeURIComponent(projectId)}/config`,
     {
       body: JSON.stringify(input),
@@ -433,6 +452,43 @@ export async function extractStudioAssets(
   );
 }
 
+export async function generateStudioAssetVisualProfile(
+  projectId: string,
+  input: {
+    targetType: "character" | "location" | "prop";
+    targetId: string;
+    channelId: string;
+    model: string;
+    locale: "en" | "zh";
+  },
+) {
+  return request<{
+    target: { id: string; type: string; name: string };
+    profile: import("@/lib/assets/visual-profile").AssetVisualProfile;
+  }>(`/api/projects/${encodeURIComponent(projectId)}/assets/visual-design`, {
+    body: JSON.stringify(input),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+}
+
+export async function saveStudioAssetVisualProfile(
+  projectId: string,
+  input: {
+    targetType: "character" | "location" | "prop";
+    targetId: string;
+    spec: import("@/lib/assets/visual-profile").AssetVisualProfileSpec;
+  },
+) {
+  return request<{
+    profile: import("@/lib/assets/visual-profile").AssetVisualProfile;
+  }>(`/api/projects/${encodeURIComponent(projectId)}/assets/visual-design`, {
+    body: JSON.stringify(input),
+    headers: { "Content-Type": "application/json" },
+    method: "PUT",
+  });
+}
+
 export async function generateStudioAsset(
   projectId: string,
   input: {
@@ -553,6 +609,29 @@ export async function generateStudioPanelImage(
       body: JSON.stringify(input),
       headers: { "Content-Type": "application/json" },
       method: "POST",
+    },
+  );
+}
+
+export async function previewStudioPanelPrompt(
+  projectId: string,
+  episodeId: string,
+  panelId: string,
+  input: {
+    kind: "image" | "video";
+    prompt?: string;
+    mode?: "reference" | "first-last";
+    lastFramePanelId?: string;
+  },
+  signal?: AbortSignal,
+) {
+  return request<{ preview: StoryboardPromptPreview }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard/${encodeURIComponent(panelId)}/prompt-preview`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+      signal,
     },
   );
 }

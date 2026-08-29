@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildActiveWorkflowDedupeKey,
   getStoryboardPhaseInvalidation,
+  shouldPreserveRetryArtifacts,
 } from "./store";
 
 describe("workflow active dedupe key", () => {
@@ -55,5 +56,17 @@ describe("storyboard phase invalidation", () => {
       artifactTypes: ["storyboard.clip.continuity"],
       tracePhases: ["continuity"],
     });
+  });
+});
+
+describe("workflow step artifact preservation", () => {
+  it("keeps partial artifacts when enqueue failure leaves the step pending", () => {
+    expect(shouldPreserveRetryArtifacts("pending")).toBe(true);
+    expect(shouldPreserveRetryArtifacts("failed")).toBe(true);
+    expect(shouldPreserveRetryArtifacts("blocked")).toBe(true);
+  });
+
+  it("invalidates artifacts when explicitly rerunning a completed step", () => {
+    expect(shouldPreserveRetryArtifacts("succeeded")).toBe(false);
   });
 });

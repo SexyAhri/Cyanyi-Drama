@@ -413,6 +413,300 @@ export function normalizeScreenplaySourceContract(
   };
 }
 
+export function normalizeReusableScreenplaySourceContract(
+  data: ScreenplayConversion,
+  input: ScreenplaySourceContract,
+): ScreenplayConversion {
+  const sourceEvents = input.sourceEvents ?? buildSourceEvents(input.clipText);
+  return normalizeScreenplaySourceContract(
+    {
+      ...data,
+      coverage: sourceEvents.map((event) => {
+        const previous = data.coverage?.find(
+          (item) => item.eventId === event.eventId,
+        );
+        const coveredModes = previous?.modes.filter(
+          (mode) => mode !== "omitted",
+        );
+        return {
+          eventId: event.eventId,
+          evidence: event.evidence,
+          modes:
+            coveredModes?.length ? coveredModes : (["visual"] as const),
+          reason: null,
+        };
+      }),
+    },
+    { ...input, sourceEvents },
+  );
+}
+
+export function normalizeStoryboardPlanningEntities(
+  data: StoryboardPlanning,
+): StoryboardPlanning {
+  return {
+    panels: data.panels.map((panel) => ({
+      ...panel,
+      characters: panel.characters.filter(
+        (name) => !isEmptyEntityPlaceholder(name),
+      ),
+      props: panel.props.filter((name) => !isEmptyEntityPlaceholder(name)),
+    })),
+  };
+}
+
+export function normalizeStoryboardPlanningContract(
+  data: StoryboardPlanning,
+  input: {
+    sourceText: string;
+    screenplay: ScreenplayConversion;
+    productionContextText?: string;
+  },
+): StoryboardPlanning {
+  const knowledgeText = `${input.sourceText}\n${input.productionContextText ?? ""}`;
+  const evidenceCandidates = storyboardEvidenceCandidates(
+    input.screenplay,
+    input.sourceText,
+  );
+  const spokenNormalized = normalizeStoryboardSpokenDelivery(
+    normalizeStoryboardPlanningEntities(data),
+    input.screenplay,
+  );
+
+  const panels = spokenNormalized.panels.map((rawPanel) => {
+      const panel = ensureStoryboardStateCharacters(rawPanel);
+      const sourceEvidence = panel.sourceEvidence.filter((quote) =>
+        input.sourceText.includes(quote),
+      );
+      const fallbackEvidence = closestStoryboardEvidence(
+        `${panel.description}\n${panel.videoPrompt}`,
+        evidenceCandidates,
+      );
+      return {
+        ...panel,
+        sourceEvidence:
+          sourceEvidence.length > 0
+            ? sourceEvidence
+            : [fallbackEvidence ?? input.screenplay.clipId],
+        vfxCues: panel.vfxCues.flatMap((cue) => {
+          const evidence = cue.evidence.filter((quote) =>
+            knowledgeText.includes(quote),
+          );
+          return evidence.length ? [{ ...cue, evidence }] : [];
+        }),
+        sfxCues: panel.sfxCues.flatMap((cue) => {
+          const evidence = cue.evidence.filter((quote) =>
+            knowledgeText.includes(quote),
+          );
+          return evidence.length ? [{ ...cue, evidence }] : [];
+        }),
+      };
+    });
+  return {
+    ...spokenNormalized,
+    panels: panels.map((panel, index) => {
+      const previous = panels[index - 1];
+      if (
+        previous?.sceneNumber !== panel.sceneNumber ||
+        !sameStoryboardCharacterSet(previous.characters, panel.characters) ||
+        !previous.endState ||
+        !panel.startState
+      )
+        return panel;
+      return {
+        ...panel,
+        startState: {
+          ...panel.startState,
+          hands: previous.endState.hands,
+          props: previous.endState.props,
+          screenDirection: previous.endState.screenDirection,
+        },
+      };
+    }),
+  };
+}
+
+function ensureStoryboardStateCharacters(
+  panel: StoryboardPlanning["panels"][number],
+) {
+  if (!panel.characters.length || !panel.startState || !panel.endState)
+    return panel;
+  const hasEveryCharacter = (body: string) =>
+    panel.characters.every((character) => body.includes(character));
+  const label = panel.characters.join("、");
+  return {
+    ...panel,
+    startState: {
+      ...panel.startState,
+      body: hasEveryCharacter(panel.startState.body)
+        ? panel.startState.body
+        : `${label}处于本镜起始姿态`,
+    },
+    endState: {
+      ...panel.endState,
+      body: hasEveryCharacter(panel.endState.body)
+        ? panel.endState.body
+        : `${label}完成本镜动作`,
+    },
+  };
+}
+
+function storyboardEvidenceCandidates(
+  screenplay: ScreenplayConversion,
+  sourceText: string,
+) {
+  const candidates = [
+    ...(screenplay.coverage?.map((item) => item.evidence) ?? []),
+    ...screenplay.scenes.flatMap((scene) => [
+      scene.description,
+      ...scene.content.flatMap((content) => [
+        content.type === "dialogue" ? content.lines : content.text,
+        ...(content.type === "action" ? (content.evidence ?? []) : []),
+        ...(content.type === "action"
+          ? (content.actionDesign?.evidence ?? [])
+          : []),
+      ]),
+    ]),
+    ...buildSourceEvents(screenplay.originalText).map((event) => event.evidence),
+  ];
+  return Array.from(
+    new Set(candidates.filter((value) => value && sourceText.includes(value))),
+  );
+}
+
+function closestStoryboardEvidence(
+  panelText: string,
+  candidates: readonly string[],
+) {
+  let best: string | undefined;
+  let bestScore = -1;
+  for (const candidate of candidates) {
+    const score = storyboardTextOverlapScore(panelText, candidate);
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function storyboardTextOverlapScore(left: string, right: string) {
+  if (left.includes(right)) return Number.MAX_SAFE_INTEGER;
+  const leftUnits = storyboardTextUnits(left);
+  const rightUnits = storyboardTextUnits(right);
+  if (!leftUnits.size || !rightUnits.size) return 0;
+  let shared = 0;
+  for (const unit of rightUnits) if (leftUnits.has(unit)) shared += 1;
+  return (2 * shared) / (leftUnits.size + rightUnits.size);
+}
+
+function storyboardTextUnits(value: string) {
+  const units = new Set(chineseBigrams(value));
+  for (const word of value.toLocaleLowerCase().match(/[a-z\d]+/g) ?? [])
+    units.add(word);
+  return units;
+}
+
+function normalizeStoryboardSpokenDelivery(
+  data: StoryboardPlanning,
+  screenplay: ScreenplayConversion,
+): StoryboardPlanning {
+  type SpokenItem = {
+    delivery: "dialogue" | "voiceover";
+    speaker: string;
+    text: string;
+  };
+  const expected = screenplay.scenes
+    .flatMap((scene) => scene.content)
+    .flatMap<SpokenItem>((content) => {
+      if (content.type === "dialogue")
+        return [
+          {
+            delivery: "dialogue",
+            speaker: content.character,
+            text: content.lines,
+          },
+        ];
+      if (content.type === "voiceover")
+        return [
+          {
+            delivery: "voiceover",
+            speaker: content.character ?? "旁白",
+            text: content.text,
+          },
+        ];
+      return [];
+    })
+    .reduce<SpokenItem[]>((groups, item) => {
+      const previous = groups.at(-1);
+      const samePerformance =
+        previous?.delivery === item.delivery &&
+        (item.delivery === "voiceover" || previous.speaker === item.speaker);
+      if (previous && samePerformance) previous.text += item.text;
+      else groups.push({ ...item });
+      return groups;
+    }, []);
+  const actual = data.panels.flatMap((panel, panelIndex) => {
+    const text = panel.lipSyncText ?? panel.voiceoverText;
+    return text ? [{ panelIndex, text }] : [];
+  });
+  if (
+    actual.map((item) => item.text).join("") !==
+    expected.map((item) => item.text).join("")
+  )
+    return data;
+
+  const assignments = new Map<number, SpokenItem>();
+  let actualIndex = 0;
+  for (const group of expected) {
+    let collected = "";
+    const groupActual = [];
+    while (actualIndex < actual.length && collected.length < group.text.length) {
+      const item = actual[actualIndex++];
+      groupActual.push(item);
+      collected += item.text;
+    }
+    if (collected !== group.text) return data;
+    for (const item of groupActual) assignments.set(item.panelIndex, group);
+  }
+  if (actualIndex !== actual.length) return data;
+
+  return {
+    ...data,
+    panels: data.panels.map((panel, panelIndex) => {
+      const assignment = assignments.get(panelIndex);
+      if (!assignment) return panel;
+      const text = panel.lipSyncText ?? panel.voiceoverText;
+      if (!text) return panel;
+      if (assignment.delivery === "voiceover")
+        return {
+          ...panel,
+          speakingCharacter: null,
+          lipSyncText: null,
+          voiceoverText: text,
+        };
+      const hasSpeaker = nameSet(panel.characters).has(
+        normalizeName(assignment.speaker),
+      );
+      return {
+        ...panel,
+        characters: hasSpeaker
+          ? panel.characters
+          : [...panel.characters, assignment.speaker],
+        speakingCharacter: assignment.speaker,
+        lipSyncText: text,
+        voiceoverText: null,
+      };
+    }),
+  };
+}
+
+function isEmptyEntityPlaceholder(value: string) {
+  return /^(?:无|没有|无角色|无人物|无道具|无关键道具|none|null|n\/a)$/iu.test(
+    value.trim(),
+  );
+}
+
 function isGroundedProductionTerm(
   value: string | null | undefined,
   knowledgeText: string,
@@ -544,15 +838,36 @@ function validateActionDesign(
 export type SourceEvent = { eventId: string; evidence: string };
 
 export function buildSourceEvents(sourceText: string): SourceEvent[] {
-  const fragments = sourceText
+  const splitFragments = sourceText
     .split(/(?<=[。！？!?；;\n])/u)
     .map((value) => value.trim())
     .filter(Boolean);
-  return (fragments.length ? fragments : [sourceText]).map(
+  const fragments: string[] = [];
+  for (const fragment of splitFragments) {
+    const match = fragment.match(/^([”’」』）》】]+)([\s\S]*)$/u);
+    if (!match || !fragments.length) {
+      fragments.push(fragment);
+      continue;
+    }
+    fragments[fragments.length - 1] += match[1];
+    const remainder = match[2].trim();
+    if (remainder) fragments.push(remainder);
+  }
+  const reviewableFragments = fragments.filter((evidence, index) => {
+    if (!normalizeActionText(evidence)) return false;
+    return index !== 0 || !isChapterHeading(evidence);
+  });
+  return reviewableFragments.map(
     (evidence, index) => ({
       eventId: `E${String(index + 1).padStart(3, "0")}`,
       evidence,
     }),
+  );
+}
+
+function isChapterHeading(value: string) {
+  return /^第[0-9零〇一二三四五六七八九十百千万两]+(?:章|回|节|卷)[^。！？!?；;]*$/u.test(
+    value.trim(),
   );
 }
 
@@ -907,6 +1222,45 @@ export function validateStoryboardRefinement(
   return issues;
 }
 
+export function normalizeStoryboardRefinementContract(
+  data: StoryboardRefinement,
+  basePanels: StoryboardPlanning["panels"],
+): StoryboardRefinement {
+  const baseByIndex = new Map(
+    basePanels.map((panel) => [panel.panelIndex, panel]),
+  );
+  return {
+    panels: data.panels.map((panel) => {
+      const base = baseByIndex.get(panel.panelIndex);
+      if (!base) return panel;
+      return {
+        ...panel,
+        shotType: base.shotType,
+        cameraMove: base.cameraMove,
+        durationSeconds: base.durationSeconds,
+        motionTimeline: base.motionTimeline.map((beat, index) => ({
+          ...beat,
+          action: panel.motionTimeline[index]?.action ?? beat.action,
+          camera: panel.motionTimeline[index]?.camera ?? beat.camera,
+        })),
+        sceneNumber: base.sceneNumber,
+        startState: base.startState,
+        endState: base.endState,
+        worldContext: base.worldContext,
+        vfxCues: base.vfxCues,
+        sfxCues: base.sfxCues,
+        speakingCharacter: base.speakingCharacter,
+        lipSyncText: base.lipSyncText,
+        voiceoverText: base.voiceoverText,
+        locationName: base.locationName,
+        characters: base.characters,
+        props: base.props,
+        sourceEvidence: base.sourceEvidence,
+      };
+    }),
+  };
+}
+
 function validateMotionTimeline(
   panel: StoryboardPlanning["panels"][number],
   path: string,
@@ -1049,6 +1403,7 @@ function validateStoryboardScreenplayContract(
     const previous = data.panels[index - 1];
     if (
       previous?.sceneNumber === panel.sceneNumber &&
+      sameStoryboardCharacterSet(previous.characters, panel.characters) &&
       previous.endState &&
       panel.startState &&
       (previous.endState.hands !== panel.startState.hands ||
@@ -1399,7 +1754,7 @@ function hasUninterruptedSpeakerMention(
 }
 
 const SPEECH_VERB_PATTERN =
-  "说(?:道)?|问(?:道)?|答(?:道)?|回答|回应|喊(?:道)?|叫(?!(?:进|到|来|住|醒))(?:道)?|喝(?:道)?|叹(?:道)?|笑(?:道)?|开口|低声(?:说)?|轻声(?:说)?|安慰|劝(?:说|慰)?|安抚|鼓励|齐声|惊呼|高呼|议论|起哄|叫嚷|嘲笑|怒骂|欢呼|哄笑|窃窃私语|附和|says?|said|asks?|asked|answers?|answered|replies?|replied|shouts?|shouted|cries?|cried|calls?|called|yells?|yelled|chants?|chanted|cheers?|cheered|murmurs?|murmured|whispers?|whispered";
+  "说(?:道)?|问(?:道)?|答(?:道)?|回答|回应|喊(?!一声)(?:道)?|叫(?!(?:进|到|来|住|醒|一声))(?:道)?|喝(?!一声)(?:道)?|叹(?!一声)(?:道)?|笑(?:道)?|开口|低声(?:说)?|轻声(?:说)?|安慰|劝(?:说|慰)?|安抚|鼓励|齐声|惊呼|高呼|议论|起哄|叫嚷|嘲笑|怒骂|欢呼|哄笑|窃窃私语|附和|says?|said|asks?|asked|answers?|answered|replies?|replied|shouts?|shouted|cries?|cried|calls?|called|yells?|yelled|chants?|chanted|cheers?|cheered|murmurs?|murmured|whispers?|whispered";
 
 export function isImplicitVisualBridgeAction(
   value: string,
@@ -1617,6 +1972,18 @@ function validateUniqueNames(
 
 function nameSet(values: readonly string[]) {
   return new Set(values.map(normalizeName));
+}
+
+export function sameStoryboardCharacterSet(
+  left: readonly string[],
+  right: readonly string[],
+) {
+  const leftSet = nameSet(left);
+  const rightSet = nameSet(right);
+  return (
+    leftSet.size === rightSet.size &&
+    Array.from(leftSet).every((name) => rightSet.has(name))
+  );
 }
 
 function normalizeName(value: string) {

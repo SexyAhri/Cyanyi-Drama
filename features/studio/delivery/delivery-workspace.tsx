@@ -1,8 +1,6 @@
 "use client";
 
 import {
-  ArrowDown,
-  ArrowUp,
   Ban,
   Clapperboard,
   Download,
@@ -16,14 +14,12 @@ import { toast } from "sonner";
 
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { MediaTask } from "@/lib/media/task-contract";
-import { cn } from "@/lib/utils";
 
 import {
   buildStudioTimeline,
@@ -51,11 +47,10 @@ import type {
 import {
   alignTimelineSubtitles,
   findTimelineAsset,
-  moveTimelineTrack,
-  updateTimelineDuration,
 } from "./delivery-view-model";
 import { PostMasterPanel } from "./post-master-panel";
 import { RenderDialog } from "./render-dialog";
+import { TimelineEditor } from "./timeline-editor";
 
 const copy = {
   "zh-CN": {
@@ -391,87 +386,17 @@ export function DeliveryWorkspace({
           </h2>
           <p className="max-w-md text-sm leading-6">{text.noTimelineDetail}</p>
         </div>
-      ) : (
-        <div className="grid min-h-[40rem] border-b 2xl:grid-cols-[22rem_minmax(0,1fr)]">
-          <aside className="border-b 2xl:border-r 2xl:border-b-0">
-            <div className="flex h-11 items-center justify-between border-b px-3 text-xs font-semibold">
-              <span>{text.tracks}</span>
-              <span className="text-muted-foreground">
-                {timeline?.duration.toFixed(1)} {text.seconds}
-              </span>
-            </div>
-            <div className="max-h-96 overflow-y-auto p-1.5 2xl:max-h-[calc(100dvh-17rem)]">
-              {tracks.map((track, index) => (
-                <div
-                  className={cn(
-                    "flex items-center gap-2 rounded-md px-2 py-1.5",
-                    selectedTrack?.id === track.id && "bg-muted",
-                  )}
-                  key={track.id}
-                >
-                  <button
-                    className="min-w-0 flex-1 py-1 text-left"
-                    onClick={() => setSelectedTrackId(track.id)}
-                    type="button"
-                  >
-                    <span className="block text-sm font-medium">
-                      {String(index + 1).padStart(2, "0")}
-                    </span>
-                    <span className="block text-[11px] text-muted-foreground">
-                      {track.start.toFixed(1)}–{track.end.toFixed(1)}{" "}
-                      {text.seconds}
-                    </span>
-                  </button>
-                  <Input
-                    aria-label={text.duration}
-                    className="h-7 w-16 px-1.5 text-center text-xs"
-                    max={30}
-                    min={0.5}
-                    onChange={(event) =>
-                      setTimeline((current) =>
-                        current
-                          ? updateTimelineDuration(
-                              current,
-                              track.id,
-                              Number(event.target.value),
-                            )
-                          : current,
-                      )
-                    }
-                    step={0.5}
-                    type="number"
-                    value={track.duration}
-                  />
-                  <TimelineAction
-                    disabled={index === 0}
-                    icon={<ArrowUp className="size-3.5" />}
-                    label={text.moveUp}
-                    onClick={() =>
-                      setTimeline((current) =>
-                        current
-                          ? moveTimelineTrack(current, track.id, -1)
-                          : current,
-                      )
-                    }
-                  />
-                  <TimelineAction
-                    disabled={index === tracks.length - 1}
-                    icon={<ArrowDown className="size-3.5" />}
-                    label={text.moveDown}
-                    onClick={() =>
-                      setTimeline((current) =>
-                        current
-                          ? moveTimelineTrack(current, track.id, 1)
-                          : current,
-                      )
-                    }
-                  />
-                </div>
-              ))}
-            </div>
-          </aside>
-
-          <section className="min-w-0 p-4 sm:p-6">
+      ) : timeline ? (
+        <div className="border-b">
+          <TimelineEditor
+            locale={locale}
+            onChange={setTimeline}
+            onSelect={setSelectedTrackId}
+            selectedTrackId={selectedTrack?.id ?? ""}
+            subtitles={subtitles}
+            timeline={timeline}
+          />
+          <section className="mx-auto min-w-0 max-w-5xl p-4 sm:p-6">
             <h2 className="mb-2 text-sm font-semibold">{text.preview}</h2>
             <div className="overflow-hidden rounded-md border bg-muted/30">
               <AspectRatio ratio={16 / 9}>
@@ -523,7 +448,7 @@ export function DeliveryWorkspace({
             </section>
           </section>
         </div>
-      )}
+      ) : null}
 
       {data && timeline ? (
         <PostMasterPanel
@@ -654,38 +579,6 @@ function OutputPreview({
         </figcaption>
       </figure>
     </section>
-  );
-}
-
-function TimelineAction({
-  disabled,
-  icon,
-  label,
-  onClick,
-}: {
-  disabled: boolean;
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            aria-label={label}
-            disabled={disabled}
-            onClick={onClick}
-            size="icon-sm"
-            type="button"
-            variant="ghost"
-          />
-        }
-      >
-        {icon}
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
   );
 }
 

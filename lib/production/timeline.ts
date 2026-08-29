@@ -7,10 +7,14 @@ export type EditorTimelineTrack = {
   id: string;
   imageAssetId: string | null;
   lipSyncAssetId: string | null;
+  sourceStart: number;
   shotIndex: number;
   start: number;
+  transition: "cut" | "fade";
+  transitionDuration: number;
   type: "image" | "video";
   videoAssetId: string | null;
+  volume: number;
 };
 
 export function buildSequentialTimeline(
@@ -34,15 +38,19 @@ export function buildSequentialTimeline(
       id: item.id,
       imageAssetId: item.imageAssetId ?? null,
       lipSyncAssetId: item.lipSyncAssetId ?? null,
+      sourceStart: 0,
       shotIndex: item.shotIndex,
       start: cursor,
+      transition: "cut",
+      transitionDuration: 0.35,
       type: item.lipSyncAssetId || item.videoAssetId ? "video" : "image",
       videoAssetId: item.videoAssetId ?? null,
+      volume: 1,
     };
     cursor = track.end;
     return track;
   });
-  return { duration: cursor, tracks, version: 1 as const };
+  return { duration: cursor, tracks, version: 2 as const };
 }
 
 export function parseTimelineSequence(value: unknown) {
@@ -53,7 +61,14 @@ export function parseTimelineSequence(value: unknown) {
     const id = entry.id.trim();
     if (!id || seen.has(id)) return [];
     seen.add(id);
-    return [{ id, duration: normalizeDuration(entry.duration) }];
+    return [{
+      id,
+      duration: normalizeDuration(entry.duration),
+      sourceStart: normalizeSourceStart(entry.sourceStart),
+      transition: entry.transition === "fade" ? ("fade" as const) : ("cut" as const),
+      transitionDuration: normalizeTransitionDuration(entry.transitionDuration),
+      volume: normalizeVolume(entry.volume),
+    }];
   });
 }
 
@@ -80,6 +95,24 @@ function normalizeDuration(value: unknown) {
   return typeof value === "number" && Number.isFinite(value)
     ? Math.min(30, Math.max(0.5, value))
     : 5;
+}
+
+function normalizeSourceStart(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(300, Math.max(0, value))
+    : 0;
+}
+
+function normalizeVolume(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(2, Math.max(0, value))
+    : 1;
+}
+
+function normalizeTransitionDuration(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(2, Math.max(0.1, value))
+    : 0.35;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

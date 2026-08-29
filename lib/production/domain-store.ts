@@ -54,6 +54,7 @@ export async function listProductionProps(userId: string, projectId: string) {
     name: row.name,
     summary: row.summary,
     metadata: parseObject(row.metadataJson),
+    visualProfile: parseObject(row.visualProfileJson),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   }));
@@ -89,6 +90,7 @@ export async function upsertProductionProps(
       name: row.name,
       summary: row.summary,
       metadata: parseObject(row.metadataJson),
+      visualProfile: parseObject(row.visualProfileJson),
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     });

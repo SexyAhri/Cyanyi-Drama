@@ -5,8 +5,12 @@ const mocks = vi.hoisted(() => ({
   mediaAssetCount: vi.fn(),
   mediaAssetDelete: vi.fn(),
   mediaAssetFindFirst: vi.fn(),
+  characterAppearanceUpdateMany: vi.fn(),
+  locationImageFindMany: vi.fn(),
+  locationImageUpdateMany: vi.fn(),
   mediaHashDeleteMany: vi.fn(),
   mediaTaskUpdate: vi.fn(),
+  novelLocationUpdateMany: vi.fn(),
   transaction: vi.fn(),
 }));
 
@@ -29,11 +33,20 @@ describe("media asset actions", () => {
           delete: mocks.mediaAssetDelete,
           findFirst: mocks.mediaAssetFindFirst,
         },
+        characterAppearance: {
+          updateMany: mocks.characterAppearanceUpdateMany,
+        },
+        locationImage: {
+          findMany: mocks.locationImageFindMany,
+          updateMany: mocks.locationImageUpdateMany,
+        },
         mediaHash: { deleteMany: mocks.mediaHashDeleteMany },
         mediaTask: { update: mocks.mediaTaskUpdate },
+        novelLocation: { updateMany: mocks.novelLocationUpdateMany },
       }),
     );
     mocks.mediaAssetCount.mockResolvedValue(0);
+    mocks.locationImageFindMany.mockResolvedValue([]);
     mocks.deleteObject.mockResolvedValue(undefined);
     mocks.mediaAssetFindFirst.mockResolvedValue({
       id: "asset-1",
@@ -71,6 +84,14 @@ describe("media asset actions", () => {
     expect(mocks.mediaAssetDelete).toHaveBeenCalledWith({
       where: { id: "asset-1" },
     });
+    expect(mocks.characterAppearanceUpdateMany).toHaveBeenCalledWith({
+      where: { imageAssetId: "asset-1" },
+      data: { imageAssetId: null, selected: false },
+    });
+    expect(mocks.locationImageUpdateMany).toHaveBeenCalledWith({
+      where: { imageAssetId: "asset-1" },
+      data: { imageAssetId: null, selected: false },
+    });
     expect(mocks.mediaHashDeleteMany).toHaveBeenCalledWith({
       where: { storageKey: "projects/project-1/media/image/asset-1.png" },
     });
@@ -86,6 +107,19 @@ describe("media asset actions", () => {
 
     expect(mocks.mediaHashDeleteMany).not.toHaveBeenCalled();
     expect(mocks.deleteObject).not.toHaveBeenCalled();
+  });
+
+  it("clears a location baseline that pointed at the deleted media", async () => {
+    mocks.locationImageFindMany.mockResolvedValue([
+      { id: "location-image-1" },
+    ]);
+
+    await deleteMediaAsset({ assetId: "asset-1", userId: "user-1" });
+
+    expect(mocks.novelLocationUpdateMany).toHaveBeenCalledWith({
+      where: { selectedImageId: { in: ["location-image-1"] } },
+      data: { selectedImageId: null },
+    });
   });
 
   it("does not reveal or delete assets owned by another user", async () => {

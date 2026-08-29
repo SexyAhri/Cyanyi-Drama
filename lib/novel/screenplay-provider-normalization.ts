@@ -8,6 +8,7 @@ import {
 type ProviderNormalizationContext = {
   clipText: string;
   characters: readonly string[];
+  sourceEvents?: readonly { eventId: string; evidence: string }[];
 };
 
 const ACTION_KEYS = [
@@ -26,9 +27,28 @@ export function normalizeScreenplayProviderPayload(
 ) {
   if (!isRecord(value) || !Array.isArray(value.scenes)) return value;
   return {
-    ...pick(value, ["clipId", "originalText", "coverage"]),
+    ...pick(value, ["clipId", "originalText"]),
+    ...(Array.isArray(value.coverage)
+      ? { coverage: normalizeCoverage(value.coverage, context.sourceEvents) }
+      : {}),
     scenes: value.scenes.map((scene) => normalizeScene(scene, context)),
   };
+}
+
+function normalizeCoverage(
+  value: unknown[],
+  sourceEvents: ProviderNormalizationContext["sourceEvents"],
+) {
+  const expectedEvidence = new Map(
+    sourceEvents?.map((event) => [event.eventId, event.evidence]) ?? [],
+  );
+  return value.map((item) => {
+    if (!isRecord(item)) return item;
+    const normalized = pick(item, ["eventId", "evidence", "modes", "reason"]);
+    const eventId = typeof item.eventId === "string" ? item.eventId : undefined;
+    const evidence = eventId ? expectedEvidence.get(eventId) : undefined;
+    return evidence === undefined ? normalized : { ...normalized, evidence };
+  });
 }
 
 function normalizeScene(

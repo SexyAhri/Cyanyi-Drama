@@ -23,10 +23,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { MediaTask } from "@/lib/media/task-contract";
-import type { EpisodeRecord } from "@/lib/projects/types";
 import { cn } from "@/lib/utils";
 
 import {
+  deleteStudioMediaAsset,
   loadStudioAssetCatalog,
   selectStudioAsset,
   uploadStudioAsset,
@@ -41,8 +41,6 @@ import type {
   StudioSelectionContext,
   WorkspaceSnapshot,
 } from "../types";
-import { getProductionCopy } from "../production/copy";
-import { DepartmentDeliverablesWorkspace } from "../production/department-deliverables";
 import { StatusIndicator } from "../components/status-indicator";
 import { runtimeStatusToStageStatus } from "../stage-state";
 import { AssetCandidateGrid } from "./asset-candidates";
@@ -58,18 +56,12 @@ import {
   type StudioAssetEntity,
   type StudioAssetKind,
 } from "./asset-view-model";
+import { VisualProfilePanel } from "./visual-profile-panel";
 
-type AssetTab =
-  | StudioAssetKind
-  | "source"
-  | "department"
-  | "visual_bible"
-  | "color_script"
-  | "specifications";
+type AssetTab = StudioAssetKind | "source";
 
 export function AssetsWorkspace({
   analysisModels,
-  episode,
   imageModels,
   locale,
   onContextChange,
@@ -77,7 +69,6 @@ export function AssetsWorkspace({
   snapshot,
 }: {
   analysisModels: StudioModelOption[];
-  episode?: EpisodeRecord;
   imageModels: StudioModelOption[];
   locale: StudioLocale;
   onContextChange: (selection?: StudioSelectionContext) => void;
@@ -85,16 +76,16 @@ export function AssetsWorkspace({
   snapshot: WorkspaceSnapshot;
 }) {
   const copy = getStudioCopy(locale);
-  const productionCopy = getProductionCopy(locale);
   const [catalog, setCatalog] = useState<ProjectAssetCatalog | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [tab, setTab] = useState<AssetTab>("department");
+  const [tab, setTab] = useState<AssetTab>("character");
   const [selectedEntityId, setSelectedEntityId] = useState("");
   const [checkedEntityIds, setCheckedEntityIds] = useState<string[]>([]);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isSelecting, setIsSelecting] = useState(false);
+  const [deletingAssetId, setDeletingAssetId] = useState("");
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const sourceInputRef = useRef<HTMLInputElement>(null);
   const projectId = snapshot.project.id;
@@ -107,13 +98,6 @@ export function AssetsWorkspace({
           )
         : [],
     [catalog, projectId],
-  );
-  const visualAssets = useMemo(
-    () =>
-      catalog?.assets.filter(
-        (asset) => asset.kind === "image" && Boolean(asset.url),
-      ) ?? [],
-    [catalog],
   );
 
   const load = useCallback(
@@ -148,9 +132,13 @@ export function AssetsWorkspace({
   const entities = useMemo(
     () =>
       catalog && isDomainAssetTab(tab)
-        ? buildStudioAssetEntities(catalog, tab)
+        ? buildStudioAssetEntities(
+            catalog,
+            tab,
+            snapshot.project.config.artStyle,
+          )
         : [],
-    [catalog, tab],
+    [catalog, snapshot.project.config.artStyle, tab],
   );
   const selectedEntity =
     entities.find((entity) => entity.id === selectedEntityId) ?? entities[0];
@@ -166,7 +154,10 @@ export function AssetsWorkspace({
             id: selectedEntity.id,
             kind: selectedEntity.kind,
             label: selectedEntity.name,
-            metadata: { candidates: selectedEntity.candidates.length },
+            metadata: {
+              candidates: selectedEntity.candidates.length,
+              visualProfileReady: Boolean(selectedEntity.visualProfile),
+            },
           }
         : undefined,
     );
@@ -243,6 +234,24 @@ export function AssetsWorkspace({
     }
   }
 
+  async function deleteCandidate(candidate: StudioAssetCandidate) {
+    if (!candidate.assetId) return false;
+    setDeletingAssetId(candidate.assetId);
+    try {
+      await deleteStudioMediaAsset(candidate.assetId);
+      toast.success(copy.mediaDeleted);
+      await refreshAll();
+      return true;
+    } catch (requestError) {
+      toast.error(
+        requestError instanceof Error ? requestError.message : copy.actionFailed,
+      );
+      return false;
+    } finally {
+      setDeletingAssetId("");
+    }
+  }
+
   if (isLoading && !catalog) {
     return (
       <div className="flex h-full min-h-96 items-center justify-center text-muted-foreground">
@@ -274,6 +283,9 @@ export function AssetsWorkspace({
             {snapshot.project.name}
           </p>
           <h1 className="mt-1 text-xl font-semibold">{copy.assetLibrary}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {copy.assetWorkflowSummary}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {isDomainAssetTab(tab) ? (
@@ -357,22 +369,6 @@ export function AssetsWorkspace({
           variant="line"
         >
           <AssetTabTrigger
-            label={productionCopy.artDepartment}
-            value="department"
-          />
-          <AssetTabTrigger
-            label={productionCopy.visualBible}
-            value="visual_bible"
-          />
-          <AssetTabTrigger
-            label={productionCopy.colorScript}
-            value="color_script"
-          />
-          <AssetTabTrigger
-            label={productionCopy.specifications}
-            value="specifications"
-          />
-          <AssetTabTrigger
             count={catalog.characters.length}
             label={copy.characterAssets}
             value="character"
@@ -394,69 +390,6 @@ export function AssetsWorkspace({
           />
         </TabsList>
 
-        <TabsContent className="mt-4 xl:min-h-0 xl:overflow-hidden" value="department">
-          {tab === "department" ? (
-            <DepartmentDeliverablesWorkspace
-              defaultType="visual_bible"
-              departments={["art"]}
-              episodeId={episode?.id}
-              locale={locale}
-              onContextChange={onContextChange}
-              projectId={projectId}
-              sourceAssets={visualAssets}
-              title={productionCopy.artDepartment}
-            />
-          ) : null}
-        </TabsContent>
-        <TabsContent className="mt-4 xl:min-h-0 xl:overflow-hidden" value="visual_bible">
-          {tab === "visual_bible" ? (
-            <DepartmentDeliverablesWorkspace
-              defaultType="visual_bible"
-              departments={["art"]}
-              locale={locale}
-              onContextChange={onContextChange}
-              projectId={projectId}
-              sourceAssets={visualAssets}
-              title={productionCopy.visualBible}
-              types={["visual_bible"]}
-            />
-          ) : null}
-        </TabsContent>
-        <TabsContent className="mt-4 xl:min-h-0 xl:overflow-hidden" value="color_script">
-          {tab === "color_script" ? (
-            <DepartmentDeliverablesWorkspace
-              defaultType="color_script"
-              departments={["art"]}
-              episodeId={episode?.id}
-              locale={locale}
-              onContextChange={onContextChange}
-              projectId={projectId}
-              sourceAssets={visualAssets}
-              title={productionCopy.colorScript}
-              types={["color_script"]}
-            />
-          ) : null}
-        </TabsContent>
-        <TabsContent className="mt-4 xl:min-h-0 xl:overflow-hidden" value="specifications">
-          {tab === "specifications" ? (
-            <DepartmentDeliverablesWorkspace
-              defaultType="character_design"
-              departments={["art"]}
-              episodeId={episode?.id}
-              locale={locale}
-              onContextChange={onContextChange}
-              projectId={projectId}
-              sourceAssets={visualAssets}
-              title={productionCopy.specifications}
-              types={[
-                "character_design",
-                "environment_design",
-                "prop_costume_design",
-              ]}
-            />
-          ) : null}
-        </TabsContent>
-
         {(["character", "location", "prop"] as const).map((kind) => (
           <TabsContent
             className="mt-4 xl:min-h-0 xl:overflow-hidden"
@@ -465,6 +398,9 @@ export function AssetsWorkspace({
           >
             <DomainAssetView
               checkedEntityIds={checkedEntityIds}
+              analysisModels={analysisModels}
+              artStyle={snapshot.project.config.artStyle}
+              deletingAssetId={deletingAssetId}
               entities={entities}
               imageModels={imageModels}
               isSelecting={isSelecting}
@@ -472,6 +408,7 @@ export function AssetsWorkspace({
               locale={locale}
               onCheckedChange={setCheckedEntityIds}
               onRefresh={refreshAll}
+              onDeleteCandidate={deleteCandidate}
               onSelectCandidate={selectCandidate}
               onSelectEntity={setSelectedEntityId}
               onUpload={(file) =>
@@ -523,13 +460,17 @@ function isDomainAssetTab(value: AssetTab): value is StudioAssetKind {
 }
 
 function DomainAssetView({
+  analysisModels,
+  artStyle,
   checkedEntityIds,
+  deletingAssetId,
   entities,
   imageModels,
   isSelecting,
   isUploading,
   locale,
   onCheckedChange,
+  onDeleteCandidate,
   onRefresh,
   onSelectCandidate,
   onSelectEntity,
@@ -540,13 +481,17 @@ function DomainAssetView({
   tasks,
   uploadInputRef,
 }: {
+  analysisModels: StudioModelOption[];
+  artStyle: string;
   checkedEntityIds: string[];
+  deletingAssetId: string;
   entities: StudioAssetEntity[];
   imageModels: StudioModelOption[];
   isSelecting: boolean;
   isUploading: boolean;
   locale: StudioLocale;
   onCheckedChange: (ids: string[]) => void;
+  onDeleteCandidate: (candidate: StudioAssetCandidate) => Promise<boolean>;
   onRefresh: () => Promise<unknown> | void;
   onSelectCandidate: (candidate: StudioAssetCandidate) => void;
   onSelectEntity: (id: string) => void;
@@ -614,6 +559,8 @@ function DomainAssetView({
                     {entity.name}
                   </span>
                   <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                    {entity.visualProfile ? copy.visualReady : copy.notDesigned}
+                    {" · "}
                     {entity.candidates.length} {copy.candidates}
                   </span>
                 </button>
@@ -683,6 +630,14 @@ function DomainAssetView({
               />
             </div>
           </header>
+          <VisualProfilePanel
+            artStyle={artStyle}
+            entity={selectedEntity}
+            locale={locale}
+            models={analysisModels}
+            onCompleted={onRefresh}
+            projectId={projectId}
+          />
           <div className="pt-5">
             <div className="mb-3 flex items-center gap-2">
               <h3 className="text-sm font-semibold">{copy.candidates}</h3>
@@ -691,9 +646,11 @@ function DomainAssetView({
               </Badge>
             </div>
             <AssetCandidateGrid
+              deletingAssetId={deletingAssetId}
               entity={selectedEntity}
               isSelecting={isSelecting}
               locale={locale}
+              onDelete={onDeleteCandidate}
               onSelect={onSelectCandidate}
               tasks={tasks}
             />

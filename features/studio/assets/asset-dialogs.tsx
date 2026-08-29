@@ -149,6 +149,17 @@ export function GenerateAssetDialog({
   const [prompt, setPrompt] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
+      setPrompt(
+        targets.length === 1
+          ? targets[0]?.generationPrompt ?? ""
+          : copy.batchGeneratePromptDefault,
+      );
+    }
+    setOpen(nextOpen);
+  }
+
   useEffect(() => {
     if (!models.some((model) => model.id === modelId)) {
       setModelId(models[0]?.id ?? "");
@@ -178,7 +189,7 @@ export function GenerateAssetDialog({
           items: targets.map((target) => ({
             targetType: target.kind,
             targetId: target.id,
-            prompt: [prompt.trim(), target.name, target.description?.trim()]
+            prompt: [target.generationPrompt.trim(), prompt.trim()]
               .filter(Boolean)
               .join("\n"),
           })),
@@ -196,7 +207,7 @@ export function GenerateAssetDialog({
   }
 
   return (
-    <Dialog onOpenChange={setOpen} open={open}>
+    <Dialog onOpenChange={handleOpenChange} open={open}>
       <DialogTrigger render={trigger} />
       <DialogContent className="rounded-lg sm:max-w-lg">
         <DialogHeader>

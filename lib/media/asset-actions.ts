@@ -44,6 +44,27 @@ export async function deleteMediaAsset(input: {
       where: { id: asset.taskId },
       data: { payload: nextPayload },
     });
+
+    const locationImages = await transaction.locationImage.findMany({
+      where: { imageAssetId: asset.id },
+      select: { id: true },
+    });
+    if (locationImages.length) {
+      await transaction.novelLocation.updateMany({
+        where: { selectedImageId: { in: locationImages.map((item) => item.id) } },
+        data: { selectedImageId: null },
+      });
+    }
+    await Promise.all([
+      transaction.characterAppearance.updateMany({
+        where: { imageAssetId: asset.id },
+        data: { imageAssetId: null, selected: false },
+      }),
+      transaction.locationImage.updateMany({
+        where: { imageAssetId: asset.id },
+        data: { imageAssetId: null, selected: false },
+      }),
+    ]);
     await transaction.mediaAsset.delete({ where: { id: asset.id } });
 
     if (!asset.storageKey) return null;

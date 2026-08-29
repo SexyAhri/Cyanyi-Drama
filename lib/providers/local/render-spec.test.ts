@@ -44,7 +44,16 @@ describe("render specification", () => {
     const video = buildNormalizeSegmentArgs(
       "input.webm",
       "output.mp4",
-      { url: "https://example.com/a.webm", panelIndex: 0, kind: "video" },
+      {
+        url: "https://example.com/a.webm",
+        panelIndex: 0,
+        kind: "video",
+        durationSeconds: 4,
+        sourceStartSeconds: 1.25,
+        transition: "fade",
+        transitionDurationSeconds: 0.5,
+        volume: 0.75,
+      },
       specification,
     );
     const image = buildNormalizeSegmentArgs(
@@ -60,6 +69,10 @@ describe("render specification", () => {
     );
     expect(video.join(" ")).toContain("scale=1280:720");
     expect(video.join(" ")).toContain("fps=25");
+    expect(video).toEqual(expect.arrayContaining(["-ss", "1.25"]));
+    expect(video.join(" ")).toContain("fade=t=in:st=0:d=0.5");
+    expect(video.join(" ")).toContain("volume=0.75");
+    expect(video.join(" ")).toContain("afade=t=out:st=3.5:d=0.5");
     expect(image).toEqual(expect.arrayContaining(["-loop", "1", "-t", "4"]));
     expect(image.join(" ")).toContain("anullsrc");
     expect(

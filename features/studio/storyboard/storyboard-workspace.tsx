@@ -7,7 +7,6 @@ import {
   ChevronDown,
   ChevronUp,
   FileCheck2,
-  ListChecks,
   LoaderCircle,
   Pause,
   Play,
@@ -15,7 +14,6 @@ import {
   Scissors,
   Merge,
   TriangleAlert,
-  Video,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -23,7 +21,6 @@ import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
 import {
@@ -35,8 +32,6 @@ import {
 import { ModelSelect } from "../components/model-select";
 import { StatusIndicator } from "../components/status-indicator";
 import { getStudioCopy } from "../i18n";
-import { getProductionCopy } from "../production/copy";
-import { DepartmentDeliverablesWorkspace } from "../production/department-deliverables";
 import {
   getWorkflowForStage,
   getWorkflowContentRevision,
@@ -64,8 +59,6 @@ import {
   type PrevisSpecKey,
 } from "./previs-view-model";
 
-type StoryboardTab = "shots" | "previs" | "shot_list" | "animatic";
-
 export function StoryboardWorkspace({
   episode,
   locale,
@@ -82,14 +75,12 @@ export function StoryboardWorkspace({
   snapshot: WorkspaceSnapshot;
 }) {
   const copy = getStudioCopy(locale);
-  const productionCopy = getProductionCopy(locale);
   const [data, setData] = useState<StudioStoryboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isActing, setIsActing] = useState(false);
   const [selectedPanelId, setSelectedPanelId] = useState("");
   const [modelId, setModelId] = useState("");
-  const [tab, setTab] = useState<StoryboardTab>("shots");
   const projectId = snapshot.project.id;
   const workflows = snapshot.workflows.filter(
     (workflow) => workflow.episodeId === episode.id,
@@ -147,7 +138,6 @@ export function StoryboardWorkspace({
     panels.find((panel) => panel.id === selectedPanelId) ?? panels[0];
 
   useEffect(() => {
-    if (tab !== "shots") return;
     onContextChange(
       selectedPanel
         ? {
@@ -161,7 +151,7 @@ export function StoryboardWorkspace({
           }
         : undefined,
     );
-  }, [copy.panel, onContextChange, selectedPanel, tab]);
+  }, [copy.panel, onContextChange, selectedPanel]);
 
   useEffect(() => {
     if (!panels.length) {
@@ -310,7 +300,6 @@ export function StoryboardWorkspace({
             ) : null}
           </div>
         </div>
-        {tab === "shots" ? (
           <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
             <ModelSelect
               ariaLabel={copy.storyboardModel}
@@ -331,40 +320,9 @@ export function StoryboardWorkspace({
               status={workflow?.status}
             />
           </div>
-        ) : null}
       </header>
 
-      <Tabs
-        className="min-w-0 pt-4 xl:min-h-0 xl:flex-1 xl:overflow-hidden"
-        onValueChange={(value) => setTab(value as StoryboardTab)}
-        value={tab}
-      >
-        <TabsList
-          className="max-w-full shrink-0 overflow-x-auto"
-          variant="line"
-        >
-          <TabsTrigger value="shots">
-            <Clapperboard className="size-4" />
-            {productionCopy.shotDesign}
-          </TabsTrigger>
-          <TabsTrigger value="previs">
-            <FileCheck2 className="size-4" />
-            {productionCopy.previsDepartment}
-          </TabsTrigger>
-          <TabsTrigger value="shot_list">
-            <ListChecks className="size-4" />
-            {productionCopy.shotList}
-          </TabsTrigger>
-          <TabsTrigger value="animatic">
-            <Video className="size-4" />
-            {productionCopy.animatic}
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent
-          className="mt-4 xl:flex xl:min-h-0 xl:flex-col xl:overflow-hidden"
-          value="shots"
-        >
+      <div className="min-w-0 pt-4 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col xl:overflow-hidden">
           {!models.length ? (
             <p className="border-b py-3 text-xs text-destructive">
               {copy.noAnalysisModels}
@@ -479,65 +437,7 @@ export function StoryboardWorkspace({
               ) : null}
             </div>
           )}
-        </TabsContent>
-
-        <TabsContent
-          className="mt-4 xl:min-h-0 xl:overflow-y-auto"
-          value="previs"
-        >
-          {tab === "previs" ? (
-            <DepartmentDeliverablesWorkspace
-              defaultType="directors_treatment"
-              departments={["previs"]}
-              episodeId={episode.id}
-              locale={locale}
-              onContextChange={onContextChange}
-              projectId={projectId}
-              title={productionCopy.previsDepartment}
-            />
-          ) : null}
-        </TabsContent>
-        <TabsContent
-          className="mt-4 xl:min-h-0 xl:overflow-y-auto"
-          value="shot_list"
-        >
-          {tab === "shot_list" ? (
-            <DepartmentDeliverablesWorkspace
-              defaultType="shot_list"
-              departments={["previs"]}
-              episodeId={episode.id}
-              locale={locale}
-              onContextChange={onContextChange}
-              projectId={projectId}
-              title={productionCopy.shotList}
-              types={[
-                "blocking",
-                "shot_list",
-                "cinematography_plan",
-                "performance_plan",
-                "previs",
-              ]}
-            />
-          ) : null}
-        </TabsContent>
-        <TabsContent
-          className="mt-4 xl:min-h-0 xl:overflow-y-auto"
-          value="animatic"
-        >
-          {tab === "animatic" ? (
-            <DepartmentDeliverablesWorkspace
-              defaultType="animatic"
-              departments={["previs"]}
-              episodeId={episode.id}
-              locale={locale}
-              onContextChange={onContextChange}
-              projectId={projectId}
-              title={productionCopy.animatic}
-              types={["animatic"]}
-            />
-          ) : null}
-        </TabsContent>
-      </Tabs>
+      </div>
     </div>
   );
 }

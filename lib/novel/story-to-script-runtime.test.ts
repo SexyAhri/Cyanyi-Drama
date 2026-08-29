@@ -409,6 +409,54 @@ describe("story-to-script runtime", () => {
       .toBe(true);
   });
 
+  it("reuses successful screenplays after source-event boundary normalization", async () => {
+    const source = "“哇！”海丹麟坠落于地。";
+    currentClips = [
+      {
+        ...clip("clip-1", 0, source),
+        status: "screenplay_ready",
+        screenplay: JSON.stringify({
+          clipId: "clip-1",
+          originalText: source,
+          coverage: [
+            {
+              eventId: "E001",
+              evidence: "“哇！",
+              modes: ["visual"],
+              reason: null,
+            },
+            {
+              eventId: "E002",
+              evidence: "”海丹麟坠落于地。",
+              modes: ["visual"],
+              reason: null,
+            },
+          ],
+          scenes: [
+            {
+              sceneNumber: 0,
+              heading: { intExt: "INT", location: "书房", time: "日" },
+              description: "",
+              characters: ["乙"],
+              content: [{ type: "action", text: source }],
+            },
+          ],
+        }),
+      },
+    ];
+    listProductionClips.mockImplementation(async () => currentClips);
+
+    const result = await convertEpisodeClipsToScreenplays(
+      "user-1",
+      { ...runtimeInput, concurrency: 1 },
+      runtimeHooks(),
+    );
+
+    expect(requestOpenAiStructured).not.toHaveBeenCalled();
+    expect(result.reusedCount).toBe(1);
+    expect(currentClips[0].status).toBe("screenplay_ready");
+  });
+
   it("calls the model for missing screenplays when a workflow retry resumes", async () => {
     currentClips = [
       clip("clip-1", 0, "甲说：你好。"),

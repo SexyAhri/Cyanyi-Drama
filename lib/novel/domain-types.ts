@@ -4,6 +4,7 @@ export type NovelCharacterRecord = {
   name: string;
   aliases: string[];
   profile: Record<string, unknown>;
+  visualProfile?: Record<string, unknown>;
   introduction: string | null;
   confirmed: boolean;
   appearances: CharacterAppearanceRecord[];
@@ -28,6 +29,7 @@ export type NovelLocationRecord = {
   projectId: string;
   name: string;
   summary: string | null;
+  visualProfile?: Record<string, unknown>;
   selectedImageId: string | null;
   images: LocationImageRecord[];
   createdAt: string;

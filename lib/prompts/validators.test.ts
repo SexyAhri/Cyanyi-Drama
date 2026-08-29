@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildSourceEvents,
   normalizeCharacterAnalysisEvidence,
   normalizeLocationPropAnalysisEvidence,
   validateActingCoverage,
@@ -11,6 +12,9 @@ import {
   isDirectSpeechExcerpt,
   isImplicitVisualBridgeAction,
   isSourceBackedTemporarySpeaker,
+  normalizeStoryboardPlanningContract,
+  normalizeStoryboardPlanningEntities,
+  normalizeStoryboardRefinementContract,
   normalizeScreenplaySourceContract,
   validateLocationPropAnalysis,
   validateScreenplayConversion,
@@ -27,6 +31,26 @@ const canonical = {
 };
 
 describe("domain semantic validators", () => {
+  it("keeps sentence-closing quotes with the preceding source event", () => {
+    expect(
+      buildSourceEvents(
+        "“好灼热的火炎！”虚空中的老者眼眸中掠过惊诧，“此龙没有肉体！”\n“哇！”",
+      ).map((event) => event.evidence),
+    ).toEqual([
+      "“好灼热的火炎！”",
+      "虚空中的老者眼眸中掠过惊诧，“此龙没有肉体！”",
+      "“哇！”",
+    ]);
+  });
+
+  it("ignores a leading chapter title and punctuation-only fragments", () => {
+    expect(
+      buildSourceEvents('第313章 九炎战奥义境\n”\n“嘭！”\n龙炎席卷而来。').map(
+        (event) => event.evidence,
+      ),
+    ).toEqual(["“嘭！”", "龙炎席卷而来。"]);
+  });
+
   it("keeps only source-backed analysis evidence with a deterministic fallback", () => {
     const source = "海宏赡站在太炎镇上空，手持裂海之矛。";
     expect(
@@ -1126,6 +1150,342 @@ describe("domain semantic validators", () => {
     ).toBe(false);
   });
 
+  it("does not treat a shouted sound followed by action as dialogue", () => {
+    expect(
+      isDirectSpeechExcerpt(
+        "身前的平静海潮顿时骇浪升起，向着九炎天龙席卷而去。",
+        "海宏赡",
+        "海宏赡厉喝一声，身前的平静海潮顿时骇浪升起，向着九炎天龙席卷而去。",
+      ),
+    ).toBe(false);
+  });
+
+  it("removes exact empty entity placeholders from storyboard planning", () => {
+    const normalized = normalizeStoryboardPlanningEntities({
+      panels: [
+        {
+          panelIndex: 0,
+          shotType: "中景",
+          cameraMove: "稳定",
+          durationSeconds: 2,
+          motionTimeline: [
+            {
+              startSecond: 0,
+              endSecond: 2,
+              action: "海潮升起",
+              camera: "稳定",
+            },
+          ],
+          vfxCues: [],
+          sfxCues: [],
+          description: "海潮升起",
+          locationName: "书房",
+          characters: ["林澈", "无"],
+          props: ["无", "无字古籍"],
+          imagePrompt: null,
+          videoPrompt: "海潮升起",
+          sourceEvidence: ["海潮升起"],
+        },
+      ],
+    });
+
+    expect(normalized.panels[0].characters).toEqual(["林澈"]);
+    expect(normalized.panels[0].props).toEqual(["无字古籍"]);
+  });
+
+  it("grounds planning evidence and corrects a voiceover placed in lip sync", () => {
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: "剑光劈开石壁。天地震动。",
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "书房", time: "夜" },
+          description: "",
+          characters: ["林澈"],
+          content: [
+            { type: "action" as const, text: "剑光劈开石壁。" },
+            {
+              type: "voiceover" as const,
+              character: null,
+              text: "天地震动。",
+            },
+          ],
+        },
+      ],
+    };
+    const sourceText = JSON.stringify(screenplay, null, 2);
+    const normalized = normalizeStoryboardPlanningContract(
+      {
+        panels: [
+          {
+            panelIndex: 0,
+            sceneNumber: 0,
+            shotType: "中景",
+            cameraMove: "稳定",
+            durationSeconds: 3,
+            motionTimeline: [
+              {
+                startSecond: 0,
+                endSecond: 3,
+                action: "剑光劈开石壁，天地震动",
+                camera: "稳定",
+              },
+            ],
+            startState: {
+              body: "林澈挥剑",
+              hands: "持剑",
+              gaze: "看向石壁",
+              screenDirection: "面向画面右侧",
+              props: "无",
+            },
+            endState: {
+              body: "林澈收剑",
+              hands: "持剑",
+              gaze: "看向石壁",
+              screenDirection: "面向画面右侧",
+              props: "无",
+            },
+            vfxCues: [
+              {
+                atSecond: 1,
+                phase: "impact",
+                category: "explosion_debris",
+                description: "石壁爆裂",
+                evidence: ["模型改写的视觉证据"],
+              },
+            ],
+            sfxCues: [
+              {
+                startSecond: 1,
+                endSecond: 2,
+                type: "destruction",
+                description: "石壁碎裂声",
+                evidence: ["批准的石壁碎裂音效", "模型改写的声音证据"],
+              },
+            ],
+            speakingCharacter: "旁白",
+            lipSyncText: "天地震动。",
+            voiceoverText: null,
+            description: "剑光劈开石壁，天地震动",
+            locationName: "书房",
+            characters: ["林澈"],
+            props: [],
+            imagePrompt: null,
+            videoPrompt: "剑光劈开石壁",
+            sourceEvidence: ["模型改写的面板证据"],
+          },
+        ],
+      },
+      {
+        sourceText,
+        screenplay,
+        productionContextText: "批准的石壁碎裂音效",
+      },
+    );
+
+    expect(normalized.panels[0]).toMatchObject({
+      speakingCharacter: null,
+      lipSyncText: null,
+      voiceoverText: "天地震动。",
+      sourceEvidence: ["剑光劈开石壁。"],
+      vfxCues: [],
+      sfxCues: [{ evidence: ["批准的石壁碎裂音效"] }],
+    });
+    expect(
+      validateStoryboardPlanning(normalized, {
+        sourceText,
+        canonical: {
+          characters: ["林澈"],
+          locations: ["书房"],
+          props: [],
+        },
+        screenplay,
+        productionContextText: "批准的石壁碎裂音效",
+      }),
+    ).toEqual([]);
+  });
+
+  it("inherits adjacent continuity fields within the same scene", () => {
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: "林澈挥剑。",
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "书房", time: "夜" },
+          description: "",
+          characters: ["林澈"],
+          content: [{ type: "action" as const, text: "林澈挥剑。" }],
+        },
+      ],
+    };
+    const sourceText = JSON.stringify(screenplay, null, 2);
+    const basePanel = {
+      panelIndex: 0,
+      sceneNumber: 0,
+      shotType: "中景",
+      cameraMove: "稳定",
+      durationSeconds: 2,
+      motionTimeline: [
+        {
+          startSecond: 0,
+          endSecond: 2,
+          action: "林澈挥剑",
+          camera: "稳定",
+        },
+      ],
+      startState: {
+        body: "林澈起势",
+        hands: "右手持剑",
+        gaze: "看向前方",
+        screenDirection: "面向画面右侧",
+        props: "长剑完整",
+      },
+      endState: {
+        body: "林澈挥剑结束",
+        hands: "双手持剑",
+        gaze: "看向前方",
+        screenDirection: "面向画面左侧",
+        props: "长剑沾尘",
+      },
+      vfxCues: [],
+      sfxCues: [],
+      speakingCharacter: null,
+      lipSyncText: null,
+      voiceoverText: null,
+      description: "林澈挥剑",
+      locationName: "书房",
+      characters: ["林澈"],
+      props: [],
+      imagePrompt: null,
+      videoPrompt: "林澈挥剑",
+      sourceEvidence: ["林澈挥剑。"],
+    };
+    const normalized = normalizeStoryboardPlanningContract(
+      {
+        panels: [
+          basePanel,
+          {
+            ...basePanel,
+            panelIndex: 1,
+            startState: {
+              ...basePanel.startState,
+              hands: "右手持剑",
+              screenDirection: "面向画面右侧",
+              props: "长剑完整",
+            },
+          },
+        ],
+      },
+      { sourceText, screenplay },
+    );
+
+    expect(normalized.panels[1].startState).toMatchObject({
+      hands: "双手持剑",
+      screenDirection: "面向画面左侧",
+      props: "长剑沾尘",
+    });
+    expect(
+      validateStoryboardPlanning(normalized, {
+        sourceText,
+        canonical: {
+          characters: ["林澈"],
+          locations: ["书房"],
+          props: [],
+        },
+        screenplay,
+      }),
+    ).toEqual([]);
+  });
+
+  it("does not inherit continuity state when the cast changes in one scene", () => {
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: "林澈收剑。顾言抬头。",
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "书房", time: "夜" },
+          description: "",
+          characters: ["林澈", "顾言"],
+          content: [
+            { type: "action" as const, text: "林澈收剑。" },
+            { type: "action" as const, text: "顾言抬头。" },
+          ],
+        },
+      ],
+    };
+    const sourceText = JSON.stringify(screenplay, null, 2);
+    const panel = (panelIndex: number, character: string) => ({
+      panelIndex,
+      sceneNumber: 0,
+      shotType: "中景",
+      cameraMove: "稳定",
+      durationSeconds: 2,
+      motionTimeline: [
+        {
+          startSecond: 0,
+          endSecond: 2,
+          action: panelIndex ? "顾言抬头" : "林澈收剑",
+          camera: "稳定",
+        },
+      ],
+      startState: {
+        body: `${character}处于起始姿态`,
+        hands: panelIndex ? "双手背后" : "右手持剑",
+        gaze: "看向前方",
+        screenDirection: panelIndex ? "面向画面左侧" : "面向画面右侧",
+        props: panelIndex ? "无" : "长剑完整",
+      },
+      endState: {
+        body: `${character}完成动作`,
+        hands: panelIndex ? "双手背后" : "双手持剑",
+        gaze: "看向前方",
+        screenDirection: panelIndex ? "面向画面左侧" : "面向画面右侧",
+        props: panelIndex ? "无" : "长剑归鞘",
+      },
+      vfxCues: [],
+      sfxCues: [],
+      speakingCharacter: null,
+      lipSyncText: null,
+      voiceoverText: null,
+      description: panelIndex ? "顾言抬头" : "林澈收剑",
+      locationName: "书房",
+      characters: [character],
+      props: [],
+      imagePrompt: null,
+      videoPrompt: panelIndex ? "顾言抬头" : "林澈收剑",
+      sourceEvidence: [panelIndex ? "顾言抬头。" : "林澈收剑。"],
+    });
+
+    const changedCastPanel = panel(1, "顾言");
+    changedCastPanel.startState.body = "虚空中的老者立于原位";
+    changedCastPanel.endState.body = "虚空中的老者抬手";
+    const normalized = normalizeStoryboardPlanningContract(
+      { panels: [panel(0, "林澈"), changedCastPanel] },
+      { sourceText, screenplay },
+    );
+
+    expect(normalized.panels[1].startState).toMatchObject({
+      body: "顾言处于本镜起始姿态",
+      hands: "双手背后",
+      screenDirection: "面向画面左侧",
+      props: "无",
+    });
+    expect(
+      validateStoryboardPlanning(normalized, {
+        sourceText,
+        canonical: {
+          characters: ["林澈", "顾言"],
+          locations: ["书房"],
+          props: [],
+        },
+        screenplay,
+      }),
+    ).toEqual([]);
+  });
+
   it("recognizes only anchored, non-spoken visual bridge actions", () => {
     const source = "韩子枫从暗格中取出一个精致铁盒。";
     expect(
@@ -1236,6 +1596,30 @@ describe("domain semantic validators", () => {
         "SOURCE_EVIDENCE_CHANGED",
       ]),
     );
+
+    const normalized = normalizeStoryboardRefinementContract(
+      {
+        panels: [
+          {
+            ...panel,
+            cameraMove: "快速摇镜",
+            durationSeconds: 3,
+            characters: ["林澈", "海宏赡"],
+            props: [],
+            sourceEvidence: ["改写证据"],
+          },
+        ],
+      },
+      [panel],
+    );
+    expect(normalized.panels[0]).toMatchObject({
+      cameraMove: "缓慢推近",
+      durationSeconds: 2,
+      characters: ["林澈"],
+      props: ["怀表"],
+      sourceEvidence: ["林澈看怀表"],
+    });
+    expect(validateStoryboardRefinement(normalized, [panel])).toEqual([]);
   });
 
   it("rejects invented dialogue and unknown panel mappings", () => {

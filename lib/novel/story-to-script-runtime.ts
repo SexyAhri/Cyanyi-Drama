@@ -11,6 +11,7 @@ import {
 } from "@/lib/prompts/schemas";
 import {
   buildSourceEvents,
+  normalizeReusableScreenplaySourceContract,
   normalizeScreenplaySourceContract,
   validateClipSegmentation,
   validateScreenplayConversion,
@@ -438,6 +439,7 @@ export async function convertEpisodeClipsToScreenplays(
             normalizeScreenplayProviderPayload(value, {
               clipText: clip.content,
               characters: context.canonical.characters,
+              sourceEvents,
             }),
           validate: (data) =>
             validateScreenplayConversion(
@@ -616,7 +618,7 @@ function parseReusableScreenplay(
     if (!parsed.success) return null;
     const sourceEvents = buildSourceEvents(clipText);
     const screenplay = normalizeScreenplayDialogue(
-      normalizeScreenplaySourceContract(parsed.data, {
+      normalizeReusableScreenplaySourceContract(parsed.data, {
         clipId,
         clipText,
         sourceEvents,

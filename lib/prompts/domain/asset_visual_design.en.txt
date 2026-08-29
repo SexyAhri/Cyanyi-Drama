@@ -1,0 +1,26 @@
+Create a concrete, reusable visual specification for one production asset from the approved story facts below.
+
+Asset type: {{asset_kind}}
+Asset name: {{asset_name}}
+Project art style: {{project_style}}
+Story facts JSON:
+{{story_facts_json}}
+
+The project art style is the highest-priority, project-wide hard constraint. Do not switch styles because of the asset type, genre, era, or supplied description, and do not propose or adopt another style in inferenceNotes.
+
+Preserve every supplied story fact. You may professionally infer appearance, wardrobe, material, palette, and presentation choices that the source does not specify, but you must not add plot, identity, relationships, abilities, or biography. Record inferred choices in inferenceNotes instead of presenting them as source canon. The result must support a standard reference image and serve as a continuity constraint in every downstream shot. Do not design a transient action or story moment.
+
+For a character, specify facial impression, hair, body proportions, layered wardrobe and materials, footwear, accessories, and stable identifiers. For a location, specify spatial structure, scale, architectural or natural materials, foreground/midground/background, primary light sources, and repeatable anchors. For a prop, specify silhouette, proportions, materials, surface finish, colors, ornament, and stable identifiers.
+
+Return only this JSON:
+{
+  "visualIdentity": "the asset's immediately recognizable visual identity",
+  "shapeAndStructure": "concrete form, proportion, space, or construction",
+  "surfaceAndStyling": "wardrobe, materials, surface treatment, and styling language",
+  "colorPalette": "primary, secondary, and accent colors and their relationship",
+  "lightingAndPresentation": "lighting, background, and presentation for a standard reference image",
+  "signatureDetails": ["stable visible identifying detail"],
+  "consistencyRules": ["rule every downstream image and video must preserve; at least two"],
+  "negativePrompt": "appearance drift, incorrect elements, and presentation problems to exclude",
+  "inferenceNotes": ["non-canonical visual choice inferred from type, era, or project style"]
+}

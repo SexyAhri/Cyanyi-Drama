@@ -11,6 +11,7 @@ export const PROMPT_IDS = {
   STORY_VOICE_ANALYSIS: "story_voice_analysis",
   STORY_CONTINUITY_REVIEW: "story_continuity_review",
   ASSET_VISUAL_EXTRACTION: "asset_visual_extraction",
+  ASSET_VISUAL_DESIGN: "asset_visual_design",
   CHARACTER_REFERENCE_DESCRIPTION: "character_reference_description",
   EPISODE_SPLIT: "episode_split",
   STUDIO_WORKFLOW_AGENT: "studio_workflow_agent",

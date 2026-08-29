@@ -11,6 +11,7 @@ import {
   assertWorkflowDefinition,
   type WorkflowRunDefinition,
   type WorkflowRunStatus,
+  type WorkflowStepStatus,
 } from "./contract";
 
 const include = {
@@ -483,7 +484,9 @@ export async function retryWorkflowStep(
     targetStepId: target.id,
     downstreamStepIds,
     phaseRetry,
-    preserveTargetArtifacts: ["failed", "blocked"].includes(target.status),
+    preserveTargetArtifacts: shouldPreserveRetryArtifacts(
+      target.status as WorkflowStepStatus,
+    ),
   });
   await prisma.$transaction([
     prisma.workflowRun.update({
@@ -541,6 +544,10 @@ export type StoryboardPhaseRetry = {
   refId: string;
   phase: StoryboardRetryPhase;
 };
+
+export function shouldPreserveRetryArtifacts(status: WorkflowStepStatus) {
+  return ["pending", "failed", "blocked"].includes(status);
+}
 
 function buildRetryArtifactWhere(input: {
   runId: string;

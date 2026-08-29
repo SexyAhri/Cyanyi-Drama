@@ -18,6 +18,10 @@ export interface TimelineSegment {
   panelIndex: number;
   kind?: "image" | "video";
   durationSeconds?: number;
+  sourceStartSeconds?: number;
+  volume?: number;
+  transition?: "cut" | "fade";
+  transitionDurationSeconds?: number;
 }
 
 export interface RenderTimelineOptions {
@@ -112,6 +116,8 @@ export function buildNormalizeSegmentArgs(
 ) {
   const duration = segment.durationSeconds ?? specification.imageDurationSeconds;
   const args = ["-hide_banner", "-loglevel", "error", "-y"];
+  if (segment.kind !== "image" && segment.sourceStartSeconds)
+    args.push("-ss", String(segment.sourceStartSeconds));
   if (segment.kind === "image")
     args.push("-loop", "1", "-framerate", String(specification.fps));
   args.push("-i", inputPath);
@@ -131,7 +137,25 @@ export function buildNormalizeSegmentArgs(
   ];
   if (segment.kind !== "image" && segment.durationSeconds)
     filters.push(`tpad=stop_mode=clone:stop_duration=${duration}`);
+  const transitionDuration = Math.min(
+    Math.max(0.1, segment.transitionDurationSeconds ?? 0.35),
+    Math.max(0.1, duration / 2),
+  );
+  if (segment.transition === "fade")
+    filters.push(
+      `fade=t=in:st=0:d=${transitionDuration}`,
+      `fade=t=out:st=${Math.max(0, duration - transitionDuration)}:d=${transitionDuration}`,
+    );
   filters.push(`fps=${specification.fps}`, `format=${specification.pixelFormat}`);
+  const audioFilters = [
+    `volume=${Math.min(2, Math.max(0, segment.volume ?? 1))}`,
+  ];
+  if (segment.transition === "fade")
+    audioFilters.push(
+      `afade=t=in:st=0:d=${transitionDuration}`,
+      `afade=t=out:st=${Math.max(0, duration - transitionDuration)}:d=${transitionDuration}`,
+    );
+  audioFilters.push("apad");
   args.push(
     "-map",
     "0:v:0",
@@ -160,7 +184,7 @@ export function buildNormalizeSegmentArgs(
     "-ac",
     String(specification.audioChannels),
     "-af",
-    "apad",
+    audioFilters.join(","),
     "-shortest",
     "-movflags",
     "+faststart",

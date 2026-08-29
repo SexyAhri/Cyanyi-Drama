@@ -1,19 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowLeft,
   BellDot,
   Bot,
   Clapperboard,
   Languages,
-  LayoutDashboard,
   ListTree,
   LoaderCircle,
   RefreshCw,
   Settings,
 } from "lucide-react";
 import Link from "next/link";
+import { toast } from "sonner";
 
 import {
   AgentSettingsDialog,
@@ -24,6 +24,7 @@ import {
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { useRuntimeConnection } from "@/hooks/use-runtime-connection";
+import type { ProjectConfig } from "@/lib/projects/types";
 import {
   Tooltip,
   TooltipContent,
@@ -31,6 +32,7 @@ import {
 } from "@/components/ui/tooltip";
 
 import { getStudioCopy } from "../i18n";
+import { updateStudioProjectConfig } from "../api";
 import type { StudioLocale } from "../types";
 
 export function WorkspaceTopbar({
@@ -40,8 +42,10 @@ export function WorkspaceTopbar({
   onLocaleChange,
   onOpenActivity,
   onOpenEpisodes,
-  onOpenProduction,
+  onProjectConfigChange,
   onRefresh,
+  projectConfig,
+  projectId,
   projectName,
 }: {
   episodeName?: string;
@@ -50,8 +54,10 @@ export function WorkspaceTopbar({
   onLocaleChange: () => void;
   onOpenActivity: () => void;
   onOpenEpisodes: () => void;
-  onOpenProduction: () => void;
+  onProjectConfigChange: () => Promise<unknown> | void;
   onRefresh: () => void;
+  projectConfig: ProjectConfig;
+  projectId: string;
   projectName: string;
 }) {
   const copy = getStudioCopy(locale);
@@ -61,6 +67,62 @@ export function WorkspaceTopbar({
   const [settings, setSettings] = useState<ShellSettings>(() =>
     createDefaultShellSettings(""),
   );
+
+  useEffect(() => {
+    const selectedModel = (modelId: string | null) =>
+      runtime.models.find(
+        (model) => model.modelId === modelId || model.id === modelId,
+      )?.id ?? "";
+    setSettings((current) => ({
+      ...current,
+      analysisModel: selectedModel(projectConfig.analysisModel),
+      characterModel: selectedModel(projectConfig.characterModel),
+      locationModel: selectedModel(projectConfig.locationModel),
+      storyboardModel: selectedModel(projectConfig.storyboardModel),
+      editModel: selectedModel(projectConfig.editModel),
+      videoModel: selectedModel(projectConfig.videoModel),
+      audioModel: selectedModel(projectConfig.audioModel),
+      videoRatio: projectConfig.videoRatio,
+      artStyle: projectConfig.artStyle,
+      ttsRate: projectConfig.ttsRate,
+    }));
+  }, [projectConfig, runtime.models]);
+
+  function handleSettingsChange(next: ShellSettings) {
+    const previous = settings;
+    const modelId = (value: string) =>
+      runtime.models.find((model) => model.id === value)?.modelId ?? value;
+    const patch: Parameters<typeof updateStudioProjectConfig>[1] = {};
+    if (next.analysisModel !== previous.analysisModel)
+      patch.analysisModel = modelId(next.analysisModel) || null;
+    if (next.characterModel !== previous.characterModel)
+      patch.characterModel = modelId(next.characterModel) || null;
+    if (next.locationModel !== previous.locationModel)
+      patch.locationModel = modelId(next.locationModel) || null;
+    if (next.storyboardModel !== previous.storyboardModel)
+      patch.storyboardModel = modelId(next.storyboardModel) || null;
+    if (next.editModel !== previous.editModel)
+      patch.editModel = modelId(next.editModel) || null;
+    if (next.videoModel !== previous.videoModel)
+      patch.videoModel = modelId(next.videoModel) || null;
+    if (next.audioModel !== previous.audioModel)
+      patch.audioModel = modelId(next.audioModel) || null;
+    if (next.videoRatio !== previous.videoRatio)
+      patch.videoRatio = next.videoRatio;
+    if (next.artStyle !== previous.artStyle) patch.artStyle = next.artStyle;
+    if (next.ttsRate !== previous.ttsRate) patch.ttsRate = next.ttsRate;
+    setSettings(next);
+    if (!Object.keys(patch).length) return;
+    void updateStudioProjectConfig(projectId, patch)
+      .then(async () => {
+        toast.success(copy.projectSettingsSaved);
+        await onProjectConfigChange();
+      })
+      .catch((error) => {
+        setSettings(previous);
+        toast.error(error instanceof Error ? error.message : copy.actionFailed);
+      });
+  }
 
   return (
     <>
@@ -144,22 +206,6 @@ export function WorkspaceTopbar({
           <TooltipTrigger
             render={
               <Button
-                aria-label={copy.productionControl}
-                onClick={onOpenProduction}
-                size="icon"
-                type="button"
-                variant="ghost"
-              />
-            }
-          >
-            <LayoutDashboard className="size-4" />
-          </TooltipTrigger>
-          <TooltipContent>{copy.productionControl}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
                 aria-label={copy.refresh}
                 disabled={isRefreshing}
                 onClick={onRefresh}
@@ -214,7 +260,7 @@ export function WorkspaceTopbar({
         onOpenChange={setSettingsOpen}
         onRuntimeConnectionChange={runtime.setConnection}
         onRuntimeConnectionClear={runtime.clearConnection}
-        onSettingsChange={setSettings}
+        onSettingsChange={handleSettingsChange}
         onTestRuntimeConnection={runtime.fetchModels}
         open={settingsOpen}
         runtimeConnection={runtime.connection}

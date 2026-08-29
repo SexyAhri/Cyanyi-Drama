@@ -12,6 +12,7 @@ import {
   probeAudioUrlDuration,
 } from "@/lib/providers/local/ffmpeg-audio";
 import { planPanelDialogue } from "@/lib/media/dialogue-timeline";
+import { sanitizeMediaProviderRequest } from "@/lib/media/provider-prompt-safety";
 import { renderTimelineVideo } from "@/lib/providers/local/ffmpeg-render";
 import { normalizeRenderSpecification } from "@/lib/providers/local/render-spec";
 import { parseTimelineSequence } from "@/lib/production/timeline";
@@ -41,6 +42,10 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
   if (!channel) throw new Error("MEDIA_TASK_CHANNEL_NOT_FOUND");
   const payload = task.payload as { request?: TaskRequest };
   const request = payload.request ?? {};
+  const outboundRequest = sanitizeMediaProviderRequest(
+    request,
+    task.kind === "video" ? "video" : task.kind === "audio" ? "audio" : "image",
+  ).request;
   const operation =
     typeof (request as Record<string, unknown>).operation === "string"
       ? (request as Record<string, unknown>).operation
@@ -97,7 +102,7 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
               apiKey,
               model: task.model,
               kind: task.kind,
-              request,
+              request: outboundRequest,
               mediaTemplate,
             })
           : (() => {
@@ -503,6 +508,10 @@ async function renderEpisodeTimeline(
     panelIndex: number;
     kind: "image" | "video";
     durationSeconds?: number;
+    sourceStartSeconds?: number;
+    volume?: number;
+    transition?: "cut" | "fade";
+    transitionDurationSeconds?: number;
   }> = [];
   for (const track of renderTracks) {
     const { panel } = track;
@@ -521,6 +530,10 @@ async function renderEpisodeTimeline(
         panelIndex: panel.panelIndex,
         kind: imageUrl ? "image" : "video",
         durationSeconds: track.duration,
+        sourceStartSeconds: track.sourceStart,
+        volume: track.volume,
+        transition: track.transition,
+        transitionDurationSeconds: track.transitionDuration,
       });
   }
   if (!segments.length) throw new Error("TIMELINE_RENDER_NO_MEDIA_PANELS");

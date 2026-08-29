@@ -13,6 +13,11 @@ import {
 import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
 import { probeAudioUrlDuration } from "@/lib/providers/local/ffmpeg-audio";
 import { planPanelDialogue } from "@/lib/media/dialogue-timeline";
+import { sanitizeMediaPrompt } from "@/lib/media/provider-prompt-safety";
+import {
+  applyProjectArtStyle,
+  getProjectArtStyleLabel,
+} from "@/lib/projects/art-style";
 
 export type ProjectAssetTarget = "character" | "location" | "prop";
 
@@ -79,6 +84,7 @@ export async function createProjectImageTask(
     ? await findSelectedReferenceImages(input)
     : [];
   const entity = await createTargetEntity(input);
+  const artStyle = await loadProjectArtStyle(input.projectId);
   const referenceImages = [
     ...explicitReferenceImages,
     ...(input.useSelectedReference
@@ -98,7 +104,11 @@ export async function createProjectImageTask(
     protocol: channel.protocol,
     model: input.model,
     request: {
-      prompt: withAssetContinuityRequirements(input.targetType, input.prompt),
+      prompt: applyProjectArtStyle(
+        withAssetContinuityRequirements(input.targetType, input.prompt),
+        artStyle,
+        "zh",
+      ),
       ratio: input.ratio ?? "1:1",
       resolution: input.resolution ?? "2k",
       format: "png",
@@ -189,6 +199,7 @@ export async function createStoryboardPanelImageTask(input: {
     props: parseStringArray(panel.propsJson),
     locationName: panel.locationName,
   });
+  const artStyle = await loadProjectArtStyle(input.projectId);
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
@@ -202,12 +213,16 @@ export async function createStoryboardPanelImageTask(input: {
     protocol: channel.protocol,
     model: input.model,
     request: {
-      prompt: withStoryboardImageContinuityRequirements({
-        prompt,
-        characters: parseStringArray(panel.charactersJson),
-        props: parseStringArray(panel.propsJson),
-        locationName: panel.locationName,
-      }),
+      prompt: applyProjectArtStyle(
+        withStoryboardImageContinuityRequirements({
+          prompt,
+          characters: parseStringArray(panel.charactersJson),
+          props: parseStringArray(panel.propsJson),
+          locationName: panel.locationName,
+        }),
+        artStyle,
+        "zh",
+      ),
       ratio: input.ratio ?? "16:9",
       resolution: input.resolution ?? "2k",
       format: "png",
@@ -375,6 +390,7 @@ export async function createStoryboardPanelVideoTask(input: {
     props: parseStringArray(panel.propsJson),
     locationName: panel.locationName,
   });
+  const artStyle = await loadProjectArtStyle(input.projectId);
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
@@ -388,7 +404,7 @@ export async function createStoryboardPanelVideoTask(input: {
     protocol: channel.protocol,
     model: input.model,
     request: {
-      prompt,
+      prompt: applyProjectArtStyle(prompt, artStyle, "zh"),
       ratio: input.ratio ?? "16:9",
       resolution: input.resolution ?? "720p",
       duration: `${dialogue.durationSeconds}s`,
@@ -408,6 +424,250 @@ export async function createStoryboardPanelVideoTask(input: {
       referenceCount: referenceImages.length,
       referenceAudioCount: 0,
     },
+  };
+}
+
+export type StoryboardPromptPreview = {
+  basePrompt: string;
+  compiledPrompt: string;
+  finalPrompt: string;
+  issues: Array<{
+    blocking: boolean;
+    code: string;
+    message: string;
+  }>;
+  kind: "image" | "video";
+  referenceCount: number;
+  safetyRewrites: ReturnType<typeof sanitizeMediaPrompt>["changes"];
+  sources: Array<{
+    key: string;
+    label: string;
+    value: string;
+  }>;
+};
+
+export async function previewStoryboardPanelPrompt(input: {
+  userId: string;
+  projectId: string;
+  episodeId: string;
+  panelId: string;
+  kind: "image" | "video";
+  prompt?: string;
+  mode?: "reference" | "first-last";
+  lastFramePanelId?: string;
+}): Promise<StoryboardPromptPreview> {
+  const panel = await prisma.storyboardPanel.findFirst({
+    where: {
+      id: input.panelId,
+      storyboard: {
+        projectId: input.projectId,
+        episodeId: input.episodeId,
+        project: { userId: input.userId },
+      },
+    },
+    select: {
+      id: true,
+      storyboardId: true,
+      panelIndex: true,
+      linkedToNextPanel: true,
+      description: true,
+      durationSeconds: true,
+      imagePrompt: true,
+      videoPrompt: true,
+      firstLastFramePrompt: true,
+      actingNotesJson: true,
+      charactersJson: true,
+      propsJson: true,
+      locationName: true,
+      imageAsset: {
+        select: { url: true, storageKey: true, mimeType: true },
+      },
+    },
+  });
+  if (!panel) throw new ProjectAssetTaskError("分镜格不存在", 404);
+
+  const characters = parseStringArray(panel.charactersJson);
+  const props = parseStringArray(panel.propsJson);
+  const basePrompt =
+    input.prompt?.trim() ||
+    (input.kind === "image"
+      ? panel.imagePrompt?.trim()
+      : input.mode === "first-last"
+        ? panel.firstLastFramePrompt?.trim()
+        : panel.videoPrompt?.trim()) ||
+    panel.description?.trim() ||
+    "";
+  const issues: StoryboardPromptPreview["issues"] = [];
+  if (!basePrompt)
+    issues.push({
+      blocking: true,
+      code: "missing_prompt",
+      message: input.kind === "image" ? "缺少图片提示词" : "缺少视频提示词",
+    });
+
+  const supportingReferences = await findStoryboardReferenceImages({
+    projectId: input.projectId,
+    characters,
+    props,
+    locationName: panel.locationName,
+  });
+  const artStyle = await loadProjectArtStyle(input.projectId);
+  let referenceCount = supportingReferences.length;
+  let compiledPrompt = "";
+  const sources: StoryboardPromptPreview["sources"] = [
+    {
+      key: "art_style",
+      label: "项目画风",
+      value: getProjectArtStyleLabel(artStyle, "zh"),
+    },
+    {
+      key: "shot_prompt",
+      label: "镜头提示",
+      value: basePrompt || "未填写",
+    },
+    {
+      key: "asset_references",
+      label: "资产参考",
+      value: `${supportingReferences.length} 张角色 / 场景 / 道具参考图`,
+    },
+  ];
+
+  if (input.kind === "image") {
+    compiledPrompt = applyProjectArtStyle(
+      withStoryboardImageContinuityRequirements({
+        prompt: basePrompt,
+        characters,
+        props,
+        locationName: panel.locationName,
+      }),
+      artStyle,
+      "zh",
+    );
+  } else {
+    if (input.mode === "first-last") {
+      const firstFrameUrl = await mediaAssetUrl(panel.imageAsset);
+      const lastFrame = await findLastFramePanel({
+        userId: input.userId,
+        projectId: input.projectId,
+        episodeId: input.episodeId,
+        storyboardId: panel.storyboardId,
+        panelIndex: panel.panelIndex,
+        linkedToNextPanel: panel.linkedToNextPanel,
+        lastFramePanelId: input.lastFramePanelId,
+      });
+      const lastFrameUrl = await mediaAssetUrl(lastFrame?.imageAsset);
+      if (!firstFrameUrl || !lastFrameUrl)
+        issues.push({
+          blocking: true,
+          code: "missing_first_last_frame",
+          message: "首尾帧模式需要当前镜头首帧和已关联的下一镜头图片",
+        });
+      referenceCount += Number(Boolean(firstFrameUrl)) + Number(Boolean(lastFrameUrl));
+      sources.push({
+        key: "frame_mode",
+        label: "画面参考",
+        value: `${Number(Boolean(firstFrameUrl)) + Number(Boolean(lastFrameUrl))}/2 张首尾帧`,
+      });
+    } else {
+      const firstFrameUrl = await mediaAssetUrl(panel.imageAsset);
+      if (!firstFrameUrl)
+        issues.push({
+          blocking: true,
+          code: "missing_reference_frame",
+          message: "参考图模式需要先选择当前镜头图片",
+        });
+      referenceCount += Number(Boolean(firstFrameUrl));
+      sources.push({
+        key: "frame_mode",
+        label: "画面参考",
+        value: firstFrameUrl ? "已选择当前镜头参考图" : "缺少当前镜头参考图",
+      });
+    }
+
+    const lines = await prisma.voiceLine.findMany({
+      where: {
+        episodeId: input.episodeId,
+        matchedPanelId: panel.id,
+        episode: { projectId: input.projectId },
+      },
+      orderBy: { lineIndex: "asc" },
+      select: {
+        speaker: true,
+        content: true,
+        delivery: true,
+        durationSeconds: true,
+        audioAssetId: true,
+      },
+    });
+    const missingAudio = lines.filter((line) => !line.audioAssetId);
+    if (missingAudio.length)
+      issues.push({
+        blocking: true,
+        code: "missing_dialogue_audio",
+        message: `${missingAudio.length} 句关联对白尚未生成配音`,
+      });
+    let dialoguePrompt = basePrompt;
+    if (lines.length) {
+      try {
+        const plan = planPanelDialogue({
+          lineDurations: lines.map(
+            (line) => line.durationSeconds ?? estimateSpokenDuration(line.content),
+          ),
+          requestedDurationSeconds: panel.durationSeconds ?? 5,
+        });
+        dialoguePrompt = dialogueVideoPrompt({
+          description: panel.description ?? basePrompt,
+          motionPrompt: basePrompt,
+          actingDirections: parseStoryboardActingDirections(panel.actingNotesJson),
+          durationSeconds: plan.durationSeconds,
+          lines,
+          playbackRate: plan.playbackRate,
+          timings: plan.timings,
+        });
+        sources.push({
+          key: "dialogue_timing",
+          label: "对白节奏",
+          value: `${lines.length} 句 · ${plan.durationSeconds} 秒 · ${plan.playbackRate.toFixed(2)}x`,
+        });
+      } catch (error) {
+        issues.push({
+          blocking: true,
+          code: "dialogue_timing_invalid",
+          message:
+            error instanceof Error && error.message.startsWith("DIALOGUE_REQUIRES_SHOT_SPLIT")
+              ? "对白总时长超过单镜头容量，需要拆分镜头"
+              : "对白时长无法编排",
+        });
+      }
+    }
+    compiledPrompt = applyProjectArtStyle(
+      withStoryboardVideoContinuityRequirements({
+        prompt: dialoguePrompt,
+        characters,
+        props,
+        locationName: panel.locationName,
+      }),
+      artStyle,
+      "zh",
+    );
+  }
+
+  const sanitized = sanitizeMediaPrompt(compiledPrompt);
+  if (sanitized.changes.length)
+    sources.push({
+      key: "safety_rewrite",
+      label: "安全改写",
+      value: `${sanitized.changes.length} 处敏感描述已替换`,
+    });
+  return {
+    basePrompt,
+    compiledPrompt,
+    finalPrompt: sanitized.prompt,
+    issues,
+    kind: input.kind,
+    referenceCount,
+    safetyRewrites: sanitized.changes,
+    sources,
   };
 }
 
@@ -644,6 +904,14 @@ async function mediaAssetUrl(
 ) {
   if (asset?.storageKey) return resolveStoredMediaUrl(asset.storageKey);
   return asset?.url ?? null;
+}
+
+async function loadProjectArtStyle(projectId: string) {
+  const config = await prisma.projectConfig.findUnique({
+    where: { projectId },
+    select: { artStyle: true },
+  });
+  return config?.artStyle ?? "american-comic";
 }
 
 async function createTargetEntity(input: CreateProjectImageTaskInput) {

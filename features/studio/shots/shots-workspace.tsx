@@ -384,6 +384,7 @@ export function ShotsWorkspace({
               onCompleted={refreshAll}
               panels={checkedPanels}
               projectId={projectId}
+              tasks={snapshot.tasks}
               trigger={
                 <Button size="sm" type="button">
                   {kind === "image" ? (

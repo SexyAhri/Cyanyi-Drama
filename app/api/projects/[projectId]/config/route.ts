@@ -1,4 +1,5 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
+import { isProjectArtStyleId } from "@/lib/projects/art-style";
 import { prisma } from "@/lib/server/prisma";
 import { getProject } from "@/lib/projects/queries";
 
@@ -21,6 +22,11 @@ export async function PATCH(request: Request, context: RouteContext) {
   const data: Record<string, unknown> = {};
   for (const field of fields) {
     if (body[field] === undefined) continue;
+    if (field === "artStyle" && !isProjectArtStyleId(body[field]))
+      return attachSessionCookie(
+        Response.json({ message: "不支持的项目画风" }, { status: 400 }),
+        sessionId,
+      );
     if (field === "capabilityOverrides") {
       if (body[field] !== null && (!body[field] || typeof body[field] !== "object" || Array.isArray(body[field]))) return attachSessionCookie(Response.json({ message: "capabilityOverrides 格式不正确" }, { status: 400 }), sessionId);
       data.capabilityOverridesJson = body[field] === null ? null : JSON.stringify(body[field]);

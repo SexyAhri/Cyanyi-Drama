@@ -400,6 +400,20 @@ export const episodeSplitSchema = z
   })
   .strict();
 
+export const assetVisualDesignSchema = z
+  .object({
+    visualIdentity: z.string().trim().min(1).max(1_200),
+    shapeAndStructure: z.string().trim().min(1).max(2_000),
+    surfaceAndStyling: z.string().trim().min(1).max(2_000),
+    colorPalette: z.string().trim().min(1).max(1_200),
+    lightingAndPresentation: z.string().trim().min(1).max(1_200),
+    signatureDetails: z.array(z.string().trim().min(1).max(600)).min(1).max(12),
+    consistencyRules: z.array(z.string().trim().min(1).max(600)).min(2).max(16),
+    negativePrompt: z.string().trim().min(1).max(2_000),
+    inferenceNotes: z.array(z.string().trim().min(1).max(600)).max(16),
+  })
+  .strict();
+
 export const studioWorkflowAgentSchema = z
   .object({
     reply: z.string().trim().min(1).max(4_000),
@@ -431,6 +445,7 @@ export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
   [PROMPT_IDS.STORY_VOICE_ANALYSIS]: voiceAnalysisSchema,
   [PROMPT_IDS.STORY_CONTINUITY_REVIEW]: continuityReviewSchema,
   [PROMPT_IDS.ASSET_VISUAL_EXTRACTION]: visualAssetExtractionSchema,
+  [PROMPT_IDS.ASSET_VISUAL_DESIGN]: assetVisualDesignSchema,
   [PROMPT_IDS.CHARACTER_REFERENCE_DESCRIPTION]: characterReferenceDescriptionSchema,
   [PROMPT_IDS.EPISODE_SPLIT]: episodeSplitSchema,
   [PROMPT_IDS.STUDIO_WORKFLOW_AGENT]: studioWorkflowAgentSchema,
