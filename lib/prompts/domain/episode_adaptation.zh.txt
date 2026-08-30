@@ -1,42 +1,58 @@
-根据下列原文制作一份可供人工审阅的漫剧改编稿。原文始终是事实源，改编稿只是候选生产版本。
+你是漫剧项目的改编编剧兼前期制片。你的职责是把一集小说原文压缩成可直接转剧本的生产型叙事稿，并在同一次输出中给出可校验的时长与节拍计划。
+
+生产目标：
+1. 有章节边界时一章优先作为一集。先压缩重复说明、修辞和低价值停留，不要因为原文字数多就主动拆集。
+2. 严格遵守 runtime_contract_json。plannedDurationSeconds 等于所有 beat 时长之和且不得超过 90 秒。内容充足时靠近目标时长；内容不足时宁可短，不得注水。
+3. 常规 85–90 秒建议 16–22 个镜头，但 beat 不是镜头：一个 8–15 秒 beat 可由 2–4 个镜头完成。
+4. 动作与对白可以并行发生。对白期间人物仍需观察、走动、用餐、咳嗽、触碰道具、改变视线或回应对方，禁止站桩说话。
+
+事实与压缩：
+1. source_units_json 是唯一原文，按 unitId 记账。除 kind=heading 外，每个 source unit 必须在 sourceCoverage 中恰好出现一次，不得 omitted。
+2. 必须保留关键事件、因果、顺序、身份、关系、动机、道具归属与状态、能力限制、揭示和结尾钩子。
+3. 可压缩重复说明、修辞、评价性旁述及能被明确画面代替的解释。不得压掉动作过程、关键反应和跨场景转场。
+4. 不得新增敌人、冲突、能力、属性、道具、秘密、伤亡、胜负或原文没有的结果。
+5. 改编模式：faithful 只做必要压缩；polish 优化叙事与口语；drama 强化可见行动、有效对白和结尾钩子；custom 在不违反硬规则时执行 custom_instructions。
+6. 上下集只用于连续性。不得重复上一集结尾，不得提前消费下一集事件。
+
+正文规则：
+1. adaptedText 是生产型叙事稿，不是摘要，也不是分镜；不要写景别、焦段、镜头运动或绘图提示词。
+2. 每个改变人物、道具或空间状态的事件都写清“触发/意图 -> 准备 -> 执行 -> 状态变化 -> 停稳/反应”。普通微动作可以合并在一句或一个 beat 中。
+3. 相邻 beat 地点变化时，目标 beat 必须填写 transition，并在正文中依次写出“离场动作 -> 路径压缩 -> 入场动作 -> 到达状态”。人物不能瞬移。
+4. 原文直接对白可以压缩、合并和口语化，但事实、关系、意图和揭示结果不变。关键揭示与钩子优先保留为对白。
+5. 世界规则优先转为有依据且说话逻辑成立的角色对白，其次转为画面。明确心理可转 inner_monologue。
+6. narrationPlan 最多 2 条、中文合计不超过 60 字，只能用于 location_time 或 world_rule。普通动作和情绪不得改成旁白。
+7. dialoguePlan/narrationPlan 的 text 必须逐字出现在对应 beat 的 adaptedText 区间，后续 TTS 只消费这些声音文本。
+8. actionChain 与 transition 中的每个字符串都必须逐字取自对应 beat 的 adaptedText，不能只在计划表中声称完成。
+9. adaptedStartMarker/adaptedEndMarker 必须是对应 beat 正文的精确开头/结尾摘录。所有 beat 按顺序无缝覆盖完整 adaptedText，不得留下未记账正文。
+10. sourceCoverage.adaptedEvidence 必须逐字来自分配 beat 的 adaptedText，并真实承接该 source unit 的事件或事实。
+
+表演、互动与特效：
+1. 每个 beat 填写 performanceIntent，说明人物意图、视线、姿态和结束反应。
+2. 重要人物/道具互动填写 actor、target、action、reaction。交接、扶抱、推拉、攻击与接触必须有双方状态变化。
+3. 打斗、功法、神秘器物开启/激活、可见能量、气息、灵魂体、阵纹、空间扭曲和明确异象必须填写 effects。
+4. effects 只设计已确认事实的表现方式。production_inference 可设计颜色、材质、粒子、运动和消散，但不得新增能力、威力、属性或剧情结果。
+5. soundIntent 只写环境声、动作声和特效声，不写角色人声。
+
+口播时长按：中文字数/4.2 + 英文词数/2.6 + 标点数*0.18，并向上取整。同一 beat 的全部对白、内心独白和旁白合计估时不得超过 beat.durationSeconds。
+
+只有确实无法在 90 秒内同时保留关键事件、因果、关系、核心设定和钩子时，才返回 status=split_recommended。该结果不得包含半成品 adaptedText，也不得为了省事滥用。
+
+只返回符合 Schema 的严格 JSON。ready 结果必须包含：status、title、summary、adaptedText、changeSummary、productionPlan。productionPlan 必须包含 version=1、runtime、beats、sourceCoverage、dialoguePlan、narrationPlan、cliffhanger。split_recommended 结果必须包含 status、title、reason、suggestedBoundarySourceUnitId、firstPartHook、secondPartOpening。
+
+原文单元：
+{{source_units_json}}
+
+时长合同：
+{{runtime_contract_json}}
+
+原著信息：
+{{manuscript_context}}
+
+项目信息：
+{{project_context}}
+
+相邻集边界：
+{{episode_continuity_context}}
 
 改编模式：{{adaptation_mode}}
 自定义要求：{{custom_instructions}}
-
-全书上下文：
-{{manuscript_context}}
-
-项目改编约束：
-{{project_context}}
-
-相邻分集连续性与边界：
-{{episode_continuity_context}}
-
-原文：
-{{source_text}}
-
-可直接选用的原文逐字证据候选：
-{{source_evidence_candidates}}
-
-必须逐项映射的完整原文事件表：
-{{source_event_anchors_json}}
-
-要求：
-1. faithful 仅整理表达和段落；polish 可强化可读性、动作和对白节奏；drama 可压缩重复叙述、前置冲突并加强集尾钩子。
-2. 所有模式都不得新增或改变剧情事件、身份、关系、境界、功法、能力、道具归属、时序、胜负、伤亡、秘密和结局。
-3. 可以把原文明示的心理或叙述转换为可见动作和自然对白，但不得让角色知道原文中尚未获知的信息。
-4. 项目中的画风、画幅和模型信息只影响后续视觉制作，不能写成小说世界事实。
-5. summary 必须重新通读完整原文后生成，覆盖本集起因、主要冲突、关键推进或转折，以及结尾状态或钩子；不得只摘录或复述开头段落。原文内容足够时写 180–300 个中文字符，短篇则按比例完整概括。
-6. sourceEvidence 从上方候选中选择 3–6 条，用于证明首、中、尾主要事实已保留；候选均为原文连续逐字摘录，不得转述、补字、删字、改标点、添加引号或使用省略号。
-7. previousEpisode 只用于承接人物认知、关系、伤势、道具归属和未解决目标，除非本集原文再次发生，否则不得重复上一集事件。nextEpisode 是硬边界，不得提前消费、揭示、解决或移动下一集事件。
-8. eventCoverage 必须逐一且仅一次返回完整事件表中的全部事件。sourceEvidence 原样复制锚点 evidence；adaptedEvidence 必须是 adaptedText 中能证明该事件已保留的连续逐字摘录；treatment 只能是 preserved、condensed 或 visualized，不允许省略，也不得只保留首、中、尾抽样事件而跳过两者之间的剧情。
-
-只返回以下 JSON：
-{
-  "title": "本集标题",
-  "summary": "忠于原文的本集梗概",
-  "adaptedText": "完整改编稿",
-  "changeSummary": ["本次改编做了什么编辑处理"],
-  "sourceEvidence": ["原文中的逐字摘录"],
-  "eventCoverage": [{"eventId":"A001","sourceEvidence":"事件锚点原文","adaptedEvidence":"改编稿中的逐字对应内容","treatment":"preserved|condensed|visualized"}]
-}

@@ -152,6 +152,8 @@ export type ShellCopy = {
   settingsCreativeDefaults: string;
   settingsCreativeDefaultsDescription: string;
   settingsVideoRatio: string;
+  settingsEpisodeTargetDuration: string;
+  settingsEpisodeTargetDurationHint: string;
   settingsArtStyle: string;
   settingsArtStyleAmericanComic: string;
   settingsArtStyleChineseComic: string;
@@ -352,6 +354,8 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsCreativeDefaultsDescription:
       "Project defaults shared by image, video, and TTS generation.",
     settingsVideoRatio: "Video ratio",
+    settingsEpisodeTargetDuration: "Episode target duration",
+    settingsEpisodeTargetDurationHint: "60–90 seconds; the hard maximum is 90 seconds.",
     settingsArtStyle: "Art style",
     settingsArtStyleAmericanComic: "American comic",
     settingsArtStyleChineseComic: "Chinese animation",
@@ -545,6 +549,8 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsCreativeDefaultsDescription:
       "图片、视频和 TTS 生成共用的项目默认配置。",
     settingsVideoRatio: "视频比例",
+    settingsEpisodeTargetDuration: "单集目标时长",
+    settingsEpisodeTargetDurationHint: "可设置 60–90 秒，成片硬上限为 90 秒。",
     settingsArtStyle: "艺术风格",
     settingsArtStyleAmericanComic: "美式漫画",
     settingsArtStyleChineseComic: "国漫影视动画",

@@ -7,6 +7,7 @@ import {
   SFX_CUE_TYPES,
   VFX_CUE_CATEGORIES,
 } from "@/lib/production/action-cues";
+import { episodeAdaptationOutputSchema } from "@/lib/episodes/production-plan";
 
 const text = z.string().trim().min(1);
 const exactText = z
@@ -615,31 +616,7 @@ export const voicePerformanceDesignSchema = z
   })
   .strict();
 
-export const episodeAdaptationSchema = z
-  .object({
-    title: z.string().trim().min(1).max(160),
-    summary: z.string().trim().min(1).max(4_000),
-    adaptedText: z.string().trim().min(1).max(500_000),
-    changeSummary: z.array(z.string().trim().min(1).max(600)).max(30),
-    sourceEvidence: z
-      .array(z.string().trim().min(2).max(1_000))
-      .min(1)
-      .max(30),
-    eventCoverage: z
-      .array(
-        z
-          .object({
-            eventId: z.string().regex(/^A\d{3,}$/),
-            sourceEvidence: z.string().trim().min(2).max(1_000),
-            adaptedEvidence: z.string().trim().min(2).max(2_000),
-            treatment: z.enum(["preserved", "condensed", "visualized"]),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(120),
-  })
-  .strict();
+export const episodeAdaptationSchema = episodeAdaptationOutputSchema;
 
 export const assetVisualDesignSchema = z
   .object({

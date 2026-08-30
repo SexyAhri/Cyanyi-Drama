@@ -91,6 +91,8 @@ export function WorkspaceTopbar({
       visualEra: projectConfig.visualEra,
       visualEraCustom: projectConfig.visualEraCustom ?? "",
       ttsRate: projectConfig.ttsRate,
+      episodeTargetDurationSeconds:
+        projectConfig.episodeTargetDurationSeconds,
     }));
   }, [projectConfig, runtime.models]);
 
@@ -121,6 +123,12 @@ export function WorkspaceTopbar({
     if (next.visualEraCustom !== previous.visualEraCustom)
       patch.visualEraCustom = next.visualEraCustom.trim() || null;
     if (next.ttsRate !== previous.ttsRate) patch.ttsRate = next.ttsRate;
+    if (
+      next.episodeTargetDurationSeconds !==
+      previous.episodeTargetDurationSeconds
+    )
+      patch.episodeTargetDurationSeconds =
+        next.episodeTargetDurationSeconds;
     setSettings(next);
     if (!Object.keys(patch).length) return;
     void updateStudioProjectConfig(projectId, patch)

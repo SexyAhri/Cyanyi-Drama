@@ -10,6 +10,14 @@ import type { EpisodeSourceVersionRecord } from "@/lib/projects/types";
 import { prisma } from "@/lib/server/prisma";
 
 import { EpisodeSourceError } from "./errors";
+import {
+  buildAdaptationSourceUnits,
+  DEFAULT_EPISODE_TARGET_SECONDS,
+  EPISODE_PRODUCTION_PLAN_VERSION,
+  finalizeEpisodeProductionPlan,
+  MAX_ADAPTATION_SOURCE_UNITS,
+  validateEpisodeAdaptationOutput,
+} from "./production-plan";
 import { resolveEpisodeTextProvider } from "./provider";
 
 export type EpisodeAdaptationMode =
@@ -20,7 +28,8 @@ export type EpisodeAdaptationMode =
 
 export type EpisodeAdaptationProgress =
   | { type: "reset" }
-  | { type: "delta"; delta: string };
+  | { type: "delta"; delta: string }
+  | { type: "phase"; phase: "generating" | "validating" | "correcting" };
 
 const MAX_ADAPTATION_SOURCE_CHARS = 500_000;
 export const MAX_ADAPTATION_EVENT_ANCHORS = 120;
@@ -72,28 +81,36 @@ export async function adaptEpisodeSource(input: {
     );
 
   const provider = await resolveEpisodeTextProvider(input);
-  const eventAnchors = buildAdaptationEventAnchors(original.content);
-  if (eventAnchors.length > MAX_ADAPTATION_EVENT_ANCHORS)
+  const sourceUnits = buildAdaptationSourceUnits(original.content);
+  if (sourceUnits.length > MAX_ADAPTATION_SOURCE_UNITS)
     throw new EpisodeSourceError(
-      `本集包含 ${eventAnchors.length} 个需要逐项保留的原文事件，超过单次改编可可靠核对的 ${MAX_ADAPTATION_EVENT_ANCHORS} 个；请先调整分集边界，避免改编时静默漏掉中间剧情`,
+      `本集包含 ${sourceUnits.length} 个需要逐项核对的原文单元，超过单次改编可可靠处理的 ${MAX_ADAPTATION_SOURCE_UNITS} 个；请确认章节边界`,
       409,
     );
+  const targetDurationSeconds =
+    episode.project.config?.episodeTargetDurationSeconds ??
+    DEFAULT_EPISODE_TARGET_SECONDS;
   const continuityContext = await loadEpisodeContinuityContext({
     projectId: input.projectId,
     episodeNumber: episode.episodeNumber,
   });
   let preview = createJsonStringFieldStream("adaptedText");
+  let outputStarts = 0;
   const result = await requestOpenAiStructured({
     ...provider,
     prompt: renderPrompt({
       id: PROMPT_IDS.EPISODE_ADAPTATION,
       locale: input.locale,
       variables: {
-        source_text: original.content,
-        source_evidence_candidates: JSON.stringify(
-          buildSourceEvidenceCandidates(original.content),
-        ),
-        source_event_anchors_json: JSON.stringify(eventAnchors),
+        source_units_json: JSON.stringify(sourceUnits),
+        runtime_contract_json: JSON.stringify({
+          targetDurationSeconds,
+          hardMaxDurationSeconds: 90,
+          preferredDurationRangeSeconds: [70, 90],
+          preferredShotCountRange: [16, 22],
+          narrationMaximumLines: 2,
+          narrationMaximumChineseCharacters: 60,
+        }),
         manuscript_context: JSON.stringify({
           title: original.manuscript?.title ?? "",
           author: original.manuscript?.author ?? "",
@@ -110,17 +127,23 @@ export async function adaptEpisodeSource(input: {
     }),
     schema: episodeAdaptationSchema,
     validate: (data) => [
-      ...validateSourceEvidence(data.sourceEvidence, original.content),
-      ...validateAdaptationSummary(data.summary, original.content),
-      ...validateAdaptationEventCoverage(
-        data.eventCoverage,
-        eventAnchors,
-        data.adaptedText,
-      ),
+      ...(data.status === "ready"
+        ? validateAdaptationSummary(data.summary, original.content)
+        : []),
+      ...validateEpisodeAdaptationOutput({
+        output: data,
+        sourceUnits,
+        targetDurationSeconds,
+      }),
     ],
     temperature: 0.2,
     onOutputStart: () => {
+      outputStarts += 1;
       preview = createJsonStringFieldStream("adaptedText");
+      input.onProgress?.({
+        type: "phase",
+        phase: outputStarts === 1 ? "generating" : "correcting",
+      });
       input.onProgress?.({ type: "reset" });
     },
     onTextDelta: (delta) => {
@@ -129,6 +152,25 @@ export async function adaptEpisodeSource(input: {
         input.onProgress?.({ type: "delta", delta: contentDelta });
     },
   });
+
+  input.onProgress?.({ type: "phase", phase: "validating" });
+  if (result.data.status === "split_recommended")
+    throw new EpisodeSourceError(
+      "本章在 90 秒内无法同时保留全部关键事件，建议确认拆集边界",
+      409,
+      {
+        code: "EPISODE_SPLIT_RECOMMENDED",
+        reason: result.data.reason,
+        suggestedBoundarySourceUnitId:
+          result.data.suggestedBoundarySourceUnitId,
+        firstPartHook: result.data.firstPartHook,
+        secondPartOpening: result.data.secondPartOpening,
+      },
+    );
+  const productionPlan = finalizeEpisodeProductionPlan(
+    result.data.productionPlan,
+    original.content,
+  );
 
   const latest = await prisma.episodeSourceVersion.findFirst({
     where: { episodeId: input.episodeId, kind: "adapted" },
@@ -149,6 +191,8 @@ export async function adaptEpisodeSource(input: {
       instructions: input.instructions?.trim() || null,
       changeSummary: toJson(result.data.changeSummary),
       promptTrace: toJson(result.trace),
+      productionPlan: toJson(productionPlan),
+      productionPlanVersion: EPISODE_PRODUCTION_PLAN_VERSION,
       channelId: input.channelId,
       model: input.model,
       sourceHash: textHash(result.data.adaptedText),
@@ -603,7 +647,7 @@ async function ensureEpisodeSourceVersions(input: {
       projectId: input.projectId,
       project: { userId: input.userId },
     },
-    include: { project: true },
+    include: { project: { include: { config: true } } },
   });
   if (!episode) throw new EpisodeSourceError("剧集不存在", 404);
   const count = await prisma.episodeSourceVersion.count({
@@ -691,6 +735,8 @@ function toSourceRecord(row: {
   instructions: string | null;
   changeSummary: Prisma.JsonValue | null;
   promptTrace: Prisma.JsonValue | null;
+  productionPlan: Prisma.JsonValue | null;
+  productionPlanVersion: number | null;
   channelId: string | null;
   model: string | null;
   sourceHash: string;
@@ -707,6 +753,12 @@ function toSourceRecord(row: {
     promptTrace:
       row.promptTrace && typeof row.promptTrace === "object" && !Array.isArray(row.promptTrace)
         ? (row.promptTrace as Record<string, unknown>)
+        : null,
+    productionPlan:
+      row.productionPlan &&
+      typeof row.productionPlan === "object" &&
+      !Array.isArray(row.productionPlan)
+        ? (row.productionPlan as Record<string, unknown>)
         : null,
     createdAt: row.createdAt.toISOString(),
   };

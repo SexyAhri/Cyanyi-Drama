@@ -1,10 +1,11 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { isProjectArtStyleId } from "@/lib/projects/art-style";
+import { isEpisodeTargetDurationSeconds } from "@/lib/episodes/production-plan";
 import { prisma } from "@/lib/server/prisma";
 import { getProject } from "@/lib/projects/queries";
 
 type RouteContext = { params: Promise<{ projectId: string }> };
-const fields = ["analysisModel", "characterModel", "locationModel", "storyboardModel", "editModel", "videoModel", "audioModel", "videoRatio", "videoResolution", "artStyle", "visualEra", "visualEraCustom", "ttsRate", "workflowMode", "globalAssetText", "capabilityOverrides"] as const;
+const fields = ["analysisModel", "characterModel", "locationModel", "storyboardModel", "editModel", "videoModel", "audioModel", "videoRatio", "videoResolution", "artStyle", "visualEra", "visualEraCustom", "ttsRate", "episodeTargetDurationSeconds", "workflowMode", "globalAssetText", "capabilityOverrides"] as const;
 
 export async function GET(_request: Request, context: RouteContext) {
   const { user, sessionId } = await ensureAnonymousUser();
@@ -22,6 +23,18 @@ export async function PATCH(request: Request, context: RouteContext) {
   const data: Record<string, unknown> = {};
   for (const field of fields) {
     if (body[field] === undefined) continue;
+    if (field === "episodeTargetDurationSeconds") {
+      if (!isEpisodeTargetDurationSeconds(body[field]))
+        return attachSessionCookie(
+          Response.json(
+            { message: "单集目标时长必须是 60 到 90 秒之间的整数" },
+            { status: 400 },
+          ),
+          sessionId,
+        );
+      data[field] = body[field];
+      continue;
+    }
     if (field === "artStyle" && !isProjectArtStyleId(body[field]))
       return attachSessionCookie(
         Response.json({ message: "不支持的项目画风" }, { status: 400 }),

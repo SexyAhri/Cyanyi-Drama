@@ -12,6 +12,7 @@ export type ProjectConfig = {
   visualEra: "source" | "premodern" | "contemporary" | "custom";
   visualEraCustom: string | null;
   ttsRate: string;
+  episodeTargetDurationSeconds: number;
   workflowMode: string;
   globalAssetText: string | null;
   capabilityOverrides: Record<string, unknown>;
@@ -73,6 +74,8 @@ export type EpisodeSourceVersionRecord = {
   instructions: string | null;
   changeSummary: string[];
   promptTrace: Record<string, unknown> | null;
+  productionPlan: Record<string, unknown> | null;
+  productionPlanVersion: number | null;
   channelId: string | null;
   model: string | null;
   sourceHash: string;

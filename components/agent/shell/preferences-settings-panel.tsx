@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -180,6 +181,34 @@ export function PreferencesSettingsPanel({
             }))}
             value={settings.ttsRate}
           />
+          {showProjectVisualWorld ? (
+            <div className="grid min-w-0 gap-1.5">
+              <Label className="truncate text-xs" htmlFor="episode-target-duration">
+                {copy.settingsEpisodeTargetDuration}
+              </Label>
+              <Input
+                aria-describedby="episode-target-duration-hint"
+                className="h-9"
+                id="episode-target-duration"
+                max={90}
+                min={60}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (Number.isInteger(value) && value >= 60 && value <= 90)
+                    update({ episodeTargetDurationSeconds: value });
+                }}
+                step={5}
+                type="number"
+                value={settings.episodeTargetDurationSeconds}
+              />
+              <p
+                className="text-xs leading-5 text-muted-foreground"
+                id="episode-target-duration-hint"
+              >
+                {copy.settingsEpisodeTargetDurationHint}
+              </p>
+            </div>
+          ) : null}
         </div>
         {showProjectVisualWorld && settings.visualEra === "custom" ? (
           <div className="grid gap-1.5">

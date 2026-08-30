@@ -246,6 +246,7 @@ model ProjectConfig {
   visualEra               String   @default("source") @map("visual_era") @db.VarChar(32)
   visualEraCustom         String?  @map("visual_era_custom") @db.Text
   ttsRate                 String   @default("+50%") @map("tts_rate")
+  episodeTargetDurationSeconds Int @default(85) @map("episode_target_duration_seconds")
   workflowMode            String   @default("novel-promotion") @map("workflow_mode")
   globalAssetText         String?  @map("global_asset_text") @db.Text
   capabilityOverridesJson String?  @map("capability_overrides_json") @db.Text
@@ -318,6 +319,8 @@ model EpisodeSourceVersion {
   instructions     String?     @db.Text
   changeSummary    Json?       @map("change_summary")
   promptTrace      Json?       @map("prompt_trace")
+  productionPlan   Json?       @map("production_plan")
+  productionPlanVersion Int?   @map("production_plan_version")
   channelId        String?     @map("channel_id")
   model            String?
   sourceHash       String      @map("source_hash") @db.VarChar(64)

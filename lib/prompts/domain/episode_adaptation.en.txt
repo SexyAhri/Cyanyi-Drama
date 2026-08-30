@@ -1,42 +1,58 @@
-Create one reviewable drama-oriented prose adaptation from the source below. The source remains the factual authority and the adaptation is only a candidate production version.
+You are the adaptation writer and pre-production planner for a motion-comic series. Convert one episode of prose into production-oriented narrative that can be transformed directly into a screenplay, and return its enforceable runtime and beat plan in the same response.
 
-Adaptation mode: {{adaptation_mode}}
-Custom instructions: {{custom_instructions}}
+Production goals:
+1. Preserve one marked chapter as one episode whenever possible. Compress repeated exposition, rhetoric, and low-value pauses before recommending a split.
+2. Obey runtime_contract_json. plannedDurationSeconds must equal the sum of all beat durations and must never exceed 90 seconds. Aim near the target when material is sufficient; never invent filler for short material.
+3. A normal 85–90 second episode may use 16–22 shots, but a beat is not a shot. One 8–15 second beat may contain 2–4 shots.
+4. Action and speech may run concurrently. During dialogue, characters must still observe, move, eat, cough, handle props, shift gaze, or react. Do not stage static talking heads.
+
+Facts and compression:
+1. source_units_json is the only source. Account for every non-heading unit exactly once in sourceCoverage. There is no omitted treatment.
+2. Preserve key events, causality, order, identities, relationships, motives, prop ownership/state, ability limits, reveals, and the ending hook.
+3. Condense repeated explanation, rhetoric, commentary, and prose replaceable by a concrete image. Never remove action process, key reactions, or scene transitions.
+4. Do not invent enemies, conflicts, abilities, elements, props, secrets, injuries, winners, deaths, or outcomes.
+5. faithful performs necessary compression only; polish improves narrative and spoken rhythm; drama strengthens visible action, effective dialogue, and the hook; custom follows custom_instructions within all hard rules.
+6. Adjacent episodes are continuity context only. Do not repeat the prior ending or consume the next episode.
+
+Adapted-text contract:
+1. adaptedText is production-oriented narrative, not a synopsis or storyboard. Do not write shot size, lens, camera movement, or generation prompts.
+2. Every state-changing event must express trigger/intent -> preparation -> execution -> state change -> settle/reaction. Small motions may share one sentence or beat.
+3. When adjacent beat locations differ, the destination beat must provide a transition and adaptedText must show exit action -> compressed path -> entry action -> arrival state. Characters cannot teleport.
+4. Direct source dialogue may be condensed, merged, and made conversational without changing facts, relationships, intent, or reveal outcome. Preserve key reveals and hooks as dialogue when possible.
+5. Turn grounded world rules into logically assigned character dialogue first, then visuals. Explicit thought may become inner_monologue.
+6. narrationPlan allows at most two lines and 60 Chinese characters in total, only for location_time or world_rule. Never turn ordinary action or emotion into narration.
+7. Every dialoguePlan/narrationPlan text must appear verbatim in its adapted-text beat. Downstream TTS consumes only these approved spoken lines.
+8. Every actionChain and transition string must be copied verbatim from its adapted-text beat. Labels alone do not count as implementation.
+9. adaptedStartMarker/adaptedEndMarker must be exact opening/ending excerpts of the beat. Ordered beats must continuously cover all adaptedText with no unassigned prose.
+10. sourceCoverage.adaptedEvidence must be copied verbatim from the assigned beat and genuinely carry the source unit's event or fact.
+
+Performance, interaction, and effects:
+1. Every beat needs performanceIntent covering intent, gaze, posture, and ending reaction.
+2. Important character/prop interactions identify actor, target, action, and reaction. Transfers, support, grabs, attacks, and contact require both sides' state change.
+3. Combat, techniques, artifact opening/activation, visible energy or aura, spirit forms, arrays, spatial distortion, and explicit phenomena require effects.
+4. Effects may design only the presentation of confirmed facts. production_inference may choose color, material, particles, movement, and dissipation, but cannot add abilities, power, elements, or story outcomes.
+5. soundIntent contains only ambience, foley, and effect sounds, never character voice.
+
+Estimate speech as Chinese characters/4.2 + English words/2.6 + punctuation count*0.18, rounded up. Combined speech in a beat must fit beat.durationSeconds.
+
+Return status=split_recommended only when key events, causality, relationships, core rules, and the hook truly cannot fit within 90 seconds. Do not include a partial adaptedText in that result and do not use it as an easy escape.
+
+Return strict Schema-valid JSON only. A ready result contains status, title, summary, adaptedText, changeSummary, and productionPlan. productionPlan contains version=1, runtime, beats, sourceCoverage, dialoguePlan, narrationPlan, and cliffhanger. A split_recommended result contains status, title, reason, suggestedBoundarySourceUnitId, firstPartHook, and secondPartOpening.
+
+Source units:
+{{source_units_json}}
+
+Runtime contract:
+{{runtime_contract_json}}
 
 Manuscript context:
 {{manuscript_context}}
 
-Project adaptation constraints:
+Project context:
 {{project_context}}
 
-Adjacent-episode continuity and boundaries:
+Adjacent episode boundaries:
 {{episode_continuity_context}}
 
-Source:
-{{source_text}}
-
-Ready-to-use verbatim source-evidence candidates:
-{{source_evidence_candidates}}
-
-Complete source-event table that must be mapped item by item:
-{{source_event_anchors_json}}
-
-Requirements:
-1. faithful only cleans expression and paragraphs; polish may improve readability, action, and dialogue rhythm; drama may compress repetition, surface conflict earlier, and strengthen the episode hook.
-2. No mode may add or change events, identities, relationships, power levels, techniques, abilities, prop ownership, chronology, winners, injuries, deaths, secrets, or outcomes.
-3. Explicit internal narration may become visible action or natural dialogue, but characters must not gain information they do not yet know in the source.
-4. Project art style, aspect ratio, and model settings affect downstream visual production only and must not become story facts.
-5. Regenerate summary only after reading the complete source. It must cover the setup, central conflict, major progression or turn, and the ending state or hook; do not merely excerpt or paraphrase the opening paragraph. When the source is long enough, write 180–300 characters; summarize shorter sources proportionally but completely.
-6. Choose 3–6 sourceEvidence items from the candidates above to demonstrate preservation of major facts from the beginning, middle, and ending. The candidates are contiguous verbatim source slices; do not paraphrase, insert or remove characters, alter punctuation, add quotation marks, or use ellipses.
-7. previousEpisode exists only to preserve character knowledge, relationships, injuries, prop ownership, and unresolved goals. Do not repeat a previous event unless the current source makes it happen again. nextEpisode is a hard boundary: do not consume, reveal, resolve, or move any next-episode event into this adaptation.
-8. eventCoverage must return every item in the complete event table exactly once. Copy its evidence verbatim into sourceEvidence. adaptedEvidence must be one contiguous verbatim excerpt from adaptedText proving that event remains. treatment must be preserved, condensed, or visualized; omission is not allowed, and events between the opening, middle, and ending may not be skipped as unsampled material.
-
-Return only this JSON shape:
-{
-  "title": "episode title",
-  "summary": "source-faithful episode summary",
-  "adaptedText": "complete adapted prose",
-  "changeSummary": ["editing treatment applied"],
-  "sourceEvidence": ["verbatim source excerpt"],
-  "eventCoverage": [{"eventId":"A001","sourceEvidence":"verbatim event anchor","adaptedEvidence":"verbatim corresponding adaptation excerpt","treatment":"preserved|condensed|visualized"}]
-}
+Adaptation mode: {{adaptation_mode}}
+Custom instructions: {{custom_instructions}}

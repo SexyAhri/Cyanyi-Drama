@@ -40,8 +40,8 @@ export const PROMPT_CANARY_MANIFEST = {
   "character_reference_description:en": "e61b5baa74900ff2db4e36ad88b0881a22af43dbc11d33a6bf87d1e6b46addcc",
   "episode_split:zh": "e2bf3baa71ee40d2355bb973aec8b919be3c8ec01ab682f96c8dad4265e13124",
   "episode_split:en": "f04153d11057bbd8800178d4a310074e9c1a4e7ed937c9fcc9c6b9faeefbdcfb",
-  "episode_adaptation:zh": "56cf4fceadcdd3b6bc89b189fe1ee3ca31fefe7998b72e57449435ab18f27136",
-  "episode_adaptation:en": "f296965eba4d100d6990198b0184dbcf302dc731de591a516dc2e72042a36d92",
+  "episode_adaptation:zh": "38e7f9957d965e4e262bc31f992fbdd33fb02400018dd46503a853cfbaf48d66",
+  "episode_adaptation:en": "a047cbcec6c6f28f2e82e04ae5f708aa3d7c6768d8125be647c2d2141b71c3dd",
   "studio_workflow_agent:zh": "3cbe91f53fc2e37feb4583a3728f85b63bad8ad6d246572e828c9032c3ad16e6",
   "studio_workflow_agent:en": "88fb5ec9b7c6265bde9deb88192a66200b82ace7797688814bdb177d6219bf79",
 } satisfies Record<CanaryKey, string>;

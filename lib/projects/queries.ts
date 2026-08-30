@@ -294,6 +294,8 @@ function toProject(row: ProjectWithRelations): ProjectRecord {
           : "source",
       visualEraCustom: config?.visualEraCustom ?? null,
       ttsRate: config?.ttsRate ?? "+50%",
+      episodeTargetDurationSeconds:
+        config?.episodeTargetDurationSeconds ?? 85,
       workflowMode: config?.workflowMode ?? "novel-promotion",
       globalAssetText: config?.globalAssetText ?? null,
       capabilityOverrides: parseJsonObject(config?.capabilityOverridesJson),

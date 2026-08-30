@@ -16,8 +16,10 @@ describe("studio adaptation stream", () => {
         new Response(
           [
             JSON.stringify({ type: "started" }),
+            JSON.stringify({ type: "phase", phase: "generating" }),
             JSON.stringify({ type: "reset" }),
             JSON.stringify({ type: "delta", delta: "第一段" }),
+            JSON.stringify({ type: "phase", phase: "validating" }),
             JSON.stringify({ type: "delta", delta: "\n第二段" }),
             JSON.stringify({ type: "completed", source }),
             "",
@@ -28,6 +30,7 @@ describe("studio adaptation stream", () => {
     );
     const onReset = vi.fn();
     const onContent = vi.fn();
+    const onPhase = vi.fn();
 
     const result = await adaptStudioEpisode(
       "project-1",
@@ -38,13 +41,17 @@ describe("studio adaptation stream", () => {
         mode: "polish",
         locale: "zh",
       },
-      { onReset, onContent },
+      { onReset, onContent, onPhase },
     );
 
     expect(onReset).toHaveBeenCalledTimes(1);
     expect(onContent.mock.calls.map(([content]) => content)).toEqual([
       "第一段",
       "第一段\n第二段",
+    ]);
+    expect(onPhase.mock.calls.map(([phase]) => phase)).toEqual([
+      "generating",
+      "validating",
     ]);
     expect(result.source).toEqual(source);
   });

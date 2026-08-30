@@ -63,6 +63,7 @@ import {
 type AdaptationDraft = {
   episodeId: string;
   status: "running" | "failed";
+  phase: "generating" | "validating" | "correcting";
   content: string;
   error?: string;
 };
@@ -277,6 +278,7 @@ export function WritingWorkspace({
     setAdaptationDraft({
       episodeId: requestEpisodeId,
       status: "running",
+      phase: "generating",
       content: "",
     });
     void adaptStudioEpisode(snapshot.project.id, requestEpisodeId, input, {
@@ -290,6 +292,12 @@ export function WritingWorkspace({
         setAdaptationDraft((current) =>
           current?.episodeId === requestEpisodeId
             ? { ...current, status: "running", content, error: undefined }
+            : current,
+        ),
+      onPhase: (phase) =>
+        setAdaptationDraft((current) =>
+          current?.episodeId === requestEpisodeId
+            ? { ...current, status: "running", phase, error: undefined }
             : current,
         ),
     })
@@ -369,6 +377,12 @@ export function WritingWorkspace({
           <h1 className="mt-1 text-xl font-semibold">{copy.sourceEditor}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <Badge variant="outline">
+            {copy.episodeTargetDuration.replace(
+              "{seconds}",
+              String(snapshot.project.config.episodeTargetDurationSeconds),
+            )}
+          </Badge>
           {tab !== "screenplay" ? (
             <>
               <span className="font-mono">
@@ -378,7 +392,7 @@ export function WritingWorkspace({
               <span>
                 {adaptationDraft?.episodeId === episode.id && tab === "adapted"
                   ? adaptationDraft.status === "running"
-                    ? copy.adaptationStreaming
+                    ? adaptationPhaseLabel(copy, adaptationDraft.phase)
                     : copy.adaptationFailed
                   : selectedSourceIsActive
                   ? isDirty
@@ -735,6 +749,17 @@ function SourceVersionPane({
         </div>
       ) : null}
 
+      {productionPlanSummary(source.productionPlan, copy.productionRuntimeSummary) ? (
+        <div className="border-b py-3 text-sm">
+          <p className="text-xs font-medium text-muted-foreground">
+            {copy.productionPlan}
+          </p>
+          <p className="mt-1 leading-6">
+            {productionPlanSummary(source.productionPlan, copy.productionRuntimeSummary)}
+          </p>
+        </div>
+      ) : null}
+
       <Textarea
         aria-label={kind === "adapted" ? copy.adaptedSource : copy.originalSource}
         className="mt-4 h-[min(56dvh,42rem)] min-h-80 resize-y overflow-y-auto rounded-md bg-card p-4 leading-7 field-sizing-fixed xl:min-h-0 xl:flex-1 xl:resize-none"
@@ -774,7 +799,7 @@ function StreamingAdaptationPane({
         )}
         <span className="font-medium">
           {draft.status === "running"
-            ? copy.adaptationStreaming
+            ? adaptationPhaseLabel(copy, draft.phase)
             : copy.adaptationFailed}
         </span>
         <span className="ml-auto font-mono text-xs text-muted-foreground">
@@ -809,6 +834,31 @@ function StreamingAdaptationPane({
       />
     </div>
   );
+}
+
+function adaptationPhaseLabel(
+  copy: ReturnType<typeof getStudioCopy>,
+  phase: AdaptationDraft["phase"],
+) {
+  if (phase === "validating") return copy.adaptationValidating;
+  if (phase === "correcting") return copy.adaptationCorrecting;
+  return copy.adaptationGenerating;
+}
+
+function productionPlanSummary(value: Record<string, unknown> | null, template: string) {
+  if (!value || typeof value.runtime !== "object" || !value.runtime) return null;
+  const runtime = value.runtime as Record<string, unknown>;
+  const planned = runtime.plannedDurationSeconds;
+  const target = runtime.targetDurationSeconds;
+  const shots = runtime.estimatedShotCount;
+  const spoken = runtime.estimatedSpokenSeconds;
+  if (![planned, target, shots, spoken].every((entry) => typeof entry === "number"))
+    return null;
+  return template
+    .replace("{planned}", String(planned))
+    .replace("{target}", String(target))
+    .replace("{shots}", String(shots))
+    .replace("{spoken}", String(spoken));
 }
 
 function WorkflowActions({

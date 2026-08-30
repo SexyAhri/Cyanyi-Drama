@@ -188,6 +188,7 @@ function snapshot(input?: {
         visualEra: "source",
         visualEraCustom: null,
         ttsRate: "+0%",
+        episodeTargetDurationSeconds: 85,
         workflowMode: "novel-promotion",
         globalAssetText: null,
         capabilityOverrides: {},

@@ -82,6 +82,11 @@ function adaptationStreamResponse(
       const progress = (
         event: Parameters<NonNullable<typeof input.onProgress>>[0],
       ) => {
+        if (event.type === "phase") {
+          flushDelta();
+          send(event);
+          return;
+        }
         if (event.type === "reset") {
           pendingDelta = "";
           if (flushTimer) clearTimeout(flushTimer);

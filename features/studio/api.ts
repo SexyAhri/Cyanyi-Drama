@@ -134,6 +134,7 @@ export async function updateStudioProjectConfig(
       | "visualEra"
       | "visualEraCustom"
       | "ttsRate"
+      | "episodeTargetDurationSeconds"
     >
   >,
 ) {
@@ -496,6 +497,7 @@ export async function adaptStudioEpisode(
   callbacks?: {
     onReset?: () => void;
     onContent?: (content: string) => void;
+    onPhase?: (phase: "generating" | "validating" | "correcting") => void;
   },
 ) {
   const response = await fetch(
@@ -536,6 +538,13 @@ export async function adaptStudioEpisode(
       content += event.delta;
       callbacks?.onContent?.(content);
     }
+    if (
+      event.type === "phase" &&
+      (event.phase === "generating" ||
+        event.phase === "validating" ||
+        event.phase === "correcting")
+    )
+      callbacks?.onPhase?.(event.phase);
     if (event.type === "completed" && isEpisodeSourceRecord(event.source))
       source = event.source;
     if (event.type === "failed")

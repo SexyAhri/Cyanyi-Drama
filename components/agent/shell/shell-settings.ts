@@ -13,6 +13,7 @@ export type ShellSettings = {
   visualEra: "source" | "premodern" | "contemporary" | "custom";
   visualEraCustom: string;
   ttsRate: string;
+  episodeTargetDurationSeconds: number;
 };
 
 export function createDefaultShellSettings(modelId: string): ShellSettings {
@@ -31,5 +32,6 @@ export function createDefaultShellSettings(modelId: string): ShellSettings {
     visualEra: "source",
     visualEraCustom: "",
     ttsRate: "+0%",
+    episodeTargetDurationSeconds: 85,
   };
 }
