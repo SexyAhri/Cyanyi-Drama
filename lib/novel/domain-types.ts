@@ -95,6 +95,7 @@ export type StoryboardPanelRecord = {
   startState: Record<string, unknown>;
   endState: Record<string, unknown>;
   motionBeats: Array<Record<string, unknown>>;
+  productionBeatIds?: string[];
   worldContext: Record<string, unknown>;
   vfxCues: Array<Record<string, unknown>>;
   sfxCues: Array<Record<string, unknown>>;

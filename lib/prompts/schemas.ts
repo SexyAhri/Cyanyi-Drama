@@ -344,6 +344,11 @@ export const storyboardPanelSchema = z
     shotType: text,
     cameraMove: text,
     durationSeconds: z.number().int().min(1).max(15),
+    productionBeatIds: z
+      .array(z.string().regex(/^B\d{2,}$/))
+      .min(1)
+      .max(1)
+      .optional(),
     motionTimeline: z
       .array(
         z

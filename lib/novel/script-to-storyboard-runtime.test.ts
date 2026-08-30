@@ -68,6 +68,7 @@ import {
   validateStoryboardRefinement,
 } from "@/lib/prompts/validators";
 import {
+  assertStoryboardEpisodeDuration,
   buildDeterministicStoryboardPhases,
   buildEpisodeStoryboard,
   normalizeStoryboardPlanningProviderPayload,
@@ -75,6 +76,7 @@ import {
   stitchStoryboardClipBoundaries,
   StoryboardBatchError,
 } from "./script-to-storyboard-runtime";
+import type { EpisodeProductionContractSubset } from "@/lib/episodes/production-plan";
 
 const runtimeInput = {
   projectId: "project-1",
@@ -129,6 +131,14 @@ beforeEach(() => {
 });
 
 describe("script-to-storyboard runtime", () => {
+  it("accepts 89/90 seconds and rejects a 91-second episode", () => {
+    expect(() => assertStoryboardEpisodeDuration(89, 89)).not.toThrow();
+    expect(() => assertStoryboardEpisodeDuration(90, 90)).not.toThrow();
+    expect(() => assertStoryboardEpisodeDuration(91, 91)).toThrow(
+      "STORYBOARD_EPISODE_DURATION_OVERFLOW:91",
+    );
+  });
+
   it("stitches state and frame linkage across continuous clip boundaries", () => {
     const endState = {
       body: "甲立于书桌旁",
@@ -617,6 +627,263 @@ describe("script-to-storyboard runtime", () => {
         screenplay,
       }),
     ).toEqual([]);
+  });
+
+  it("keeps Production Plan beat timing, interaction, VFX, and SFX in fallback panels", () => {
+    const action =
+      "韩子枫握住盒盖，压稳铁盒，韩子枫掀开铁盒，铁盒开启，半透明奇异气息从盒内弥散，韩宇屏息注视。";
+    const line = "你母亲还在世。";
+    const source = `${action}${line}`;
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: source,
+      beatCoverage: [{ beatId: "B01", sceneNumbers: [0] }],
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "书房", time: "夜" },
+          description: "父子在书房打开铁盒。",
+          characters: ["韩子枫", "韩宇"],
+          content: [
+            {
+              type: "action" as const,
+              text: action,
+              origin: "source" as const,
+              actionDesign: {
+                kind: "artifact" as const,
+                performer: "韩子枫",
+                target: "铁盒",
+                realm: null,
+                technique: null,
+                visualMotif: "半透明奇异气息从盒内弥散",
+                visualMotifSource: "source" as const,
+                visualMotifRationale: null,
+                choreography: [
+                  "韩子枫握住盒盖",
+                  "压稳铁盒",
+                  "韩子枫掀开铁盒",
+                  "铁盒开启",
+                  "韩宇屏息注视",
+                ],
+                impact: null,
+                environmentResponse: "半透明奇异气息从盒内弥散",
+                vfxPlan: [
+                  {
+                    phase: "release" as const,
+                    category: "environment_interaction" as const,
+                    description: "半透明奇异气息从盒内弥散",
+                  },
+                ],
+                sfxPlan: [
+                  {
+                    phase: "release" as const,
+                    type: "energy" as const,
+                    description: "低沉能量嗡鸣",
+                  },
+                ],
+                evidence: [action],
+              },
+            },
+            {
+              type: "dialogue" as const,
+              character: "韩子枫",
+              parenthetical: null,
+              lines: line,
+            },
+          ],
+        },
+      ],
+    };
+    const productionPlan: EpisodeProductionContractSubset = {
+      beats: [
+        {
+          beatId: "B01",
+          kind: "reveal",
+          purpose: "打开铁盒并揭示真相",
+          location: "书房",
+          durationSeconds: 20,
+          adaptedStartMarker: "韩子枫握住盒盖",
+          adaptedEndMarker: line,
+          actionChain: {
+            triggerOrIntent: "韩子枫握住盒盖",
+            preparation: "压稳铁盒",
+            execution: "韩子枫掀开铁盒",
+            stateChange: "铁盒开启",
+            settleOrReaction: "韩宇屏息注视",
+          },
+          transition: null,
+          performanceIntent: "韩子枫动作谨慎，韩宇屏息注视",
+          interactions: [
+            {
+              actor: "韩子枫",
+              target: "铁盒",
+              action: "韩子枫掀开铁盒",
+              reaction: "韩宇屏息注视",
+            },
+          ],
+          effects: [
+            {
+              kind: "artifact",
+              trigger: "铁盒开启",
+              visualIntent: "半透明奇异气息从盒内弥散",
+              soundIntent: "低沉能量嗡鸣",
+              provenance: "source",
+            },
+          ],
+        },
+      ],
+      dialoguePlan: [
+        {
+          lineId: "L01",
+          beatId: "B01",
+          speaker: "韩子枫",
+          type: "dialogue",
+          text: line,
+          sourceUnitIds: ["U0001"],
+          treatment: "preserved",
+        },
+      ],
+      narrationPlan: [],
+    };
+    const sourceText = JSON.stringify(screenplay, null, 2);
+    const canonical = {
+      characters: ["韩子枫", "韩宇"],
+      locations: ["书房"],
+      props: ["铁盒"],
+    };
+    const result = buildDeterministicStoryboardPhases({
+      canonical,
+      clip: { ...clip(), content: source },
+      props: [
+        { name: "铁盒", summary: null, metadata: {}, visualProfile: {} },
+      ],
+      screenplay,
+      sourceText,
+      productionPlan,
+    });
+
+    expect(
+      result.planning.panels.reduce(
+        (total, panel) => total + panel.durationSeconds,
+        0,
+      ),
+    ).toBe(20);
+    expect(
+      result.planning.panels.every(
+        (panel) => panel.productionBeatIds?.[0] === "B01",
+      ),
+    ).toBe(true);
+    expect(result.planning.panels.flatMap((panel) => panel.vfxCues)).not.toEqual(
+      [],
+    );
+    expect(result.planning.panels.flatMap((panel) => panel.sfxCues)).not.toEqual(
+      [],
+    );
+    expect(
+      validateStoryboardPlanning(result.planning, {
+        sourceText,
+        canonical,
+        screenplay,
+        productionContextText: JSON.stringify(productionPlan),
+        productionPlan,
+      }),
+    ).toEqual([]);
+
+    const labelOnly = structuredClone(result.planning);
+    labelOnly.panels = labelOnly.panels.map((panel) => ({
+      ...panel,
+      description: panel.description.replaceAll(
+        "韩子枫动作谨慎，韩宇屏息注视",
+        "仅保留标签",
+      ),
+      videoPrompt: panel.videoPrompt.replaceAll(
+        "韩子枫动作谨慎，韩宇屏息注视",
+        "仅保留标签",
+      ),
+    }));
+    expect(
+      validateStoryboardPlanning(labelOnly, {
+        sourceText,
+        canonical,
+        screenplay,
+        productionContextText: JSON.stringify(productionPlan),
+        productionPlan,
+      }).map((issue) => issue.code),
+    ).toContain("STORYBOARD_PERFORMANCE_NOT_IMPLEMENTED");
+
+    const interactionAsMetadata = structuredClone(result.planning);
+    interactionAsMetadata.panels = interactionAsMetadata.panels.map((panel) => ({
+      ...panel,
+      description: panel.description.replaceAll(
+        "韩子枫掀开铁盒",
+        "交互仅存于证据标签",
+      ),
+      videoPrompt: panel.videoPrompt.replaceAll(
+        "韩子枫掀开铁盒",
+        "交互仅存于证据标签",
+      ),
+      motionTimeline: panel.motionTimeline.map((motion) => ({
+        ...motion,
+        action: motion.action.replaceAll(
+          "韩子枫掀开铁盒",
+          "交互仅存于证据标签",
+        ),
+        choreographyStep: motion.choreographyStep?.replaceAll(
+          "韩子枫掀开铁盒",
+          "交互仅存于证据标签",
+        ),
+        reaction: motion.reaction?.replaceAll(
+          "韩子枫掀开铁盒",
+          "交互仅存于证据标签",
+        ),
+        result: motion.result?.replaceAll(
+          "韩子枫掀开铁盒",
+          "交互仅存于证据标签",
+        ),
+        settle: motion.settle?.replaceAll(
+          "韩子枫掀开铁盒",
+          "交互仅存于证据标签",
+        ),
+      })),
+    }));
+    expect(
+      validateStoryboardPlanning(interactionAsMetadata, {
+        sourceText,
+        canonical,
+        screenplay,
+        productionContextText: JSON.stringify(productionPlan),
+        productionPlan,
+      }).map((issue) => issue.code),
+    ).toContain("STORYBOARD_INTERACTION_NOT_IMPLEMENTED");
+
+    const wrongDuration = structuredClone(result.planning);
+    wrongDuration.panels[0].durationSeconds -= 1;
+    expect(
+      validateStoryboardPlanning(wrongDuration, {
+        sourceText,
+        canonical,
+        screenplay,
+        productionContextText: JSON.stringify(productionPlan),
+        productionPlan,
+      }).map((issue) => issue.code),
+    ).toEqual(
+      expect.arrayContaining([
+        "STORYBOARD_PRODUCTION_BEAT_DURATION_MISMATCH",
+        "STORYBOARD_CLIP_DURATION_MISMATCH",
+      ]),
+    );
+
+    const unknownBeat = structuredClone(result.planning);
+    unknownBeat.panels[0].productionBeatIds = ["B99"];
+    expect(
+      validateStoryboardPlanning(unknownBeat, {
+        sourceText,
+        canonical,
+        screenplay,
+        productionContextText: JSON.stringify(productionPlan),
+        productionPlan,
+      }).map((issue) => issue.code),
+    ).toContain("STORYBOARD_PRODUCTION_BEAT_UNKNOWN");
   });
 
   it("keeps a voice-over speaker and abbreviated key prop on fallback panels", () => {

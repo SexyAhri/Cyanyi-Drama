@@ -574,6 +574,7 @@ model StoryboardPanel {
   startStateJson                 String?     @map("start_state_json") @db.Text
   endStateJson                   String?     @map("end_state_json") @db.Text
   motionBeatsJson                String?     @map("motion_beats_json") @db.Text
+  productionBeatIdsJson         String?     @map("production_beat_ids_json") @db.Text
   worldContextJson               String?     @map("world_context_json") @db.Text
   vfxCuesJson                    String?     @map("vfx_cues_json") @db.Text
   sfxCuesJson                    String?     @map("sfx_cues_json") @db.Text

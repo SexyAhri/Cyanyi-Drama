@@ -74,7 +74,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_STORYBOARD_PLANNING]: {
     pathStem: "domain/story_storyboard_planning",
-    version: 11,
+    version: 12,
     variables: [
       "source_text",
       "characters_json",
@@ -84,6 +84,8 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       "project_style",
       "story_world_directive",
       "continuity_anchor_json",
+      "production_plan_json",
+      "clip_duration_seconds",
     ],
     agent: defineAgent({
       id: "storyboard_director",
@@ -130,7 +132,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_STORYBOARD_REFINEMENT]: {
     pathStem: "domain/story_storyboard_refinement",
-    version: 9,
+    version: 10,
     variables: [
       "source_text",
       "panels_json",

@@ -1420,6 +1420,7 @@ export function validateStoryboardPlanning(
     canonical: CanonicalContext;
     screenplay?: ScreenplayConversion;
     productionContextText?: string;
+    productionPlan?: EpisodeProductionContractSubset;
   },
 ) {
   if (input.screenplay)
@@ -1547,7 +1548,263 @@ export function validateStoryboardPlanning(
   });
   if (input.screenplay)
     validateStoryboardScreenplayContract(data, input.screenplay, issues);
+  if (input.productionPlan)
+    validateStoryboardProductionPlan(data, input.productionPlan, issues);
   return issues;
+}
+
+function validateStoryboardProductionPlan(
+  data: StoryboardPlanning,
+  plan: EpisodeProductionContractSubset,
+  issues: StructuredValidationIssue[],
+) {
+  const expected = new Map(
+    plan.beats.map((beat, index) => [beat.beatId, { beat, index }]),
+  );
+  const panelsByBeat = new Map<string, StoryboardPlanning["panels"]>();
+  let previousBeatIndex = -1;
+
+  data.panels.forEach((panel, panelIndex) => {
+    if (panel.productionBeatIds?.length !== 1) {
+      issues.push(
+        issue(
+          `panels.${panelIndex}.productionBeatIds`,
+          "STORYBOARD_PRODUCTION_BEAT_REQUIRED",
+          "Every planned shot must belong to exactly one production beat",
+        ),
+      );
+      return;
+    }
+    const beatId = panel.productionBeatIds[0];
+    const entry = expected.get(beatId);
+    if (!entry) {
+      issues.push(
+        issue(
+          `panels.${panelIndex}.productionBeatIds.0`,
+          "STORYBOARD_PRODUCTION_BEAT_UNKNOWN",
+          `Unknown production beat ${beatId}`,
+        ),
+      );
+      return;
+    }
+    if (entry.index < previousBeatIndex)
+      issues.push(
+        issue(
+          `panels.${panelIndex}.productionBeatIds.0`,
+          "STORYBOARD_PRODUCTION_BEAT_ORDER_INVALID",
+          "Production beats must remain in their approved order",
+        ),
+      );
+    previousBeatIndex = Math.max(previousBeatIndex, entry.index);
+    const panels = panelsByBeat.get(beatId) ?? [];
+    panels.push(panel);
+    panelsByBeat.set(beatId, panels);
+  });
+
+  for (const [beatIndex, beat] of plan.beats.entries()) {
+    const panels = panelsByBeat.get(beat.beatId) ?? [];
+    if (!panels.length) {
+      issues.push(
+        issue(
+          "panels",
+          "STORYBOARD_PRODUCTION_BEAT_MISSING",
+          `Production beat ${beat.beatId} has no storyboard shot`,
+        ),
+      );
+      continue;
+    }
+    const duration = panels.reduce(
+      (total, panel) => total + panel.durationSeconds,
+      0,
+    );
+    if (duration !== beat.durationSeconds)
+      issues.push(
+        issue(
+          `productionPlan.beats.${beatIndex}.durationSeconds`,
+          "STORYBOARD_PRODUCTION_BEAT_DURATION_MISMATCH",
+          `Production beat ${beat.beatId} requires ${beat.durationSeconds}s but its shots total ${duration}s`,
+        ),
+      );
+
+    const visibleTexts = panels.flatMap((panel) => [
+      panel.description,
+      panel.videoPrompt,
+      panel.worldContext?.visualMotif ?? "",
+      ...panel.motionTimeline.flatMap((motion) => [
+        motion.action,
+        motion.choreographyStep ?? "",
+        motion.reaction ?? "",
+        motion.result ?? "",
+        motion.settle ?? "",
+      ]),
+      ...panel.vfxCues.map((cue) => cue.description),
+    ]);
+    const soundTexts = panels.flatMap((panel) => [
+      panel.videoPrompt,
+      ...panel.sfxCues.map((cue) => cue.description),
+    ]);
+    const assertVisible = (value: string, path: string, code: string) => {
+      if (visibleTexts.some((text) => text.includes(value))) return;
+      issues.push(
+        issue(
+          path,
+          code,
+          `Production beat ${beat.beatId} requires visible storyboard implementation: ${value}`,
+        ),
+      );
+    };
+    if (beat.actionChain)
+      for (const [key, value] of Object.entries(beat.actionChain))
+        assertVisible(
+          value,
+          `productionPlan.beats.${beatIndex}.actionChain.${key}`,
+          "STORYBOARD_ACTION_CHAIN_NOT_IMPLEMENTED",
+        );
+    if (beat.transition)
+      for (const [key, value] of Object.entries(beat.transition))
+        assertVisible(
+          value,
+          `productionPlan.beats.${beatIndex}.transition.${key}`,
+          "STORYBOARD_TRANSITION_NOT_IMPLEMENTED",
+        );
+    beat.interactions.forEach((interaction, interactionIndex) => {
+      assertVisible(
+        interaction.action,
+        `productionPlan.beats.${beatIndex}.interactions.${interactionIndex}.action`,
+        "STORYBOARD_INTERACTION_NOT_IMPLEMENTED",
+      );
+      assertVisible(
+        interaction.reaction,
+        `productionPlan.beats.${beatIndex}.interactions.${interactionIndex}.reaction`,
+        "STORYBOARD_INTERACTION_NOT_IMPLEMENTED",
+      );
+    });
+    assertVisible(
+      beat.performanceIntent,
+      `productionPlan.beats.${beatIndex}.performanceIntent`,
+      "STORYBOARD_PERFORMANCE_NOT_IMPLEMENTED",
+    );
+
+    const spoken = panels.flatMap((panel) => [
+      ...(panel.lipSyncText
+        ? [
+            {
+              type: "dialogue" as const,
+              speaker: panel.speakingCharacter ?? "",
+              text: panel.lipSyncText,
+            },
+          ]
+        : []),
+      ...(panel.voiceoverText
+        ? [
+            {
+              type: "voiceover" as const,
+              speaker: panel.speakingCharacter ?? "",
+              text: panel.voiceoverText,
+            },
+          ]
+        : []),
+    ]);
+    plan.dialoguePlan
+      .filter((line) => line.beatId === beat.beatId)
+      .forEach((line, lineIndex) => {
+        const actual = spoken
+          .filter(
+            (item) =>
+              item.type === (line.type === "dialogue" ? "dialogue" : "voiceover") &&
+              (line.type !== "dialogue" ||
+                normalizeName(item.speaker) === normalizeName(line.speaker)),
+          )
+          .map((item) => item.text)
+          .join("");
+        if (!actual.includes(line.text))
+          issues.push(
+            issue(
+              `productionPlan.beats.${beatIndex}.dialoguePlan.${lineIndex}`,
+              "STORYBOARD_DIALOGUE_NOT_IMPLEMENTED",
+              `Approved spoken line ${line.lineId} must appear verbatim in its production beat`,
+            ),
+          );
+      });
+    plan.narrationPlan
+      .filter((line) => line.beatId === beat.beatId)
+      .forEach((line, lineIndex) => {
+        const actual = spoken
+          .filter((item) => item.type === "voiceover" && !item.speaker)
+          .map((item) => item.text)
+          .join("");
+        if (!actual.includes(line.text))
+          issues.push(
+            issue(
+              `productionPlan.beats.${beatIndex}.narrationPlan.${lineIndex}`,
+              "STORYBOARD_NARRATION_NOT_IMPLEMENTED",
+              `Approved narration ${line.lineId} must appear verbatim in its production beat`,
+            ),
+          );
+      });
+
+    beat.effects.forEach((effect, effectIndex) => {
+      assertVisible(
+        effect.trigger,
+        `productionPlan.beats.${beatIndex}.effects.${effectIndex}.trigger`,
+        "STORYBOARD_EFFECT_NOT_IMPLEMENTED",
+      );
+      assertVisible(
+        effect.visualIntent,
+        `productionPlan.beats.${beatIndex}.effects.${effectIndex}.visualIntent`,
+        "STORYBOARD_EFFECT_NOT_IMPLEMENTED",
+      );
+      if (!panels.some((panel) => panel.vfxCues.length))
+        issues.push(
+          issue(
+            `productionPlan.beats.${beatIndex}.effects.${effectIndex}`,
+            "STORYBOARD_EFFECT_VFX_REQUIRED",
+            `Effect ${effect.trigger} requires executable VFX cues`,
+          ),
+        );
+      if (!panels.some((panel) => panel.sfxCues.length))
+        issues.push(
+          issue(
+            `productionPlan.beats.${beatIndex}.effects.${effectIndex}`,
+            "STORYBOARD_EFFECT_SFX_REQUIRED",
+            `Effect ${effect.trigger} requires executable SFX cues`,
+          ),
+        );
+      if (!soundTexts.some((text) => text.includes(effect.soundIntent)))
+        issues.push(
+          issue(
+            `productionPlan.beats.${beatIndex}.effects.${effectIndex}.soundIntent`,
+            "STORYBOARD_EFFECT_SOUND_NOT_IMPLEMENTED",
+            `Effect sound must implement: ${effect.soundIntent}`,
+          ),
+        );
+    });
+  }
+
+  const expectedDuration = plan.beats.reduce(
+    (total, beat) => total + beat.durationSeconds,
+    0,
+  );
+  const actualDuration = data.panels.reduce(
+    (total, panel) => total + panel.durationSeconds,
+    0,
+  );
+  if (actualDuration !== expectedDuration)
+    issues.push(
+      issue(
+        "panels",
+        "STORYBOARD_CLIP_DURATION_MISMATCH",
+        `Storyboard clip requires ${expectedDuration}s but totals ${actualDuration}s`,
+      ),
+    );
+  if (actualDuration > 90)
+    issues.push(
+      issue(
+        "panels",
+        "STORYBOARD_EPISODE_DURATION_OVERFLOW",
+        "Storyboard duration must not exceed 90 seconds",
+      ),
+    );
 }
 
 export function validateCinematographyCoverage(
@@ -1961,6 +2218,17 @@ export function validateStoryboardRefinement(
           "Refinement must preserve the base location",
         ),
       );
+    if (
+      JSON.stringify(refined.productionBeatIds) !==
+      JSON.stringify(base.productionBeatIds)
+    )
+      issues.push(
+        issue(
+          `panels.panel_${base.panelIndex}.productionBeatIds`,
+          "PRODUCTION_BEAT_IDS_CHANGED",
+          "Refinement must preserve productionBeatIds",
+        ),
+      );
     if (base.description && !refined.description.includes(base.description))
       issues.push(
         issue(
@@ -2016,6 +2284,7 @@ export function normalizeStoryboardRefinementContract(
         shotType: base.shotType,
         cameraMove: base.cameraMove,
         durationSeconds: base.durationSeconds,
+        productionBeatIds: base.productionBeatIds,
         motionTimeline: base.motionTimeline.map((beat, index) => ({
           ...beat,
           action: panel.motionTimeline[index]?.action ?? beat.action,

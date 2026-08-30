@@ -20,9 +20,14 @@
 17. 使用三列约束：mustHold 锁定不得漂移的身份、数量、空间、方向、焦点和永久事实；changesHere 只列本镜实际推进的状态变化；mustNotAppear 最多三条、只写针对性禁项。同一要求禁止同时出现在多列。
 18. riskFocus 最多选择三个：character_count、identity_state、screen_direction、spatial_layout、prop_continuity、interaction_physics、camera_motion、focus_continuity、dialogue_lipsync、audio_pollution、lighting_weather、vfx_continuity。只选最可能失败的风险，每项风险都要同时对应 mustHold 的正向锁定与 mustNotAppear 的针对性禁项，禁止堆积泛化负面词。
 19. referenceScopes 对本镜每个被引用角色或道具填写 assetName、可选 assetVersion、inherit（继承永久身份属性）与 exclude（不继承姿态、表情、持有者、战损等临时状态）；只能引用本镜实体，同一属性不能既继承又排除。
-20. 只返回严格 JSON，不得包含额外字段。
+20. production_plan_json 非空时，每个 panel 必须有且只有一个 productionBeatIds，ID 必须来自输入 beat，顺序不变且每个 beat 至少有一个镜头。每个 beat 所属镜头的 durationSeconds 之和必须精确等于该 beat 的 durationSeconds，全部镜头总时长必须精确等于 clip_duration_seconds，不能靠删镜头、删台词或静默裁尾凑时长。
+21. actionChain、transition、interaction.action、interaction.reaction 和 performanceIntent 必须逐字进入对应 beat 镜头的 description、motionTimeline.action/choreographyStep/reaction/result/settle 或 videoPrompt，productionBeatIds 和 sourceEvidence 不能代替实际呈现。
+22. dialoguePlan、inner_monologue 和 narrationPlan 必须由对应 beat 镜头逐字承接；允许按自然标点拆到相邻镜头，但拼接后必须完全一致。含口播镜头必须同时表现开口前动作、视线/姿态/手部变化或对方即时反应，禁止站桩口型。
+23. 每个 effects 项的 trigger 和 visualIntent 必须进入可见镜头内容并生成 vfxCues；soundIntent 必须逐字进入 sfxCues 或 videoPrompt。环境声、动作声和特效声必须保留，角色人声仍禁止进入 sfxCues。
+24. production_plan_json 为 {} 时表示历史兼容路径，可省略 productionBeatIds 且沿用原有时长规划。
+25. 只返回严格 JSON，不得包含额外字段。
 
-输出格式：
+输出格式（production_plan_json 非空时，每个 panel 还必须包含 `"productionBeatIds":["B01"]`）：
 {"panels":[{"panelIndex":0,"sceneNumber":0,"shotType":"中景","cameraMove":"稳定缓慢推近","durationSeconds":4,"startState":{"body":"角色立于床边","hands":"双手自然垂下","gaze":"看向父亲","screenDirection":"面向画面左侧","props":"无关键道具变化","environmentState":{"keyLightSource":"窗外日光","lightDirection":"画左至画右","weather":"晴","windDirection":null,"damageState":[],"particles":[],"ambientAudioKey":"安静卧室底噪"}},"endState":{"body":"角色俯身后停稳","hands":"双手仍自然垂下","gaze":"仍看向父亲","screenDirection":"面向画面左侧","props":"无关键道具变化","environmentState":{"keyLightSource":"窗外日光","lightDirection":"画左至画右","weather":"晴","windDirection":null,"damageState":[],"particles":[],"ambientAudioKey":"安静卧室底噪"}},"worldContext":{"realm":null,"technique":null,"powerRule":null,"visualMotif":null,"environmentScale":null,"shotIntent":{"audienceTakeaway":"角色担心父亲","primaryVisibleEvent":"角色俯身靠近","endBeat":"俯身后停稳"},"constraints":{"mustHold":["角色身份、数量和画面方向不变"],"changesHere":["角色由站立变为俯身"],"mustNotAppear":["未列入本镜的人物和剧情结果"]},"riskFocus":["identity_state","screen_direction"],"referenceScopes":[{"assetName":"角色名","assetVersion":null,"inherit":["脸型","发型","服装","体型"],"exclude":["本镜姿态","本镜表情"]}]},"speakingCharacter":null,"lipSyncText":null,"voiceoverText":null,"motionTimeline":[{"startSecond":0,"endSecond":4,"action":"角色从站立姿态俯身靠近并停稳","camera":"稳定缓慢推近并停稳","trigger":"看见父亲当前状态","preparation":"先将重心移向床边","forceSource":"核心重心带动上身前倾","settle":"俯身后保持视线并停稳"}],"vfxCues":[],"sfxCues":[{"startSecond":1,"endSecond":3,"type":"foley","description":"衣料随俯身产生轻微摩擦，不含人声","evidence":["输入中的精确依据"]}],"description":"角色俯身靠近父亲","locationName":"场景名或null","characters":["角色名"],"props":[],"imagePrompt":"角色立于床边的静态起始画面","videoPrompt":"从站立连续俯身并停稳，只含环境声与动作音效，不含角色人声","sourceEvidence":["输入中的精确证据"]}]}
 
 角色分析：{{characters_json}}
@@ -32,6 +37,8 @@
 故事时代与世界规范：{{story_world_directive}}
 跨集与相邻片段连续性锚点：{{continuity_anchor_json}}
 已批准的世界观与战力规则（可为空）：{{world_bible_json}}
+已批准的当前 Clip Production Plan 子集（{} 表示历史兼容）：{{production_plan_json}}
+当前 Clip 精确总秒数预算（历史兼容时可为空）：{{clip_duration_seconds}}
 
 结构化剧本：
 {{source_text}}

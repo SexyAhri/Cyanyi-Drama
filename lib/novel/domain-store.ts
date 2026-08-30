@@ -172,6 +172,7 @@ export async function saveStoryboard(
       startState?: Record<string, unknown>;
       endState?: Record<string, unknown>;
       motionBeats?: Array<Record<string, unknown>>;
+      productionBeatIds?: string[];
       worldContext?: Record<string, unknown>;
       vfxCues?: Array<Record<string, unknown>>;
       sfxCues?: Array<Record<string, unknown>>;
@@ -327,6 +328,7 @@ export async function saveStoryboard(
         startStateJson: stringifyObject(panel.startState),
         endStateJson: stringifyObject(panel.endState),
         motionBeatsJson: stringifyObjectArray(panel.motionBeats),
+        productionBeatIdsJson: stringifyArray(panel.productionBeatIds),
         worldContextJson: stringifyObject(panel.worldContext),
         vfxCuesJson: stringifyObjectArray(panel.vfxCues),
         sfxCuesJson: stringifyObjectArray(panel.sfxCues),
@@ -530,6 +532,7 @@ function toPanel(
     startState: parseObject(row.startStateJson),
     endState: parseObject(row.endStateJson),
     motionBeats: parseObjectArray(row.motionBeatsJson),
+    productionBeatIds: parseArray(row.productionBeatIdsJson),
     worldContext: parseObject(row.worldContextJson),
     vfxCues: parseObjectArray(row.vfxCuesJson),
     sfxCues: parseObjectArray(row.sfxCuesJson),

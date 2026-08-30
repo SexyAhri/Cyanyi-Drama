@@ -4,6 +4,10 @@ import { z } from "zod";
 
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import {
+  parseEpisodeProductionPlan,
+  type EpisodeProductionContractSubset,
+} from "@/lib/episodes/production-plan";
+import {
   getStoryWorldDirective,
   loadProjectAssetStoryWorldContext,
 } from "@/lib/assets/story-world";
@@ -58,7 +62,10 @@ import {
   STORYBOARD_DIALOGUE_TIMING_VERSION,
 } from "./storyboard-dialogue-timing";
 import { normalizeScreenplayDialogue } from "./screenplay-dialogue";
-import { mapWithConcurrency } from "./story-to-script-runtime";
+import {
+  buildClipProductionContracts,
+  mapWithConcurrency,
+} from "./story-to-script-runtime";
 
 type StoryboardPlanning = z.infer<typeof storyboardPlanningSchema>;
 type Cinematography = z.infer<typeof cinematographySchema>;
@@ -267,6 +274,7 @@ export async function buildEpisodeStoryboard(
               sourceText: clipContext.sourceText,
               canonical: clipContext.canonical,
               screenplay: clipContext.screenplay,
+              productionPlan: clipContext.productionPlan,
             },
           );
           if (!fallbackIssues.length) {
@@ -354,6 +362,7 @@ export async function buildEpisodeStoryboard(
         actingByPanel.get(panel.panelIndex)?.characters ?? [],
       ),
       durationSeconds: panel.durationSeconds,
+      productionBeatIds: panel.productionBeatIds ?? [],
       sceneNumber: panel.sceneNumber ?? null,
       speakingCharacter: panel.speakingCharacter ?? null,
       lipSyncText: panel.lipSyncText ?? null,
@@ -378,6 +387,16 @@ export async function buildEpisodeStoryboard(
     }));
   });
   const panels = stitchStoryboardClipBoundaries(rawPanels);
+  if (context.productionPlan) {
+    const actualDuration = panels.reduce(
+      (total, panel) => total + (panel.durationSeconds ?? 0),
+      0,
+    );
+    assertStoryboardEpisodeDuration(
+      actualDuration,
+      context.productionPlan.runtime.plannedDurationSeconds,
+    );
+  }
   const sourceHash = sha256(
     JSON.stringify({
       clips: context.clips.map((clip) => ({
@@ -426,6 +445,18 @@ export async function buildEpisodeStoryboard(
     results: publicResults,
     promptTraces,
   };
+}
+
+export function assertStoryboardEpisodeDuration(
+  actualDuration: number,
+  plannedDuration: number,
+) {
+  if (actualDuration !== plannedDuration)
+    throw new Error(
+      `STORYBOARD_EPISODE_DURATION_MISMATCH:${actualDuration}/${plannedDuration}`,
+    );
+  if (actualDuration > 90)
+    throw new Error(`STORYBOARD_EPISODE_DURATION_OVERFLOW:${actualDuration}`);
 }
 
 type StitchableStoryboardPanel = {
@@ -484,6 +515,7 @@ async function runPlanningPhase(
     canonical: context.canonical,
     screenplay: context.screenplay,
     productionContextText: storyboardProductionContextText(context),
+    productionPlan: context.productionPlan,
   };
   const prompt = renderPrompt({
     id: PROMPT_IDS.STORY_STORYBOARD_PLANNING,
@@ -497,6 +529,8 @@ async function runPlanningPhase(
       project_style: context.projectStyleDirective,
       story_world_directive: context.storyWorldDirective,
       continuity_anchor_json: context.continuityAnchorText,
+      production_plan_json: JSON.stringify(context.productionPlan ?? {}),
+      clip_duration_seconds: String(context.productionDurationSeconds ?? ""),
     },
   });
   const normalize = (data: StoryboardPlanning) =>
@@ -517,6 +551,10 @@ async function runPlanningPhase(
       projectStyle: context.projectStyleDirective,
       storyWorld: context.storyWorldDirective,
       continuityAnchor: context.continuityAnchorText,
+      productionPlan: context.productionPlan,
+      productionPlanVersion: context.productionPlanVersion,
+      productionTargetDurationSeconds: context.productionTargetDurationSeconds,
+      productionDurationSeconds: context.productionDurationSeconds,
       dialogueTimingVersion: STORYBOARD_DIALOGUE_TIMING_VERSION,
     }),
     schema: storyboardPlanningSchema,
@@ -633,6 +671,9 @@ function storyboardProductionContextText(context: ClipContext) {
     JSON.stringify(context.characters),
     JSON.stringify(context.locations),
     JSON.stringify(context.props),
+    JSON.stringify(context.productionPlan ?? {}),
+    String(context.productionPlanVersion ?? ""),
+    String(context.productionTargetDurationSeconds ?? ""),
   ].join("\n");
 }
 
@@ -921,10 +962,12 @@ type LoadedContext = Awaited<ReturnType<typeof loadStoryboardContext>>;
 type ClipContext = ReturnType<typeof buildClipContext>;
 
 function buildClipContext(clip: ProductionClip, context: LoadedContext) {
+  const productionPlan = context.productionContractsByClip.get(clip.id);
   const screenplay = parseScreenplay(
     clip,
     context.canonical,
     context.worldBibleText,
+    productionPlan,
   );
   const screenplayCharacterNames = Array.from(
     new Set(
@@ -982,6 +1025,14 @@ function buildClipContext(clip: ProductionClip, context: LoadedContext) {
     projectStyleDirective: context.projectStyleDirective,
     storyWorldDirective: context.storyWorldDirective,
     continuityAnchorText,
+    productionPlan,
+    productionPlanVersion: context.productionPlan?.version,
+    productionTargetDurationSeconds:
+      context.productionPlan?.runtime.targetDurationSeconds,
+    productionDurationSeconds: productionPlan?.beats.reduce(
+      (total, beat) => total + beat.durationSeconds,
+      0,
+    ),
   };
 }
 
@@ -1030,7 +1081,7 @@ export function buildDeterministicStoryboardPhases(
   context: Pick<
     ClipContext,
     "clip" | "screenplay" | "sourceText" | "canonical" | "props"
-  >,
+  > & { productionPlan?: EpisodeProductionContractSubset },
 ) {
   const panelDrafts = context.screenplay.scenes.flatMap((scene) => {
     const contentSegments = scene.content.flatMap((item) => {
@@ -1191,11 +1242,22 @@ export function buildDeterministicStoryboardPhases(
         environmentState: previous.endState.environmentState,
       };
   });
+  const timedPlanning = normalizeStoryboardDialogueTiming({ panels });
+  const budgetedPlanning = context.productionPlan
+    ? {
+        panels: applyProductionPlanToFallbackPanels(
+          timedPlanning.panels,
+          context.productionPlan,
+          context.screenplay,
+        ),
+      }
+    : timedPlanning;
   const planning = normalizeStoryboardPlanningContract(
-    normalizeStoryboardDialogueTiming({ panels }),
+    budgetedPlanning,
     {
       sourceText: context.sourceText,
       screenplay: context.screenplay,
+      productionContextText: JSON.stringify(context.productionPlan ?? {}),
     },
   );
   const cinematography: Cinematography = {
@@ -1301,6 +1363,310 @@ export function buildDeterministicStoryboardPhases(
   return { planning, cinematography, acting, refinement, continuity };
 }
 
+function applyProductionPlanToFallbackPanels(
+  panels: StoryboardPlanning["panels"],
+  plan: EpisodeProductionContractSubset,
+  screenplay: z.infer<typeof screenplayConversionSchema>,
+) {
+  const sceneNumbersByBeat = new Map(
+    plan.beats.map((beat) => [
+      beat.beatId,
+      new Set(
+        screenplay.beatCoverage?.find((item) => item.beatId === beat.beatId)
+          ?.sceneNumbers ?? [],
+      ),
+    ]),
+  );
+  const groups = plan.beats.map(() => [] as StoryboardPlanning["panels"]);
+  let currentBeatIndex = 0;
+  for (const panel of panels) {
+    const searchable = fallbackPanelSearchText(panel);
+    const candidates = plan.beats
+      .map((beat, beatIndex) => ({
+        beatIndex,
+        score: productionBeatMaterial(beat, plan)
+          .filter((value) => searchable.includes(value))
+          .reduce((total, value) => total + value.length, 0),
+        sceneMatch:
+          panel.sceneNumber !== undefined &&
+          sceneNumbersByBeat.get(beat.beatId)?.has(panel.sceneNumber),
+      }))
+      .filter((entry) => entry.beatIndex >= currentBeatIndex);
+    const matched = candidates
+      .filter((entry) => entry.score > 0)
+      .sort((left, right) => right.score - left.score)[0];
+    const sceneMatched = candidates.find(
+      (entry) => entry.sceneMatch && entry.beatIndex === currentBeatIndex,
+    ) ?? candidates.find((entry) => entry.sceneMatch);
+    const selected = matched ?? sceneMatched ?? candidates[0];
+    if (!selected)
+      throw new Error("STORYBOARD_FALLBACK_PRODUCTION_BEAT_ASSIGNMENT_FAILED");
+    currentBeatIndex = selected.beatIndex;
+    groups[selected.beatIndex].push(panel);
+  }
+
+  const budgeted = plan.beats.flatMap((beat, beatIndex) => {
+    const group = groups[beatIndex];
+    if (!group.length)
+      group.push(
+        buildFallbackProductionBeatPanel(
+          beat,
+          panels.at(-1),
+          sceneNumbersByBeat.get(beat.beatId),
+        ),
+      );
+    while (group.length < Math.ceil(beat.durationSeconds / 15))
+      group.push(buildFallbackBeatContinuation(group.at(-1)!, beat));
+
+    const minimumDurations = group.map((panel) =>
+      Math.max(
+        1,
+        panel.motionTimeline.length,
+        panel.lipSyncText || panel.voiceoverText
+          ? estimateSpeechDurationSeconds(
+              panel.lipSyncText ?? panel.voiceoverText ?? "",
+            )
+          : 1,
+      ),
+    );
+    const minimumTotal = minimumDurations.reduce(
+      (total, duration) => total + duration,
+      0,
+    );
+    if (minimumTotal > beat.durationSeconds || group.length > beat.durationSeconds)
+      throw new Error(
+        `STORYBOARD_FALLBACK_BEAT_BUDGET_TOO_SHORT:${beat.beatId}:${minimumTotal}/${beat.durationSeconds}`,
+      );
+    const durations = [...minimumDurations];
+    let remaining = beat.durationSeconds - minimumTotal;
+    for (let index = 0; index < group.length && remaining > 0; index += 1) {
+      const preferred = Math.min(15, group[index].durationSeconds);
+      const increment = Math.min(
+        remaining,
+        Math.max(0, preferred - durations[index]),
+      );
+      durations[index] += increment;
+      remaining -= increment;
+    }
+    while (remaining > 0) {
+      let advanced = false;
+      for (let index = 0; index < durations.length && remaining > 0; index += 1) {
+        if (durations[index] >= 15) continue;
+        durations[index] += 1;
+        remaining -= 1;
+        advanced = true;
+      }
+      if (!advanced)
+        throw new Error(
+          `STORYBOARD_FALLBACK_BEAT_BUDGET_TOO_LONG:${beat.beatId}`,
+        );
+    }
+
+    return group.map((panel, panelIndex) => {
+      const durationSeconds = durations[panelIndex];
+      const enriched =
+        panelIndex === 0 ? enrichFallbackPanelWithBeat(panel, beat) : panel;
+      return retimeFallbackPanel(
+        { ...enriched, productionBeatIds: [beat.beatId] },
+        durationSeconds,
+      );
+    });
+  });
+  return budgeted.map((panel, panelIndex) => ({ ...panel, panelIndex }));
+}
+
+function productionBeatMaterial(
+  beat: EpisodeProductionContractSubset["beats"][number],
+  plan: EpisodeProductionContractSubset,
+) {
+  return [
+    ...(beat.actionChain ? Object.values(beat.actionChain) : []),
+    ...(beat.transition ? Object.values(beat.transition) : []),
+    ...beat.interactions.flatMap((interaction) => [
+      interaction.action,
+      interaction.reaction,
+    ]),
+    beat.performanceIntent,
+    ...beat.effects.flatMap((effect) => [
+      effect.trigger,
+      effect.visualIntent,
+      effect.soundIntent,
+    ]),
+    ...plan.dialoguePlan
+      .filter((line) => line.beatId === beat.beatId)
+      .map((line) => line.text),
+    ...plan.narrationPlan
+      .filter((line) => line.beatId === beat.beatId)
+      .map((line) => line.text),
+  ];
+}
+
+function fallbackPanelSearchText(panel: StoryboardPlanning["panels"][number]) {
+  return [
+    panel.description,
+    panel.videoPrompt,
+    panel.lipSyncText,
+    panel.voiceoverText,
+    ...panel.motionTimeline.flatMap((beat) => [
+      beat.action,
+      beat.choreographyStep,
+      beat.reaction,
+      beat.result,
+      beat.settle,
+    ]),
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join("\n");
+}
+
+function enrichFallbackPanelWithBeat(
+  panel: StoryboardPlanning["panels"][number],
+  beat: EpisodeProductionContractSubset["beats"][number],
+) {
+  const visible = [
+    ...(beat.actionChain ? Object.values(beat.actionChain) : []),
+    ...(beat.transition ? Object.values(beat.transition) : []),
+    ...beat.interactions.flatMap((interaction) => [
+      interaction.action,
+      interaction.reaction,
+    ]),
+    beat.performanceIntent,
+    ...beat.effects.flatMap((effect) => [effect.trigger, effect.visualIntent]),
+  ];
+  const effectEvidence = beat.effects.map((effect) => effect.trigger);
+  return {
+    ...panel,
+    description: `${panel.description}\n制作节拍实现：${visible.join("；")}`,
+    videoPrompt: `${panel.videoPrompt}\n制作节拍实现：${visible.join("；")}。声音：${beat.effects.map((effect) => effect.soundIntent).join("；")}`,
+    vfxCues: [
+      ...panel.vfxCues,
+      ...beat.effects.map((effect) => ({
+        atSecond: 0,
+        phase: "release" as const,
+        category: "environment_interaction" as const,
+        description: `${effect.trigger}；${effect.visualIntent}`,
+        evidence: [effect.trigger],
+      })),
+    ],
+    sfxCues: [
+      ...panel.sfxCues,
+      ...beat.effects.map((effect) => ({
+        startSecond: 0,
+        endSecond: 1,
+        type: "energy" as const,
+        description: effect.soundIntent,
+        evidence: [effect.trigger],
+      })),
+    ],
+    sourceEvidence: [
+      ...new Set([...panel.sourceEvidence, ...effectEvidence]),
+    ],
+  };
+}
+
+function buildFallbackProductionBeatPanel(
+  beat: EpisodeProductionContractSubset["beats"][number],
+  template: StoryboardPlanning["panels"][number] | undefined,
+  sceneNumbers: Set<number> | undefined,
+): StoryboardPlanning["panels"][number] {
+  const description = productionBeatMaterial(beat, {
+    beats: [beat],
+    dialoguePlan: [],
+    narrationPlan: [],
+  }).join("；") || beat.purpose;
+  const characters = template?.characters ?? [];
+  const props = template?.props ?? [];
+  const durationSeconds = 1;
+  const cameraMove = template?.cameraMove ?? "稳定跟随制作节拍动作";
+  return {
+    panelIndex: 0,
+    sceneNumber: sceneNumbers ? Array.from(sceneNumbers)[0] : template?.sceneNumber,
+    shotType: template?.shotType ?? "中景",
+    cameraMove,
+    durationSeconds,
+    productionBeatIds: [beat.beatId],
+    motionTimeline: buildFallbackMotionTimeline(
+      description,
+      durationSeconds,
+      cameraMove,
+      characters,
+      props,
+    ),
+    startState:
+      template?.endState ?? fallbackContinuityState(characters, props),
+    endState: template?.endState ?? fallbackContinuityState(characters, props),
+    worldContext: template?.worldContext,
+    vfxCues: [],
+    sfxCues: [],
+    speakingCharacter: null,
+    lipSyncText: null,
+    voiceoverText: null,
+    description,
+    locationName: beat.location,
+    characters,
+    props,
+    imagePrompt: template?.imagePrompt ?? `${beat.location}，${beat.purpose}`,
+    videoPrompt: description,
+    sourceEvidence: template?.sourceEvidence ?? [beat.adaptedStartMarker],
+  };
+}
+
+function buildFallbackBeatContinuation(
+  panel: StoryboardPlanning["panels"][number],
+  beat: EpisodeProductionContractSubset["beats"][number],
+) {
+  const description = `承接并完成制作节拍：${beat.performanceIntent}`;
+  return {
+    ...panel,
+    panelIndex: 0,
+    durationSeconds: 1,
+    speakingCharacter: null,
+    lipSyncText: null,
+    voiceoverText: null,
+    description,
+    imagePrompt: panel.imagePrompt,
+    videoPrompt: `${description}；${panel.videoPrompt}`,
+    motionTimeline: buildFallbackMotionTimeline(
+      description,
+      1,
+      panel.cameraMove,
+      panel.characters,
+      panel.props,
+    ),
+    vfxCues: [],
+    sfxCues: [],
+  };
+}
+
+function retimeFallbackPanel(
+  panel: StoryboardPlanning["panels"][number],
+  durationSeconds: number,
+) {
+  const beatCount = Math.min(panel.motionTimeline.length, durationSeconds);
+  return {
+    ...panel,
+    durationSeconds,
+    motionTimeline: panel.motionTimeline.slice(0, beatCount).map((beat, index) => ({
+      ...beat,
+      startSecond: Math.floor((durationSeconds * index) / beatCount),
+      endSecond: Math.floor((durationSeconds * (index + 1)) / beatCount),
+    })),
+    vfxCues: panel.vfxCues.map((cue) => ({
+      ...cue,
+      atSecond: Math.min(cue.atSecond, durationSeconds),
+    })),
+    sfxCues: panel.sfxCues
+      .filter((cue) => cue.startSecond < durationSeconds)
+      .map((cue) => ({
+        ...cue,
+        endSecond: Math.max(
+          cue.startSecond + 1,
+          Math.min(cue.endSecond, durationSeconds),
+        ),
+      })),
+  };
+}
+
 function formatMotionTimelinePrompt(
   panel: StoryboardRefinement["panels"][number],
   actingDirections: ActingDirection["directions"][number]["characters"],
@@ -1340,6 +1706,9 @@ function formatMotionTimelinePrompt(
   );
   return [
     `总时长：${panel.durationSeconds}s`,
+    ...(panel.productionBeatIds?.length
+      ? [`制作节拍：${panel.productionBeatIds.join("、")}`]
+      : []),
     `整体运镜：${panel.cameraMove}`,
     `连续动作：${panel.videoPrompt}`,
     "关键动作节拍：",
@@ -1632,13 +2001,20 @@ function splitFallbackShotText(value: string, maxLength = 48) {
 }
 
 function storyboardFallbackInputHash(
-  context: Pick<ClipContext, "sourceText" | "canonical">,
+  context: Pick<ClipContext, "sourceText" | "canonical"> & {
+    productionPlan?: EpisodeProductionContractSubset;
+    productionPlanVersion?: number;
+    productionTargetDurationSeconds?: number;
+  },
 ) {
   return hashJson({
-    fallbackVersion: 6,
+    fallbackVersion: 7,
     dialogueTimingVersion: STORYBOARD_DIALOGUE_TIMING_VERSION,
     sourceText: context.sourceText,
     canonical: context.canonical,
+    productionPlan: context.productionPlan,
+    productionPlanVersion: context.productionPlanVersion,
+    productionTargetDurationSeconds: context.productionTargetDurationSeconds,
   });
 }
 
@@ -1667,7 +2043,11 @@ function compactShotDescription(value: string, maxLength = 240) {
 function parseStoryboardFallbackArtifact(
   value: unknown,
   inputHash: string,
-  context: Pick<ClipContext, "sourceText" | "canonical" | "screenplay">,
+  context: Pick<ClipContext, "sourceText" | "canonical" | "screenplay"> & {
+    productionPlan?: EpisodeProductionContractSubset;
+    productionPlanVersion?: number;
+    productionTargetDurationSeconds?: number;
+  },
 ) {
   if (
     !isRecord(value) ||
@@ -1746,6 +2126,10 @@ async function loadStoryboardContext(
         description: true,
         novelText: true,
         episodeNumber: true,
+        activeSourceId: true,
+        sourceVersions: {
+          select: { id: true, content: true, productionPlan: true },
+        },
         project: {
           select: { config: { select: { artStyle: true } } },
         },
@@ -1781,6 +2165,17 @@ async function loadStoryboardContext(
     throw new Error(`STORYBOARD_PROTOCOL_NOT_SUPPORTED:${channel.protocol}`);
   const apiKeys = parseApiKeys(channel.encryptedApiKeys);
   if (!apiKeys.length) throw new Error("STORYBOARD_CHANNEL_API_KEY_MISSING");
+  const clipSourceText = clips.map((clip) => clip.content).join("");
+  const activeSource = episode.sourceVersions?.find(
+    (source) => source.id === episode.activeSourceId,
+  );
+  const productionPlan =
+    activeSource?.content === clipSourceText
+      ? parseEpisodeProductionPlan(activeSource.productionPlan)
+      : null;
+  const productionContractsByClip = productionPlan
+    ? buildClipProductionContracts(clipSourceText, clips, productionPlan)
+    : new Map<string, EpisodeProductionContractSubset>();
   const [storyWorld, previousEpisodeEnding] = await Promise.all([
     loadProjectAssetStoryWorldContext({
       userId,
@@ -1825,6 +2220,8 @@ async function loadStoryboardContext(
     previousEpisodeEnding,
     projectStyleDirective: getProjectArtStyleDirective(artStyle, locale),
     storyWorldDirective: getStoryWorldDirective(storyWorld.lock, locale),
+    productionPlan,
+    productionContractsByClip,
     clips,
     canonical: {
       characters: characters.map((character) => character.name),
@@ -1910,6 +2307,7 @@ function parseScreenplay(
   clip: ProductionClip,
   canonical: CanonicalContext,
   knowledgeText: string,
+  productionPlan?: EpisodeProductionContractSubset,
 ) {
   if (!clip.screenplay)
     throw new Error(`STORYBOARD_SCREENPLAY_REQUIRED:${clip.id}`);
@@ -1934,6 +2332,7 @@ function parseScreenplay(
         canonical,
         sourceEvents,
         knowledgeText,
+        productionPlan,
       }).length
     )
       throw new Error("invalid screenplay");
