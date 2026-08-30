@@ -1,5 +1,10 @@
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import {
+  parseEpisodeProductionPlan,
+  type EpisodeProductionContractSubset,
+  type EpisodeProductionPlan,
+} from "@/lib/episodes/production-plan";
+import {
   getStoryWorldDirective,
   loadProjectAssetStoryWorldContext,
 } from "@/lib/assets/story-world";
@@ -85,6 +90,7 @@ type SegmentedClip = {
   location: string | null;
   characters: string[];
   props: string[];
+  productionBeatIds?: string[];
 };
 
 type SourceUnit = {
@@ -130,7 +136,13 @@ export async function splitEpisodeIntoClips(
   if (
     input.resumeExisting &&
     existing &&
-    hasCompleteClipCoverage(context.sourceText, existing)
+    hasCompleteClipCoverage(context.sourceText, existing) &&
+    (!context.productionPlan ||
+      hasProductionPlanClipAlignment(
+        context.sourceText,
+        existing,
+        context.productionPlan,
+      ))
   ) {
     const payload = {
       clips: existing,
@@ -143,12 +155,19 @@ export async function splitEpisodeIntoClips(
     return { clipCount: existing.length, ...payload };
   }
 
-  const sourceUnits = buildSourceUnits(context.sourceText);
   let segmentedClips: SegmentedClip[];
   let degraded = false;
   let fallbackReason: string | undefined;
   const promptTraces: PromptExecutionTrace[] = [];
-  try {
+  if (context.productionPlan) {
+    segmentedClips = buildBeatAwareClipSegmentation(
+      context.sourceText,
+      context.productionPlan,
+      context.canonical,
+      context.screenplayClipMaxChars,
+    );
+  } else try {
+    const sourceUnits = buildSourceUnits(context.sourceText);
     const result = await requestOpenAiStructured({
       ...context.provider,
       prompt: renderPrompt({
@@ -327,6 +346,122 @@ export function restoreSourceBackedClips(
   return clips;
 }
 
+export function buildBeatAwareClipSegmentation(
+  sourceText: string,
+  plan: EpisodeProductionPlan,
+  canonical: CanonicalContext,
+  maxChars = MAX_SCREENPLAY_CLIP_CHARS,
+): SegmentedClip[] {
+  const spans = resolveProductionBeatSpans(sourceText, plan);
+  const limit = Math.max(200, maxChars);
+  const groups: typeof spans[] = [];
+  let current: typeof spans = [];
+  for (const span of spans) {
+    const currentLength = current.length
+      ? current.at(-1)!.end - current[0].start
+      : 0;
+    const nextLength = currentLength + (span.end - span.start);
+    if (current.length && nextLength > limit) {
+      groups.push(current);
+      current = [];
+    }
+    current.push(span);
+  }
+  if (current.length) groups.push(current);
+  return groups.map((group) => {
+    const text = sourceText.slice(group[0].start, group.at(-1)!.end);
+    const characters = canonical.characters.filter((name) => text.includes(name));
+    const props = canonical.props.filter((name) => text.includes(name));
+    return {
+      start: text.slice(0, Math.min(40, text.length)),
+      end: text.slice(Math.max(0, text.length - 40)),
+      text,
+      summary: group.map((span) => span.beat.purpose).join(" / "),
+      location: group.at(-1)!.beat.location,
+      characters,
+      props,
+      productionBeatIds: group.map((span) => span.beat.beatId),
+    };
+  });
+}
+
+function resolveProductionBeatSpans(
+  sourceText: string,
+  plan: EpisodeProductionPlan,
+) {
+  const spans: Array<{
+    beat: EpisodeProductionPlan["beats"][number];
+    start: number;
+    end: number;
+  }> = [];
+  let cursor = 0;
+  for (const beat of plan.beats) {
+    const markerStart = sourceText.indexOf(beat.adaptedStartMarker, cursor);
+    if (markerStart < 0 || sourceText.slice(cursor, markerStart).trim())
+      throw new Error(`PRODUCTION_BEAT_START_MISMATCH:${beat.beatId}`);
+    const markerEnd = sourceText.indexOf(beat.adaptedEndMarker, markerStart);
+    if (markerEnd < markerStart)
+      throw new Error(`PRODUCTION_BEAT_END_MISMATCH:${beat.beatId}`);
+    const end = markerEnd + beat.adaptedEndMarker.length;
+    spans.push({ beat, start: cursor, end });
+    cursor = end;
+  }
+  if (!spans.length || sourceText.slice(cursor).trim())
+    throw new Error("PRODUCTION_BEAT_SOURCE_COVERAGE_MISMATCH");
+  spans.at(-1)!.end = sourceText.length;
+  return spans;
+}
+
+function hasProductionPlanClipAlignment(
+  sourceText: string,
+  clips: ReadonlyArray<{ content: string }>,
+  plan: EpisodeProductionPlan,
+) {
+  try {
+    const boundaries = new Set(
+      resolveProductionBeatSpans(sourceText, plan).map((span) => span.end),
+    );
+    let cursor = 0;
+    return clips.every((clip) => {
+      cursor += clip.content.length;
+      return boundaries.has(cursor);
+    });
+  } catch {
+    return false;
+  }
+}
+
+export function buildClipProductionContracts(
+  sourceText: string,
+  clips: ReadonlyArray<{ id: string; content: string }>,
+  plan: EpisodeProductionPlan,
+) {
+  const spans = resolveProductionBeatSpans(sourceText, plan);
+  const result = new Map<string, EpisodeProductionContractSubset>();
+  let cursor = 0;
+  for (const clip of clips) {
+    const start = cursor;
+    const end = start + clip.content.length;
+    cursor = end;
+    const beats = spans.filter((span) => span.start >= start && span.end <= end);
+    if (
+      !beats.length ||
+      beats[0].start !== start ||
+      beats.at(-1)!.end !== end
+    )
+      throw new Error(`PRODUCTION_CLIP_BEAT_ALIGNMENT_MISMATCH:${clip.id}`);
+    const beatIds = new Set(beats.map((span) => span.beat.beatId));
+    result.set(clip.id, {
+      beats: beats.map((span) => span.beat),
+      dialoguePlan: plan.dialoguePlan.filter((line) => beatIds.has(line.beatId)),
+      narrationPlan: plan.narrationPlan.filter((line) => beatIds.has(line.beatId)),
+    });
+  }
+  if (cursor !== sourceText.length)
+    throw new Error("PRODUCTION_CLIP_SOURCE_COVERAGE_MISMATCH");
+  return result;
+}
+
 class ClipSegmentationBoundaryError extends Error {}
 
 function isSegmentationContractFailure(error: unknown) {
@@ -386,6 +521,9 @@ export async function convertEpisodeClipsToScreenplays(
     input.episodeId,
   );
   if (!clips?.length) throw new Error("STORY_CLIPS_REQUIRED");
+  const productionPlansByClip = context.productionPlan
+    ? buildClipProductionContracts(context.sourceText, clips, context.productionPlan)
+    : new Map<string, EpisodeProductionContractSubset>();
 
   const results = await mapWithConcurrency(
     clips,
@@ -398,6 +536,7 @@ export async function convertEpisodeClipsToScreenplays(
         clip.content,
         context.canonical,
         context.productionKnowledgeText,
+        productionPlansByClip.get(clip.id),
       );
       if (stored) {
         await prisma.storyClip.update({
@@ -422,6 +561,7 @@ export async function convertEpisodeClipsToScreenplays(
           data: { status: "screenplay_running" },
         });
         const sourceEvents = buildSourceEvents(clip.content);
+        const productionPlan = productionPlansByClip.get(clip.id);
         const sourceContract = {
           clipId: clip.id,
           clipText: clip.content,
@@ -437,6 +577,7 @@ export async function convertEpisodeClipsToScreenplays(
               clip_id: clip.id,
               clip_text: clip.content,
               source_events_json: JSON.stringify(sourceEvents),
+              production_plan_json: JSON.stringify(productionPlan ?? {}),
               character_library: JSON.stringify(context.characters),
               location_library: JSON.stringify(context.locations),
               prop_library: JSON.stringify(context.props),
@@ -464,6 +605,7 @@ export async function convertEpisodeClipsToScreenplays(
                 canonical: context.canonical,
                 sourceEvents,
                 knowledgeText: context.productionKnowledgeText,
+                productionPlan,
               },
             ),
         });
@@ -476,6 +618,7 @@ export async function convertEpisodeClipsToScreenplays(
           canonical: context.canonical,
           sourceEvents,
           knowledgeText: context.productionKnowledgeText,
+          productionPlan,
         });
         if (normalizationIssues.length)
           throw new Error(
@@ -623,6 +766,7 @@ function parseReusableScreenplay(
   clipText: string,
   canonical: CanonicalContext,
   knowledgeText: string,
+  productionPlan?: EpisodeProductionContractSubset,
 ) {
   if (!value) return null;
   try {
@@ -643,6 +787,7 @@ function parseReusableScreenplay(
       canonical,
       sourceEvents,
       knowledgeText,
+      productionPlan,
     }).length
       ? null
       : screenplay;
@@ -674,6 +819,10 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
           name: true,
           description: true,
           novelText: true,
+          activeSourceId: true,
+          sourceVersions: {
+            select: { id: true, content: true, productionPlan: true },
+          },
           project: {
             select: { config: { select: { artStyle: true } } },
           },
@@ -710,6 +859,13 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
   if (!apiKeys.length) throw new Error("STORY_CHANNEL_API_KEY_MISSING");
   const sourceText = input.sourceText ?? episode.novelText;
   if (!sourceText?.trim()) throw new Error("STORY_SOURCE_TEXT_REQUIRED");
+  const activeSource = episode.sourceVersions?.find(
+    (source) => source.id === episode.activeSourceId,
+  );
+  const productionPlan =
+    activeSource?.content === sourceText
+      ? parseEpisodeProductionPlan(activeSource.productionPlan)
+      : null;
   const storyWorld = await loadProjectAssetStoryWorldContext({
     userId,
     projectId: input.projectId,
@@ -730,6 +886,7 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
   const worldBibleText = JSON.stringify(worldBible?.payload ?? {});
   return {
     sourceText,
+    productionPlan,
     characters,
     locations,
     props,
@@ -748,6 +905,7 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
       JSON.stringify(effectLibrary),
       projectStyleDirective,
       storyWorldDirective,
+      productionPlan ? JSON.stringify(productionPlan) : "",
     ].join("\n"),
     screenplayClipMaxChars: runtimeSettings.screenplayClipMaxChars,
     workflowConcurrency: runtimeSettings.workflowConcurrency,

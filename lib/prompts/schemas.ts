@@ -173,6 +173,17 @@ export const screenplayConversionSchema = z
   .object({
     clipId: text,
     originalText: exactText,
+    beatCoverage: z
+      .array(
+        z
+          .object({
+            beatId: z.string().regex(/^B\d{2,}$/),
+            sceneNumbers: z.array(z.number().int().nonnegative()).min(1).max(20),
+          })
+          .strict(),
+      )
+      .max(40)
+      .optional(),
     coverage: z
       .array(
         z

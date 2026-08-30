@@ -28,7 +28,7 @@
 
 表演、互动与特效：
 1. 每个 beat 填写 performanceIntent，说明人物意图、视线、姿态和结束反应。
-2. 重要人物/道具互动填写 actor、target、action、reaction。交接、扶抱、推拉、攻击与接触必须有双方状态变化。
+2. 重要人物/道具互动填写 actor、target、action、reaction。action 与 reaction 必须逐字出现在对应 beat 正文；交接、扶抱、推拉、攻击与接触必须有双方状态变化。
 3. 打斗、功法、神秘器物开启/激活、可见能量、气息、灵魂体、阵纹、空间扭曲和明确异象必须填写 effects。
 4. effects 只设计已确认事实的表现方式。production_inference 可设计颜色、材质、粒子、运动和消散，但不得新增能力、威力、属性或剧情结果。
 5. soundIntent 只写环境声、动作声和特效声，不写角色人声。

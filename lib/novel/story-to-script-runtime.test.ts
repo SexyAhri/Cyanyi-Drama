@@ -56,6 +56,7 @@ vi.mock("@/lib/server/prisma", () => ({
 }));
 
 import {
+  buildBeatAwareClipSegmentation,
   buildDeterministicClipSegmentation,
   buildDeterministicScreenplay,
   buildSourceUnits,
@@ -69,6 +70,7 @@ import {
   ScreenplayBatchError,
   splitEpisodeIntoClips,
 } from "./story-to-script-runtime";
+import type { EpisodeProductionPlan } from "@/lib/episodes/production-plan";
 
 const runtimeInput = {
   projectId: "project-1",
@@ -370,6 +372,122 @@ describe("story-to-script runtime", () => {
     expect(clips.at(-1)?.characters).toEqual(expect.arrayContaining(["乙"]));
   });
 
+  it("splits an approved adaptation only between production beats", () => {
+    const first = `甲先咬牙。${"甲在练武场挥拳。".repeat(24)}甲收拳站稳。`;
+    const second = `乙推开房门。${"乙回到书房坐下。".repeat(24)}乙靠在椅背。`;
+    const sourceText = `${first}\n${second}`;
+    const plan = {
+      version: 1,
+      sourceHash: "a".repeat(64),
+      runtime: {
+        targetDurationSeconds: 85,
+        plannedDurationSeconds: 40,
+        hardMaxDurationSeconds: 90,
+        estimatedShotCount: 12,
+        estimatedSpokenSeconds: 0,
+        fit: "short_source",
+      },
+      beats: [
+        productionBeat("B01", first, "练武场"),
+        productionBeat("B02", second, "书房"),
+      ],
+      sourceCoverage: [],
+      dialoguePlan: [],
+      narrationPlan: [],
+      cliffhanger: {
+        beatId: "B02",
+        setup: "乙返回书房",
+        finalImageOrLine: "乙坐下",
+      },
+    } as EpisodeProductionPlan;
+
+    const clips = buildBeatAwareClipSegmentation(
+      sourceText,
+      plan,
+      {
+        characters: ["甲", "乙"],
+        locations: ["练武场", "书房"],
+        props: [],
+      },
+      220,
+    );
+
+    expect(clips.map((clip) => clip.text).join("")).toBe(sourceText);
+    expect(clips.map((clip) => clip.productionBeatIds)).toEqual([
+      ["B01"],
+      ["B02"],
+    ]);
+    expect(clips.map((clip) => clip.location)).toEqual(["练武场", "书房"]);
+  });
+
+  it("uses the active Production Plan without requesting AI segmentation", async () => {
+    const first = "甲先咬牙，双手握拳，挥拳击出，衣袖震动，随后收拳站稳。";
+    const second = "乙推开房门，跨过门槛，走到书桌前坐下，随后靠在椅背。";
+    const sourceText = `${first}\n${second}`;
+    const plan: EpisodeProductionPlan = {
+      version: 1,
+      sourceHash: "a".repeat(64),
+      runtime: {
+        targetDurationSeconds: 85,
+        plannedDurationSeconds: 40,
+        hardMaxDurationSeconds: 90,
+        estimatedShotCount: 12,
+        estimatedSpokenSeconds: 0,
+        fit: "short_source",
+      },
+      beats: [
+        productionBeat("B01", first, "练武场"),
+        productionBeat("B02", second, "书房"),
+      ],
+      sourceCoverage: [
+        {
+          sourceUnitId: "U0001",
+          beatId: "B01",
+          adaptedEvidence: "甲先咬牙",
+          treatment: "preserved",
+        },
+      ],
+      dialoguePlan: [],
+      narrationPlan: [],
+      cliffhanger: {
+        beatId: "B02",
+        setup: "乙进入书房",
+        finalImageOrLine: "乙靠在椅背",
+      },
+    };
+    episodeFindFirst.mockResolvedValue({
+      novelText: sourceText,
+      activeSourceId: "source-1",
+      sourceVersions: [
+        { id: "source-1", content: sourceText, productionPlan: plan },
+      ],
+    });
+    listProductionClips.mockResolvedValue([]);
+    saveProductionClips.mockImplementation(
+      async (_userId, _projectId, _episodeId, clips) =>
+        clips.map((item: { content: string }, index: number) => ({
+          id: `clip-${index}`,
+          clipIndex: index,
+          content: item.content,
+        })),
+    );
+
+    const result = await splitEpisodeIntoClips(
+      "user-1",
+      runtimeInput,
+      runtimeHooks(),
+    );
+
+    expect(requestOpenAiStructured).not.toHaveBeenCalled();
+    expect(result.clips.map((item) => item.content).join("")).toBe(sourceText);
+    expect(saveProductionClips.mock.calls[0][3]).toEqual([
+      expect.objectContaining({
+        content: sourceText,
+        summary: "练武场动作 / 书房动作",
+      }),
+    ]);
+  });
+
   it("deterministically bounds oversized provider clips before persistence", () => {
     const sourceText = `${"甲在练武场挥剑。".repeat(220)}乙拿起长剑回到书房。`;
     const clips = normalizeScreenplayClipSizes(
@@ -566,6 +684,29 @@ function runtimeHooks() {
   return {
     assertActive: vi.fn().mockResolvedValue(undefined),
     persistArtifact: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function productionBeat(beatId: string, text: string, location: string) {
+  return {
+    beatId,
+    kind: "action" as const,
+    purpose: `${location}动作`,
+    location,
+    durationSeconds: 20,
+    adaptedStartMarker: text.slice(0, 12),
+    adaptedEndMarker: text.slice(-12),
+    actionChain: {
+      triggerOrIntent: text.slice(0, 4),
+      preparation: text.slice(4, 8),
+      execution: text.slice(8, 12),
+      stateChange: text.slice(12, 16),
+      settleOrReaction: text.slice(-8),
+    },
+    transition: null,
+    performanceIntent: "动作连续",
+    interactions: [],
+    effects: [],
   };
 }
 

@@ -28,7 +28,7 @@ Adapted-text contract:
 
 Performance, interaction, and effects:
 1. Every beat needs performanceIntent covering intent, gaze, posture, and ending reaction.
-2. Important character/prop interactions identify actor, target, action, and reaction. Transfers, support, grabs, attacks, and contact require both sides' state change.
+2. Important character/prop interactions identify actor, target, action, and reaction. action and reaction must appear verbatim in the corresponding beat text. Transfers, support, grabs, attacks, and contact require both sides' state change.
 3. Combat, techniques, artifact opening/activation, visible energy or aura, spirit forms, arrays, spatial distortion, and explicit phenomena require effects.
 4. Effects may design only the presentation of confirmed facts. production_inference may choose color, material, particles, movement, and dissipation, but cannot add abilities, power, elements, or story outcomes.
 5. soundIntent contains only ambience, foley, and effect sounds, never character voice.

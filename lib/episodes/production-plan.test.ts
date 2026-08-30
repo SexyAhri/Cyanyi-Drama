@@ -20,7 +20,7 @@ const sourceUnits = [
 const beatText = {
   B01: "韩宇咬紧牙关，双手握住石把，双腿微屈，猛然发力，铁石缓缓离地，铁石稳稳落地。",
   B02: "韩宇放稳铁石，转身离开练武场，穿过灯笼摇曳的回廊，推开竹篱院门，进入偏院后停下脚步。",
-  B03: "父亲掀开铁盒，铁盒开启，奇异气息弥漫而出，室内响起低沉嗡鸣。",
+  B03: "父亲掀开铁盒，铁盒开启，奇异气息弥漫而出，室内响起低沉嗡鸣，韩宇屏息注视。",
   B04: "父亲看着韩宇，轻声说：“你母亲还在世。”韩宇猛地抬眼。",
 } as const;
 
@@ -116,7 +116,7 @@ function fixture(): EpisodeProductionPlanDraft {
           {
             actor: "父亲",
             target: "铁盒",
-            action: "掀开盒盖",
+            action: "父亲掀开铁盒",
             reaction: "韩宇屏息注视",
           },
         ],
@@ -144,7 +144,7 @@ function fixture(): EpisodeProductionPlanDraft {
           {
             actor: "父亲",
             target: "韩宇",
-            action: "看着他说明真相",
+            action: "父亲看着韩宇",
             reaction: "韩宇猛地抬眼",
           },
         ],
@@ -243,6 +243,12 @@ describe("episode production plan", () => {
     const plan = fixture();
     plan.beats[0].actionChain!.execution = "腾空旋转三周";
     expect(issueCodes(plan)).toContain("PRODUCTION_ACTION_NOT_MATERIALIZED");
+  });
+
+  it("rejects an interaction that exists only in the plan", () => {
+    const plan = fixture();
+    plan.beats[3].interactions[0].action = "父亲起身拥抱韩宇";
+    expect(issueCodes(plan)).toContain("PRODUCTION_INTERACTION_NOT_MATERIALIZED");
   });
 
   it("requires a complete transition when the location changes", () => {

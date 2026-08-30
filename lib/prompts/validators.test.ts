@@ -23,6 +23,7 @@ import {
   validateVoiceAnalysis,
 } from "./validators";
 import { clipSegmentationSchema } from "./schemas";
+import type { EpisodeProductionContractSubset } from "@/lib/episodes/production-plan";
 
 const canonical = {
   characters: ["林澈"],
@@ -31,6 +32,130 @@ const canonical = {
 };
 
 describe("domain semantic validators", () => {
+  it("requires Production Plan beats to be implemented in screenplay content", () => {
+    const clipText =
+      "韩子枫掀开铁盒，铁盒开启，奇异气息弥漫而出，韩宇屏息注视。韩子枫说：“你母亲还在世。”";
+    const productionPlan: EpisodeProductionContractSubset = {
+      beats: [
+        {
+          beatId: "B01",
+          kind: "reveal",
+          purpose: "打开铁盒并揭示真相",
+          location: "书房",
+          durationSeconds: 20,
+          adaptedStartMarker: "韩子枫掀开铁盒",
+          adaptedEndMarker: "你母亲还在世。”",
+          actionChain: null,
+          transition: null,
+          performanceIntent: "韩宇屏息注视并在揭示后反应",
+          interactions: [
+            {
+              actor: "韩子枫",
+              target: "铁盒",
+              action: "韩子枫掀开铁盒",
+              reaction: "韩宇屏息注视",
+            },
+          ],
+          effects: [
+            {
+              kind: "artifact",
+              trigger: "铁盒开启",
+              visualIntent: "奇异气息弥漫而出",
+              soundIntent: "低沉能量嗡鸣",
+              provenance: "source",
+            },
+          ],
+        },
+      ],
+      dialoguePlan: [
+        {
+          lineId: "L01",
+          beatId: "B01",
+          speaker: "韩子枫",
+          type: "dialogue",
+          text: "你母亲还在世。",
+          sourceUnitIds: ["U0001"],
+          treatment: "preserved",
+        },
+      ],
+      narrationPlan: [],
+    };
+    const screenplay = {
+      clipId: "clip-1",
+      originalText: clipText,
+      beatCoverage: [{ beatId: "B01", sceneNumbers: [0] }],
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "书房", time: "夜" },
+          description: "铁盒放在桌上。",
+          characters: ["韩子枫", "韩宇"],
+          content: [
+            {
+              type: "action" as const,
+              text: "韩子枫掀开铁盒，铁盒开启，奇异气息弥漫而出，韩宇屏息注视。",
+              origin: "source" as const,
+              actionDesign: {
+                kind: "artifact" as const,
+                performer: "韩子枫",
+                target: "铁盒",
+                realm: null,
+                technique: null,
+                visualMotif: "半透明气息从盒内缓慢弥散",
+                visualMotifSource: "production_inference" as const,
+                visualMotifRationale: "只呈现原文已有的奇异气息",
+                choreography: ["韩子枫掀开铁盒", "铁盒开启"],
+                impact: null,
+                environmentResponse: "奇异气息弥漫而出",
+                vfxPlan: [
+                  {
+                    phase: "release" as const,
+                    category: "environment_interaction" as const,
+                    description: "半透明气息从盒内弥散",
+                  },
+                ],
+                sfxPlan: [
+                  {
+                    phase: "release" as const,
+                    type: "energy" as const,
+                    description: "低沉能量嗡鸣",
+                  },
+                ],
+                evidence: ["铁盒开启"],
+              },
+            },
+            {
+              type: "dialogue" as const,
+              character: "韩子枫",
+              parenthetical: null,
+              lines: "你母亲还在世。",
+            },
+          ],
+        },
+      ],
+    };
+    const input = {
+      clipId: "clip-1",
+      clipText,
+      canonical: {
+        characters: ["韩子枫", "韩宇"],
+        locations: ["书房"],
+        props: ["铁盒"],
+      },
+      productionPlan,
+    };
+
+    expect(validateScreenplayConversion(screenplay, input)).toEqual([]);
+
+    const labelOnly = structuredClone(screenplay);
+    labelOnly.scenes[0].content[0].text = "韩子枫掀开铁盒，铁盒开启。";
+    expect(
+      validateScreenplayConversion(labelOnly, input).map((item) => item.code),
+    ).toEqual(
+      expect.arrayContaining(["SCREENPLAY_INTERACTION_NOT_IMPLEMENTED"]),
+    );
+  });
+
   it("keeps sentence-closing quotes with the preceding source event", () => {
     expect(
       buildSourceEvents(

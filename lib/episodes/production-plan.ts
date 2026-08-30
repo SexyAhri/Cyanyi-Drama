@@ -210,6 +210,10 @@ export type EpisodeProductionPlanDraft = z.infer<
   typeof episodeProductionPlanDraftSchema
 >;
 export type EpisodeProductionPlan = z.infer<typeof episodeProductionPlanSchema>;
+export type EpisodeProductionContractSubset = Pick<
+  EpisodeProductionPlan,
+  "beats" | "dialoguePlan" | "narrationPlan"
+>;
 export type EpisodeAdaptationOutput = z.infer<
   typeof episodeAdaptationOutputSchema
 >;
@@ -347,6 +351,21 @@ export function validateEpisodeProductionPlan(input: {
               "Every transition step must be copied from the corresponding adapted-text beat",
             ),
           );
+      });
+    if (slice)
+      beat.interactions.forEach((interaction, interactionIndex) => {
+        for (const [key, value] of [
+          ["action", interaction.action],
+          ["reaction", interaction.reaction],
+        ] as const)
+          if (!slice.includes(value))
+            issues.push(
+              issue(
+                `productionPlan.beats.${index}.interactions.${interactionIndex}.${key}`,
+                "PRODUCTION_INTERACTION_NOT_MATERIALIZED",
+                "Every important interaction action and reaction must be copied from its corresponding adapted-text beat",
+              ),
+            );
       });
     beat.effects.forEach((effect, effectIndex) => {
       const triggerKey = normalized(effect.trigger);

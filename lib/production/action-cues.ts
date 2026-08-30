@@ -13,6 +13,8 @@ export const ACTION_DESIGN_KINDS = [
   "skill",
   "defense",
   "movement",
+  "artifact",
+  "phenomenon",
 ] as const;
 
 export const VFX_CUE_CATEGORIES = [

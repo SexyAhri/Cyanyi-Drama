@@ -28,6 +28,13 @@ export function normalizeScreenplayProviderPayload(
   if (!isRecord(value) || !Array.isArray(value.scenes)) return value;
   return {
     ...pick(value, ["clipId", "originalText"]),
+    ...(Array.isArray(value.beatCoverage)
+      ? {
+          beatCoverage: value.beatCoverage.map((item) =>
+            isRecord(item) ? pick(item, ["beatId", "sceneNumbers"]) : item,
+          ),
+        }
+      : {}),
     ...(Array.isArray(value.coverage)
       ? { coverage: normalizeCoverage(value.coverage, context.sourceEvents) }
       : {}),

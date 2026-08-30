@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { canonicalSummaryPlaceholderFragments } from "@/lib/assets/canonical-summary";
+import type { EpisodeProductionContractSubset } from "@/lib/episodes/production-plan";
 import type { StructuredValidationIssue } from "@/lib/llm/structured-output";
 import {
   actingDirectionSchema,
@@ -214,6 +215,7 @@ export function validateScreenplayConversion(
     canonical: CanonicalContext;
     sourceEvents?: readonly SourceEvent[];
     knowledgeText?: string;
+    productionPlan?: EpisodeProductionContractSubset | null;
   },
 ) {
   const issues: StructuredValidationIssue[] = [];
@@ -365,7 +367,193 @@ export function validateScreenplayConversion(
         );
     });
   });
+  if (input.productionPlan)
+    validateProductionBeatImplementation(data, input.productionPlan, issues);
   return issues;
+}
+
+function validateProductionBeatImplementation(
+  data: ScreenplayConversion,
+  plan: EpisodeProductionContractSubset,
+  issues: StructuredValidationIssue[],
+) {
+  const expected = new Map(plan.beats.map((beat) => [beat.beatId, beat]));
+  const coverageByBeat = new Map<
+    string,
+    NonNullable<ScreenplayConversion["beatCoverage"]>[number]
+  >();
+  for (const [index, coverage] of (data.beatCoverage ?? []).entries()) {
+    if (!expected.has(coverage.beatId))
+      issues.push(
+        issue(
+          `beatCoverage.${index}.beatId`,
+          "SCREENPLAY_BEAT_UNKNOWN",
+          `Unknown production beat ${coverage.beatId}`,
+        ),
+      );
+    if (coverageByBeat.has(coverage.beatId))
+      issues.push(
+        issue(
+          `beatCoverage.${index}.beatId`,
+          "SCREENPLAY_BEAT_DUPLICATE",
+          `Production beat ${coverage.beatId} appears more than once`,
+        ),
+      );
+    if (new Set(coverage.sceneNumbers).size !== coverage.sceneNumbers.length)
+      issues.push(
+        issue(
+          `beatCoverage.${index}.sceneNumbers`,
+          "SCREENPLAY_BEAT_SCENE_DUPLICATE",
+          "A beat cannot reference the same scene more than once",
+        ),
+      );
+    coverageByBeat.set(coverage.beatId, coverage);
+  }
+
+  for (const [beatIndex, beat] of plan.beats.entries()) {
+    const coverage = coverageByBeat.get(beat.beatId);
+    if (!coverage) {
+      issues.push(
+        issue(
+          "beatCoverage",
+          "SCREENPLAY_BEAT_MISSING",
+          `Production beat ${beat.beatId} is not implemented`,
+        ),
+      );
+      continue;
+    }
+    const scenes = coverage.sceneNumbers.flatMap((sceneNumber, index) => {
+      const scene = data.scenes[sceneNumber];
+      if (scene) return [scene];
+      issues.push(
+        issue(
+          `beatCoverage.${beatIndex}.sceneNumbers.${index}`,
+          "SCREENPLAY_BEAT_SCENE_UNKNOWN",
+          `Scene ${sceneNumber} does not exist`,
+        ),
+      );
+      return [];
+    });
+    const content = scenes.flatMap((scene) => scene.content);
+    const actionTexts = content.flatMap((item) =>
+      item.type === "action" ? [item.text] : [],
+    );
+    const assertActionMaterialized = (
+      value: string,
+      path: string,
+      code: string,
+    ) => {
+      if (!actionTexts.some((text) => text.includes(value)))
+        issues.push(
+          issue(
+            path,
+            code,
+            `Production beat ${beat.beatId} requires scene action content: ${value}`,
+          ),
+        );
+    };
+    if (beat.actionChain)
+      for (const [key, value] of Object.entries(beat.actionChain))
+        assertActionMaterialized(
+          value,
+          `beatCoverage.${beatIndex}.actionChain.${key}`,
+          "SCREENPLAY_ACTION_CHAIN_NOT_IMPLEMENTED",
+        );
+    if (beat.transition)
+      for (const [key, value] of Object.entries(beat.transition))
+        assertActionMaterialized(
+          value,
+          `beatCoverage.${beatIndex}.transition.${key}`,
+          "SCREENPLAY_TRANSITION_NOT_IMPLEMENTED",
+        );
+    beat.interactions.forEach((interaction, interactionIndex) => {
+      assertActionMaterialized(
+        interaction.action,
+        `beatCoverage.${beatIndex}.interactions.${interactionIndex}.action`,
+        "SCREENPLAY_INTERACTION_NOT_IMPLEMENTED",
+      );
+      assertActionMaterialized(
+        interaction.reaction,
+        `beatCoverage.${beatIndex}.interactions.${interactionIndex}.reaction`,
+        "SCREENPLAY_INTERACTION_NOT_IMPLEMENTED",
+      );
+    });
+
+    const dialogue = plan.dialoguePlan.filter(
+      (line) => line.beatId === beat.beatId,
+    );
+    const narration = plan.narrationPlan.filter(
+      (line) => line.beatId === beat.beatId,
+    );
+    dialogue.forEach((line, lineIndex) => {
+      const implemented = content.some((item) =>
+        line.type === "dialogue"
+          ? item.type === "dialogue" &&
+            item.lines === line.text &&
+            normalizeName(item.character) === normalizeName(line.speaker)
+          : item.type === "voiceover" &&
+            item.text === line.text &&
+            normalizeName(item.character ?? "") === normalizeName(line.speaker),
+      );
+      if (!implemented)
+        issues.push(
+          issue(
+            `beatCoverage.${beatIndex}.dialoguePlan.${lineIndex}`,
+            "SCREENPLAY_DIALOGUE_NOT_IMPLEMENTED",
+            `Approved spoken line ${line.lineId} must appear verbatim with its assigned speaker`,
+          ),
+        );
+    });
+    narration.forEach((line, lineIndex) => {
+      if (
+        !content.some(
+          (item) =>
+            item.type === "voiceover" && !item.character && item.text === line.text,
+        )
+      )
+        issues.push(
+          issue(
+            `beatCoverage.${beatIndex}.narrationPlan.${lineIndex}`,
+            "SCREENPLAY_NARRATION_NOT_IMPLEMENTED",
+            `Approved narration ${line.lineId} must appear verbatim as narrator voiceover`,
+          ),
+        );
+    });
+    if ((dialogue.length || narration.length) && !actionTexts.length)
+      issues.push(
+        issue(
+          `beatCoverage.${beatIndex}.sceneNumbers`,
+          "SCREENPLAY_SPOKEN_PERFORMANCE_REQUIRED",
+          `Spoken beat ${beat.beatId} requires visible action or reaction in scenes.content`,
+        ),
+      );
+
+    beat.effects.forEach((effect, effectIndex) => {
+      const allowedKinds =
+        effect.kind === "combat" ? ["fight", "duel"] : [effect.kind];
+      const implemented = content.some((item) => {
+        if (item.type !== "action" || !item.actionDesign) return false;
+        const design = item.actionDesign;
+        const carriesTrigger =
+          item.text.includes(effect.trigger) ||
+          design.evidence.some((entry) => entry.includes(effect.trigger));
+        return (
+          allowedKinds.includes(design.kind) &&
+          carriesTrigger &&
+          design.vfxPlan.length > 0 &&
+          design.sfxPlan.length > 0
+        );
+      });
+      if (!implemented)
+        issues.push(
+          issue(
+            `beatCoverage.${beatIndex}.effects.${effectIndex}`,
+            "SCREENPLAY_EFFECT_NOT_IMPLEMENTED",
+            `Effect trigger ${effect.trigger} requires matching actionDesign with VFX and SFX plans`,
+          ),
+        );
+    });
+  }
 }
 
 function normalizeAnalysisEntities<
@@ -1043,7 +1231,7 @@ function validateActionDesign(
 }
 
 function requiresActionDesign(value: string) {
-  return /(?:打斗|决斗|交战|混战|追逐|追赶|逃窜|攻击|突袭|进攻|防御|格挡|招架|闪避|反击|挥(?:剑|刀|拳)|刺向|劈向|砍向|斩向|射向|踢向|击中|命中|受击|功法|招式|剑诀|刀法|掌法|拳法|法术|变身|召唤|fight|duel|combat|chase|attack|defend|block|dodge|counter|strike|slash|shoot|transform|summon)/iu.test(
+  return /(?:打斗|决斗|交战|混战|追逐|追赶|逃窜|攻击|突袭|进攻|防御|格挡|招架|闪避|反击|挥(?:剑|刀|拳)|刺向|劈向|砍向|斩向|射向|踢向|击中|命中|受击|功法|招式|剑诀|刀法|掌法|拳法|法术|变身|召唤|铁盒开启|器物(?:开启|激活|认主)|奇异气息|异象|灵魂状态|阵纹|空间(?:扭曲|崩裂)|虚空(?:扭曲|崩裂)|fight|duel|combat|chase|attack|defend|block|dodge|counter|strike|slash|shoot|transform|summon|artifact activation|visible phenomenon|spatial distortion)/iu.test(
     value,
   );
 }
