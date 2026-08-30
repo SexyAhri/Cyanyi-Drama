@@ -11,6 +11,7 @@ import {
   NativeSelectOption,
 } from "@/components/ui/native-select";
 import type { PostQcStatus } from "@/lib/production/post-contract";
+import { cn } from "@/lib/utils";
 
 import type { ProductionDeliverableRecord, StudioLocale } from "../types";
 
@@ -24,12 +25,14 @@ export type EditableQcCheck = {
 
 export function QcReportEditor<T extends string>({
   checks,
+  columns = 1,
   keys,
   labels,
   locale,
   onChange,
 }: {
   checks: Record<T, EditableQcCheck>;
+  columns?: 1 | 2;
   keys: readonly T[];
   labels: Record<T, string>;
   locale: StudioLocale;
@@ -39,11 +42,16 @@ export function QcReportEditor<T extends string>({
     ? { measured: "Measured", target: "Target", unit: "Unit", note: "QC note" }
     : { measured: "实测", target: "目标", unit: "单位", note: "检查备注" };
   return (
-    <div className="divide-y border-y">
+    <div
+      className={cn(
+        "grid border-t",
+        columns === 2 && "2xl:grid-cols-2 2xl:gap-x-5",
+      )}
+    >
       {keys.map((key) => {
         const check = checks[key];
         return (
-          <div className="py-3" key={key}>
+          <div className="border-b py-3" key={key}>
             <div className="flex min-w-0 items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2">
                 <QcIcon status={check.status} />

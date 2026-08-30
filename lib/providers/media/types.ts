@@ -4,6 +4,7 @@ import type { OpenAiCompatibleMediaTemplate } from "@/lib/providers/openai-compa
 
 export type MediaReferenceImage = {
   url: string;
+  storageKey?: string;
   mimeType?: string;
   role?: "reference_image" | "first_frame" | "last_frame";
 };
@@ -36,6 +37,8 @@ export type MediaProviderRequest = {
   responseFormat?: string;
   emotionPrompt?: string;
   emotionStrength?: number;
+  instructions?: string;
+  optimizeInstructions?: boolean;
   operation?: string;
   audioAssetId?: string;
   audioMode?: "ambient_only" | "none";

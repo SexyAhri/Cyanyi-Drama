@@ -402,6 +402,7 @@ export async function createStoryboardPanelVideoTask(input: {
   });
   const referenceImages: Array<{
     url: string;
+    storageKey?: string;
     mimeType?: string;
     role?: "reference_image" | "first_frame" | "last_frame";
   }> = [];
@@ -422,11 +423,13 @@ export async function createStoryboardPanelVideoTask(input: {
     referenceImages.push(
       {
         url: firstFrameUrl,
+        storageKey: panel.imageAsset?.storageKey ?? undefined,
         mimeType: panel.imageAsset?.mimeType ?? undefined,
         role: "first_frame",
       },
       {
         url: lastFrameUrl,
+        storageKey: lastFrame?.imageAsset?.storageKey ?? undefined,
         mimeType: lastFrame?.imageAsset?.mimeType ?? undefined,
         role: "last_frame",
       },
@@ -436,6 +439,7 @@ export async function createStoryboardPanelVideoTask(input: {
     if (panelImageUrl)
       referenceImages.push({
         url: panelImageUrl,
+        storageKey: panel.imageAsset?.storageKey ?? undefined,
         mimeType: panel.imageAsset?.mimeType ?? undefined,
         role: "reference_image",
       });
@@ -464,6 +468,7 @@ export async function createStoryboardPanelVideoTask(input: {
     lines: dialogue.lines,
     playbackRate: dialogue.playbackRate,
     timings: dialogue.timings,
+    usesEstimatedTiming: dialogue.usesEstimatedTiming,
   });
   const prompt = withStoryboardVideoContinuityRequirements({
     prompt: dialoguePrompt,
@@ -723,9 +728,9 @@ export async function previewStoryboardPanelPrompt(input: {
     const missingAudio = lines.filter((line) => !line.audioAssetId);
     if (missingAudio.length)
       issues.push({
-        blocking: true,
-        code: "missing_dialogue_audio",
-        message: `${missingAudio.length} 句关联对白尚未生成配音`,
+        blocking: false,
+        code: "dialogue_audio_pending",
+        message: `${missingAudio.length} 句关联对白将在后续配音与口型阶段处理，本次按文本预估节奏`,
       });
     let dialoguePrompt = compileStoryboardEventBlueprint(
       basePrompt,
@@ -748,11 +753,12 @@ export async function previewStoryboardPanelPrompt(input: {
           lines,
           playbackRate: plan.playbackRate,
           timings: plan.timings,
+          usesEstimatedTiming: missingAudio.length > 0,
         });
         sources.push({
           key: "dialogue_timing",
           label: "对白节奏",
-          value: `${lines.length} 句 · ${plan.durationSeconds} 秒 · ${plan.playbackRate.toFixed(2)}x`,
+          value: `${lines.length} 句 · ${plan.durationSeconds} 秒 · ${plan.playbackRate.toFixed(2)}x${missingAudio.length ? " · 文本预估" : " · 正式配音"}`,
         });
       } catch (error) {
         issues.push({
@@ -839,13 +845,10 @@ async function prepareStoryboardDialogue(input: {
     durationSeconds: number;
     url: string;
   }> = [];
+  let usesEstimatedTiming = false;
   for (const line of lines) {
     const url = await mediaAssetUrl(line.audioAsset);
-    if (!url)
-      throw new ProjectAssetTaskError(
-        `镜头对白“${line.content}”尚未生成配音，请先用声音模型生成后再制作视频`,
-        409,
-      );
+    if (!url) usesEstimatedTiming = true;
     const durationSeconds =
       line.durationSeconds ??
       (url ? await probeAudioUrlDuration(url) : estimateSpokenDuration(line.content));
@@ -870,6 +873,7 @@ async function prepareStoryboardDialogue(input: {
       playbackRate: 1,
       references: [] as Array<{ url: string; mimeType?: string }>,
       timings: [],
+      usesEstimatedTiming: false,
     };
 
   const plan = planPanelDialogue({
@@ -886,6 +890,7 @@ async function prepareStoryboardDialogue(input: {
     playbackRate: plan.playbackRate,
     references: [] as Array<{ url: string; mimeType?: string }>,
     timings: plan.timings,
+    usesEstimatedTiming,
   };
 }
 
@@ -897,6 +902,7 @@ export function dialogueVideoPrompt(input: {
   lines: Array<{ speaker: string; content: string; delivery: string }>;
   playbackRate: number;
   timings: Array<{ lineIndex: number; startSeconds: number; endSeconds: number }>;
+  usesEstimatedTiming?: boolean;
 }) {
   const actingByCharacter = new Map(
     input.actingDirections.map((direction) => [direction.name, direction]),
@@ -911,7 +917,9 @@ export function dialogueVideoPrompt(input: {
   const timingLines = input.timings.map((timing) => {
     const line = input.lines[timing.lineIndex];
     return line.delivery === "dialogue"
-      ? `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}s | ${line.speaker}按已生成配音的时长做无声自然口型，同时执行：${performanceDirection(line.speaker)} | 其他角色闭口，并按各自表演指导给出持续倾听、判断或情绪变化的无声反应`
+      ? input.usesEstimatedTiming
+        ? `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}s | ${line.speaker}按对白文本预估节奏完成无声说话表演与自然口部占位，精准口型留待后期，同时执行：${performanceDirection(line.speaker)} | 其他角色闭口，并按各自表演指导给出持续倾听、判断或情绪变化的无声反应`
+        : `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}s | ${line.speaker}按正式配音时长完成无声说话表演，同时执行：${performanceDirection(line.speaker)} | 其他角色闭口，并按各自表演指导给出持续倾听、判断或情绪变化的无声反应`
       : `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}s | ${line.speaker}的内心独白/画外音时段 | 画面中所有人物保持闭口、不做口型；${line.speaker}通过${performanceDirection(line.speaker)}外化心理变化，其他角色不得感知未说出口的内容`;
   });
   const secondBeats = Array.from(
@@ -922,7 +930,7 @@ export function dialogueVideoPrompt(input: {
       );
       const action = active
         ? input.lines[active.lineIndex].delivery === "dialogue"
-          ? `${input.lines[active.lineIndex].speaker}持续当前对白，并以${performanceDirection(input.lines[active.lineIndex].speaker)}推进表演；其他角色保持视线和无声反应连续`
+          ? `${input.lines[active.lineIndex].speaker}持续当前无声说话表演，并以${performanceDirection(input.lines[active.lineIndex].speaker)}推进表演；其他角色保持视线和无声反应连续`
           : `${input.lines[active.lineIndex].speaker}在内心独白中保持闭口，以${performanceDirection(input.lines[active.lineIndex].speaker)}呈现思绪变化；所有人物均不得做口型`
         : "对白间隙，人物不能冻结或回到默认中性状态；延续上一拍的呼吸、视线、表情余韵和重心，并对刚发生的动作保持无声反应";
       return `${second}-${second + 1}s | ${action} | 镜头保持同侧轴线并做轻微稳定推进`;
@@ -944,15 +952,17 @@ export function dialogueVideoPrompt(input: {
         ]
       : []),
     "表演硬约束：除非逐角色指导明确要求面无表情，否则禁止全程中性脸、僵硬凝视、机械站立或只动嘴不表演。角色要以视线焦点和转移、自然眨眼、呼吸深浅、眉眼嘴角、下颌张力、吞咽、手指与肩颈微动作、身体重心及与他人的无声反应，连续外化已有心理活动和潜台词。每个动作必须有动作前意图、动作中情绪阻力和动作后余韵；保持克制自然，不新增剧情动作、关系、对白或结果。",
-    "声音硬约束：只生成与场景匹配的环境声和动作音效。禁止生成任何角色声音、对白、旁白、内心独白、吟唱或其他可辨识人声。角色配音已由独立声音模型生成，将在口型与成片阶段另行合成；本视频不得代替、复述或混入角色配音。不要生成画面内字幕、文字或水印。",
-    input.playbackRate > 1
-      ? `口型时序已按正式配音调整为 ${input.playbackRate.toFixed(2)} 倍语速，仅用于无声表演同步。`
-      : "口型时序来自正式配音，仅用于无声表演同步。",
-    "无声口型与画外音时序：",
+    `声音硬约束：只生成与画面动作严格同步的空间环境声、自然氛围声和动作音效；优先按动作与环境音效时间点完成龙炎轰鸣、破空锐响、能量冲击等已设计声音，不得用无关音效填充。禁止角色声音、对白、旁白、内心独白、喊叫、吟唱或其他可辨识人声。角色配音${input.usesEstimatedTiming ? "将在" : "已由"}独立声音模型生成，并在口型与成片阶段另行合成；本视频不得代替、复述或混入角色配音。不要生成画面内字幕、文字或水印。`,
+    input.usesEstimatedTiming
+      ? `当前对白节奏根据文本预估${input.playbackRate > 1 ? `，按 ${input.playbackRate.toFixed(2)} 倍语速压缩` : ""}；本次只生成表演和口部占位，正式配音与精准口型在后续阶段完成。`
+      : input.playbackRate > 1
+        ? `表演时序已按正式配音调整为 ${input.playbackRate.toFixed(2)} 倍语速，精准口型仍在后期完成。`
+        : "表演时序来自正式配音，精准口型仍在后期完成。",
+    "对白表演与画外音时序：",
     ...timingLines,
     "逐秒表演与运镜：",
     ...secondBeats,
-    "连续性：角色身份、服装、站位、视线、光向和空间轴线前后一致；口型只跟随当前说话者，避免多人同时开口、跳帧、瞬移或动作重置；音轨始终只有环境声与动作音效。",
+    `连续性：角色身份、服装、站位、视线、光向和空间轴线前后一致；${input.usesEstimatedTiming ? "说话表演只由当前说话者承担，口部仅作自然占位，精准口型留待后期" : "说话表演只跟随当前说话者，精准口型留待后期"}，避免多人同时开口、跳帧、瞬移或动作重置；音轨只保留环境声与动作音效，不得混入可辨识人声。`,
   ].join("\n");
 }
 
@@ -1639,6 +1649,7 @@ async function findExplicitReferenceImages(input: CreateProjectImageTaskInput) {
   );
   return assets.map((asset) => ({
     url: asset.url,
+    storageKey: asset.storageKey ?? undefined,
     mimeType: asset.mimeType ?? undefined,
   }));
 }
@@ -1651,13 +1662,17 @@ async function findSelectedReferenceImages(input: CreateProjectImageTaskInput) {
         selected: true,
         imageAsset: { url: { not: null } },
       },
-      include: { imageAsset: { select: { url: true, mimeType: true } } },
+      include: { imageAsset: { select: { url: true, storageKey: true, mimeType: true } } },
       orderBy: { updatedAt: "desc" },
       take: 3,
     });
     return rows.flatMap((row) =>
       row.imageAsset?.url
-        ? [{ url: row.imageAsset.url, mimeType: row.imageAsset.mimeType ?? undefined }]
+        ? [{
+            url: row.imageAsset.url,
+            storageKey: row.imageAsset.storageKey ?? undefined,
+            mimeType: row.imageAsset.mimeType ?? undefined,
+          }]
         : [],
     );
   }
@@ -1669,13 +1684,17 @@ async function findSelectedReferenceImages(input: CreateProjectImageTaskInput) {
         selected: true,
         imageAsset: { url: { not: null } },
       },
-      include: { imageAsset: { select: { url: true, mimeType: true } } },
+      include: { imageAsset: { select: { url: true, storageKey: true, mimeType: true } } },
       orderBy: { updatedAt: "desc" },
       take: 3,
     });
     return rows.flatMap((row) =>
       row.imageAsset?.url
-        ? [{ url: row.imageAsset.url, mimeType: row.imageAsset.mimeType ?? undefined }]
+        ? [{
+            url: row.imageAsset.url,
+            storageKey: row.imageAsset.storageKey ?? undefined,
+            mimeType: row.imageAsset.mimeType ?? undefined,
+          }]
         : [],
     );
   }
@@ -1688,7 +1707,7 @@ async function findSelectedReferenceImages(input: CreateProjectImageTaskInput) {
       role: "selected",
       mediaAsset: { kind: "image", url: { not: null } },
     },
-    include: { mediaAsset: { select: { url: true, mimeType: true } } },
+    include: { mediaAsset: { select: { url: true, storageKey: true, mimeType: true } } },
     orderBy: { createdAt: "desc" },
     take: 3,
   });
@@ -1696,6 +1715,7 @@ async function findSelectedReferenceImages(input: CreateProjectImageTaskInput) {
     reference.mediaAsset.url
       ? [{
           url: reference.mediaAsset.url,
+          storageKey: reference.mediaAsset.storageKey ?? undefined,
           mimeType: reference.mediaAsset.mimeType ?? undefined,
         }]
       : [],
@@ -1708,7 +1728,11 @@ async function findStoryboardReferenceImages(input: {
   props?: string[];
   locationName: string | null;
 }) {
-  const references: Array<{ url: string; mimeType?: string }> = [];
+  const references: Array<{
+    url: string;
+    storageKey?: string;
+    mimeType?: string;
+  }> = [];
   const names = input.characters.map((name) => name.trim()).filter(Boolean);
   if (names.length) {
     const characters = await prisma.novelCharacter.findMany({
@@ -1722,7 +1746,7 @@ async function findStoryboardReferenceImages(input: {
       select: {
         appearances: {
           where: { selected: true, imageAsset: { url: { not: null } } },
-          include: { imageAsset: { select: { url: true, mimeType: true } } },
+          include: { imageAsset: { select: { url: true, storageKey: true, mimeType: true } } },
           orderBy: { updatedAt: "desc" },
           take: 1,
         },
@@ -1730,7 +1754,12 @@ async function findStoryboardReferenceImages(input: {
     });
     for (const character of characters) {
       const asset = character.appearances[0]?.imageAsset;
-      if (asset?.url) references.push({ url: asset.url, mimeType: asset.mimeType ?? undefined });
+      if (asset?.url)
+        references.push({
+          url: asset.url,
+          storageKey: asset.storageKey ?? undefined,
+          mimeType: asset.mimeType ?? undefined,
+        });
     }
   }
   if (input.locationName?.trim()) {
@@ -1739,14 +1768,19 @@ async function findStoryboardReferenceImages(input: {
       select: {
         images: {
           where: { selected: true, imageAsset: { url: { not: null } } },
-          include: { imageAsset: { select: { url: true, mimeType: true } } },
+          include: { imageAsset: { select: { url: true, storageKey: true, mimeType: true } } },
           orderBy: { updatedAt: "desc" },
           take: 1,
         },
       },
     });
     const asset = location?.images[0]?.imageAsset;
-    if (asset?.url) references.push({ url: asset.url, mimeType: asset.mimeType ?? undefined });
+    if (asset?.url)
+      references.push({
+        url: asset.url,
+        storageKey: asset.storageKey ?? undefined,
+        mimeType: asset.mimeType ?? undefined,
+      });
   }
   const propNames = input.props?.map((name) => name.trim()).filter(Boolean) ?? [];
   if (propNames.length) {
@@ -1763,13 +1797,14 @@ async function findStoryboardReferenceImages(input: {
           role: "selected",
           mediaAsset: { kind: "image", url: { not: null } },
         },
-        select: { mediaAsset: { select: { url: true, mimeType: true } } },
+        select: { mediaAsset: { select: { url: true, storageKey: true, mimeType: true } } },
       });
       for (const reference of propAssets) {
         const asset = reference.mediaAsset;
         if (asset.url)
           references.push({
             url: asset.url,
+            storageKey: asset.storageKey ?? undefined,
             mimeType: asset.mimeType ?? undefined,
           });
       }

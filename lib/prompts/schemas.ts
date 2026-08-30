@@ -589,6 +589,32 @@ export const episodeSplitSchema = z
   })
   .strict();
 
+export const voicePerformanceDesignSchema = z
+  .object({
+    speakers: z
+      .array(
+        z
+          .object({
+            speaker: text,
+            voiceProfilePrompt: z.string().trim().min(12).max(96),
+          })
+          .strict(),
+      )
+      .max(100),
+    lines: z
+      .array(
+        z
+          .object({
+            lineId: text,
+            emotionPrompt: z.string().trim().min(12).max(96),
+            emotionStrength: z.number().min(0).max(1),
+          })
+          .strict(),
+      )
+      .max(500),
+  })
+  .strict();
+
 export const episodeAdaptationSchema = z
   .object({
     title: z.string().trim().min(1).max(160),
@@ -669,6 +695,7 @@ export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
   [PROMPT_IDS.STORY_ACTING_DIRECTION]: actingDirectionSchema,
   [PROMPT_IDS.STORY_STORYBOARD_REFINEMENT]: storyboardRefinementSchema,
   [PROMPT_IDS.STORY_VOICE_ANALYSIS]: voiceAnalysisSchema,
+  [PROMPT_IDS.STORY_VOICE_PERFORMANCE_DESIGN]: voicePerformanceDesignSchema,
   [PROMPT_IDS.STORY_CONTINUITY_REVIEW]: continuityReviewSchema,
   [PROMPT_IDS.ASSET_VISUAL_EXTRACTION]: visualAssetExtractionSchema,
   [PROMPT_IDS.ASSET_VISUAL_DESIGN]: assetVisualDesignSchema,

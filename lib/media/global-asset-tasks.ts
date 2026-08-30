@@ -185,13 +185,21 @@ async function resolveReferences(
     } | null;
   }>,
 ) {
-  const references: Array<{ url: string; mimeType?: string }> = [];
+  const references: Array<{
+    url: string;
+    storageKey?: string;
+    mimeType?: string;
+  }> = [];
   for (const row of rows) {
     const url = row.asset?.storageKey
       ? await resolveStoredMediaUrl(row.asset.storageKey)
       : row.asset?.url ?? row.url;
     if (url)
-      references.push({ url, mimeType: row.asset?.mimeType ?? undefined });
+      references.push({
+        url,
+        storageKey: row.asset?.storageKey ?? undefined,
+        mimeType: row.asset?.mimeType ?? undefined,
+      });
   }
   return references;
 }

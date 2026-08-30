@@ -74,6 +74,34 @@ describe("delivery view model", () => {
     expect(subtitles[0]).toMatchObject({ start: 3, end: 5 });
   });
 
+  it("does not overlap multiple dialogue lines in one track", () => {
+    const subtitles = alignTimelineSubtitles(
+      [
+        {
+          id: "line-1",
+          lineIndex: 0,
+          speaker: "A",
+          content: "Hello",
+          matchedPanelId: "panel-2",
+          durationSeconds: 1,
+        } as never,
+        {
+          id: "line-2",
+          lineIndex: 1,
+          speaker: "B",
+          content: "World",
+          matchedPanelId: "panel-2",
+          durationSeconds: 2,
+        } as never,
+      ],
+      timeline(),
+    );
+
+    expect(subtitles[0].start).toBe(2);
+    expect(subtitles[0].end).toBe(subtitles[1].start);
+    expect(subtitles[1].end).toBe(5);
+  });
+
   it("converts the timeline to a millisecond EDL and QC report", () => {
     const result = buildPostMasterPackage({
       aspectRatio: "16:9",

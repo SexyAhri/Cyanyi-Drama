@@ -41,13 +41,36 @@ describe("storyboard video audio contract", () => {
       timings: [{ lineIndex: 0, startSeconds: 0, endSeconds: 4 }],
     });
 
-    expect(prompt).toContain("只生成与场景匹配的环境声和动作音效");
-    expect(prompt).toContain("禁止生成任何角色声音");
+    expect(prompt).toContain("只生成与画面动作严格同步的空间环境声");
+    expect(prompt).toContain("龙炎轰鸣、破空锐响、能量冲击");
+    expect(prompt).toContain("禁止角色声音、对白、旁白");
+    expect(prompt).toContain("音轨只保留环境声与动作音效");
     expect(prompt).toContain("韩宇先压住慌乱，再缓慢抬眼看向父亲");
     expect(prompt).toContain("担忧父亲却努力显得镇定");
     expect(prompt).toContain("扶床沿的手指先收紧再放松");
     expect(prompt).toContain("眉心短暂收紧，抬眼时嘴角克制");
     expect(prompt).toContain("禁止全程中性脸、僵硬凝视、机械站立");
+    expect(prompt).not.toContain("父亲，我会想办法。");
+  });
+
+  it("uses estimated dialogue timing before dubbing without claiming final lip sync", () => {
+    const prompt = dialogueVideoPrompt({
+      description: "韩宇看向父亲，准备开口。",
+      motionPrompt: "镜头稳定推近韩宇。",
+      actingDirections: [],
+      durationSeconds: 3,
+      lines: [
+        { speaker: "韩宇", content: "父亲，我会想办法。", delivery: "dialogue" },
+      ],
+      playbackRate: 1,
+      timings: [{ lineIndex: 0, startSeconds: 0, endSeconds: 3 }],
+      usesEstimatedTiming: true,
+    });
+
+    expect(prompt).toContain("按对白文本预估节奏");
+    expect(prompt).toContain("精准口型留待后期");
+    expect(prompt).toContain("角色配音将在独立声音模型生成");
+    expect(prompt).not.toContain("已生成配音");
     expect(prompt).not.toContain("父亲，我会想办法。");
   });
 

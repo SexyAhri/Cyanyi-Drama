@@ -17,6 +17,15 @@ export type EditorTimelineTrack = {
   volume: number;
 };
 
+export type TimelineSubtitleCue = {
+  id: string;
+  index: number;
+  start: number;
+  end: number;
+  speaker: string;
+  text: string;
+};
+
 export function buildSequentialTimeline(
   input: Array<{
     clipId?: string | null;
@@ -89,6 +98,53 @@ export function buildPanelSubtitleTimings(input: {
       input.trackStart + timing.endSeconds,
     ),
   }));
+}
+
+export function buildTimelineSubtitles(
+  lines: readonly {
+    id: string;
+    lineIndex: number;
+    speaker: string;
+    content: string;
+    matchedPanelId?: string | null;
+    durationSeconds?: number | null;
+  }[],
+  tracks: readonly { id: string; duration: number }[],
+): TimelineSubtitleCue[] {
+  const orderedLines = [...lines].sort(
+    (left, right) => left.lineIndex - right.lineIndex,
+  );
+  let trackStart = 0;
+  const cues: TimelineSubtitleCue[] = [];
+  for (const track of tracks) {
+    const trackDuration = normalizeDuration(track.duration);
+    const matchedLines = orderedLines.filter(
+      (line) => line.matchedPanelId === track.id && line.content.trim(),
+    );
+    if (matchedLines.length) {
+      const fallbackDuration = trackDuration / matchedLines.length;
+      const timings = buildPanelSubtitleTimings({
+        lineDurations: matchedLines.map(
+          (line) => line.durationSeconds ?? fallbackDuration,
+        ),
+        trackDuration,
+        trackStart,
+      });
+      matchedLines.forEach((line, index) =>
+        cues.push({
+          id: line.id,
+          index: line.lineIndex,
+          ...timings[index],
+          speaker: line.speaker,
+          text: line.content.trim(),
+        }),
+      );
+    }
+    trackStart += trackDuration;
+  }
+  return cues.sort(
+    (left, right) => left.start - right.start || left.index - right.index,
+  );
 }
 
 function normalizeDuration(value: unknown) {

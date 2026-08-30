@@ -1012,6 +1012,24 @@ export async function analyzeStudioVoiceLines(
   );
 }
 
+export async function designStudioVoicePerformance(
+  projectId: string,
+  episodeId: string,
+  input: { channelId: string; model: string; locale: "en" | "zh" },
+) {
+  return request<{
+    voiceLines: VoiceLineRecord[];
+    promptTrace: Record<string, unknown>;
+  }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/voice-design`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
 export async function updateStudioVoiceLine(
   projectId: string,
   episodeId: string,
@@ -1021,10 +1039,12 @@ export async function updateStudioVoiceLine(
       | "speaker"
       | "content"
       | "voicePresetId"
+      | "voiceProfilePrompt"
       | "emotionPrompt"
-       | "emotionStrength"
-       | "delivery"
-       | "matchedPanelId"
+      | "emotionStrength"
+      | "optimizeInstructions"
+      | "delivery"
+      | "matchedPanelId"
     >
   > & { lineId: string },
 ) {

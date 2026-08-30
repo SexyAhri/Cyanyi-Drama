@@ -96,6 +96,11 @@ export async function PATCH(request: Request, context: Context) {
           body.voicePresetId === null || typeof body.voicePresetId === "string"
             ? body.voicePresetId
             : undefined,
+        voiceProfilePrompt:
+          body.voiceProfilePrompt === null ||
+          typeof body.voiceProfilePrompt === "string"
+            ? body.voiceProfilePrompt
+            : undefined,
         emotionPrompt:
           body.emotionPrompt === null || typeof body.emotionPrompt === "string"
             ? body.emotionPrompt
@@ -105,6 +110,10 @@ export async function PATCH(request: Request, context: Context) {
           (typeof body.emotionStrength === "number" &&
             Number.isFinite(body.emotionStrength))
             ? body.emotionStrength
+            : undefined,
+        optimizeInstructions:
+          typeof body.optimizeInstructions === "boolean"
+            ? body.optimizeInstructions
             : undefined,
         matchedPanelId:
           body.matchedPanelId === null || typeof body.matchedPanelId === "string"

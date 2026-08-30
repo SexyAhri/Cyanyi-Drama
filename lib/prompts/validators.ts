@@ -1125,7 +1125,7 @@ function validateSourceEventCoverage(
         issue(
           `coverage.${event.eventId}.modes`,
           "SOURCE_EVENT_OMISSION_FORBIDDEN",
-          "Every source event must remain visual, dialogue, or voiceover; unfilmable exposition belongs in grounded voiceover rather than being dropped",
+          "Every source event must remain visual, dialogue, or an explicitly source-labeled voiceover; ordinary exposition must be materialized visually rather than dropped",
         ),
       );
     if (item.modes.includes("omitted") && item.modes.length > 1)
@@ -2728,6 +2728,14 @@ export function isDirectSpeechExcerpt(
   )
     return true;
 
+  if (
+    new RegExp(
+      `[^。！？!?，,：:\\s]{1,16}[^。！？!?“”"]{0,24}(?:${SPEECH_VERB_PATTERN})[^。！？!?“”"]{0,16}[：:，,]\\s*${escapedContent}`,
+      "iu",
+    ).test(sourceText)
+  )
+    return true;
+
   const escapedSpeaker = escapeRegex(speaker.trim());
   if (!escapedSpeaker) return false;
   const speechVerb = SPEECH_VERB_PATTERN;
@@ -2819,7 +2827,7 @@ function hasUninterruptedSpeakerMention(
 }
 
 const SPEECH_VERB_PATTERN =
-  "说(?:道)?|问(?:道)?|答(?:道)?|回答|回应|喊(?!一声)(?:道)?|叫(?!(?:进|到|来|住|醒|一声))(?:道)?|喝(?!一声)(?:道)?|叹(?!一声)(?:道)?|笑(?:道)?|开口|低声(?:说)?|轻声(?:说)?|安慰|劝(?:说|慰)?|安抚|鼓励|齐声|惊呼|高呼|议论|起哄|叫嚷|嘲笑|怒骂|欢呼|哄笑|窃窃私语|附和|says?|said|asks?|asked|answers?|answered|replies?|replied|shouts?|shouted|cries?|cried|calls?|called|yells?|yelled|chants?|chanted|cheers?|cheered|murmurs?|murmured|whispers?|whispered";
+  "说(?:道)?|问(?:道)?|答(?:道)?|回答|回应|解释|透露|告知|告诉|表示|补充|提醒|喊(?!一声)(?:道)?|叫(?!(?:进|到|来|住|醒|一声))(?:道)?|喝(?!一声)(?:道)?|叹(?!一声)(?:道)?|笑(?:道)?|开口|低声(?:说)?|轻声(?:说)?|安慰|劝(?:说|慰)?|安抚|鼓励|齐声|惊呼|高呼|议论|起哄|叫嚷|嘲笑|怒骂|欢呼|哄笑|窃窃私语|附和|says?|said|asks?|asked|answers?|answered|explains?|explained|reveals?|revealed|replies?|replied|shouts?|shouted|cries?|cried|calls?|called|yells?|yelled|chants?|chanted|cheers?|cheered|murmurs?|murmured|whispers?|whispered";
 
 export function isImplicitVisualBridgeAction(
   value: string,

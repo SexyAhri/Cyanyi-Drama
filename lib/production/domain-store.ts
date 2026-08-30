@@ -5,8 +5,8 @@ import {
   sanitizeCanonicalSummary,
 } from "@/lib/assets/canonical-summary";
 import {
-  buildPanelSubtitleTimings,
   buildSequentialTimeline,
+  buildTimelineSubtitles,
 } from "@/lib/production/timeline";
 import { prisma } from "@/lib/server/prisma";
 
@@ -299,8 +299,10 @@ export async function saveVoiceLines(
     speaker: string;
     content: string;
     voicePresetId?: string | null;
+    voiceProfilePrompt?: string | null;
     emotionPrompt?: string | null;
     emotionStrength?: number | null;
+    optimizeInstructions?: boolean;
     delivery?: "dialogue" | "inner_monologue" | "voiceover";
     matchedPanelId?: string | null;
   }>,
@@ -320,8 +322,10 @@ export async function saveVoiceLines(
           speaker: line.speaker.trim(),
           content: line.content.trim(),
           voicePresetId: line.voicePresetId || null,
+          voiceProfilePrompt: line.voiceProfilePrompt?.trim() || null,
           emotionPrompt: line.emotionPrompt?.trim() || null,
           emotionStrength: finiteNumber(line.emotionStrength),
+          optimizeInstructions: line.optimizeInstructions ?? true,
           delivery: line.delivery ?? "dialogue",
           matchedPanelId: line.matchedPanelId || null,
         })),
@@ -338,8 +342,10 @@ export async function updateVoiceLine(
   lineId: string,
   input: {
     content?: string;
+    voiceProfilePrompt?: string | null;
     emotionPrompt?: string | null;
     emotionStrength?: number | null;
+    optimizeInstructions?: boolean;
     delivery?: "dialogue" | "inner_monologue" | "voiceover";
     matchedPanelId?: string | null;
     speaker?: string;
@@ -393,11 +399,17 @@ export async function updateVoiceLine(
       ...(input.voicePresetId !== undefined
         ? { voicePresetId: input.voicePresetId || null }
         : {}),
+      ...(input.voiceProfilePrompt !== undefined
+        ? { voiceProfilePrompt: input.voiceProfilePrompt?.trim() || null }
+        : {}),
       ...(input.emotionPrompt !== undefined
         ? { emotionPrompt: input.emotionPrompt?.trim() || null }
         : {}),
       ...(input.emotionStrength !== undefined
         ? { emotionStrength: finiteNumber(input.emotionStrength) }
+        : {}),
+      ...(input.optimizeInstructions !== undefined
+        ? { optimizeInstructions: input.optimizeInstructions }
         : {}),
       ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
       ...(input.matchedPanelId !== undefined
@@ -551,34 +563,7 @@ export async function buildEditorTimeline(
     where: { episodeId, episode: { projectId, project: { userId } } },
     orderBy: { lineIndex: "asc" },
   });
-  const subtitleTiming = new Map<string, { start: number; end: number }>();
-  for (const track of timeline.tracks) {
-    const matchedLines = voiceLines.filter(
-      (line) => line.matchedPanelId === track.id,
-    );
-    if (!matchedLines.length) continue;
-    const fallbackDuration = track.duration / matchedLines.length;
-    const timings = buildPanelSubtitleTimings({
-      lineDurations: matchedLines.map(
-        (line) => line.durationSeconds ?? fallbackDuration,
-      ),
-      trackDuration: track.duration,
-      trackStart: track.start,
-    });
-    matchedLines.forEach((line, index) =>
-      subtitleTiming.set(line.id, timings[index]),
-    );
-  }
-  const subtitles = voiceLines.map((line, index) => {
-    const timing = subtitleTiming.get(line.id) ?? { start: 0, end: 0 };
-    return {
-      id: line.id,
-      index,
-      ...timing,
-      speaker: line.speaker,
-      text: line.content,
-    };
-  });
+  const subtitles = buildTimelineSubtitles(voiceLines, timeline.tracks);
   return saveEditorProject(
     userId,
     projectId,
@@ -596,8 +581,10 @@ function toVoiceLine(row: {
   content: string;
   voicePresetId: string | null;
   audioAssetId: string | null;
+  voiceProfilePrompt: string | null;
   emotionPrompt: string | null;
   emotionStrength: number | null;
+  optimizeInstructions: boolean;
   delivery: string;
   matchedPanelId: string | null;
   durationSeconds: number | null;
@@ -613,8 +600,10 @@ function toVoiceLine(row: {
     content: row.content,
     voicePresetId: row.voicePresetId,
     audioAssetId: row.audioAssetId,
+    voiceProfilePrompt: row.voiceProfilePrompt,
     emotionPrompt: row.emotionPrompt,
     emotionStrength: row.emotionStrength,
+    optimizeInstructions: row.optimizeInstructions,
     delivery: row.delivery,
     matchedPanelId: row.matchedPanelId,
     durationSeconds: row.durationSeconds,

@@ -6,6 +6,10 @@ import {
   AUTODL_COMFYUI_WORKFLOWS,
   autoDlModelCapabilities,
 } from "@/lib/providers/media/autodl-comfyui-workflows";
+import {
+  BAILIAN_DASHSCOPE_MODELS,
+  bailianDashScopeModelCapabilities,
+} from "@/lib/providers/media/bailian-dashscope-models";
 import { AdminRequiredError, requireAdmin } from "@/lib/server/auth";
 
 type ModelsRequestBody = {
@@ -16,7 +20,8 @@ type ModelsRequestBody = {
     | "anthropic"
     | "google-gemini"
     | "volcengine-ark"
-    | "autodl-comfyui";
+    | "autodl-comfyui"
+    | "bailian-dashscope";
 };
 
 type OpenAIModel = {
@@ -57,6 +62,17 @@ export async function POST(request: Request) {
         name: workflow.name,
         type: workflow.type,
         capabilities: autoDlModelCapabilities(workflow.id),
+        protocol,
+      })),
+    });
+  }
+
+  if (protocol === "bailian-dashscope") {
+    return Response.json({
+      models: BAILIAN_DASHSCOPE_MODELS.map((model) => ({
+        ...model,
+        modelId: model.id,
+        capabilities: bailianDashScopeModelCapabilities(model.id),
         protocol,
       })),
     });

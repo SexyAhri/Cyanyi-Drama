@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/server/auth", () => ({
   AdminRequiredError: class AdminRequiredError extends Error {},
@@ -6,6 +6,10 @@ vi.mock("@/lib/server/auth", () => ({
 }));
 
 import { POST } from "./route";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("models route", () => {
   it("returns the built-in AutoDL workflow catalog without calling a foreign endpoint", async () => {
@@ -47,5 +51,40 @@ describe("models route", () => {
         }),
       ]),
     );
+  });
+
+  it("returns the built-in Qwen-Audio Plus catalog without a paid request", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const response = await POST(
+      new Request("http://localhost/api/models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          protocol: "bailian-dashscope",
+          baseUrl:
+            "https://workspace-1.cn-beijing.maas.aliyuncs.com/api/v1",
+          apiKey: "token",
+        }),
+      }),
+    );
+    const payload = (await response.json()) as {
+      models: Array<{
+        id: string;
+        type: string;
+        protocol: string;
+        capabilities: { modalities: string[] };
+      }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(payload.models).toEqual([
+      expect.objectContaining({
+        id: "qwen-audio-3.0-tts-plus",
+        type: "audio",
+        protocol: "bailian-dashscope",
+        capabilities: expect.objectContaining({ modalities: ["audio"] }),
+      }),
+    ]);
   });
 });

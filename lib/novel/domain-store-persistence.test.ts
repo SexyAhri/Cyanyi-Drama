@@ -43,7 +43,21 @@ beforeEach(() => {
       clipPanelIndex: 0,
       panelIndex: 4,
       imagePrompt: "人工确认的旧图片提示词",
+      videoPrompt: "人工确认的旧视频提示词",
+      firstLastFramePrompt: "人工确认的首尾帧提示词",
       imageAssetId: "image-asset-1",
+      imagePromptDesignJson: JSON.stringify({
+        designNotes: ["旧设计重点"],
+        continuitySafeguards: ["旧连续性"],
+      }),
+      videoPromptDesignJson: JSON.stringify({
+        designNotes: ["旧视频设计重点"],
+        continuitySafeguards: ["旧视频连续性"],
+      }),
+      firstLastFramePromptDesignJson: JSON.stringify({
+        designNotes: ["旧首尾帧设计重点"],
+        continuitySafeguards: ["旧首尾帧连续性"],
+      }),
     },
   ]);
   storyboardPanelUpdateMany.mockResolvedValue({ count: 1 });
@@ -134,6 +148,80 @@ describe("storyboard persistence", () => {
     );
   });
 
+  it("persists prompt design details with their matching media mode", async () => {
+    await saveStoryboard("user-1", "project-1", "episode-1", {
+      status: "ready",
+      panels: [
+        {
+          clipId: "clip-1",
+          clipPanelIndex: 0,
+          panelIndex: 0,
+          imagePromptDesign: {
+            designNotes: ["  锁定手部发力  "],
+            continuitySafeguards: ["韩宇站位保持画左"],
+          },
+        },
+      ],
+    });
+
+    expect(storyboardPanelUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          imagePromptDesignJson: JSON.stringify({
+            designNotes: ["锁定手部发力"],
+            continuitySafeguards: ["韩宇站位保持画左"],
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("returns persisted design details as structured panel data", async () => {
+    const result = await saveStoryboard("user-1", "project-1", "episode-1", {
+      status: "ready",
+      panels: [
+        {
+          clipId: "clip-1",
+          clipPanelIndex: 0,
+          panelIndex: 0,
+        },
+      ],
+    });
+
+    expect(result?.panels[0]?.videoPromptDesign).toEqual({
+      designNotes: ["视频设计重点"],
+      continuitySafeguards: ["视频连续性"],
+    });
+  });
+
+  it("preserves saved design details when a workflow rerun omits them", async () => {
+    await saveStoryboard("user-1", "project-1", "episode-1", {
+      status: "ready",
+      preserveImagePrompts: true,
+      panels: [
+        {
+          clipId: "clip-1",
+          clipPanelIndex: 0,
+          panelIndex: 0,
+          imagePrompt: "模型重新生成的提示词",
+        },
+      ],
+    });
+
+    expect(storyboardPanelUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          videoPrompt: "人工确认的旧视频提示词",
+          firstLastFramePrompt: "人工确认的首尾帧提示词",
+          imagePromptDesignJson: JSON.stringify({
+            designNotes: ["旧设计重点"],
+            continuitySafeguards: ["旧连续性"],
+          }),
+        }),
+      }),
+    );
+  });
+
   it("rejects a clip outside the current episode", async () => {
     storyClipCount.mockResolvedValue(0);
 
@@ -178,6 +266,12 @@ function storyboardRow() {
         propsJson: null,
         imagePrompt: null,
         videoPrompt: null,
+        imagePromptDesignJson: null,
+        videoPromptDesignJson: JSON.stringify({
+          designNotes: ["视频设计重点"],
+          continuitySafeguards: ["视频连续性"],
+        }),
+        firstLastFramePromptDesignJson: null,
         phase: "continuity",
         status: "ready",
         srtStart: null,

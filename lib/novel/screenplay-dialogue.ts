@@ -13,10 +13,41 @@ type ScreenplayContent = ScreenplayConversion["scenes"][number]["content"][numbe
 export function normalizeScreenplayDialogue(
   screenplay: ScreenplayConversion,
 ): ScreenplayConversion {
+  const generatedNarration = screenplay.scenes.flatMap((scene) =>
+    scene.content.flatMap((content) =>
+      content.type === "voiceover" &&
+      content.character === null &&
+      !isExplicitNarratorVoiceover(content.text, screenplay.originalText)
+        ? [content.text]
+        : [],
+    ),
+  );
   return {
     ...screenplay,
+    coverage: screenplay.coverage?.map((item) => ({
+      ...item,
+      modes: Array.from(
+        new Set(
+          item.modes.map((mode) =>
+            mode === "voiceover" &&
+            generatedNarration.some((text) =>
+              eventTextsReferToEachOther(text, item.evidence),
+            )
+              ? generatedNarration.some(
+                  (text) =>
+                    eventTextsReferToEachOther(text, item.evidence) &&
+                    isAttributedSpeechExcerpt(text, screenplay.originalText),
+                )
+                ? ("dialogue" as const)
+                : ("visual" as const)
+              : mode,
+          ),
+        ),
+      ),
+    })),
     scenes: screenplay.scenes.map((scene) => {
       let mostRecentActor: string | undefined;
+      let mostRecentSpeaker: string | undefined;
       return {
         ...scene,
         content: scene.content.flatMap((content) => {
@@ -27,9 +58,41 @@ export function normalizeScreenplayDialogue(
             content.character,
             screenplay.originalText,
           );
+        if (content.type === "dialogue" && !unspokenDialogue)
+          mostRecentSpeaker = content.character;
+        const generatedNarratorVoiceover =
+          content.type === "voiceover" &&
+          content.character === null &&
+          !isExplicitNarratorVoiceover(content.text, screenplay.originalText);
+        const recoveredSpeaker =
+          generatedNarratorVoiceover && content.type === "voiceover"
+            ? inferAttributedSpeechSpeaker(
+                content.text,
+                screenplay.originalText,
+                scene.characters,
+                mostRecentSpeaker,
+              )
+            : undefined;
         const candidate = unspokenDialogue
-          ? ({ type: "action" as const, text: content.lines } satisfies ScreenplayContent)
-          : content;
+          ? ({
+              type: "action" as const,
+              text: content.lines,
+            } satisfies ScreenplayContent)
+          : recoveredSpeaker && content.type === "voiceover"
+            ? ({
+                type: "dialogue" as const,
+                character: recoveredSpeaker,
+                parenthetical: null,
+                lines: content.text,
+              } satisfies ScreenplayContent)
+            : generatedNarratorVoiceover && content.type === "voiceover"
+              ? ({
+                  type: "action" as const,
+                  text: content.text,
+                } satisfies ScreenplayContent)
+              : content;
+        if (candidate.type === "dialogue")
+          mostRecentSpeaker = candidate.character;
         const resolvedContent =
           candidate.type === "action" &&
           candidate.origin === undefined &&
@@ -94,6 +157,88 @@ export function normalizeScreenplayDialogue(
     }),
   };
 }
+
+export function isExplicitNarratorVoiceover(
+  content: string,
+  sourceText: string,
+) {
+  const trimmed = content.trim();
+  if (!trimmed) return false;
+  let cursor = 0;
+  while (cursor < sourceText.length) {
+    const index = sourceText.indexOf(trimmed, cursor);
+    if (index < 0) return false;
+    const prefix = sourceText.slice(Math.max(0, index - 80), index);
+    if (
+      /(?:旁白|画外音|旁述|解说|narrator|voice[- ]?over|v\.?\s*o\.?)[^。！？!?\n]{0,24}[：:]\s*[“"]?\s*$/iu.test(
+        prefix,
+      )
+    )
+      return true;
+    cursor = index + trimmed.length;
+  }
+  return false;
+}
+
+function eventTextsReferToEachOther(left: string, right: string) {
+  const normalizedLeft = left.replace(/[\p{P}\p{S}\s]/gu, "");
+  const normalizedRight = right.replace(/[\p{P}\p{S}\s]/gu, "");
+  return (
+    Boolean(normalizedLeft) &&
+    Boolean(normalizedRight) &&
+    (normalizedLeft.includes(normalizedRight) ||
+      normalizedRight.includes(normalizedLeft))
+  );
+}
+
+function inferAttributedSpeechSpeaker(
+  content: string,
+  sourceText: string,
+  characters: readonly string[],
+  mostRecentSpeaker?: string,
+) {
+  const prefix = attributedSpeechPrefix(content, sourceText);
+  if (!prefix) return undefined;
+  const named = lastMentionedCharacter(prefix, characters);
+  if (named) return named;
+  if (
+    /(?:父亲|母亲|师父|老师|长老|族长|哥哥|姐姐|弟弟|妹妹|father|mother|teacher)/iu.test(
+      prefix,
+    )
+  )
+    return mostRecentSpeaker ??
+      (characters.length === 1 ? characters[0] : undefined);
+  return undefined;
+}
+
+function isAttributedSpeechExcerpt(content: string, sourceText: string) {
+  return Boolean(attributedSpeechPrefix(content, sourceText));
+}
+
+function attributedSpeechPrefix(content: string, sourceText: string) {
+  const trimmed = content.trim();
+  let cursor = 0;
+  while (trimmed && cursor < sourceText.length) {
+    const index = sourceText.indexOf(trimmed, cursor);
+    if (index < 0) return undefined;
+    const window = sourceText.slice(Math.max(0, index - 64), index);
+    const boundary = Math.max(
+      window.lastIndexOf("。"),
+      window.lastIndexOf("！"),
+      window.lastIndexOf("？"),
+      window.lastIndexOf("!"),
+      window.lastIndexOf("?"),
+      window.lastIndexOf("\n"),
+    );
+    const prefix = window.slice(boundary + 1);
+    if (ATTRIBUTED_SPEECH_END_PATTERN.test(prefix)) return prefix;
+    cursor = index + trimmed.length;
+  }
+  return undefined;
+}
+
+const ATTRIBUTED_SPEECH_END_PATTERN =
+  /(?:说(?:道)?|问(?:道)?|答(?:道)?|回答|回应|解释|透露|告知|告诉|表示|补充|提醒|安慰|劝(?:说|慰)?|says?|said|asks?|asked|answers?|answered|explains?|explained|reveals?|revealed)[^。！？!?\n]{0,16}[：:，,]\s*$/iu;
 
 function findBestSourceEvidence(value: string, sourceText: string) {
   const valueBigrams = new Set(chineseBigrams(value));

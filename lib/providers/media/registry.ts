@@ -6,6 +6,7 @@ import {
 } from "@/lib/providers/lipsync";
 
 import { autoDlComfyUiMediaProvider } from "./autodl-comfyui";
+import { bailianDashScopeMediaProvider } from "./bailian-dashscope";
 import { openAiCompatibleMediaProvider } from "./openai-compatible";
 import type {
   GenerateProviderLipSyncInput,
@@ -18,12 +19,14 @@ const providers: Partial<Record<ChannelProtocol, MediaProviderAdapter>> = {
   "openai-compatible": openAiCompatibleMediaProvider,
   "volcengine-ark": volcengineArkMediaProvider,
   "autodl-comfyui": autoDlComfyUiMediaProvider,
+  "bailian-dashscope": bailianDashScopeMediaProvider,
 };
 
 export const MEDIA_CHANNEL_PROTOCOLS: ChannelProtocol[] = [
   "openai-compatible",
   "volcengine-ark",
   "autodl-comfyui",
+  "bailian-dashscope",
 ];
 
 export function isMediaChannelProtocol(

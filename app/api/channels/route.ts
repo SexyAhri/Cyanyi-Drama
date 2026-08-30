@@ -348,7 +348,8 @@ function normalizeProtocol(value: string): ChannelProtocol {
     value === "anthropic" ||
     value === "google-gemini" ||
     value === "volcengine-ark" ||
-    value === "autodl-comfyui"
+    value === "autodl-comfyui" ||
+    value === "bailian-dashscope"
   ) {
     return value;
   }
@@ -358,6 +359,7 @@ function normalizeProtocol(value: string): ChannelProtocol {
 function providerKeyForProtocol(protocol?: string) {
   if (protocol === "volcengine-ark") return "volcengine-ark";
   if (protocol === "autodl-comfyui") return "autodl";
+  if (protocol === "bailian-dashscope") return "alibaba-bailian";
   return "custom";
 }
 

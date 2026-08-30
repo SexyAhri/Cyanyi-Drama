@@ -8,12 +8,14 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  ZoomIn,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Tooltip,
   TooltipContent,
@@ -55,6 +57,10 @@ import { TimelineEditor } from "./timeline-editor";
 const copy = {
   "zh-CN": {
     title: "时间线与交付",
+    timelineTab: "时间线编辑",
+    postTab: "后期母版",
+    timelineDuration: "成片时长",
+    timelineZoom: "时间线缩放",
     build: "生成时间线",
     rebuild: "重建时间线",
     save: "保存时间线",
@@ -67,6 +73,13 @@ const copy = {
     noTimelineDetail: "完成分镜和镜头素材后，生成可编辑的交付时间线。",
     noPreview: "当前镜头没有可预览素材",
     preview: "镜头预览",
+    review: "镜头检查",
+    shot: "镜头",
+    range: "时间范围",
+    media: "媒体类型",
+    transition: "过渡",
+    cut: "直接切换",
+    fade: "淡入淡出",
     subtitles: "字幕预览",
     noSubtitles: "没有关联到当前镜头的字幕",
     output: "成片",
@@ -82,6 +95,10 @@ const copy = {
   },
   en: {
     title: "Timeline and delivery",
+    timelineTab: "Timeline edit",
+    postTab: "Post master",
+    timelineDuration: "Duration",
+    timelineZoom: "Timeline zoom",
     build: "Build timeline",
     rebuild: "Rebuild timeline",
     save: "Save timeline",
@@ -95,6 +112,13 @@ const copy = {
       "Build an editable delivery timeline after storyboard media is ready.",
     noPreview: "No preview media for this shot",
     preview: "Shot preview",
+    review: "Shot inspector",
+    shot: "Shot",
+    range: "Time range",
+    media: "Media type",
+    transition: "Transition",
+    cut: "Cut",
+    fade: "Fade in/out",
     subtitles: "Subtitle preview",
     noSubtitles: "No subtitles linked to this shot",
     output: "Final video",
@@ -142,6 +166,8 @@ export function DeliveryWorkspace({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [busyTaskId, setBusyTaskId] = useState("");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState("timeline");
+  const [pixelsPerSecond, setPixelsPerSecond] = useState(32);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -319,7 +345,7 @@ export function DeliveryWorkspace({
     : [];
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-7 sm:py-7">
+    <div className="mx-auto w-full max-w-[1600px] px-4 py-5 sm:px-6 sm:py-7 lg:px-8">
       <header className="flex flex-col gap-4 border-b pb-5 2xl:flex-row 2xl:items-end 2xl:justify-between">
         <div className="min-w-0">
           <p className="truncate text-xs text-muted-foreground">
@@ -386,96 +412,173 @@ export function DeliveryWorkspace({
           </h2>
           <p className="max-w-md text-sm leading-6">{text.noTimelineDetail}</p>
         </div>
-      ) : timeline ? (
-        <div className="border-b">
-          <TimelineEditor
-            locale={locale}
-            onChange={setTimeline}
-            onSelect={setSelectedTrackId}
-            selectedTrackId={selectedTrack?.id ?? ""}
-            subtitles={subtitles}
-            timeline={timeline}
-          />
-          <section className="mx-auto min-w-0 max-w-5xl p-4 sm:p-6">
-            <h2 className="mb-2 text-sm font-semibold">{text.preview}</h2>
-            <div className="overflow-hidden rounded-md border bg-muted/30">
-              <AspectRatio ratio={16 / 9}>
-                {previewAsset?.url && previewAsset.kind === "image" ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    alt={text.preview}
-                    className="size-full object-contain"
-                    src={previewAsset.url}
+      ) : timeline && data ? (
+        <Tabs
+          className="gap-0"
+          onValueChange={setActiveWorkspaceTab}
+          value={activeWorkspaceTab}
+        >
+          <div className="flex min-h-11 flex-wrap items-center gap-4 border-b text-xs">
+            <TabsList
+              aria-label={text.title}
+              className="h-11 max-w-full shrink-0 justify-start gap-5 overflow-x-auto px-1"
+              variant="line"
+            >
+              <TabsTrigger className="px-2" value="timeline">
+                {text.timelineTab}
+              </TabsTrigger>
+              <TabsTrigger className="px-2" value="post">
+                {text.postTab}
+              </TabsTrigger>
+            </TabsList>
+            {activeWorkspaceTab === "timeline" ? (
+              <div className="ml-auto flex items-center gap-5">
+                <span className="font-semibold">
+                  {text.timelineDuration} · {timeline.duration.toFixed(1)} {text.seconds}
+                </span>
+                <label className="flex items-center gap-2 text-muted-foreground">
+                  <ZoomIn className="size-3.5" />
+                  <span className="sr-only">{text.timelineZoom}</span>
+                  <input
+                    aria-label={text.timelineZoom}
+                    className="w-28 accent-foreground"
+                    max={64}
+                    min={18}
+                    onChange={(event) => setPixelsPerSecond(Number(event.target.value))}
+                    step={2}
+                    type="range"
+                    value={pixelsPerSecond}
                   />
-                ) : previewAsset?.url ? (
-                  <video
-                    className="size-full object-contain"
-                    controls
-                    preload="metadata"
-                    src={previewAsset.url}
-                  />
-                ) : (
-                  <div className="flex size-full items-center justify-center text-sm text-muted-foreground">
-                    {text.noPreview}
+                </label>
+              </div>
+            ) : null}
+          </div>
+
+          <TabsContent className="min-w-0" keepMounted value="timeline">
+            <div className="border-b">
+              <TimelineEditor
+                locale={locale}
+                onChange={setTimeline}
+                onSelect={setSelectedTrackId}
+                pixelsPerSecond={pixelsPerSecond}
+                selectedTrackId={selectedTrack?.id ?? ""}
+                subtitles={subtitles}
+                timeline={timeline}
+              />
+              <div className="grid min-w-0 2xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.8fr)]">
+                <section className="min-w-0 py-5 2xl:pr-6">
+                  <h2 className="mb-2 text-sm font-semibold">{text.preview}</h2>
+                  <div className="overflow-hidden rounded-md border bg-muted/30">
+                    <AspectRatio ratio={16 / 9}>
+                      {previewAsset?.url && previewAsset.kind === "image" ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          alt={text.preview}
+                          className="size-full object-contain"
+                          src={previewAsset.url}
+                        />
+                      ) : previewAsset?.url ? (
+                        <video
+                          className="size-full object-contain"
+                          controls
+                          preload="metadata"
+                          src={previewAsset.url}
+                        />
+                      ) : (
+                        <div className="flex size-full items-center justify-center text-sm text-muted-foreground">
+                          {text.noPreview}
+                        </div>
+                      )}
+                    </AspectRatio>
                   </div>
-                )}
-              </AspectRatio>
-            </div>
+                </section>
 
-            <section className="mt-5 border-t pt-5">
-              <h2 className="text-sm font-semibold">{text.subtitles}</h2>
-              {selectedSubtitles.length ? (
-                <div className="mt-2 divide-y border-y">
-                  {selectedSubtitles.map((subtitle) => (
-                    <div
-                      className="grid gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)]"
-                      key={subtitle.id}
-                    >
-                      <span className="text-xs font-medium">
-                        {subtitle.speaker}
-                      </span>
-                      <p className="text-sm leading-6 text-muted-foreground">
-                        {subtitle.text}
+                <aside className="min-w-0 border-t py-5 2xl:border-t-0 2xl:border-l 2xl:pl-6">
+                  <h2 className="text-sm font-semibold">{text.review}</h2>
+                  {selectedTrack ? (
+                    <dl className="mt-2 grid grid-cols-2 border-y text-sm">
+                      <div className="border-b py-3 pr-3">
+                        <dt className="text-xs text-muted-foreground">{text.shot}</dt>
+                        <dd className="mt-1 font-mono font-medium">
+                          {String(selectedTrack.shotIndex + 1).padStart(2, "0")}
+                        </dd>
+                      </div>
+                      <div className="border-b border-l py-3 pl-3">
+                        <dt className="text-xs text-muted-foreground">{text.range}</dt>
+                        <dd className="mt-1 font-mono font-medium">
+                          {selectedTrack.start.toFixed(1)}–{selectedTrack.end.toFixed(1)}s
+                        </dd>
+                      </div>
+                      <div className="py-3 pr-3">
+                        <dt className="text-xs text-muted-foreground">{text.media}</dt>
+                        <dd className="mt-1 font-medium">{selectedTrack.type}</dd>
+                      </div>
+                      <div className="border-l py-3 pl-3">
+                        <dt className="text-xs text-muted-foreground">{text.transition}</dt>
+                        <dd className="mt-1 font-medium">
+                          {selectedTrack.transition === "fade" ? text.fade : text.cut}
+                        </dd>
+                      </div>
+                    </dl>
+                  ) : null}
+
+                  <section className="mt-5">
+                    <h3 className="text-sm font-semibold">{text.subtitles}</h3>
+                    {selectedSubtitles.length ? (
+                      <div className="mt-2 divide-y border-y">
+                        {selectedSubtitles.map((subtitle) => (
+                          <div className="py-3" key={subtitle.id}>
+                            <span className="text-xs font-medium">
+                              {subtitle.speaker}
+                            </span>
+                            <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                              {subtitle.text}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-2 border-y py-4 text-sm text-muted-foreground">
+                        {text.noSubtitles}
                       </p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="mt-2 border-y py-4 text-sm text-muted-foreground">
-                  {text.noSubtitles}
-                </p>
-              )}
-            </section>
-          </section>
-        </div>
-      ) : null}
+                    )}
+                  </section>
+                </aside>
+              </div>
+            </div>
+          </TabsContent>
 
-      {data && timeline ? (
-        <PostMasterPanel
-          aspectRatio={snapshot.project.config.videoRatio}
-          catalog={data.deliverables}
-          episodeId={episode.id}
-          episodeName={episode.name}
-          frameRate={24}
-          language={locale === "en" ? "en" : "zh-CN"}
-          locale={locale}
-          onCompleted={refreshAll}
-          projectId={projectId}
-          resolution={snapshot.project.config.videoResolution}
-          subtitles={subtitles}
-          timeline={timeline}
-        />
-      ) : null}
-
-      {data ? (
-        <OutputPreview
-          assets={data.assets}
-          busyTaskId={busyTaskId}
-          editor={data.production.editorProject}
-          locale={locale}
-          onTaskAction={controlTask}
-          task={renderTask}
-        />
+          <TabsContent className="min-w-0" keepMounted value="post">
+            <div className="grid min-w-0 border-b 2xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.75fr)]">
+              <div className="min-w-0 2xl:pr-6">
+                <PostMasterPanel
+                  aspectRatio={snapshot.project.config.videoRatio}
+                  catalog={data.deliverables}
+                  episodeId={episode.id}
+                  episodeName={episode.name}
+                  frameRate={24}
+                  language={locale === "en" ? "en" : "zh-CN"}
+                  locale={locale}
+                  onCompleted={refreshAll}
+                  projectId={projectId}
+                  resolution={snapshot.project.config.videoResolution}
+                  subtitles={subtitles}
+                  timeline={timeline}
+                />
+              </div>
+              <div className="min-w-0 border-t 2xl:border-t-0 2xl:border-l 2xl:pl-6">
+                <OutputPreview
+                  assets={data.assets}
+                  busyTaskId={busyTaskId}
+                  editor={data.production.editorProject}
+                  locale={locale}
+                  onTaskAction={controlTask}
+                  task={renderTask}
+                />
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
       ) : null}
     </div>
   );
@@ -507,7 +610,7 @@ function OutputPreview({
     <section className="py-5">
       <h2 className="mb-2 text-sm font-semibold">{text.output}</h2>
       <figure className="overflow-hidden rounded-md border bg-card">
-        <div className="mx-auto max-w-4xl bg-muted/30">
+        <div className="bg-muted/30">
           <AspectRatio ratio={16 / 9}>
             {url ? (
               <video

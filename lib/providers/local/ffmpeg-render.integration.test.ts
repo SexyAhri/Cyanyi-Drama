@@ -78,6 +78,9 @@ describe("ffmpeg timeline render", () => {
             },
           ],
           audioUrl: `data:audio/wav;base64,${audio.toString("base64")}`,
+          subtitles: [
+            { start: 0.1, end: 1, text: "Subtitle render check" },
+          ],
         });
         const output = Buffer.from(rendered.dataUrl.split(",")[1], "base64");
         expect(output.byteLength).toBeGreaterThan(1000);

@@ -60,6 +60,11 @@ export type StoryboardRecord = {
   updatedAt: string;
 };
 
+export type StoryboardPromptDesignDetails = {
+  designNotes: string[];
+  continuitySafeguards: string[];
+};
+
 export type StoryboardPanelRecord = {
   id: string;
   storyboardId: string;
@@ -75,6 +80,9 @@ export type StoryboardPanelRecord = {
   props: string[];
   imagePrompt: string | null;
   videoPrompt: string | null;
+  imagePromptDesign?: StoryboardPromptDesignDetails | null;
+  videoPromptDesign?: StoryboardPromptDesignDetails | null;
+  firstLastFramePromptDesign?: StoryboardPromptDesignDetails | null;
   phase?: string;
   status?: string;
   srtStart?: number | null;

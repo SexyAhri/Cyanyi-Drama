@@ -256,6 +256,7 @@ export function ShotsWorkspace({
   }
 
   async function savePromptDesign(mediaKind: ShotMediaKind, input: {
+    details: NonNullable<StudioStoryboardPanel["imagePromptDesign"]> | null;
     mode: "reference" | "first-last";
     prompt: string;
   }) {
@@ -265,10 +266,19 @@ export function ShotsWorkspace({
         ? {
             ...panel,
             ...(mediaKind === "image"
-              ? { imagePrompt: input.prompt }
+              ? {
+                  imagePrompt: input.prompt,
+                  imagePromptDesign: input.details,
+                }
               : input.mode === "first-last"
-                ? { firstLastFramePrompt: input.prompt }
-                : { videoPrompt: input.prompt }),
+                ? {
+                    firstLastFramePrompt: input.prompt,
+                    firstLastFramePromptDesign: input.details,
+                  }
+                : {
+                    videoPrompt: input.prompt,
+                    videoPromptDesign: input.details,
+                  }),
           }
         : panel,
     );

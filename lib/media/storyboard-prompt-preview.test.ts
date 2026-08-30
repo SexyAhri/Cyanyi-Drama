@@ -92,7 +92,7 @@ describe("storyboard prompt preview", () => {
     );
   });
 
-  it("reports missing video references and dialogue audio without creating a task", async () => {
+  it("blocks missing video references but defers dialogue audio to post-production", async () => {
     mocks.voiceLineFindMany.mockResolvedValue([
       {
         speaker: "林玄",
@@ -114,11 +114,20 @@ describe("storyboard prompt preview", () => {
 
     expect(preview.issues.map((issue) => issue.code)).toEqual([
       "missing_reference_frame",
-      "missing_dialogue_audio",
+      "dialogue_audio_pending",
     ]);
+    expect(preview.issues).toContainEqual(
+      expect.objectContaining({
+        blocking: false,
+        code: "dialogue_audio_pending",
+      }),
+    );
     expect(preview.sources).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ key: "dialogue_timing" }),
+        expect.objectContaining({
+          key: "dialogue_timing",
+          value: expect.stringContaining("文本预估"),
+        }),
       ]),
     );
     expect(preview.compiledPrompt).toContain("动作时间线");
@@ -127,6 +136,8 @@ describe("storyboard prompt preview", () => {
     expect(preview.compiledPrompt).toContain("稳住呼吸再判断来袭方向");
     expect(preview.compiledPrompt).toContain("摄影机位与构图规则");
     expect(preview.compiledPrompt).toContain("保持林玄与来袭方向同框");
+    expect(preview.compiledPrompt).toContain("精准口型留待后期");
+    expect(preview.compiledPrompt).not.toContain("角色配音已由独立声音模型生成");
   });
 });
 

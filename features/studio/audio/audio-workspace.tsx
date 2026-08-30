@@ -17,11 +17,11 @@ import { toast } from "sonner";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import {
   NativeSelect,
   NativeSelectOption,
 } from "@/components/ui/native-select";
+import { Slider } from "@/components/ui/slider";
 import {
   SuggestedInput,
   type SuggestedInputOption,
@@ -40,6 +40,7 @@ import {
   analyzeStudioVoiceLines,
   controlStudioMediaTask,
   createStudioVoicePreset,
+  designStudioVoicePerformance,
   generateStudioLipSync,
   generateStudioVoiceLine,
   generateStudioVoiceLineBatch,
@@ -79,32 +80,43 @@ const copy = {
     title: "对白与声音后期",
     analyze: "分析台词",
     reanalyze: "重新分析台词",
+    designVoices: "AI 配音设计",
+    redesignVoices: "AI 重新设计配音",
+    aiDialogueTools: "AI台词处理",
     analysisModel: "分析模型",
-    audioModel: "后期替换配音模型",
+    textAnalysisModel: "文本分析模型",
+    audioModel: "配音模型",
     lipModel: "口型模型",
+    dialogueInfoTab: "台词信息",
+    voiceDesignTab: "配音设计",
+    outputTab: "生成结果",
     noLines: "还没有台词",
-    noLinesDetail: "从当前剧本提取直接对白后，可在这里校对并按需替换配音。",
-    noAudioModel: "没有可用的后期替换配音模型",
+    noLinesDetail: "从当前剧本提取直接对白后，可在这里校对并设计、生成配音。",
+    noAudioModel: "没有可用的配音模型",
     lines: "台词",
     selected: "已选择",
-    generateSelected: "生成替换配音",
+    generateSelected: "生成配音",
     retryFailed: "重试失败项",
-    merge: "合并替换配音",
+    merge: "合并配音",
     speaker: "角色",
     content: "台词内容",
     voice: "音色",
-    noVoice: "自动（后期配音模型默认）",
-    dialogueTab: "对白校对与替换",
+    noVoice: "自动（配音模型默认）",
+    dialogueTab: "台词与配音",
     soundPostTab: "声音后期",
     episodeMixTab: "整集音轨",
     speakerSuggestions: "分镜角色",
     panel: "关联镜头",
     noPanel: "未关联镜头",
-    emotion: "情绪提示",
+    voiceProfile: "角色声线",
+    voiceProfileDetail: "声线描述",
+    linePerformance: "逐句表演",
+    emotion: "表演指令",
     strength: "情绪强度",
+    optimizeInstructions: "让 Qwen Plus 自动优化表演指令",
     save: "保存台词",
-    generate: "生成替换配音",
-    audioPreview: "替换配音预览",
+    generate: "生成配音",
+    audioPreview: "配音预览",
     noAudio: "尚未生成语音",
     mergedAudio: "整集音轨",
     noMergedAudio: "尚未合并整集音轨",
@@ -118,6 +130,7 @@ const copy = {
     loadFailed: "声音数据载入失败",
     saved: "台词已保存",
     submitted: "任务已提交",
+    designed: "配音设计已更新",
     created: "音色已创建",
     tasksRetried: "已重试 {count} 个失败任务",
     actionFailed: "操作失败",
@@ -126,33 +139,44 @@ const copy = {
     title: "Dialogue and sound post",
     analyze: "Analyze dialogue",
     reanalyze: "Analyze again",
+    designVoices: "AI voice design",
+    redesignVoices: "AI voice redesign",
+    aiDialogueTools: "AI dialogue tools",
     analysisModel: "Analysis model",
-    audioModel: "Replacement speech model",
+    textAnalysisModel: "Text analysis model",
+    audioModel: "Speech model",
     lipModel: "Lip sync model",
+    dialogueInfoTab: "Dialogue",
+    voiceDesignTab: "Voice design",
+    outputTab: "Output",
     noLines: "No dialogue yet",
     noLinesDetail:
-      "Extract direct dialogue from the current script, then review it and replace speech only when needed.",
-    noAudioModel: "No replacement speech model is available",
+      "Extract direct dialogue from the current script, then review, design, and generate speech here.",
+    noAudioModel: "No speech model is available",
     lines: "Dialogue",
     selected: "selected",
-    generateSelected: "Generate replacements",
+    generateSelected: "Generate speech",
     retryFailed: "Retry failed",
-    merge: "Merge replacements",
+    merge: "Merge speech",
     speaker: "Speaker",
     content: "Dialogue",
     voice: "Voice",
-    noVoice: "Auto (replacement model default)",
-    dialogueTab: "Dialogue review",
+    noVoice: "Auto (speech model default)",
+    dialogueTab: "Dialogue and speech",
     soundPostTab: "Sound post",
     episodeMixTab: "Episode mix",
     speakerSuggestions: "Storyboard cast",
     panel: "Linked shot",
     noPanel: "No linked shot",
-    emotion: "Emotion",
+    voiceProfile: "Character voice",
+    voiceProfileDetail: "Voice description",
+    linePerformance: "Line performance",
+    emotion: "Performance direction",
     strength: "Emotion strength",
+    optimizeInstructions: "Let Qwen Plus optimize the performance direction",
     save: "Save dialogue",
-    generate: "Generate replacement",
-    audioPreview: "Replacement preview",
+    generate: "Generate speech",
+    audioPreview: "Speech preview",
     noAudio: "No speech generated",
     mergedAudio: "Episode mix",
     noMergedAudio: "No episode mix yet",
@@ -166,6 +190,7 @@ const copy = {
     loadFailed: "Unable to load audio data",
     saved: "Dialogue saved",
     submitted: "Task submitted",
+    designed: "Voice design updated",
     created: "Voice created",
     tasksRetried: "Retried {count} failed tasks",
     actionFailed: "Action failed",
@@ -179,6 +204,8 @@ type AudioData = {
   storyboard: StudioStoryboardData;
   assets: ProjectMediaAsset[];
 };
+
+type HeaderAction = "analyze" | "design" | null;
 
 export function AudioWorkspace({
   analysisModels,
@@ -205,6 +232,8 @@ export function AudioWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [busyHeaderAction, setBusyHeaderAction] =
+    useState<HeaderAction>(null);
   const [busyTaskId, setBusyTaskId] = useState("");
   const [selectedLineId, setSelectedLineId] = useState("");
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
@@ -294,6 +323,8 @@ export function AudioWorkspace({
   const tasks = snapshot.tasks.filter((task) => task.episodeId === episode.id);
   const selectedLine =
     lines.find((line) => line.id === selectedLineId) ?? lines[0];
+  const allChecked =
+    lines.length > 0 && lines.every((line) => checkedIds.includes(line.id));
 
   useEffect(() => {
     onContextChange(
@@ -318,8 +349,13 @@ export function AudioWorkspace({
     await Promise.all([load(), onRefresh()]);
   }
 
-  async function run(action: () => Promise<unknown>, success: string) {
+  async function run(
+    action: () => Promise<unknown>,
+    success: string,
+    headerAction: HeaderAction = null,
+  ) {
     setBusy(true);
+    setBusyHeaderAction(headerAction);
     try {
       await action();
       toast.success(success);
@@ -332,6 +368,7 @@ export function AudioWorkspace({
       );
     } finally {
       setBusy(false);
+      setBusyHeaderAction(null);
     }
   }
 
@@ -346,6 +383,22 @@ export function AudioWorkspace({
           locale: locale === "en" ? "en" : "zh",
         }),
       text.submitted,
+      "analyze",
+    );
+  }
+
+  async function designVoices() {
+    const model = analysisModels.find((item) => item.id === analysisModelId);
+    if (!model || !lines.length) return;
+    await run(
+      () =>
+        designStudioVoicePerformance(projectId, episode.id, {
+          channelId: model.channelId,
+          model: model.modelId,
+          locale: locale === "en" ? "en" : "zh",
+        }),
+      text.designed,
+      "design",
     );
   }
 
@@ -437,40 +490,62 @@ export function AudioWorkspace({
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-7 sm:py-7 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:overflow-hidden">
-      <header className="flex shrink-0 flex-col gap-4 border-b pb-5 lg:flex-row lg:items-end lg:justify-between">
+      <header className="flex shrink-0 flex-col gap-4 border-b pb-5 2xl:flex-row 2xl:items-end 2xl:justify-between">
         <div className="min-w-0">
           <p className="truncate text-xs text-muted-foreground">
             {String(episode.episodeNumber).padStart(2, "0")} · {episode.name}
           </p>
           <h1 className="mt-1 text-xl font-semibold">{text.title}</h1>
         </div>
-        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-            <ModelSelect
-              ariaLabel={text.analysisModel}
-              className="h-8 sm:w-64"
-              disabled={busy}
-              models={analysisModels}
-              onChange={setAnalysisModelId}
-              placeholder={text.analysisModel}
-              value={analysisModelId}
-            />
-            <Button
-              disabled={busy || !analysisModelId}
-              onClick={analyze}
-              size="sm"
-              variant={lines.length ? "outline" : "default"}
-            >
-              {busy ? (
-                <LoaderCircle className="size-4 animate-spin" />
-              ) : lines.length ? (
-                <RotateCcw className="size-4" />
-              ) : (
-                <Sparkles className="size-4" />
-              )}
-              {lines.length ? text.reanalyze : text.analyze}
-            </Button>
-          </div>
+        <div className="flex min-w-0 flex-wrap gap-2 2xl:justify-end">
+          <ModelSelect
+            ariaLabel={text.textAnalysisModel}
+            className="min-w-52 flex-1 sm:flex-none sm:w-64"
+            disabled={busy}
+            models={analysisModels}
+            onChange={setAnalysisModelId}
+            placeholder={text.textAnalysisModel}
+            size="sm"
+            value={analysisModelId}
+          />
+          <Button
+            disabled={busy || !analysisModelId}
+            onClick={analyze}
+            size="sm"
+            variant={lines.length ? "outline" : "default"}
+          >
+            {busyHeaderAction === "analyze" ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : lines.length ? (
+              <RotateCcw className="size-4" />
+            ) : (
+              <Sparkles className="size-4" />
+            )}
+            {text.aiDialogueTools}
+          </Button>
+          <Button
+            disabled={busy || !analysisModelId || !lines.length}
+            onClick={() => void designVoices()}
+            size="sm"
+            variant={
+              lines.every(
+                (line) => line.voiceProfilePrompt && line.emotionPrompt,
+              )
+                ? "outline"
+                : "default"
+            }
+          >
+            {busyHeaderAction === "design" ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : (
+              <Sparkles className="size-4" />
+            )}
+            {lines.every(
+              (line) => line.voiceProfilePrompt && line.emotionPrompt,
+            )
+              ? text.redesignVoices
+              : text.designVoices}
+          </Button>
           <VoicePresetDialog locale={locale} onCreate={createPreset} />
         </div>
       </header>
@@ -505,149 +580,159 @@ export function AudioWorkspace({
           className="mt-4 xl:flex xl:min-h-0 xl:flex-col xl:overflow-hidden"
           value="dialogue"
         >
-        {lines.length ? (
-        <div className="flex shrink-0 flex-col gap-3 border-b py-4 xl:flex-row xl:items-end xl:justify-between">
-          <label className="grid min-w-0 gap-1 text-xs font-medium sm:w-72">
-            {text.audioModel}
-            <ModelSelect
-              disabled={busy}
-              models={audioModels}
-              onChange={setAudioModelId}
-              placeholder={text.audioModel}
-              value={audioModelId}
-            />
-          </label>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              disabled={busy || !checkedIds.length || !audioModelId}
-              onClick={() => void generateLines(checkedIds)}
-              size="sm"
-            >
-              <Volume2 className="size-4" />
-              {text.generateSelected}
-            </Button>
-            <Button
-              disabled={
-                busy || !latestFailedVoiceTasks(checkedIds, tasks).length
-              }
-              onClick={() => void retryFailed()}
-              size="sm"
-              variant="outline"
-            >
-              <RotateCcw className="size-4" />
-              {text.retryFailed}
-            </Button>
-            <Button
-              disabled={
-                busy ||
-                !audioModelId ||
-                !lines.some((line) => line.audioAssetId)
-              }
-              onClick={() => void mergeAudio()}
-              size="sm"
-              variant="outline"
-            >
-              <Merge className="size-4" />
-              {text.merge}
-            </Button>
-          </div>
-        </div>
-      ) : null}
-
-      {!lines.length ? (
-        <div className="flex min-h-96 flex-col items-center justify-center gap-2 border-b text-center text-muted-foreground">
-          <AudioLines className="size-6" />
-          <h2 className="text-sm font-medium text-foreground">
-            {text.noLines}
-          </h2>
-          <p className="max-w-md text-sm leading-6">{text.noLinesDetail}</p>
-        </div>
-      ) : (
-        <div className="grid border-y xl:min-h-0 xl:flex-1 xl:grid-cols-[20rem_minmax(0,1fr)] xl:overflow-hidden">
-          <aside className="flex min-h-0 flex-col border-b xl:border-r xl:border-b-0">
-            <div className="flex h-11 items-center justify-between border-b px-3 text-xs font-semibold">
-              <span>{text.lines}</span>
-              <span className="text-muted-foreground">
-                {checkedIds.length} {text.selected}
-              </span>
+          {!lines.length ? (
+            <div className="flex min-h-96 flex-col items-center justify-center gap-2 border-y text-center text-muted-foreground">
+              <AudioLines className="size-6" />
+              <h2 className="text-sm font-medium text-foreground">
+                {text.noLines}
+              </h2>
+              <p className="max-w-md text-sm leading-6">
+                {text.noLinesDetail}
+              </p>
             </div>
-            <div className="max-h-80 overflow-y-auto p-1.5 xl:max-h-none xl:flex-1">
-              {lines.map((line) => {
-                const task = latestVoiceTask(line.id, tasks);
-                const checked = checkedIds.includes(line.id);
-                return (
-                  <div
-                    className={cn(
-                      "flex items-start gap-2 rounded-md px-2 py-1",
-                      selectedLine?.id === line.id && "bg-muted",
-                    )}
-                    key={line.id}
-                  >
+          ) : (
+            <>
+              {checkedIds.length ? (
+                <div className="flex shrink-0 flex-col gap-3 border-y py-3 lg:flex-row lg:items-end lg:justify-between">
+                  <label className="grid min-w-0 gap-1 text-xs font-medium sm:w-72">
+                    {text.audioModel}
+                    <ModelSelect
+                      disabled={busy}
+                      models={audioModels}
+                      onChange={setAudioModelId}
+                      placeholder={text.audioModel}
+                      size="sm"
+                      value={audioModelId}
+                    />
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      disabled={busy || !audioModelId}
+                      onClick={() => void generateLines(checkedIds)}
+                      size="sm"
+                    >
+                      <Volume2 className="size-4" />
+                      {text.generateSelected} · {checkedIds.length}
+                    </Button>
+                    <Button
+                      disabled={
+                        busy ||
+                        !latestFailedVoiceTasks(checkedIds, tasks).length
+                      }
+                      onClick={() => void retryFailed()}
+                      size="sm"
+                      variant="outline"
+                    >
+                      <RotateCcw className="size-4" />
+                      {text.retryFailed}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+              <div className="grid border-y xl:min-h-0 xl:flex-1 xl:grid-cols-[17rem_minmax(0,1fr)] xl:overflow-hidden">
+              <aside className="flex min-h-0 flex-col border-b xl:border-r xl:border-b-0">
+                <div className="flex h-11 items-center justify-between gap-3 border-b px-3 text-xs">
+                  <label className="flex min-w-0 items-center gap-2 font-semibold">
                     <Checkbox
-                      aria-label={`${text.lines} ${line.lineIndex + 1}`}
-                      checked={checked}
-                      className="mt-3"
-                      onCheckedChange={(next) =>
-                        setCheckedIds((current) =>
-                          next
-                            ? [...new Set([...current, line.id])]
-                            : current.filter((id) => id !== line.id),
+                      aria-label={text.lines}
+                      checked={allChecked}
+                      onCheckedChange={(checked) =>
+                        setCheckedIds(
+                          checked ? lines.map((line) => line.id) : [],
                         )
                       }
                     />
-                    <button
-                      className="min-w-0 flex-1 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                      onClick={() => setSelectedLineId(line.id)}
-                      type="button"
-                    >
-                      <span className="flex items-center gap-2">
-                        <span className="truncate text-sm font-medium">
-                          {line.speaker}
-                        </span>
-                        {task ? (
-                          <StatusIndicator
-                            compact
-                            locale={locale}
-                            status={runtimeStatusToStageStatus(task.status)}
-                          />
-                        ) : null}
-                      </span>
-                      <span className="mt-0.5 block line-clamp-2 text-xs leading-5 text-muted-foreground">
-                        {line.content}
-                      </span>
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </aside>
+                    <span className="truncate">{text.lines}</span>
+                  </label>
+                  <span className="shrink-0 text-muted-foreground">
+                    {checkedIds.length} {text.selected}
+                  </span>
+                </div>
+                <div className="max-h-80 overflow-y-auto p-1.5 xl:max-h-none xl:flex-1">
+                  {lines.map((line) => {
+                    const task = latestVoiceTask(line.id, tasks);
+                    const checked = checkedIds.includes(line.id);
+                    return (
+                      <div
+                        className={cn(
+                          "flex items-start gap-2 rounded-md px-2 py-1",
+                          selectedLine?.id === line.id && "bg-muted",
+                        )}
+                        key={line.id}
+                      >
+                        <Checkbox
+                          aria-label={`${text.lines} ${line.lineIndex + 1}`}
+                          checked={checked}
+                          className="mt-3"
+                          onCheckedChange={(next) =>
+                            setCheckedIds((current) =>
+                              next
+                                ? [...new Set([...current, line.id])]
+                                : current.filter((id) => id !== line.id),
+                            )
+                          }
+                        />
+                        <button
+                          className="min-w-0 flex-1 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                          onClick={() => setSelectedLineId(line.id)}
+                          type="button"
+                        >
+                          <span className="flex items-center gap-2">
+                            <span className="truncate text-sm font-medium">
+                              {line.speaker}
+                            </span>
+                            {task ? (
+                              <StatusIndicator
+                                compact
+                                locale={locale}
+                                status={runtimeStatusToStageStatus(task.status)}
+                              />
+                            ) : null}
+                          </span>
+                          <span className="mt-0.5 block line-clamp-2 text-xs leading-5 text-muted-foreground">
+                            {line.content}
+                          </span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </aside>
 
-          {selectedLine && data ? (
-            <VoiceLineDetails
-              assets={data.assets}
-              audioModel={audioModels.find((item) => item.id === audioModelId)}
-              busy={busy}
-              busyTaskId={busyTaskId}
-              line={selectedLine}
-              lipModel={lipSyncModels.find((item) => item.id === lipModelId)}
-              lipModels={lipSyncModels}
-              lipModelId={lipModelId}
-              locale={locale}
-              onControlTask={controlTask}
-              onGenerate={() => generateLines([selectedLine.id])}
-              onLipModelChange={setLipModelId}
-              onRun={run}
-              panels={panels}
-              presets={data.presets}
-              speakerOptions={speakerOptions}
-              projectId={projectId}
-              episodeId={episode.id}
-              setData={setData}
-              tasks={tasks}
-            />
-          ) : null}
-        </div>
-      )}
+              {selectedLine && data ? (
+                <VoiceLineDetails
+                  assets={data.assets}
+                  audioModel={audioModels.find(
+                    (item) => item.id === audioModelId,
+                  )}
+                  audioModelId={audioModelId}
+                  audioModels={audioModels}
+                  busy={busy}
+                  busyTaskId={busyTaskId}
+                  line={selectedLine}
+                  lipModel={lipSyncModels.find(
+                    (item) => item.id === lipModelId,
+                  )}
+                  lipModels={lipSyncModels}
+                  lipModelId={lipModelId}
+                  locale={locale}
+                  onControlTask={controlTask}
+                  onAudioModelChange={setAudioModelId}
+                  onGenerate={() => generateLines([selectedLine.id])}
+                  onLipModelChange={setLipModelId}
+                  onRun={run}
+                  panels={panels}
+                  presets={data.presets}
+                  speakerOptions={speakerOptions}
+                  projectId={projectId}
+                  episodeId={episode.id}
+                  setData={setData}
+                  tasks={tasks}
+                />
+              ) : null}
+            </div>
+            </>
+          )}
         </TabsContent>
 
         <TabsContent className="xl:min-h-0 xl:overflow-y-auto" value="post">
@@ -668,10 +753,15 @@ export function AudioWorkspace({
           {data ? (
             <MergedAudio
               assets={data.assets}
+              audioModelId={audioModelId}
+              audioModels={audioModels}
               audioTracks={data.production.audioTracks}
+              busy={busy}
               busyTaskId={busyTaskId}
               locale={locale}
+              onAudioModelChange={setAudioModelId}
               onControlTask={controlTask}
+              onMerge={mergeAudio}
               tasks={tasks}
             />
           ) : null}
@@ -684,6 +774,8 @@ export function AudioWorkspace({
 function VoiceLineDetails({
   assets,
   audioModel,
+  audioModelId,
+  audioModels,
   busy,
   busyTaskId,
   episodeId,
@@ -692,6 +784,7 @@ function VoiceLineDetails({
   lipModelId,
   lipModels,
   locale,
+  onAudioModelChange,
   onControlTask,
   onGenerate,
   onLipModelChange,
@@ -705,6 +798,8 @@ function VoiceLineDetails({
 }: {
   assets: ProjectMediaAsset[];
   audioModel?: StudioModelOption;
+  audioModelId: string;
+  audioModels: StudioModelOption[];
   busy: boolean;
   busyTaskId: string;
   episodeId: string;
@@ -713,6 +808,7 @@ function VoiceLineDetails({
   lipModelId: string;
   lipModels: StudioModelOption[];
   locale: StudioLocale;
+  onAudioModelChange: (value: string) => void;
   onControlTask: (task: MediaTask, action: "cancel" | "retry") => Promise<void>;
   onGenerate: () => Promise<void>;
   onLipModelChange: (value: string) => void;
@@ -729,16 +825,24 @@ function VoiceLineDetails({
   const [content, setContent] = useState(line.content);
   const [presetId, setPresetId] = useState(line.voicePresetId ?? "");
   const [panelId, setPanelId] = useState(line.matchedPanelId ?? "");
+  const [voiceProfile, setVoiceProfile] = useState(
+    line.voiceProfilePrompt ?? "",
+  );
   const [emotion, setEmotion] = useState(line.emotionPrompt ?? "");
   const [strength, setStrength] = useState(line.emotionStrength ?? 0.5);
+  const [optimizeInstructions, setOptimizeInstructions] = useState(
+    line.optimizeInstructions,
+  );
 
   useEffect(() => {
     setSpeaker(line.speaker);
     setContent(line.content);
     setPresetId(line.voicePresetId ?? "");
     setPanelId(line.matchedPanelId ?? "");
+    setVoiceProfile(line.voiceProfilePrompt ?? "");
     setEmotion(line.emotionPrompt ?? "");
     setStrength(line.emotionStrength ?? 0.5);
+    setOptimizeInstructions(line.optimizeInstructions);
   }, [line]);
 
   const voiceTask = latestVoiceTask(line.id, tasks);
@@ -763,8 +867,10 @@ function VoiceLineDetails({
         content,
         voicePresetId: presetId || null,
         matchedPanelId: panelId || null,
+        voiceProfilePrompt: voiceProfile || null,
         emotionPrompt: emotion || null,
         emotionStrength: strength,
+        optimizeInstructions,
       });
       setData((current) =>
         current
@@ -824,145 +930,235 @@ function VoiceLineDetails({
         </Button>
       </header>
 
-      <div className="grid gap-4 border-b py-5 sm:grid-cols-2">
-        <Field label={text.speaker}>
-          <SuggestedInput
-            ariaLabel={text.speaker}
-            onChange={setSpeaker}
-            options={speakerOptions}
-            suggestionsLabel={text.speakerSuggestions}
-            value={speaker}
-          />
-        </Field>
-        <Field label={text.voice}>
-          <NativeSelect
-            className="w-full"
-            onChange={(event) => setPresetId(event.target.value)}
-            value={presetId}
-          >
-            <NativeSelectOption value="">{text.noVoice}</NativeSelectOption>
-            {presets.map((preset) => (
-              <NativeSelectOption key={preset.id} value={preset.id}>
-                {preset.name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </Field>
-        <Field label={text.panel}>
-          <NativeSelect
-            className="w-full"
-            onChange={(event) => setPanelId(event.target.value)}
-            value={panelId}
-          >
-            <NativeSelectOption value="">{text.noPanel}</NativeSelectOption>
-            {panels.map((item) => (
-              <NativeSelectOption key={item.id} value={item.id}>
-                {String(item.panelIndex + 1).padStart(2, "0")} ·{" "}
-                {item.shotType || item.description || text.panel}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </Field>
-        <Field label={text.strength}>
-          <Input
-            max={1}
-            min={0}
-            onChange={(event) => setStrength(Number(event.target.value))}
-            step={0.1}
-            type="number"
-            value={strength}
-          />
-        </Field>
-        <Field className="sm:col-span-2" label={text.content}>
-          <Textarea
-            className="min-h-24"
-            onChange={(event) => setContent(event.target.value)}
-            value={content}
-          />
-        </Field>
-        <Field className="sm:col-span-2" label={text.emotion}>
-          <Input
-            onChange={(event) => setEmotion(event.target.value)}
-            value={emotion}
-          />
-        </Field>
-      </div>
+      <Tabs className="pt-3" defaultValue="dialogue" key={line.id}>
+        <TabsList
+          className="max-w-full justify-start overflow-x-auto"
+          variant="line"
+        >
+          <TabsTrigger value="dialogue">{text.dialogueInfoTab}</TabsTrigger>
+          <TabsTrigger value="design">{text.voiceDesignTab}</TabsTrigger>
+          <TabsTrigger value="output">{text.outputTab}</TabsTrigger>
+        </TabsList>
 
-      <div className={cn("grid gap-5 py-5", line.delivery === "dialogue" && "2xl:grid-cols-2")}>
-        <section>
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold">{text.audioPreview}</h3>
-            <Button
-              disabled={busy || !audioModel}
-              onClick={() => void onGenerate()}
-              size="sm"
-            >
-              <Volume2 className="size-4" />
-              {text.generate}
-            </Button>
-          </div>
-          <MediaCard
-            busyTaskId={busyTaskId}
-            empty={text.noAudio}
-            kind="audio"
-            locale={locale}
-            onTaskAction={onControlTask}
-            task={voiceTask}
-            url={audio?.url ?? undefined}
-          />
-        </section>
-
-        {line.delivery === "dialogue" ? (
-        <section>
-          <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <label className="grid min-w-0 flex-1 gap-1 text-xs font-medium">
-              {text.lipModel}
-              <ModelSelect
-                models={lipModels}
-                onChange={onLipModelChange}
-                placeholder={text.lipModel}
-                value={lipModelId}
+        <TabsContent className="mt-0 py-5 pr-1" value="dialogue">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label={text.speaker}>
+              <SuggestedInput
+                ariaLabel={text.speaker}
+                onChange={setSpeaker}
+                options={speakerOptions}
+                suggestionsLabel={text.speakerSuggestions}
+                value={speaker}
               />
-            </label>
-            <Button
-              disabled={busy || !lipModel || !panel || !audio?.id}
-              onClick={() => void generateLip()}
-              size="sm"
-              variant="outline"
-            >
-              <Video className="size-4" />
-              {text.generateLip}
-            </Button>
+            </Field>
+            <Field label={text.panel}>
+              <NativeSelect
+                className="w-full"
+                onChange={(event) => setPanelId(event.target.value)}
+                value={panelId}
+              >
+                <NativeSelectOption value="">{text.noPanel}</NativeSelectOption>
+                {panels.map((item) => (
+                  <NativeSelectOption key={item.id} value={item.id}>
+                    {String(item.panelIndex + 1).padStart(2, "0")} ·{" "}
+                    {item.shotType || item.description || text.panel}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </Field>
+            <Field className="sm:col-span-2" label={text.content}>
+              <Textarea
+                className="min-h-36"
+                onChange={(event) => setContent(event.target.value)}
+                value={content}
+              />
+            </Field>
           </div>
-          <MediaCard
-            busyTaskId={busyTaskId}
-            empty={text.noLip}
-            kind="video"
-            locale={locale}
-            onTaskAction={onControlTask}
-            task={lipTask}
-            url={lipAsset?.url ?? lipOutput?.url}
-          />
-        </section>
-        ) : null}
-      </div>
+        </TabsContent>
+
+        <TabsContent className="mt-0 py-5 pr-1" value="design">
+          <div className="grid gap-6 2xl:grid-cols-2">
+            <section className="min-w-0">
+              <h3 className="text-sm font-semibold">{text.voiceProfile}</h3>
+              <div className="mt-3 grid gap-4">
+                <Field label={text.voice}>
+                  <NativeSelect
+                    className="w-full"
+                    onChange={(event) => setPresetId(event.target.value)}
+                    value={presetId}
+                  >
+                    <NativeSelectOption value="">
+                      {text.noVoice}
+                    </NativeSelectOption>
+                    {presets.map((preset) => (
+                      <NativeSelectOption key={preset.id} value={preset.id}>
+                        {preset.name}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </Field>
+                <Field label={text.voiceProfileDetail}>
+                  <Textarea
+                    className="min-h-36"
+                    onChange={(event) => setVoiceProfile(event.target.value)}
+                    value={voiceProfile}
+                  />
+                </Field>
+              </div>
+            </section>
+            <section className="min-w-0 border-t pt-5 2xl:border-t-0 2xl:border-l 2xl:pt-0 2xl:pl-6">
+              <h3 className="text-sm font-semibold">
+                {text.linePerformance}
+              </h3>
+              <div className="mt-3 grid gap-4">
+                <div className="grid gap-1.5">
+                  <div className="flex items-center justify-between gap-3 text-xs font-medium">
+                    <span>{text.strength}</span>
+                    <span className="font-mono text-muted-foreground">
+                      {strength.toFixed(1)}
+                    </span>
+                  </div>
+                  <div className="flex h-9 items-center px-1">
+                    <Slider
+                      aria-label={text.strength}
+                      max={1}
+                      min={0}
+                      onValueChange={(value) =>
+                        setStrength(
+                          Array.isArray(value) ? (value[0] ?? 0.5) : value,
+                        )
+                      }
+                      step={0.1}
+                      value={strength}
+                    />
+                  </div>
+                </div>
+                <Field label={text.emotion}>
+                  <Textarea
+                    className="min-h-36"
+                    onChange={(event) => setEmotion(event.target.value)}
+                    value={emotion}
+                  />
+                </Field>
+                <label className="flex items-start gap-2 text-sm leading-5">
+                  <Checkbox
+                    checked={optimizeInstructions}
+                    className="mt-0.5"
+                    onCheckedChange={(checked) =>
+                      setOptimizeInstructions(checked === true)
+                    }
+                  />
+                  <span>{text.optimizeInstructions}</span>
+                </label>
+              </div>
+            </section>
+          </div>
+        </TabsContent>
+
+        <TabsContent className="mt-0 py-5 pr-1" value="output">
+          <div
+            className={cn(
+              "grid gap-5",
+              line.delivery === "dialogue" && "2xl:grid-cols-2",
+            )}
+          >
+            <section>
+              <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <label className="grid min-w-0 flex-1 gap-1 text-xs font-medium">
+                  {text.audioModel}
+                  <ModelSelect
+                    disabled={busy}
+                    models={audioModels}
+                    onChange={onAudioModelChange}
+                    placeholder={text.audioModel}
+                    size="sm"
+                    value={audioModelId}
+                  />
+                </label>
+                <Button
+                  disabled={busy || !audioModel}
+                  onClick={() => void onGenerate()}
+                  size="sm"
+                >
+                  <Volume2 className="size-4" />
+                  {text.generate}
+                </Button>
+              </div>
+              <MediaCard
+                busyTaskId={busyTaskId}
+                empty={text.noAudio}
+                kind="audio"
+                locale={locale}
+                onTaskAction={onControlTask}
+                task={voiceTask}
+                url={audio?.url ?? undefined}
+              />
+            </section>
+
+            {line.delivery === "dialogue" ? (
+              <section>
+                <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                  <label className="grid min-w-0 flex-1 gap-1 text-xs font-medium">
+                    {text.lipModel}
+                    <ModelSelect
+                      models={lipModels}
+                      onChange={onLipModelChange}
+                      placeholder={text.lipModel}
+                      size="sm"
+                      value={lipModelId}
+                    />
+                  </label>
+                  <Button
+                    disabled={busy || !lipModel || !panel || !audio?.id}
+                    onClick={() => void generateLip()}
+                    size="sm"
+                    variant="outline"
+                  >
+                    <Video className="size-4" />
+                    {text.generateLip}
+                  </Button>
+                </div>
+                <MediaCard
+                  busyTaskId={busyTaskId}
+                  empty={text.noLip}
+                  kind="video"
+                  locale={locale}
+                  onTaskAction={onControlTask}
+                  task={lipTask}
+                  url={lipAsset?.url ?? lipOutput?.url}
+                />
+              </section>
+            ) : null}
+          </div>
+        </TabsContent>
+      </Tabs>
     </section>
   );
 }
 
 function MergedAudio({
   assets,
+  audioModelId,
+  audioModels,
   audioTracks,
+  busy,
   busyTaskId,
   locale,
+  onAudioModelChange,
   onControlTask,
+  onMerge,
   tasks,
 }: {
   assets: ProjectMediaAsset[];
+  audioModelId: string;
+  audioModels: StudioModelOption[];
   audioTracks: ProductionData["audioTracks"];
+  busy: boolean;
   busyTaskId: string;
   locale: StudioLocale;
+  onAudioModelChange: (value: string) => void;
   onControlTask: (task: MediaTask, action: "cancel" | "retry") => Promise<void>;
+  onMerge: () => Promise<void>;
   tasks: MediaTask[];
 }) {
   const text = copy[locale];
@@ -976,6 +1172,27 @@ function MergedAudio({
   const output = task?.status === "succeeded" ? task.output?.[0] : undefined;
   return (
     <section className="py-5">
+      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <label className="grid min-w-0 gap-1 text-xs font-medium sm:w-72">
+          {text.audioModel}
+          <ModelSelect
+            disabled={busy}
+            models={audioModels}
+            onChange={onAudioModelChange}
+            placeholder={text.audioModel}
+            size="sm"
+            value={audioModelId}
+          />
+        </label>
+        <Button
+          disabled={busy || !audioModelId}
+          onClick={() => void onMerge()}
+          size="sm"
+        >
+          <Merge className="size-4" />
+          {text.merge}
+        </Button>
+      </div>
       <h2 className="mb-2 text-sm font-semibold">{text.mergedAudio}</h2>
       <MediaCard
         busyTaskId={busyTaskId}

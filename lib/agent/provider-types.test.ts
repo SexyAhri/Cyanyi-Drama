@@ -38,6 +38,18 @@ describe("model capability inference", () => {
     expect(voice.supportsReferenceAudio).toBe(true);
   });
 
+  it("recognizes the built-in Qwen-Audio Plus voice model", () => {
+    const voice = inferModelCapabilities(
+      "qwen-audio-3.0-tts-plus",
+      "bailian-dashscope",
+    );
+
+    expect(getPrimaryModelCapability(voice)).toBe("audio");
+    expect(voice.modalities).toEqual(["audio"]);
+    expect(voice.supportsReferenceAudio).toBe(false);
+    expect(voice.supportsToolCalling).toBe(false);
+  });
+
   it("defaults unknown provider models to text without enabling media", () => {
     const capabilities = inferModelCapabilities("custom-model");
 

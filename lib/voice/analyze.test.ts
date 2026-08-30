@@ -317,6 +317,83 @@ describe("voice analysis", () => {
     });
   });
 
+  it("removes generated narrator prose from an existing screenplay", async () => {
+    episodeFindFirst.mockResolvedValue({
+      id: "episode-1",
+      novelText: "太炎镇位于西部边陲。韩子枫说道：\"回去吧。\"",
+      clips: [
+        {
+          id: "clip-1",
+          screenplay: JSON.stringify({
+            clipId: "clip-1",
+            originalText: "太炎镇位于西部边陲。韩子枫说道：\"回去吧。\"",
+            scenes: [
+              {
+                sceneNumber: 0,
+                heading: { intExt: "EXT", location: "太炎镇", time: "日" },
+                description: "太炎镇位于西部边陲。",
+                characters: ["韩子枫"],
+                content: [
+                  {
+                    type: "voiceover",
+                    character: null,
+                    text: "太炎镇位于西部边陲。",
+                  },
+                  {
+                    type: "dialogue",
+                    character: "韩子枫",
+                    parenthetical: null,
+                    lines: "回去吧。",
+                  },
+                ],
+              },
+            ],
+          }),
+        },
+      ],
+      storyboard: {
+        panels: [
+          {
+            id: "panel-1",
+            clipId: "clip-1",
+            panelIndex: 0,
+            description: "太炎镇全景",
+            subtitleText: null,
+            speakingCharacter: null,
+            lipSyncText: null,
+            voiceoverText: "太炎镇位于西部边陲。",
+            sourceEvidenceJson: "[]",
+          },
+          {
+            id: "panel-2",
+            clipId: "clip-1",
+            panelIndex: 1,
+            description: "韩子枫开口",
+            subtitleText: null,
+            speakingCharacter: "韩子枫",
+            lipSyncText: "回去吧。",
+            voiceoverText: null,
+            sourceEvidenceJson: "[]",
+          },
+        ],
+      },
+    });
+
+    await analyzeEpisodeVoices(input);
+
+    expect(requestOpenAiStructured).not.toHaveBeenCalled();
+    expect(voiceLineCreateMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          speaker: "韩子枫",
+          content: "回去吧。",
+          delivery: "dialogue",
+          matchedPanelId: "panel-2",
+        }),
+      ],
+    });
+  });
+
   it("does not hide non-retryable provider errors", async () => {
     requestOpenAiStructured.mockRejectedValue(
       new Error("STRUCTURED_PROVIDER_FAILED:400:invalid request"),

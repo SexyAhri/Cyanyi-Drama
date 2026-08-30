@@ -78,7 +78,11 @@ export async function createVfxShotTask(input: {
   );
   const referenceImages = sourceAssets
     .filter((asset) => asset.kind === "image")
-    .map((asset) => ({ url: asset.url, mimeType: asset.mimeType ?? undefined }))
+    .map((asset) => ({
+      url: asset.url,
+      storageKey: asset.storageKey ?? undefined,
+      mimeType: asset.mimeType ?? undefined,
+    }))
     .slice(0, 9);
 
   return createProductionTask({

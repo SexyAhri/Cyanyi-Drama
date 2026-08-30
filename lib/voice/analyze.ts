@@ -151,6 +151,13 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
   let fallbackReason: string | undefined;
   if (screenplayLines) {
     analyzedData = screenplayLines;
+    const retainedPanelSpeech = new Set(
+      analyzedData.lines.flatMap((line) =>
+        line.matchedPanelIndex === null
+          ? []
+          : [`${line.matchedPanelIndex}\u0000${line.content}`],
+      ),
+    );
     const issues = validateVoiceAnalysis(analyzedData, {
       sourceText: episode.novelText,
       characters: characters.map((character) => character.name),
@@ -160,7 +167,11 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
       panelIndices: panelContext.map((panel) => panel.panelIndex),
       panelSpokenText: panelContext.flatMap((panel) => {
         const text = panel.lipSyncText ?? panel.voiceoverText;
-        return text ? [{ panelIndex: panel.panelIndex, text }] : [];
+        return text &&
+          (panel.lipSyncText ||
+            retainedPanelSpeech.has(`${panel.panelIndex}\u0000${text}`))
+          ? [{ panelIndex: panel.panelIndex, text }]
+          : [];
       }),
     });
     if (issues.length)
@@ -358,7 +369,7 @@ export function buildScreenplayVoiceAnalysis(input: {
       }),
     );
   });
-  return lines.length ? voiceAnalysisSchema.parse({ lines }) : null;
+  return voiceAnalysisSchema.parse({ lines });
 }
 
 function findPerformedSegments(

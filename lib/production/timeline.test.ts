@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPanelSubtitleTimings,
   buildSequentialTimeline,
+  buildTimelineSubtitles,
   parseTimelineSequence,
 } from "./timeline";
 
@@ -104,5 +105,50 @@ describe("production timeline", () => {
     expect(timings[0].end).toBeCloseTo(23.82, 1);
     expect(timings[1].start).toBeCloseTo(timings[0].end);
     expect(timings[3].end).toBeCloseTo(34);
+  });
+
+  it("builds non-overlapping subtitles after timeline reordering", () => {
+    const cues = buildTimelineSubtitles(
+      [
+        {
+          id: "line-1",
+          lineIndex: 0,
+          speaker: "A",
+          content: "First",
+          matchedPanelId: "panel-1",
+          durationSeconds: 1,
+        },
+        {
+          id: "line-2",
+          lineIndex: 1,
+          speaker: "A",
+          content: "Second",
+          matchedPanelId: "panel-1",
+          durationSeconds: 2,
+        },
+        {
+          id: "line-3",
+          lineIndex: 2,
+          speaker: "B",
+          content: "Earlier shot",
+          matchedPanelId: "panel-2",
+          durationSeconds: 2,
+        },
+      ],
+      [
+        { id: "panel-2", duration: 2 },
+        { id: "panel-1", duration: 3 },
+      ],
+    );
+
+    expect(cues.map((cue) => cue.id)).toEqual([
+      "line-3",
+      "line-1",
+      "line-2",
+    ]);
+    expect(cues[0]).toMatchObject({ start: 0, end: 2 });
+    expect(cues[1].start).toBe(2);
+    expect(cues[1].end).toBeLessThan(cues[2].end);
+    expect(cues[2].end).toBe(5);
   });
 });

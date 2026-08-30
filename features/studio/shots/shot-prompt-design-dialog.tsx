@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import type { StoryboardPromptDesignDetails } from "@/lib/novel/domain-types";
 
 import { designStudioPanelPrompt } from "../api";
 import { ModelSelect } from "../components/model-select";
@@ -90,6 +91,7 @@ export function ShotPromptDesignDialog({
   locale: StudioLocale;
   mode: PromptDesignVideoMode;
   onSave: (input: {
+    details: StoryboardPromptDesignDetails | null;
     mode: PromptDesignVideoMode;
     prompt: string;
   }) => Promise<unknown> | void;
@@ -104,16 +106,20 @@ export function ShotPromptDesignDialog({
   const [isDesigning, setIsDesigning] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [tab, setTab] = useState<"prompt" | "notes" | "continuity">("prompt");
-  const [details, setDetails] = useState<{
-    designNotes: string[];
-    continuitySafeguards: string[];
-  } | null>(null);
+  const [details, setDetails] =
+    useState<StoryboardPromptDesignDetails | null>(null);
   const storedPrompt =
     kind === "image"
       ? panel.imagePrompt
       : mode === "first-last"
         ? panel.firstLastFramePrompt
         : panel.videoPrompt;
+  const storedDetails =
+    kind === "image"
+      ? panel.imagePromptDesign
+      : mode === "first-last"
+        ? panel.firstLastFramePromptDesign
+        : panel.videoPromptDesign;
 
   useEffect(() => {
     if (!analysisModels.some((model) => model.id === modelId))
@@ -123,7 +129,7 @@ export function ShotPromptDesignDialog({
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen) {
       setPrompt(storedPrompt ?? panel.description ?? "");
-      setDetails(null);
+      setDetails(storedDetails ?? null);
       setTab("prompt");
     }
     setOpen(nextOpen);
@@ -164,7 +170,7 @@ export function ShotPromptDesignDialog({
     if (!prompt.trim()) return;
     setIsSaving(true);
     try {
-      await onSave({ mode, prompt: prompt.trim() });
+      await onSave({ details, mode, prompt: prompt.trim() });
       toast.success(copy.saved);
       setOpen(false);
     } catch (error) {

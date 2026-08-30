@@ -1,5 +1,6 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { getStoryboard, saveStoryboard } from "@/lib/novel/domain-store";
+import type { StoryboardPromptDesignDetails } from "@/lib/novel/domain-types";
 import { listLatestStoryboardContinuityIssues } from "@/lib/novel/continuity-store";
 import { buildStoryboardContentReview } from "@/lib/novel/storyboard-review";
 import { listProductionClips } from "@/lib/production/domain-store";
@@ -146,6 +147,9 @@ function isPanelInput(value: unknown): value is {
   props?: string[];
   imagePrompt?: string | null;
   videoPrompt?: string | null;
+  imagePromptDesign?: StoryboardPromptDesignDetails | null;
+  videoPromptDesign?: StoryboardPromptDesignDetails | null;
+  firstLastFramePromptDesign?: StoryboardPromptDesignDetails | null;
   phase?: string;
   status?: string;
   srtStart?: number | null;
@@ -179,7 +183,35 @@ function isPanelInput(value: unknown): value is {
         item.clipPanelIndex >= 0)) &&
     (item.sourceEvidence === undefined ||
       (Array.isArray(item.sourceEvidence) &&
-        item.sourceEvidence.every((entry) => typeof entry === "string")))
+        item.sourceEvidence.every((entry) => typeof entry === "string"))) &&
+    [
+      item.imagePromptDesign,
+      item.videoPromptDesign,
+      item.firstLastFramePromptDesign,
+    ].every(
+      (details) =>
+        details === undefined ||
+        details === null ||
+        isPromptDesignDetails(details),
+    )
+  );
+}
+
+function isPromptDesignDetails(
+  value: unknown,
+): value is StoryboardPromptDesignDetails {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const details = value as Record<string, unknown>;
+  return [details.designNotes, details.continuitySafeguards].every(
+    (items) =>
+      Array.isArray(items) &&
+      items.length <= 16 &&
+      items.every(
+        (item) =>
+          typeof item === "string" &&
+          item.trim().length > 0 &&
+          item.length <= 600,
+      ),
   );
 }
 

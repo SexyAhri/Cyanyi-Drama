@@ -18,6 +18,7 @@ export function ModelSelect({
   models,
   onChange,
   placeholder,
+  size = "default",
   value,
 }: {
   ariaLabel?: string;
@@ -26,6 +27,7 @@ export function ModelSelect({
   models: StudioModelOption[];
   onChange: (value: string) => void;
   placeholder: string;
+  size?: "sm" | "default";
   value: string;
 }) {
   const selected = models.find((model) => model.id === value);
@@ -37,7 +39,8 @@ export function ModelSelect({
     >
       <SelectTrigger
         aria-label={ariaLabel ?? placeholder}
-        className={cn("h-9 min-w-0 w-full", className)}
+        className={cn("min-w-0 w-full", className)}
+        size={size}
       >
         <SelectValue>
           <span className="min-w-0 flex-1 truncate">

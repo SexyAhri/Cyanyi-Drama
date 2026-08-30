@@ -3,6 +3,112 @@ import { describe, expect, it } from "vitest";
 import { normalizeScreenplayDialogue } from "./screenplay-dialogue";
 
 describe("screenplay dialogue normalization", () => {
+  it("demotes generated prose narration to visual action and coverage", () => {
+    const narration =
+      "太炎镇坐落于大秦王朝西部边陲，韩家庄虽为百年望族却已衰落。";
+    const screenplay = normalizeScreenplayDialogue({
+      clipId: "clip-1",
+      originalText: narration,
+      coverage: [
+        {
+          eventId: "E001",
+          evidence: narration,
+          modes: ["voiceover" as const],
+          reason: null,
+        },
+      ],
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "EXT" as const, location: "太炎镇", time: "日" },
+          description: narration,
+          characters: [],
+          content: [
+            { type: "voiceover" as const, character: null, text: narration },
+          ],
+        },
+      ],
+    });
+
+    expect(screenplay.coverage?.[0].modes).toEqual(["visual"]);
+    expect(screenplay.scenes[0].content).toContainEqual({
+      type: "action",
+      text: narration,
+    });
+    expect(screenplay.scenes[0].content).not.toContainEqual(
+      expect.objectContaining({ type: "voiceover" }),
+    );
+  });
+
+  it("keeps narration explicitly labeled by the source", () => {
+    const screenplay = normalizeScreenplayDialogue({
+      clipId: "clip-1",
+      originalText: "旁白：\"十年后，旧城只剩断壁。\"",
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "EXT" as const, location: "旧城", time: "日" },
+          description: "旧城断壁",
+          characters: [],
+          content: [
+            {
+              type: "voiceover" as const,
+              character: null,
+              text: "十年后，旧城只剩断壁。",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(screenplay.scenes[0].content).toContainEqual({
+      type: "voiceover",
+      character: null,
+      text: "十年后，旧城只剩断壁。",
+    });
+  });
+
+  it("recovers attributed unquoted speech that was emitted as narration", () => {
+    const line = "母亲身在阴阳之境，非普通修者能及。";
+    const screenplay = normalizeScreenplayDialogue({
+      clipId: "clip-1",
+      originalText: `韩子枫说道：“先听我说。”韩宇面露惊诧。父亲解释，${line}`,
+      coverage: [
+        {
+          eventId: "E001",
+          evidence: `父亲解释，${line}`,
+          modes: ["voiceover" as const],
+          reason: null,
+        },
+      ],
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT" as const, location: "卧房", time: "夜" },
+          description: "",
+          characters: ["韩子枫", "韩宇"],
+          content: [
+            {
+              type: "dialogue" as const,
+              character: "韩子枫",
+              parenthetical: null,
+              lines: "先听我说。",
+            },
+            { type: "voiceover" as const, character: null, text: line },
+          ],
+        },
+      ],
+    });
+
+    expect(screenplay.coverage?.[0].modes).toEqual(["dialogue"]);
+    expect(screenplay.scenes[0].content).toContainEqual({
+      type: "dialogue",
+      character: "韩子枫",
+      parenthetical: null,
+      lines: line,
+    });
+  });
+
   it("turns a father's inner narration into voice-over and extracts the son's unquoted reassurance", () => {
     const screenplay = normalizeScreenplayDialogue({
       clipId: "clip-1",

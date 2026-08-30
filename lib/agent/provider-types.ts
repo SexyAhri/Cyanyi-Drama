@@ -1,12 +1,14 @@
 import type { OpenAiCompatibleMediaTemplate } from "@/lib/providers/openai-compatible-media-template";
 import { autoDlModelCapabilities } from "@/lib/providers/media/autodl-comfyui-workflows";
+import { bailianDashScopeModelCapabilities } from "@/lib/providers/media/bailian-dashscope-models";
 
 export type ChannelProtocol =
   | "openai-compatible"
   | "anthropic"
   | "google-gemini"
   | "volcengine-ark"
-  | "autodl-comfyui";
+  | "autodl-comfyui"
+  | "bailian-dashscope";
 
 export type ModelCapability =
   | "text"
@@ -52,6 +54,11 @@ export function inferModelCapabilities(
 
   if (protocol === "autodl-comfyui") {
     const configured = autoDlModelCapabilities(normalized);
+    if (configured) return configured;
+  }
+
+  if (protocol === "bailian-dashscope") {
+    const configured = bailianDashScopeModelCapabilities(normalized);
     if (configured) return configured;
   }
 

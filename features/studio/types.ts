@@ -141,8 +141,10 @@ export type VoiceLineRecord = {
   content: string;
   voicePresetId: string | null;
   audioAssetId: string | null;
+  voiceProfilePrompt: string | null;
   emotionPrompt: string | null;
   emotionStrength: number | null;
+  optimizeInstructions: boolean;
   delivery: "dialogue" | "inner_monologue" | "voiceover";
   matchedPanelId: string | null;
   durationSeconds: number | null;

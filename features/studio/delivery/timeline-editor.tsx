@@ -6,7 +6,6 @@ import {
   GripVertical,
   Music2,
   Volume2,
-  ZoomIn,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -29,8 +28,6 @@ const copy = {
     video: "画面",
     audio: "镜头音频",
     subtitles: "字幕",
-    zoom: "时间线缩放",
-    duration: "成片时长",
     shotDuration: "镜头时长",
     sourceStart: "源视频起点",
     volume: "镜头音量",
@@ -38,15 +35,12 @@ const copy = {
     transitionDuration: "淡入淡出时长",
     cut: "直接切换",
     fade: "淡入淡出",
-    seconds: "秒",
     noSubtitle: "无字幕",
   },
   en: {
     video: "Video",
     audio: "Clip audio",
     subtitles: "Subtitles",
-    zoom: "Timeline zoom",
-    duration: "Duration",
     shotDuration: "Shot duration",
     sourceStart: "Source in",
     volume: "Clip volume",
@@ -54,7 +48,6 @@ const copy = {
     transitionDuration: "Fade duration",
     cut: "Cut",
     fade: "Fade in/out",
-    seconds: "sec",
     noSubtitle: "No subtitle",
   },
 } as const;
@@ -63,6 +56,7 @@ export function TimelineEditor({
   locale,
   onChange,
   onSelect,
+  pixelsPerSecond,
   selectedTrackId,
   subtitles,
   timeline,
@@ -70,12 +64,12 @@ export function TimelineEditor({
   locale: StudioLocale;
   onChange: (timeline: EditorTimeline) => void;
   onSelect: (trackId: string) => void;
+  pixelsPerSecond: number;
   selectedTrackId: string;
   subtitles: EditorSubtitle[];
   timeline: EditorTimeline;
 }) {
   const text = copy[locale];
-  const [pixelsPerSecond, setPixelsPerSecond] = useState(32);
   const [draggedTrackId, setDraggedTrackId] = useState("");
   const tracks = timeline.tracks;
   const selectedTrack =
@@ -99,26 +93,6 @@ export function TimelineEditor({
 
   return (
     <section className="border-b">
-      <header className="flex min-h-11 flex-wrap items-center gap-4 border-b px-3 py-2 text-xs">
-        <span className="font-semibold">
-          {text.duration} · {timeline.duration.toFixed(1)} {text.seconds}
-        </span>
-        <label className="ml-auto flex items-center gap-2 text-muted-foreground">
-          <ZoomIn className="size-3.5" />
-          <span className="sr-only">{text.zoom}</span>
-          <input
-            aria-label={text.zoom}
-            className="w-28 accent-foreground"
-            max={64}
-            min={18}
-            onChange={(event) => setPixelsPerSecond(Number(event.target.value))}
-            step={2}
-            type="range"
-            value={pixelsPerSecond}
-          />
-        </label>
-      </header>
-
       <div className="overflow-x-auto">
         <div
           className="min-w-full"

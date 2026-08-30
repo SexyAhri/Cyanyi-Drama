@@ -44,6 +44,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AUTODL_COMFYUI_BASE_URL } from "@/lib/providers/media/autodl-comfyui-workflows";
+import { BAILIAN_DASHSCOPE_BASE_URL_PLACEHOLDER } from "@/lib/providers/media/bailian-dashscope-models";
 
 import type { ShellCopy } from "./chat-shell-i18n";
 import type {
@@ -570,6 +571,9 @@ export function ChannelSettingsPanel({
                         <SelectItem value="autodl-comfyui">
                           AutoDL ComfyUI
                         </SelectItem>
+                        <SelectItem value="bailian-dashscope">
+                          阿里云百炼官方
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -591,6 +595,8 @@ export function ChannelSettingsPanel({
                     placeholder={
                       draft.protocol === "autodl-comfyui"
                         ? AUTODL_COMFYUI_BASE_URL
+                        : draft.protocol === "bailian-dashscope"
+                          ? BAILIAN_DASHSCOPE_BASE_URL_PLACEHOLDER
                         : "https://api.openai.com/v1"
                     }
                     value={draft.baseUrl}
@@ -1121,6 +1127,9 @@ function normalizeProtocol(protocol: unknown): ChannelProtocol {
   if (protocol === "autodl-comfyui" || protocol === "AutoDL ComfyUI") {
     return "autodl-comfyui";
   }
+  if (protocol === "bailian-dashscope" || protocol === "阿里云百炼官方") {
+    return "bailian-dashscope";
+  }
   return "openai-compatible";
 }
 
@@ -1130,7 +1139,8 @@ function isChannelProtocol(value: string): value is ChannelProtocol {
     value === "anthropic" ||
     value === "google-gemini" ||
     value === "volcengine-ark" ||
-    value === "autodl-comfyui"
+    value === "autodl-comfyui" ||
+    value === "bailian-dashscope"
   );
 }
 
@@ -1144,6 +1154,8 @@ function getProtocolLabel(protocol: ChannelProtocol) {
       return "火山方舟官方";
     case "autodl-comfyui":
       return "AutoDL ComfyUI";
+    case "bailian-dashscope":
+      return "阿里云百炼官方";
     default:
       return "OpenAI 兼容";
   }
@@ -1153,8 +1165,10 @@ function defaultBaseUrlForProtocol(
   protocol: ChannelProtocol,
   currentBaseUrl: string,
 ) {
-  if (protocol !== "autodl-comfyui") return currentBaseUrl;
-  return currentBaseUrl.trim() || AUTODL_COMFYUI_BASE_URL;
+  if (protocol === "autodl-comfyui")
+    return currentBaseUrl.trim() || AUTODL_COMFYUI_BASE_URL;
+  if (protocol === "bailian-dashscope") return "";
+  return currentBaseUrl;
 }
 
 function composeChannelModelId(channelId: string, modelId: string) {

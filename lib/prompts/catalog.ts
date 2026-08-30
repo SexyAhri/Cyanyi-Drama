@@ -46,7 +46,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_SCREENPLAY_CONVERSION]: {
     pathStem: "domain/story_screenplay_conversion",
-    version: 12,
+    version: 13,
     variables: [
       "clip_id",
       "clip_text",
@@ -151,7 +151,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_VOICE_ANALYSIS]: {
     pathStem: "domain/story_voice_analysis",
-    version: 6,
+    version: 7,
     variables: ["source_text", "characters_json", "panels_json"],
     agent: defineAgent({
       id: "dialogue_editor",
@@ -250,6 +250,34 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       prohibited: ["rewriting source text", "omitting text", "inventing markers"],
       contextPolicy: { scope: "project", trust: "untrusted" },
       qualityGates: ["schema_valid", "source_boundaries_locatable", "full_source_coverage"],
+    }),
+  },
+  [PROMPT_IDS.STORY_VOICE_PERFORMANCE_DESIGN]: {
+    pathStem: "domain/story_voice_performance_design",
+    version: 2,
+    variables: [
+      "source_text",
+      "characters_json",
+      "panels_json",
+      "voice_lines_json",
+    ],
+    agent: defineAgent({
+      id: "voice_director",
+      responsibility:
+        "Design stable character voices and line-specific performance instructions from approved script and storyboard context.",
+      prohibited: [
+        "rewriting dialogue",
+        "changing speakers or line order",
+        "inventing story facts",
+        "adding music or sound effects",
+      ],
+      contextPolicy: { scope: "episode", trust: "untrusted" },
+      qualityGates: [
+        "speaker_voice_consistency",
+        "exact_line_coverage",
+        "scene_grounded_performance",
+        "clean_voice_output",
+      ],
     }),
   },
   [PROMPT_IDS.EPISODE_ADAPTATION]: {

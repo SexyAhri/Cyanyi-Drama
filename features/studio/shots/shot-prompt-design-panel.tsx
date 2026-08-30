@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import type { StoryboardPromptDesignDetails } from "@/lib/novel/domain-types";
 
 import type {
   StudioLocale,
@@ -77,6 +78,7 @@ export function ShotPromptDesignPanel({
   kind: ShotMediaKind;
   locale: StudioLocale;
   onSave: (input: {
+    details: StoryboardPromptDesignDetails | null;
     mode: PromptDesignVideoMode;
     prompt: string;
   }) => Promise<unknown> | void;

@@ -7,11 +7,13 @@ vi.mock("@/lib/providers/http", () => ({ fetchWithProviderRetry }));
 import {
   assertTimelineDialogueAudioCoverage,
   assertTimelineRenderCoverage,
+  assertTimelineSubtitleCoverage,
   assertVoiceLinePanelCoverage,
   mediaAssetMetadata,
   generateImage,
   isSourceMediaDownloadFailure,
   mediaAssetExtension,
+  shouldStripProviderVideoAudio,
 } from "./media-runtime";
 
 beforeEach(() => {
@@ -128,5 +130,48 @@ describe("timeline render coverage", () => {
     expect(() =>
       assertTimelineDialogueAudioCoverage(2, "https://media.test/dialogue.mp3"),
     ).not.toThrow();
+  });
+
+  it("fails when a rendered timeline cannot place every subtitle", () => {
+    expect(() =>
+      assertTimelineSubtitleCoverage({
+        timelinePanelIds: ["panel-1"],
+        lines: [
+          { lineIndex: 0, matchedPanelId: "panel-1" },
+          { lineIndex: 3, matchedPanelId: "panel-removed" },
+        ],
+      }),
+    ).toThrow("TIMELINE_RENDER_SUBTITLE_PANEL_MISSING:3");
+  });
+
+  it("preserves storyboard ambient audio and strips only explicit or legacy silent tasks", () => {
+    expect(
+      shouldStripProviderVideoAudio({
+        kind: "video",
+        targetType: "storyboard_panel",
+        request: { audioMode: "none" },
+      }),
+    ).toBe(true);
+    expect(
+      shouldStripProviderVideoAudio({
+        kind: "video",
+        targetType: "storyboard_panel",
+        request: { audioMode: "ambient_only" },
+      }),
+    ).toBe(false);
+    expect(
+      shouldStripProviderVideoAudio({
+        kind: "video",
+        targetType: "lip_sync",
+        request: { audioMode: "none" },
+      }),
+    ).toBe(false);
+    expect(
+      shouldStripProviderVideoAudio({
+        kind: "video",
+        targetType: "storyboard_panel",
+        request: {},
+      }),
+    ).toBe(true);
   });
 });

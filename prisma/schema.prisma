@@ -542,51 +542,54 @@ model Storyboard {
 }
 
 model StoryboardPanel {
-  id                   String      @id
-  storyboardId         String      @map("storyboard_id")
-  clipId               String?     @map("clip_id")
-  clipPanelIndex       Int?        @map("clip_panel_index")
-  panelIndex           Int         @map("panel_index")
-  sceneNumber          Int?        @map("scene_number")
-  shotType             String?     @map("shot_type")
-  cameraMove           String?     @map("camera_move") @db.Text
-  description          String?     @db.Text
-  locationName         String?     @map("location_name")
-  charactersJson       String?     @map("characters_json") @db.Text
-  propsJson            String?     @map("props_json") @db.Text
-  imagePrompt          String?     @map("image_prompt") @db.Text
-  videoPrompt          String?     @map("video_prompt") @db.Text
-  phase                String      @default("phase1")
-  status               String      @default("draft")
-  srtStart             Float?      @map("srt_start")
-  srtEnd               Float?      @map("srt_end")
-  durationSeconds      Float?      @map("duration_seconds")
-  subtitleText         String?     @map("subtitle_text") @db.Text
-  speakingCharacter    String?     @map("speaking_character")
-  lipSyncText          String?     @map("lip_sync_text") @db.Text
-  voiceoverText        String?     @map("voiceover_text") @db.Text
-  startStateJson       String?     @map("start_state_json") @db.Text
-  endStateJson         String?     @map("end_state_json") @db.Text
-  motionBeatsJson      String?     @map("motion_beats_json") @db.Text
-  worldContextJson     String?     @map("world_context_json") @db.Text
-  vfxCuesJson          String?     @map("vfx_cues_json") @db.Text
-  sfxCuesJson          String?     @map("sfx_cues_json") @db.Text
-  actingNotesJson      String?     @map("acting_notes_json") @db.Text
-  photographyRules     String?     @map("photography_rules") @db.Text
-  firstLastFramePrompt String?     @map("first_last_frame_prompt") @db.Text
-  linkedToNextPanel    Boolean     @default(false) @map("linked_to_next_panel")
-  sourceEvidenceJson   String?     @map("source_evidence_json") @db.Text
-  imageAssetId         String?     @map("image_asset_id")
-  videoAssetId         String?     @map("video_asset_id")
-  lipSyncAssetId       String?     @map("lip_sync_asset_id")
-  createdAt            DateTime    @default(now()) @map("created_at")
-  updatedAt            DateTime    @updatedAt @map("updated_at")
-  storyboard           Storyboard  @relation(fields: [storyboardId], references: [id], onDelete: Cascade)
-  clip                 StoryClip?  @relation(fields: [clipId], references: [id], onDelete: SetNull)
-  imageAsset           MediaAsset? @relation("StoryboardPanelImage", fields: [imageAssetId], references: [id], onDelete: SetNull)
-  videoAsset           MediaAsset? @relation("StoryboardPanelVideo", fields: [videoAssetId], references: [id], onDelete: SetNull)
-  lipSyncAsset         MediaAsset? @relation("StoryboardPanelLipSync", fields: [lipSyncAssetId], references: [id], onDelete: SetNull)
-  voiceLines           VoiceLine[]
+  id                             String      @id
+  storyboardId                   String      @map("storyboard_id")
+  clipId                         String?     @map("clip_id")
+  clipPanelIndex                 Int?        @map("clip_panel_index")
+  panelIndex                     Int         @map("panel_index")
+  sceneNumber                    Int?        @map("scene_number")
+  shotType                       String?     @map("shot_type")
+  cameraMove                     String?     @map("camera_move") @db.Text
+  description                    String?     @db.Text
+  locationName                   String?     @map("location_name")
+  charactersJson                 String?     @map("characters_json") @db.Text
+  propsJson                      String?     @map("props_json") @db.Text
+  imagePrompt                    String?     @map("image_prompt") @db.Text
+  videoPrompt                    String?     @map("video_prompt") @db.Text
+  imagePromptDesignJson          String?     @map("image_prompt_design_json") @db.Text
+  videoPromptDesignJson          String?     @map("video_prompt_design_json") @db.Text
+  firstLastFramePromptDesignJson String?     @map("first_last_frame_prompt_design_json") @db.Text
+  phase                          String      @default("phase1")
+  status                         String      @default("draft")
+  srtStart                       Float?      @map("srt_start")
+  srtEnd                         Float?      @map("srt_end")
+  durationSeconds                Float?      @map("duration_seconds")
+  subtitleText                   String?     @map("subtitle_text") @db.Text
+  speakingCharacter              String?     @map("speaking_character")
+  lipSyncText                    String?     @map("lip_sync_text") @db.Text
+  voiceoverText                  String?     @map("voiceover_text") @db.Text
+  startStateJson                 String?     @map("start_state_json") @db.Text
+  endStateJson                   String?     @map("end_state_json") @db.Text
+  motionBeatsJson                String?     @map("motion_beats_json") @db.Text
+  worldContextJson               String?     @map("world_context_json") @db.Text
+  vfxCuesJson                    String?     @map("vfx_cues_json") @db.Text
+  sfxCuesJson                    String?     @map("sfx_cues_json") @db.Text
+  actingNotesJson                String?     @map("acting_notes_json") @db.Text
+  photographyRules               String?     @map("photography_rules") @db.Text
+  firstLastFramePrompt           String?     @map("first_last_frame_prompt") @db.Text
+  linkedToNextPanel              Boolean     @default(false) @map("linked_to_next_panel")
+  sourceEvidenceJson             String?     @map("source_evidence_json") @db.Text
+  imageAssetId                   String?     @map("image_asset_id")
+  videoAssetId                   String?     @map("video_asset_id")
+  lipSyncAssetId                 String?     @map("lip_sync_asset_id")
+  createdAt                      DateTime    @default(now()) @map("created_at")
+  updatedAt                      DateTime    @updatedAt @map("updated_at")
+  storyboard                     Storyboard  @relation(fields: [storyboardId], references: [id], onDelete: Cascade)
+  clip                           StoryClip?  @relation(fields: [clipId], references: [id], onDelete: SetNull)
+  imageAsset                     MediaAsset? @relation("StoryboardPanelImage", fields: [imageAssetId], references: [id], onDelete: SetNull)
+  videoAsset                     MediaAsset? @relation("StoryboardPanelVideo", fields: [videoAssetId], references: [id], onDelete: SetNull)
+  lipSyncAsset                   MediaAsset? @relation("StoryboardPanelLipSync", fields: [lipSyncAssetId], references: [id], onDelete: SetNull)
+  voiceLines                     VoiceLine[]
 
   @@unique([storyboardId, panelIndex])
   @@unique([clipId, clipPanelIndex])
@@ -685,25 +688,27 @@ model VoicePreset {
 }
 
 model VoiceLine {
-  id              String           @id
-  episodeId       String           @map("episode_id")
-  lineIndex       Int              @map("line_index")
-  speaker         String
-  content         String           @db.Text
-  voicePresetId   String?          @map("voice_preset_id")
-  audioAssetId    String?          @map("audio_asset_id")
-  emotionPrompt   String?          @map("emotion_prompt") @db.Text
-  emotionStrength Float?           @map("emotion_strength")
-  delivery        String           @default("dialogue")
-  matchedPanelId  String?          @map("matched_panel_id")
-  durationSeconds Float?           @map("duration_seconds")
-  status          String           @default("draft")
-  createdAt       DateTime         @default(now()) @map("created_at")
-  updatedAt       DateTime         @updatedAt @map("updated_at")
-  episode         Episode          @relation(fields: [episodeId], references: [id], onDelete: Cascade)
-  voicePreset     VoicePreset?     @relation(fields: [voicePresetId], references: [id], onDelete: SetNull)
-  audioAsset      MediaAsset?      @relation("VoiceLineAudio", fields: [audioAssetId], references: [id], onDelete: SetNull)
-  matchedPanel    StoryboardPanel? @relation(fields: [matchedPanelId], references: [id], onDelete: SetNull)
+  id                   String           @id
+  episodeId            String           @map("episode_id")
+  lineIndex            Int              @map("line_index")
+  speaker              String
+  content              String           @db.Text
+  voicePresetId        String?          @map("voice_preset_id")
+  audioAssetId         String?          @map("audio_asset_id")
+  voiceProfilePrompt   String?          @map("voice_profile_prompt") @db.Text
+  emotionPrompt        String?          @map("emotion_prompt") @db.Text
+  emotionStrength      Float?           @map("emotion_strength")
+  optimizeInstructions Boolean          @default(true) @map("optimize_instructions")
+  delivery             String           @default("dialogue")
+  matchedPanelId       String?          @map("matched_panel_id")
+  durationSeconds      Float?           @map("duration_seconds")
+  status               String           @default("draft")
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
+  episode              Episode          @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  voicePreset          VoicePreset?     @relation(fields: [voicePresetId], references: [id], onDelete: SetNull)
+  audioAsset           MediaAsset?      @relation("VoiceLineAudio", fields: [audioAssetId], references: [id], onDelete: SetNull)
+  matchedPanel         StoryboardPanel? @relation(fields: [matchedPanelId], references: [id], onDelete: SetNull)
 
   @@unique([episodeId, lineIndex])
   @@index([episodeId, updatedAt])

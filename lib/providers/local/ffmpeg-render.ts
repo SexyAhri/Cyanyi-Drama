@@ -24,9 +24,16 @@ export interface TimelineSegment {
   transitionDurationSeconds?: number;
 }
 
+export interface TimelineSubtitleCue {
+  start: number;
+  end: number;
+  text: string;
+}
+
 export interface RenderTimelineOptions {
   segments: TimelineSegment[];
   audioUrl?: string | null;
+  subtitles?: readonly TimelineSubtitleCue[];
   format?: string;
   specification?: RenderSpecification;
 }
@@ -86,9 +93,24 @@ export async function renderTimelineVideo(opts: RenderTimelineOptions) {
       await writeFile(audioPath, Buffer.from(await response.arrayBuffer()));
     }
 
+    let subtitlePath: string | null = null;
+    if (opts.subtitles?.length) {
+      const srt = buildSubtitleSrt(opts.subtitles, specification);
+      if (srt) {
+        subtitlePath = join(root, "subtitles.srt");
+        await writeFile(subtitlePath, srt, "utf8");
+      }
+    }
+
     const outputPath = join(root, "rendered.mp4");
     await executeFfmpeg(
-      buildConcatFfmpegArgs(listPath, audioPath, outputPath, specification),
+      buildConcatFfmpegArgs(
+        listPath,
+        audioPath,
+        outputPath,
+        specification,
+        subtitlePath,
+      ),
     );
 
     const bytes = await readFile(outputPath);
@@ -198,6 +220,7 @@ export function buildConcatFfmpegArgs(
   audioPath: string | null,
   outputPath: string,
   specification: RenderSpecification,
+  subtitlePath: string | null = null,
 ) {
   const base = [
     "-hide_banner",
@@ -211,13 +234,32 @@ export function buildConcatFfmpegArgs(
     "-i",
     listPath,
   ];
+  const videoArgs = subtitlePath
+    ? [
+        "-vf",
+        buildSubtitleVideoFilter(subtitlePath, specification),
+        "-c:v",
+        specification.videoCodec,
+        "-preset",
+        "fast",
+        "-crf",
+        String(specification.crf),
+        "-pix_fmt",
+        specification.pixelFormat,
+        "-r",
+        String(specification.fps),
+        "-g",
+        String(Math.max(1, Math.round(specification.fps * 2))),
+        "-video_track_timescale",
+        "90000",
+      ]
+    : ["-c:v", "copy"];
   if (audioPath) {
     base.push("-i", audioPath);
     base.push(
       "-filter_complex",
-      "[0:a:0][1:a:0]amix=inputs=2:duration=first:dropout_transition=0:weights=0.5 1:normalize=0[mixed]",
-      "-c:v",
-      "copy",
+      "[0:a:0][1:a:0]sidechaincompress=threshold=0.025:ratio=8:attack=20:release=300[ducked];[ducked][1:a:0]amix=inputs=2:duration=first:dropout_transition=0:weights=0.8 1:normalize=0[mixed]",
+      ...videoArgs,
       "-c:a",
       specification.audioCodec,
       "-b:a",
@@ -235,8 +277,7 @@ export function buildConcatFfmpegArgs(
     );
   } else {
     base.push(
-      "-c:v",
-      "copy",
+      ...videoArgs,
       "-c:a",
       "copy",
       "-map",
@@ -249,6 +290,89 @@ export function buildConcatFfmpegArgs(
   }
   base.push(outputPath);
   return base;
+}
+
+export function buildSubtitleSrt(
+  cues: readonly TimelineSubtitleCue[],
+  specification: RenderSpecification,
+) {
+  const fontSize = subtitleFontSize(specification);
+  const maxLineCharacters = Math.max(
+    12,
+    Math.min(28, Math.floor(specification.width / (fontSize * 1.3))),
+  );
+  return cues
+    .filter(
+      (cue) =>
+        Number.isFinite(cue.start) &&
+        Number.isFinite(cue.end) &&
+        cue.end > cue.start &&
+        cue.text.trim(),
+    )
+    .sort((left, right) => left.start - right.start)
+    .map((cue, index) => {
+      const text = wrapSubtitleText(cue.text, maxLineCharacters);
+      return `${index + 1}\n${subtitleTimestamp(cue.start)} --> ${subtitleTimestamp(cue.end)}\n${text}`;
+    })
+    .filter((cue) => !cue.endsWith("\n"))
+    .join("\n\n");
+}
+
+export function buildSubtitleVideoFilter(
+  subtitlePath: string,
+  specification: RenderSpecification,
+) {
+  const fontSize = subtitleFontSize(specification);
+  const margin = Math.max(24, Math.round(specification.height * 0.055));
+  const fontName = process.platform === "win32" ? "Microsoft YaHei" : "Noto Sans CJK SC";
+  const options = [`filename='${escapeFilterValue(subtitlePath)}'`];
+  if (process.platform === "win32") {
+    const fontsDirectory = join(process.env.WINDIR || "C:\\Windows", "Fonts");
+    options.push(`fontsdir='${escapeFilterValue(fontsDirectory)}'`);
+  }
+  options.push(
+    `force_style='FontName=${fontName},FontSize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=${margin}'`,
+  );
+  return `subtitles=${options.join(":")}`;
+}
+
+function subtitleFontSize(specification: RenderSpecification) {
+  return Math.max(
+    18,
+    Math.min(42, Math.round(Math.min(specification.width, specification.height) * 0.035)),
+  );
+}
+
+function subtitleTimestamp(seconds: number) {
+  const totalMilliseconds = Math.max(0, Math.round(seconds * 1_000));
+  const milliseconds = totalMilliseconds % 1_000;
+  const totalSeconds = Math.floor(totalMilliseconds / 1_000);
+  const second = totalSeconds % 60;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const minute = totalMinutes % 60;
+  const hour = Math.floor(totalMinutes / 60);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")},${String(milliseconds).padStart(3, "0")}`;
+}
+
+function wrapSubtitleText(text: string, maxLineCharacters: number) {
+  const value = text
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/[<>{}]/g, "")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const characters = Array.from(value);
+  const lines: string[] = [];
+  for (let index = 0; index < characters.length; index += maxLineCharacters)
+    lines.push(characters.slice(index, index + maxLineCharacters).join(""));
+  return lines.join("\n");
+}
+
+function escapeFilterValue(value: string) {
+  return value
+    .replace(/\\/g, "/")
+    .replace(/:/g, "\\:")
+    .replace(/'/g, "\\'");
 }
 
 async function hasAudioStream(inputPath: string) {

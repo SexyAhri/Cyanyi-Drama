@@ -224,7 +224,7 @@ export function PostMasterPanel({
   }
 
   return (
-    <section className="border-b py-6">
+    <section className="py-5">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="flex items-center gap-2"><h2 className="text-base font-semibold">{text.title}</h2>{current ? <Badge variant="outline">v{current.deliverable.version}</Badge> : null}</div>
@@ -240,7 +240,7 @@ export function PostMasterPanel({
         </TabsList>
         <TabsContent className="pt-4" value="edl">
           <div className="mb-3 flex items-center justify-between"><span className="text-xs text-muted-foreground">{locale === "en" ? `${draft.edl.tracks.length} clips` : `${draft.edl.tracks.length} 个镜头`} · {(draft.edl.durationMs / 1_000).toFixed(1)}s · {draft.edl.frameRate} fps</span><Button onClick={exportEdl} size="sm" variant="outline"><FileDown className="size-4" />{text.exportEdl}</Button></div>
-          <div className="max-h-80 divide-y overflow-y-auto border-y font-mono text-xs">
+          <div className="max-h-60 divide-y overflow-y-auto border-y font-mono text-xs">
             {draft.edl.tracks.map((track) => <div className="grid grid-cols-[4rem_8rem_1fr_1fr] gap-2 py-2" key={track.id}><span>{String(track.shotIndex + 1).padStart(3, "0")}</span><span>{track.reel}</span><span>{timecode(track.inMs, draft.edl.frameRate)}</span><span>{timecode(track.outMs, draft.edl.frameRate)}</span></div>)}
           </div>
         </TabsContent>
@@ -256,7 +256,7 @@ export function PostMasterPanel({
         </TabsContent>
         <TabsContent className="pt-4" value="qc">
           <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-semibold">{text.qc}</h3><span className="text-xs text-muted-foreground">{readiness.passed}/{readiness.total}</span></div>
-          <QcReportEditor checks={draft.qc} keys={MASTER_QC_KEYS} labels={qcLabels[locale]} locale={locale} onChange={(key, value) => setDraft({ ...draft, qc: { ...draft.qc, [key]: value } })} />
+          <QcReportEditor checks={draft.qc} columns={2} keys={MASTER_QC_KEYS} labels={qcLabels[locale]} locale={locale} onChange={(key, value) => setDraft({ ...draft, qc: { ...draft.qc, [key]: value } })} />
         </TabsContent>
         <TabsContent className="pt-4" value="versions"><VersionHistory busy={busy} locale={locale} onRestore={(id) => void restore(id)} versions={versions.map((item) => ({ deliverable: item.deliverable, summary: item.package ? locale === "en" ? `${item.package.edl.tracks.length} clips · ${item.package.online.resolution} · ${item.package.subtitles.cueCount} cues` : `${item.package.edl.tracks.length} 个镜头 · ${item.package.online.resolution} · ${item.package.subtitles.cueCount} 条字幕` : item.deliverable.title }))} /></TabsContent>
       </Tabs>

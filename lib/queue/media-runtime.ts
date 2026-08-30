@@ -3,8 +3,8 @@ import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/server/prisma";
 import type { MediaAsset, MediaTaskKind } from "@/lib/media/task-contract";
+import { storeGeneratedMediaAsset } from "@/lib/media/generated-media-storage";
 import {
-  downloadAndStoreMedia,
   resolveStoredMediaInput,
   resolveStoredMediaUrl,
 } from "@/lib/storage";
@@ -14,9 +14,13 @@ import {
 } from "@/lib/providers/local/ffmpeg-audio";
 import { planPanelDialogue } from "@/lib/media/dialogue-timeline";
 import { sanitizeMediaProviderRequest } from "@/lib/media/provider-prompt-safety";
+import { resolveStoredReferenceImages } from "@/lib/media/reference-inputs";
 import { renderTimelineVideo } from "@/lib/providers/local/ffmpeg-render";
 import { normalizeRenderSpecification } from "@/lib/providers/local/render-spec";
-import { parseTimelineSequence } from "@/lib/production/timeline";
+import {
+  buildTimelineSubtitles,
+  parseTimelineSequence,
+} from "@/lib/production/timeline";
 import { assertMediaTaskOutputBehavior } from "@/lib/quality/behavior-guards";
 import {
   parseOpenAiCompatibleMediaTemplate,
@@ -43,8 +47,9 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
   if (!channel) throw new Error("MEDIA_TASK_CHANNEL_NOT_FOUND");
   const payload = task.payload as { request?: TaskRequest };
   const request = payload.request ?? {};
+  const resolvedRequest = await resolveStoredReferenceImages(request, userId);
   const outboundRequest = sanitizeMediaProviderRequest(
-    request,
+    resolvedRequest,
     task.kind === "video" ? "video" : task.kind === "audio" ? "audio" : "image",
   ).request;
   const operation =
@@ -121,6 +126,23 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
       ? lastError
       : new Error(String(lastError ?? "MEDIA_PROVIDER_FAILED"));
   }
+  const stripProviderAudio = shouldStripProviderVideoAudio({
+    kind: task.kind,
+    targetType: task.targetType,
+    request,
+  });
+  if (stripProviderAudio)
+    output = output.map((asset) =>
+      asset.kind === "video"
+        ? {
+            ...asset,
+            metadata: {
+              ...(asset.metadata ?? {}),
+              storedProviderAudio: "removed",
+            },
+          }
+        : asset,
+    );
   assertMediaTaskOutputBehavior({
     taskKind: task.kind as MediaTaskKind,
     output,
@@ -148,13 +170,17 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
               const storageKey = `projects/${task.projectId ?? "global"}/media/${asset.kind}/${asset.id}.${mediaAssetExtension(asset)}`;
               let storedKey: string | null = null;
               try {
-                storedKey = await downloadAndStoreMedia(
-                  asset.url,
+                storedKey = await storeGeneratedMediaAsset({
+                  asset,
                   storageKey,
-                  asset.mimeType,
-                );
+                  stripVideoAudio: stripProviderAudio,
+                });
               } catch (error) {
-                if (isSourceMediaDownloadFailure(error)) throw error;
+                if (
+                  stripProviderAudio ||
+                  isSourceMediaDownloadFailure(error)
+                )
+                  throw error;
                 storedKey = null;
               }
               return {
@@ -480,7 +506,7 @@ async function renderEpisodeTimeline(
   if (!episodeId || !projectId)
     throw new Error("TIMELINE_RENDER_EPISODE_REQUIRED");
 
-  const [storyboard, editorProject, voiceLineCount] = await Promise.all([
+  const [storyboard, editorProject, voiceLines] = await Promise.all([
     prisma.storyboard.findFirst({
       where: { projectId, episodeId, project: { userId } },
       select: {
@@ -503,8 +529,17 @@ async function renderEpisodeTimeline(
       },
       select: { timelineJson: true },
     }),
-    prisma.voiceLine.count({
+    prisma.voiceLine.findMany({
       where: { episodeId, episode: { projectId, project: { userId } } },
+      orderBy: { lineIndex: "asc" },
+      select: {
+        id: true,
+        lineIndex: true,
+        speaker: true,
+        content: true,
+        matchedPanelId: true,
+        durationSeconds: true,
+      },
     }),
   ]);
   if (!storyboard) throw new Error("TIMELINE_RENDER_STORYBOARD_NOT_FOUND");
@@ -513,6 +548,10 @@ async function renderEpisodeTimeline(
   );
   const panels = new Map(storyboard.panels.map((panel) => [panel.id, panel]));
   if (!sequence.length) throw new Error("TIMELINE_RENDER_TRACKS_INVALID");
+  assertTimelineSubtitleCoverage({
+    timelinePanelIds: sequence.map((track) => track.id),
+    lines: voiceLines,
+  });
   const resolvedTracks: Array<{
     track: (typeof sequence)[number];
     panel: (typeof storyboard.panels)[number];
@@ -557,7 +596,9 @@ async function renderEpisodeTimeline(
     select: { asset: { select: { url: true, storageKey: true } } },
   });
   const audioUrl = (await resolveAssetUrl(audioTrack?.asset)) ?? undefined;
-  assertTimelineDialogueAudioCoverage(voiceLineCount, audioUrl);
+  assertTimelineDialogueAudioCoverage(voiceLines.length, audioUrl);
+
+  const subtitles = buildTimelineSubtitles(voiceLines, sequence);
 
   const specification = normalizeRenderSpecification(
     request as Record<string, unknown>,
@@ -565,6 +606,7 @@ async function renderEpisodeTimeline(
   const rendered = await renderTimelineVideo({
     segments,
     audioUrl,
+    subtitles,
     specification,
   });
   return [
@@ -579,10 +621,23 @@ async function renderEpisodeTimeline(
         imagePanelCount: segments.filter((segment) => segment.kind === "image")
           .length,
         hasAudio: !!audioUrl,
+        subtitleCount: subtitles.length,
         specification: rendered.specification,
       },
     },
   ];
+}
+
+export function shouldStripProviderVideoAudio(input: {
+  kind: string;
+  targetType: string | null;
+  request: TaskRequest;
+}) {
+  return (
+    input.kind === "video" &&
+    input.targetType === "storyboard_panel" &&
+    input.request.audioMode !== "ambient_only"
+  );
 }
 
 export function assertTimelineRenderCoverage(input: {
@@ -606,6 +661,25 @@ export function assertTimelineRenderCoverage(input: {
   if (missingMedia.length)
     throw new Error(
       `TIMELINE_RENDER_PANEL_MEDIA_MISSING:${missingMedia.join(",")}`,
+    );
+}
+
+export function assertTimelineSubtitleCoverage(input: {
+  timelinePanelIds: readonly string[];
+  lines: readonly {
+    lineIndex: number;
+    matchedPanelId: string | null;
+  }[];
+}) {
+  const panelIds = new Set(input.timelinePanelIds);
+  const missing = input.lines.flatMap((line) =>
+    line.matchedPanelId && panelIds.has(line.matchedPanelId)
+      ? []
+      : [line.lineIndex],
+  );
+  if (missing.length)
+    throw new Error(
+      `TIMELINE_RENDER_SUBTITLE_PANEL_MISSING:${missing.join(",")}`,
     );
 }
 

@@ -21,6 +21,7 @@
 /build
 /.media/
 /.backups/
+/artifacts/
 /docs/benchmarks/
 /scripts/prompt-benchmark.ts
 

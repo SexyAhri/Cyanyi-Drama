@@ -11,6 +11,7 @@ import {
   type PostMasterPackage,
 } from "@/lib/production/post-contract";
 import type { ProductionDeliverableRecord } from "../types";
+import { buildTimelineSubtitles } from "@/lib/production/timeline";
 
 export function moveTimelineTrack(
   timeline: EditorTimeline,
@@ -109,19 +110,7 @@ export function alignTimelineSubtitles(
   lines: VoiceLineRecord[],
   timeline: EditorTimeline,
 ): EditorSubtitle[] {
-  return lines.map((line, index) => {
-    const track = line.matchedPanelId
-      ? timeline.tracks.find((item) => item.id === line.matchedPanelId)
-      : undefined;
-    return {
-      id: line.id,
-      index,
-      start: track?.start ?? 0,
-      end: track?.end ?? 0,
-      speaker: line.speaker,
-      text: line.content,
-    };
-  });
+  return buildTimelineSubtitles(lines, timeline.tracks);
 }
 
 export function buildPostMasterPackage(input: {

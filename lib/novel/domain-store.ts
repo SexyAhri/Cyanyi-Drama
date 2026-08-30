@@ -13,6 +13,7 @@ import type {
   NovelCharacterRecord,
   NovelLocationRecord,
   StoryboardPanelRecord,
+  StoryboardPromptDesignDetails,
   StoryboardRecord,
 } from "./domain-types";
 
@@ -156,6 +157,9 @@ export async function saveStoryboard(
       props?: string[];
       imagePrompt?: string | null;
       videoPrompt?: string | null;
+      imagePromptDesign?: StoryboardPromptDesignDetails | null;
+      videoPromptDesign?: StoryboardPromptDesignDetails | null;
+      firstLastFramePromptDesign?: StoryboardPromptDesignDetails | null;
       phase?: string;
       status?: string;
       srtStart?: number | null;
@@ -231,7 +235,12 @@ export async function saveStoryboard(
         clipPanelIndex: true,
         panelIndex: true,
         imagePrompt: true,
+        videoPrompt: true,
+        firstLastFramePrompt: true,
         imageAssetId: true,
+        imagePromptDesignJson: true,
+        videoPromptDesignJson: true,
+        firstLastFramePromptDesignJson: true,
       },
     });
     const existingByIdentity = new Map(
@@ -278,7 +287,34 @@ export async function saveStoryboard(
           input.preserveImagePrompts && existingPanel?.imagePrompt?.trim()
             ? existingPanel.imagePrompt.trim()
             : panel.imagePrompt?.trim() || null,
-        videoPrompt: panel.videoPrompt?.trim() || null,
+        videoPrompt:
+          input.preserveImagePrompts &&
+          existingPanel?.videoPromptDesignJson &&
+          existingPanel.videoPrompt?.trim()
+            ? existingPanel.videoPrompt.trim()
+            : panel.videoPrompt?.trim() || null,
+        imagePromptDesignJson: promptDesignJson(
+          panel.imagePromptDesign,
+          existingPanel?.imagePromptDesignJson,
+          Boolean(input.preserveImagePrompts) ||
+            sameText(panel.imagePrompt, existingPanel?.imagePrompt),
+        ),
+        videoPromptDesignJson: promptDesignJson(
+          panel.videoPromptDesign,
+          existingPanel?.videoPromptDesignJson,
+          (Boolean(input.preserveImagePrompts) &&
+            Boolean(existingPanel?.videoPromptDesignJson)) ||
+            sameText(panel.videoPrompt, existingPanel?.videoPrompt),
+        ),
+        firstLastFramePromptDesignJson: promptDesignJson(
+          panel.firstLastFramePromptDesign,
+          existingPanel?.firstLastFramePromptDesignJson,
+          panel.firstLastFramePrompt === undefined ||
+            sameText(
+              panel.firstLastFramePrompt,
+              existingPanel?.firstLastFramePrompt,
+            ),
+        ),
         phase: panel.phase?.trim() || "phase1",
         status: panel.status?.trim() || "draft",
         srtStart: finiteNumber(panel.srtStart),
@@ -296,7 +332,10 @@ export async function saveStoryboard(
         sfxCuesJson: stringifyObjectArray(panel.sfxCues),
         actingNotesJson: stringifyObject(panel.actingNotes),
         photographyRules: panel.photographyRules?.trim() || null,
-        firstLastFramePrompt: panel.firstLastFramePrompt?.trim() || null,
+        firstLastFramePrompt:
+          panel.firstLastFramePrompt === undefined
+            ? existingPanel?.firstLastFramePrompt ?? null
+            : panel.firstLastFramePrompt?.trim() || null,
         linkedToNextPanel: panel.linkedToNextPanel ?? false,
         sourceEvidenceJson: stringifyArray(panel.sourceEvidence),
       };
@@ -474,6 +513,11 @@ function toPanel(
     props: parseArray(row.propsJson),
     imagePrompt: row.imagePrompt,
     videoPrompt: row.videoPrompt,
+    imagePromptDesign: parsePromptDesign(row.imagePromptDesignJson),
+    videoPromptDesign: parsePromptDesign(row.videoPromptDesignJson),
+    firstLastFramePromptDesign: parsePromptDesign(
+      row.firstLastFramePromptDesignJson,
+    ),
     phase: row.phase,
     status: row.status,
     srtStart: row.srtStart,
@@ -500,4 +544,45 @@ function toPanel(
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+function promptDesignJson(
+  value: StoryboardPromptDesignDetails | null | undefined,
+  existing: string | null | undefined,
+  preserveExisting: boolean,
+) {
+  if (value === undefined) return preserveExisting ? existing ?? null : null;
+  if (value === null) return null;
+  return JSON.stringify({
+    designNotes: cleanPromptDesignList(value.designNotes),
+    continuitySafeguards: cleanPromptDesignList(value.continuitySafeguards),
+  });
+}
+
+function sameText(
+  left: string | null | undefined,
+  right: string | null | undefined,
+) {
+  return (left?.trim() || null) === (right?.trim() || null);
+}
+
+function parsePromptDesign(
+  value: string | null,
+): StoryboardPromptDesignDetails | null {
+  const parsed = parseObject(value);
+  const designNotes = cleanPromptDesignList(parsed.designNotes);
+  const continuitySafeguards = cleanPromptDesignList(
+    parsed.continuitySafeguards,
+  );
+  return designNotes.length || continuitySafeguards.length
+    ? { designNotes, continuitySafeguards }
+    : null;
+}
+
+function cleanPromptDesignList(value: unknown) {
+  return Array.isArray(value)
+    ? value.flatMap((item) =>
+        typeof item === "string" && item.trim() ? [item.trim()] : [],
+      )
+    : [];
 }

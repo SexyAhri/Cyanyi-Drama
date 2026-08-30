@@ -9,6 +9,7 @@ export const PROMPT_IDS = {
   STORY_ACTING_DIRECTION: "story_acting_direction",
   STORY_STORYBOARD_REFINEMENT: "story_storyboard_refinement",
   STORY_VOICE_ANALYSIS: "story_voice_analysis",
+  STORY_VOICE_PERFORMANCE_DESIGN: "story_voice_performance_design",
   STORY_CONTINUITY_REVIEW: "story_continuity_review",
   ASSET_VISUAL_EXTRACTION: "asset_visual_extraction",
   ASSET_VISUAL_DESIGN: "asset_visual_design",
