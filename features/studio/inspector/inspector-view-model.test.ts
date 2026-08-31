@@ -111,7 +111,7 @@ describe("studio inspector view model", () => {
     expect(summarizeUsageCosts(costs)).toEqual({ quantity: 5, total: 0.5 });
   });
 
-  it("only retries failed operations that still have attempts", () => {
+  it("keeps media retry limits but allows explicit workflow retries", () => {
     const task = {
       id: "task-1",
       kind: "task",
@@ -142,7 +142,7 @@ describe("studio inspector view model", () => {
       id: "step-1",
       kind: "workflow-step",
       updatedAt: "2026-01-01T00:00:00.000Z",
-      workflow: {},
+      workflow: { status: "failed" },
       step: {
         status: "failed",
         retryable: true,
@@ -151,6 +151,18 @@ describe("studio inspector view model", () => {
       },
     } as OperationItem;
     expect(isOperationRetryable(step)).toBe(true);
+    expect(
+      isOperationRetryable({
+        ...step,
+        workflow: { status: "failed" },
+        step: {
+          status: "failed",
+          retryable: false,
+          attempt: 3,
+          maxAttempts: 1,
+        },
+      } as OperationItem),
+    ).toBe(true);
   });
 
   it("exposes one delete action for every terminal workflow", () => {
@@ -183,13 +195,14 @@ describe("studio inspector view model", () => {
     ).toBe(true);
   });
 
-  it("labels exhausted attempts and explains response-stream termination", () => {
+  it("labels run attempts without presenting a manual retry limit", () => {
     const step = {
       status: "failed",
       attempt: 3,
       maxAttempts: 3,
     } as WorkflowStepSummary;
-    expect(workflowAttemptLabel(step, "zh-CN")).toBe("已用尽 3/3 次尝试");
+    expect(workflowAttemptLabel(step, "zh-CN")).toBe("第 3 次运行");
+    expect(workflowAttemptLabel({ ...step, attempt: 0 }, "en")).toBe("Not run");
     expect(
       operationErrorMessage(
         {

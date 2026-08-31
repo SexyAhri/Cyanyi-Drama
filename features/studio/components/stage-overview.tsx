@@ -188,7 +188,13 @@ function WorkflowSection({
               {workflowStepLabel(locale, step.key)}
             </span>
             <span className="hidden text-xs text-muted-foreground sm:inline">
-              {step.attempt}/{step.maxAttempts}
+              {step.attempt > 0
+                ? locale === "zh-CN"
+                  ? `第 ${step.attempt} 次`
+                  : `Attempt ${step.attempt}`
+                : locale === "zh-CN"
+                  ? "未运行"
+                  : "Not run"}
             </span>
             <StatusIndicator
               locale={locale}

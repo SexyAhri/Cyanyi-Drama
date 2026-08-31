@@ -146,15 +146,10 @@ export function WorkspacePage({
           previous !== state &&
           ["blocked", "failed"].includes(step.status)
         ) {
-          const exhausted = step.attempt >= step.maxAttempts;
           const title =
             locale === "zh-CN"
-              ? exhausted
-                ? `工作流失败，已用尽 ${step.attempt}/${step.maxAttempts} 次尝试`
-                : `工作流失败，已使用 ${step.attempt}/${step.maxAttempts} 次尝试`
-              : exhausted
-                ? `Workflow failed: ${step.attempt}/${step.maxAttempts} attempts exhausted`
-                : `Workflow failed: attempt ${step.attempt}/${step.maxAttempts}`;
+              ? `工作流第 ${step.attempt} 次运行失败，可手动重试`
+              : `Workflow run attempt ${step.attempt} failed; manual retry is available`;
           toast.error(title, {
             description: operationErrorMessage(step.error, locale),
             id: `workflow-failure-${step.id}-${step.attempt}`,

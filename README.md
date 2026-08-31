@@ -260,7 +260,7 @@ Worker 不会在没有实际服务商处理器时伪造成功状态；未接入�
 - `GET/POST /api/media/batches/:batchId`：读取批次汇总，批量取消或重试失败任务
 - `GET /api/projects/:projectId/workflows`：读取项目工作流
 - `GET/POST /api/workflows/:runId`：读取、暂停、恢复、重试或取消工作流
-- `POST /api/workflows/:runId/steps/:stepKey/retry`：只重试一个失败且仍可重试的工作流步骤
+- `POST /api/workflows/:runId/steps/:stepKey/retry`：手动重试一个失败步骤并重新执行其下游步骤，不受自动尝试次数限制
 
 ## 制作任务与失败恢复
 

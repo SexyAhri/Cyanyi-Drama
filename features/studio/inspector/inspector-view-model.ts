@@ -62,8 +62,7 @@ export function isOperationRetryable(item: OperationItem) {
     );
   return (
     ["blocked", "failed"].includes(item.step.status) &&
-    item.step.retryable &&
-    item.step.attempt < item.step.maxAttempts
+    ["blocked", "failed"].includes(item.workflow.status)
   );
 }
 
@@ -90,16 +89,10 @@ export function workflowAttemptLabel(
   step: WorkflowStepSummary,
   locale: StudioLocale,
 ) {
-  const exhausted =
-    ["blocked", "failed"].includes(step.status) &&
-    step.attempt >= step.maxAttempts;
-  if (locale === "zh-CN")
-    return exhausted
-      ? `已用尽 ${step.attempt}/${step.maxAttempts} 次尝试`
-      : `尝试 ${step.attempt}/${step.maxAttempts}`;
-  return exhausted
-    ? `Attempts exhausted ${step.attempt}/${step.maxAttempts}`
-    : `Attempt ${step.attempt}/${step.maxAttempts}`;
+  if (step.attempt <= 0) return locale === "zh-CN" ? "尚未运行" : "Not run";
+  return locale === "zh-CN"
+    ? `第 ${step.attempt} 次运行`
+    : `Run attempt ${step.attempt}`;
 }
 
 export function operationErrorMessage(

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildActiveWorkflowDedupeKey,
   getStoryboardPhaseInvalidation,
+  isWorkflowStepManuallyRetryable,
   shouldPreserveRetryArtifacts,
 } from "./store";
 
@@ -68,5 +69,29 @@ describe("workflow step artifact preservation", () => {
 
   it("invalidates artifacts when explicitly rerunning a completed step", () => {
     expect(shouldPreserveRetryArtifacts("succeeded")).toBe(false);
+  });
+});
+
+describe("manual workflow retry", () => {
+  it("allows failed steps beyond the automatic attempt limit", () => {
+    expect(
+      isWorkflowStepManuallyRetryable({
+        status: "failed",
+        attempt: 8,
+        maxAttempts: 1,
+        retryable: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the configured limit for non-failed explicit reruns", () => {
+    expect(
+      isWorkflowStepManuallyRetryable({
+        status: "succeeded",
+        attempt: 1,
+        maxAttempts: 1,
+        retryable: true,
+      }),
+    ).toBe(false);
   });
 });

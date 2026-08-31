@@ -385,12 +385,6 @@ export async function retryWorkflowRun(userId: string, runId: string) {
     include: { steps: true },
   });
   if (!current || !["failed", "blocked"].includes(current.status)) return null;
-  const exhausted = current.steps.some(
-    (step) =>
-      ["failed", "blocked"].includes(step.status) &&
-      step.attempt >= step.maxAttempts,
-  );
-  if (exhausted) return null;
   const resetKeys = resolveRetryStepKeys(current.steps);
   const activeDedupeKey = buildRunDedupeKey(current);
   if (await hasConflictingActiveRun(runId, activeDedupeKey)) return null;
@@ -460,8 +454,7 @@ export async function retryWorkflowStep(
   });
   if (!current || ["running", "canceled"].includes(current.status)) return null;
   const target = current.steps.find((step) => step.stepKey === stepKey);
-  if (!target || !target.retryable || target.attempt >= target.maxAttempts)
-    return null;
+  if (!target || !isWorkflowStepManuallyRetryable(target)) return null;
   if (
     phaseRetry &&
     (current.workflowType !== "script-to-storyboard" ||
@@ -544,6 +537,16 @@ export type StoryboardPhaseRetry = {
   refId: string;
   phase: StoryboardRetryPhase;
 };
+
+export function isWorkflowStepManuallyRetryable(step: {
+  status: string;
+  attempt: number;
+  maxAttempts: number;
+  retryable: boolean;
+}) {
+  if (["failed", "blocked"].includes(step.status)) return true;
+  return step.retryable && step.attempt < step.maxAttempts;
+}
 
 export function shouldPreserveRetryArtifacts(status: WorkflowStepStatus) {
   return ["pending", "failed", "blocked"].includes(status);

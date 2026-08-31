@@ -34,7 +34,7 @@ export async function POST(request: Request, context: Context) {
   if (!workflow)
     return attachSessionCookie(
       Response.json(
-        { message: "步骤不存在、不可重试或已达到重试上限" },
+        { message: "步骤不存在或当前状态不可重试" },
         { status: 409 },
       ),
       sessionId,

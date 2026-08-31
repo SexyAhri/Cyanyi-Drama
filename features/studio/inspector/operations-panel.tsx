@@ -266,14 +266,7 @@ function OperationRow({
             <span>{formatStudioDate(locale, item.updatedAt)}</span>
             {item.kind === "task" ? <span>{item.task.progress}%</span> : null}
             {item.kind === "workflow-step" ? (
-              <span
-                className={
-                  item.step.attempt >= item.step.maxAttempts &&
-                  ["blocked", "failed"].includes(item.step.status)
-                    ? "font-medium text-destructive"
-                    : undefined
-                }
-              >
+              <span>
                 {workflowAttemptLabel(item.step, locale)}
               </span>
             ) : null}
