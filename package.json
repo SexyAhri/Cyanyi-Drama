@@ -8,6 +8,7 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
+    "novel:import": "tsx scripts/import-novel-volumes.ts",
     "worker": "tsx lib/worker/index.ts",
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",

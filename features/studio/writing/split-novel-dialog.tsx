@@ -46,6 +46,10 @@ import {
   mergeManuscriptParts,
   type ManuscriptPart,
 } from "@/lib/episodes/manuscript-parts";
+import {
+  parseNovelStructure,
+  selectNovelVolumes,
+} from "@/lib/episodes/novel-volumes";
 
 import { splitStudioNovel } from "../api";
 import { ModelSelect } from "../components/model-select";
@@ -56,6 +60,7 @@ import type {
   StudioLocale,
   StudioModelOption,
 } from "../types";
+import { NovelVolumeSelection } from "./novel-volume-selection";
 
 type SplitMode = "auto" | "markers" | "ai";
 const MAX_MANUSCRIPT_CHARS = 50_000_000;
@@ -89,6 +94,7 @@ export function SplitNovelDialog({
   const [preview, setPreview] = useState<EpisodeSplitResult | null>(null);
   const [episodes, setEpisodes] = useState<EpisodeSplitDraft[]>([]);
   const [page, setPage] = useState(0);
+  const [selectedVolumeIndices, setSelectedVolumeIndices] = useState<number[]>([]);
 
   useEffect(() => {
     if (!models.some((model) => model.id === modelId)) {
@@ -102,6 +108,20 @@ export function SplitNovelDialog({
     [episodes, page],
   );
   const sourceFileName = importedParts.map((part) => part.name).join(" + ");
+  const novelStructure = useMemo(
+    () => (content.length >= 100 ? parseNovelStructure(content) : null),
+    [content],
+  );
+  const requiresVolumeSelection = Boolean(novelStructure?.hasExplicitVolumes);
+  const selectedContent = useMemo(() => {
+    if (!requiresVolumeSelection || !novelStructure) return content;
+    if (!selectedVolumeIndices.length) return "";
+    return selectNovelVolumes(
+      content,
+      novelStructure.volumes,
+      selectedVolumeIndices,
+    );
+  }, [content, novelStructure, requiresVolumeSelection, selectedVolumeIndices]);
 
   function reset() {
     setContent("");
@@ -113,6 +133,7 @@ export function SplitNovelDialog({
     setPreview(null);
     setEpisodes([]);
     setPage(0);
+    setSelectedVolumeIndices([]);
   }
 
   function handleOpenChange(next: boolean) {
@@ -141,6 +162,7 @@ export function SplitNovelDialog({
         throw new Error(copy.splitLengthInvalid);
       const metadata = extractManuscriptMetadata(text, parts[0]?.name);
       setContent(text);
+      setSelectedVolumeIndices([]);
       setImportedParts(parts);
       if (!importedParts.length) {
         setTitle(metadata.title);
@@ -161,6 +183,7 @@ export function SplitNovelDialog({
     const parts = importedParts.filter((part) => part.name !== name);
     setImportedParts(parts);
     setContent(joinManuscriptParts(parts));
+    setSelectedVolumeIndices([]);
     setPreview(null);
     setEpisodes([]);
   }
@@ -168,15 +191,15 @@ export function SplitNovelDialog({
   async function handlePreview() {
     const model = models.find((item) => item.id === modelId);
     if (
-      content.length < 100 ||
-      content.length > MAX_MANUSCRIPT_CHARS ||
+      selectedContent.length < 100 ||
+      selectedContent.length > MAX_MANUSCRIPT_CHARS ||
       (mode === "ai" && !model)
     )
       return;
     setIsSubmitting(true);
     try {
       const result = await splitStudioNovel(projectId, {
-        content,
+        content: selectedContent,
         sourceFileName: sourceFileName || undefined,
         title,
         author,
@@ -263,7 +286,7 @@ export function SplitNovelDialog({
         <div className="min-h-0 overflow-y-auto pr-1">
           {!preview ? (
             <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
-              <div className="space-y-4">
+              <div className="min-w-0 space-y-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <input
                     accept=".txt,text/plain"
@@ -342,6 +365,7 @@ export function SplitNovelDialog({
                       onChange={(event) => {
                         const value = event.target.value;
                         setContent(value);
+                        setSelectedVolumeIndices([]);
                         setImportedParts([]);
                         if (value.length >= 100) {
                           const metadata = extractManuscriptMetadata(value);
@@ -355,9 +379,22 @@ export function SplitNovelDialog({
                     />
                   </label>
                 )}
+
+                {requiresVolumeSelection && novelStructure ? (
+                  <NovelVolumeSelection
+                    disabled={isSubmitting}
+                    locale={locale}
+                    onChange={(indices) => {
+                      setSelectedVolumeIndices(indices);
+                      setConfirmed(false);
+                    }}
+                    selectedIndices={selectedVolumeIndices}
+                    structure={novelStructure}
+                  />
+                ) : null}
               </div>
 
-              <div className="space-y-4 border-t pt-4 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-5">
+              <div className="min-w-0 space-y-4 border-t pt-4 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-5">
                 <label className="grid gap-1.5 text-sm font-medium">
                   {copy.manuscriptTitle}
                   <Input
@@ -583,8 +620,8 @@ export function SplitNovelDialog({
             <Button
               disabled={
                 isSubmitting ||
-                content.length < 100 ||
-                content.length > MAX_MANUSCRIPT_CHARS ||
+                selectedContent.length < 100 ||
+                selectedContent.length > MAX_MANUSCRIPT_CHARS ||
                 !title.trim() ||
                 (mode === "ai" && !modelId)
               }
