@@ -10,7 +10,7 @@ import {
   type StructuredValidationIssue,
 } from "./structured-output";
 
-export type StructuredOutputMode = "json_object" | "json_schema";
+export type StructuredOutputMode = "text" | "json_object" | "json_schema";
 
 export type PromptTokenUsage = {
   inputTokens: number;
@@ -31,6 +31,55 @@ export type PromptExecutionTrace = {
   tokenUsage: PromptTokenUsage | null;
   outputHash: string;
 };
+
+export async function requestOpenAiText(input: {
+  baseUrl: string;
+  apiKeys: string[];
+  model: string;
+  prompt: RenderedPrompt;
+  imageUrls?: string[];
+  temperature?: number;
+  timeoutMs?: number;
+  stream?: boolean;
+  maxTransportAttempts?: number;
+  onOutputStart?: () => void;
+  onTextDelta?: (delta: string) => void;
+}) {
+  const response = await requestText({
+    baseUrl: input.baseUrl,
+    apiKey: input.apiKeys[0],
+    model: input.model,
+    messages: [
+      ...(input.prompt.systemText
+        ? [{ role: "system" as const, content: input.prompt.systemText }]
+        : []),
+      { role: "user", content: input.prompt.text },
+    ],
+    imageUrls: input.imageUrls,
+    temperature: input.temperature,
+    timeoutMs: input.timeoutMs,
+    stream: input.stream,
+    maxTransportAttempts: input.maxTransportAttempts,
+    onOutputStart: input.onOutputStart,
+    onTextDelta: input.onTextDelta,
+  });
+  const outputText = response.text.trim();
+  if (!outputText) throw new Error("STRUCTURED_PROVIDER_TEXT_MISSING");
+  const trace: PromptExecutionTrace = {
+    promptId: input.prompt.id,
+    agentId: input.prompt.agentId,
+    promptVersion: input.prompt.version,
+    promptVersionHash: input.prompt.versionHash,
+    systemHash: input.prompt.systemHash,
+    model: input.model,
+    structuredOutputMode: "text",
+    repaired: false,
+    correctionAttempts: 0,
+    tokenUsage: response.tokenUsage,
+    outputHash: sha256(outputText),
+  };
+  return { text: outputText, outputText, trace };
+}
 
 export async function requestOpenAiStructured<T>(input: {
   baseUrl: string;
@@ -123,7 +172,7 @@ async function requestText(input: {
   apiKey: string;
   model: string;
   messages: StructuredMessage[];
-  responseFormat: ReturnType<typeof buildStructuredResponseFormat>;
+  responseFormat?: ReturnType<typeof buildStructuredResponseFormat>;
   imageUrls?: string[];
   temperature?: number;
   timeoutMs?: number;
@@ -164,7 +213,7 @@ async function requestTextAttempt(input: {
   apiKey: string;
   model: string;
   messages: StructuredMessage[];
-  responseFormat: ReturnType<typeof buildStructuredResponseFormat>;
+  responseFormat?: ReturnType<typeof buildStructuredResponseFormat>;
   imageUrls?: string[];
   temperature?: number;
   timeoutMs?: number;
@@ -189,7 +238,9 @@ async function requestTextAttempt(input: {
         body: JSON.stringify({
           model: input.model,
           temperature: input.temperature ?? 0.2,
-          response_format: input.responseFormat,
+          ...(input.responseFormat
+            ? { response_format: input.responseFormat }
+            : {}),
           stream: input.stream ?? true,
           ...((input.stream ?? true)
             ? { stream_options: { include_usage: true } }

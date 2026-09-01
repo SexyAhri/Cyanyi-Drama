@@ -374,7 +374,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.EPISODE_ADAPTATION]: {
     pathStem: "domain/episode_adaptation",
-    version: 7,
+    version: 8,
     variables: [
       "source_text",
       "target_duration_seconds",

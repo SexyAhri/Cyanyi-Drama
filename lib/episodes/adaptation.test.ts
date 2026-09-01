@@ -2,84 +2,39 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildEpisodeContinuityContext,
-  createJsonStringFieldStream,
-  extractPartialJsonStringField,
-  normalizeEpisodeAdaptationOutput,
+  parseAdaptationText,
+  summarizeAdaptation,
 } from "./adaptation";
 
-describe("episode adaptation streaming preview", () => {
-  it("extracts a JSON string field before the response is complete", () => {
+describe("episode adaptation local metadata", () => {
+  it("reads AI-authored title and synopsis from a soft text format", () => {
     expect(
-      extractPartialJsonStringField(
-        '{"title":"第一集","summary":"完整梗概","adaptedText":"第一段\\n第二段',
-        "adaptedText",
-      ),
-    ).toBe("第一段\n第二段");
-    expect(
-      extractPartialJsonStringField(
-        '{"title":"第一集","summary":"尚未完成',
-        "adaptedText",
-      ),
-    ).toBeNull();
-  });
-
-  it("waits for a complete unicode escape instead of showing broken text", () => {
-    expect(
-      extractPartialJsonStringField(
-        '{"adaptedText":"开场\\u4e2',
-        "adaptedText",
-      ),
-    ).toBe("开场");
-    expect(
-      extractPartialJsonStringField(
-        '{"adaptedText":"开场\\u4e2d',
-        "adaptedText",
-      ),
-    ).toBe("开场中");
-  });
-
-  it("emits only new adapted text across model chunks", () => {
-    const stream = createJsonStringFieldStream("adaptedText");
-
-    expect(stream.push('{"title":"第一集","adapted')).toBe("");
-    expect(stream.push('Text":"第一段\\n第')).toBe("第一段\n第");
-    expect(stream.push('二段\\u4e2')).toBe("二段");
-    expect(stream.push('d","changeSummary":[]}')).toBe("中");
-  });
-});
-
-describe("episode adaptation normalization", () => {
-  it("keeps usable model text and removes obsolete planning fields", () => {
-    expect(
-      normalizeEpisodeAdaptationOutput(
-        {
-          status: "ready",
-          title: " 第一集 ",
-          adaptedText: " 改编正文 ",
-          productionPlan: { beats: [] },
-        },
-        { title: "原始标题" },
+      parseAdaptationText(
+        "标题：寒门少年\n梗概：韩宇苦练后得知母亲仍在世。\n正文：\n凛冽冬夜，韩宇仍在练武。",
+        "第一集",
       ),
     ).toEqual({
+      title: "寒门少年",
+      summary: "韩宇苦练后得知母亲仍在世。",
+      content: "凛冽冬夜，韩宇仍在练武。",
+    });
+  });
+
+  it("keeps unformatted AI prose instead of failing a format check", () => {
+    expect(parseAdaptationText("凛冽冬夜，韩宇仍在练武。", "第一集")).toEqual({
       title: "第一集",
-      summary: "改编正文",
-      adaptedText: "改编正文",
-      changeSummary: [],
+      summary: "凛冽冬夜，韩宇仍在练武。",
+      content: "凛冽冬夜，韩宇仍在练武。",
     });
   });
 
-  it("accepts common local aliases without another model request", () => {
-    expect(
-      normalizeEpisodeAdaptationOutput(
-        { content: "可用正文", synopsis: "本集梗概", changeSummary: [" 精简说明 ", 1] },
-        { title: "默认标题" },
-      ),
-    ).toEqual({
-      title: "默认标题",
-      summary: "本集梗概",
-      adaptedText: "可用正文",
-      changeSummary: ["精简说明"],
-    });
+  it("derives a compact synopsis without constraining the generated prose", () => {
+    expect(summarizeAdaptation(" 第一段。\n\n第二段。 ")).toBe(
+      "第一段。 第二段。",
+    );
+    expect(summarizeAdaptation("甲".repeat(300))).toBe(
+      `${"甲".repeat(280)}...`,
+    );
   });
 });
 

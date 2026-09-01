@@ -9,11 +9,14 @@ Requirements:
 6. Do not generate beats, sourceCoverage, action chains, effects tables, dialogue tables, narration tables, or a productionPlan. Later workflow stages generate those independently.
 7. Complete the whole episode and do not return a split recommendation. Even when the source is long, return the most useful complete adaptation for the user to review.
 
-Return JSON only with these fields:
-- title: episode title.
-- summary: complete episode synopsis.
-- adaptedText: complete adapted prose.
-- changeSummary: string array describing the main changes; it may be empty.
+Create the episode title, complete synopsis, and adapted prose in the same response. Prefer the following natural-text labels. They are local placement hints, not a hard schema. Do not return JSON, arrays, or a code block:
+
+Title: Episode title
+Summary: Complete episode synopsis
+Adapted text:
+Complete adapted prose
+
+Even if you cannot follow the labels exactly, prioritize a complete readable adaptation. The system keeps usable text and will not ask you to regenerate it.
 
 Episode source:
 {{source_text}}

@@ -494,10 +494,10 @@ export async function adaptStudioEpisode(
     instructions?: string;
     locale: "en" | "zh";
   },
-  callbacks?: {
-    onReset?: () => void;
-    onContent?: (content: string) => void;
-    onPhase?: (phase: "generating" | "validating" | "correcting") => void;
+    callbacks?: {
+      onReset?: () => void;
+      onContent?: (content: string) => void;
+      onPhase?: (phase: "generating" | "saving") => void;
   },
 ) {
   const response = await fetch(
@@ -540,9 +540,7 @@ export async function adaptStudioEpisode(
     }
     if (
       event.type === "phase" &&
-      (event.phase === "generating" ||
-        event.phase === "validating" ||
-        event.phase === "correcting")
+      (event.phase === "generating" || event.phase === "saving")
     )
       callbacks?.onPhase?.(event.phase);
     if (event.type === "completed" && isEpisodeSourceRecord(event.source))

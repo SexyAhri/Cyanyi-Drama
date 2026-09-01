@@ -2,9 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { Prisma } from "@prisma/client";
 
-import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
+import { requestOpenAiText } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
-import { episodeAdaptationSchema } from "@/lib/prompts/schemas";
 import type { EpisodeSourceVersionRecord } from "@/lib/projects/types";
 import { prisma } from "@/lib/server/prisma";
 
@@ -21,7 +20,7 @@ export type EpisodeAdaptationMode =
 export type EpisodeAdaptationProgress =
   | { type: "reset" }
   | { type: "delta"; delta: string }
-  | { type: "phase"; phase: "generating" | "validating" };
+  | { type: "phase"; phase: "generating" | "saving" };
 
 const MAX_ADAPTATION_SOURCE_CHARS = 500_000;
 
@@ -79,8 +78,7 @@ export async function adaptEpisodeSource(input: {
     projectId: input.projectId,
     episodeNumber: episode.episodeNumber,
   });
-  let preview = createJsonStringFieldStream("adaptedText");
-  const result = await requestOpenAiStructured({
+  const result = await requestOpenAiText({
     ...provider,
     prompt: renderPrompt({
       id: PROMPT_IDS.EPISODE_ADAPTATION,
@@ -102,14 +100,8 @@ export async function adaptEpisodeSource(input: {
         custom_instructions: input.instructions?.trim() ?? "",
       },
     }),
-    schema: episodeAdaptationSchema,
-    normalizeRaw: (value) =>
-      normalizeEpisodeAdaptationOutput(value, {
-        title: original.title ?? episode.name,
-      }),
     temperature: 0.2,
     onOutputStart: () => {
-      preview = createJsonStringFieldStream("adaptedText");
       input.onProgress?.({
         type: "phase",
         phase: "generating",
@@ -117,13 +109,12 @@ export async function adaptEpisodeSource(input: {
       input.onProgress?.({ type: "reset" });
     },
     onTextDelta: (delta) => {
-      const contentDelta = preview.push(delta);
-      if (contentDelta)
-        input.onProgress?.({ type: "delta", delta: contentDelta });
+      if (delta) input.onProgress?.({ type: "delta", delta });
     },
   });
 
-  input.onProgress?.({ type: "phase", phase: "validating" });
+  input.onProgress?.({ type: "phase", phase: "saving" });
+  const adaptation = parseAdaptationText(result.text, episode.name);
 
   const latest = await prisma.episodeSourceVersion.findFirst({
     where: { episodeId: input.episodeId, kind: "adapted" },
@@ -137,12 +128,12 @@ export async function adaptEpisodeSource(input: {
       manuscriptId: original.manuscriptId,
       kind: "adapted",
       version: (latest?.version ?? 0) + 1,
-      title: result.data.title,
-      summary: result.data.summary,
-      content: result.data.adaptedText,
+      title: adaptation.title,
+      summary: adaptation.summary,
+      content: adaptation.content,
       adaptationMode: input.mode,
       instructions: input.instructions?.trim() || null,
-      changeSummary: toJson(result.data.changeSummary),
+      changeSummary: toJson([]),
       promptTrace: toJson({
         ...result.trace,
         rawOutput: result.outputText,
@@ -151,7 +142,7 @@ export async function adaptEpisodeSource(input: {
       productionPlanVersion: null,
       channelId: input.channelId,
       model: input.model,
-      sourceHash: textHash(result.data.adaptedText),
+      sourceHash: textHash(adaptation.content),
       sourceStartIndex: original.sourceStartIndex,
       sourceEndIndex: original.sourceEndIndex,
     },
@@ -210,41 +201,33 @@ export async function assertEpisodeHasNoDownstream(input: {
     );
 }
 
-export function normalizeEpisodeAdaptationOutput(
-  value: unknown,
-  fallback: { title: string },
-) {
-  const record =
-    value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : {};
-  const adaptedText = firstNonEmptyString(
-    record.adaptedText,
-    record.content,
-    record.text,
-    record.script,
+export function parseAdaptationText(value: string, fallbackTitle: string) {
+  const normalized = value.trim();
+  const titleMatch = normalized.match(
+    /(?:^|\n)\s*(?:#{1,6}\s*)?(?:标题|title)\s*[：:]\s*(.+?)\s*(?:\n|$)/iu,
   );
-  const summary = firstNonEmptyString(
-    record.summary,
-    record.synopsis,
-    adaptedText?.slice(0, 280),
+  const summaryMatch = normalized.match(
+    /(?:^|\n)\s*(?:#{1,6}\s*)?(?:梗概|简介|summary|synopsis)\s*[：:]\s*([\s\S]*?)(?=\n\s*(?:#{1,6}\s*)?(?:正文|改编正文|script|adapted\s*text)\s*[：:]|$)/iu,
   );
+  const contentMatch = normalized.match(
+    /(?:^|\n)\s*(?:#{1,6}\s*)?(?:正文|改编正文|script|adapted\s*text)\s*[：:]\s*([\s\S]+)$/iu,
+  );
+  const content = contentMatch?.[1].trim() || normalized;
   return {
-    title: firstNonEmptyString(record.title, fallback.title) ?? fallback.title,
-    summary: summary ?? "待人工补充梗概",
-    adaptedText: adaptedText ?? "",
-    changeSummary: Array.isArray(record.changeSummary)
-      ? record.changeSummary.flatMap((item) =>
-          typeof item === "string" && item.trim() ? [item.trim()] : [],
-        )
-      : [],
+    title: cleanSingleLine(titleMatch?.[1]) || fallbackTitle,
+    summary:
+      summaryMatch?.[1].trim() || summarizeAdaptation(content),
+    content,
   };
 }
 
-function firstNonEmptyString(...values: unknown[]) {
-  return values.find(
-    (value): value is string => typeof value === "string" && Boolean(value.trim()),
-  )?.trim();
+export function summarizeAdaptation(value: string) {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  return normalized.length > 280 ? `${normalized.slice(0, 280)}...` : normalized;
+}
+
+function cleanSingleLine(value: string | undefined) {
+  return value?.replace(/^\*+|\*+$/gu, "").trim().slice(0, 160) || "";
 }
 
 export type EpisodeContinuityContext = {
@@ -343,147 +326,6 @@ function episodeBoundaryText(
   return edge === "start"
     ? `${text.slice(0, 1_200)}...`
     : `...${text.slice(-1_200)}`;
-}
-
-export function extractPartialJsonStringField(raw: string, field: string) {
-  const valueStart = findJsonStringFieldValue(raw, field);
-  if (valueStart === null) return null;
-  return readJsonString(raw, valueStart).value;
-}
-
-export function createJsonStringFieldStream(field: string) {
-  let prefix = "";
-  let started = false;
-  let completed = false;
-  let escaped = false;
-  let unicode: string | null = null;
-  const marker = new RegExp(`"${escapeRegExp(field)}"\\s*:\\s*"`, "u");
-
-  return {
-    push(chunk: string) {
-      if (completed || !chunk) return "";
-      let input = chunk;
-      if (!started) {
-        prefix += chunk;
-        const match = marker.exec(prefix);
-        if (!match) return "";
-        started = true;
-        input = prefix.slice((match.index ?? 0) + match[0].length);
-        prefix = "";
-      }
-
-      let output = "";
-      for (const current of input) {
-        if (unicode !== null) {
-          if (!/[0-9a-f]/iu.test(current)) {
-            completed = true;
-            break;
-          }
-          unicode += current;
-          if (unicode.length === 4) {
-            output += String.fromCharCode(Number.parseInt(unicode, 16));
-            unicode = null;
-            escaped = false;
-          }
-          continue;
-        }
-        if (escaped) {
-          if (current === "u") {
-            unicode = "";
-            continue;
-          }
-          output += decodeJsonEscape(current);
-          escaped = false;
-          continue;
-        }
-        if (current === "\\") {
-          escaped = true;
-          continue;
-        }
-        if (current === '"') {
-          completed = true;
-          break;
-        }
-        output += current;
-      }
-      return output;
-    },
-  };
-}
-
-function decodeJsonEscape(value: string) {
-  return value === "n"
-    ? "\n"
-    : value === "r"
-      ? "\r"
-      : value === "t"
-        ? "\t"
-        : value === "b"
-          ? "\b"
-          : value === "f"
-            ? "\f"
-            : value;
-}
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
-function findJsonStringFieldValue(raw: string, field: string) {
-  let index = 0;
-  while (index < raw.length) {
-    if (raw[index] !== '"') {
-      index += 1;
-      continue;
-    }
-    const token = readJsonString(raw, index + 1);
-    if (!token.complete) return null;
-    let cursor = token.end + 1;
-    while (/\s/u.test(raw[cursor] ?? "")) cursor += 1;
-    if (token.value === field && raw[cursor] === ":") {
-      cursor += 1;
-      while (/\s/u.test(raw[cursor] ?? "")) cursor += 1;
-      return raw[cursor] === '"' ? cursor + 1 : null;
-    }
-    index = token.end + 1;
-  }
-  return null;
-}
-
-function readJsonString(raw: string, start: number) {
-  let value = "";
-  for (let index = start; index < raw.length; index += 1) {
-    const current = raw[index];
-    if (current === '"') return { value, end: index, complete: true };
-    if (current !== "\\") {
-      value += current;
-      continue;
-    }
-    const escaped = raw[index + 1];
-    if (!escaped) return { value, end: raw.length, complete: false };
-    if (escaped === "u") {
-      const hex = raw.slice(index + 2, index + 6);
-      if (!/^[0-9a-f]{4}$/iu.test(hex))
-        return { value, end: raw.length, complete: false };
-      value += String.fromCharCode(Number.parseInt(hex, 16));
-      index += 5;
-      continue;
-    }
-    value +=
-      escaped === "n"
-        ? "\n"
-        : escaped === "r"
-          ? "\r"
-          : escaped === "t"
-            ? "\t"
-            : escaped === "b"
-              ? "\b"
-              : escaped === "f"
-                ? "\f"
-                : escaped;
-    index += 1;
-  }
-  return { value, end: raw.length, complete: false };
 }
 
 async function ensureEpisodeSourceVersions(input: {

@@ -735,12 +735,7 @@ export const voicePerformanceDesignSchema = z
   })
   .strict();
 
-export const episodeAdaptationSchema = z.object({
-  title: z.string().trim().min(1).max(160),
-  summary: z.string().trim().min(1).max(4_000),
-  adaptedText: z.string().trim().min(1).max(500_000),
-  changeSummary: z.array(z.string().trim().min(1).max(600)).max(30).default([]),
-});
+export const episodeAdaptationSchema = z.string().trim().min(1);
 
 export const assetVisualDesignSchema = z
   .object({

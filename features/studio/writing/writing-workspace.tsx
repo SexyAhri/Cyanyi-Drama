@@ -63,7 +63,7 @@ import {
 type AdaptationDraft = {
   episodeId: string;
   status: "running" | "failed";
-  phase: "generating" | "validating" | "correcting";
+  phase: "generating" | "saving";
   content: string;
   error?: string;
 };
@@ -840,8 +840,7 @@ function adaptationPhaseLabel(
   copy: ReturnType<typeof getStudioCopy>,
   phase: AdaptationDraft["phase"],
 ) {
-  if (phase === "validating") return copy.adaptationValidating;
-  if (phase === "correcting") return copy.adaptationCorrecting;
+  if (phase === "saving") return copy.adaptationSaving;
   return copy.adaptationGenerating;
 }
 
