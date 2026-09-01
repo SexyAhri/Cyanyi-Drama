@@ -12,7 +12,7 @@ export async function fetchWithProviderRetry(
   init?: RequestInit,
   options: ProviderFetchOptions = {},
 ) {
-  const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? 3));
+  const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? 1));
   const baseDelayMs = Math.max(0, options.baseDelayMs ?? 1_000);
   const maxBackoffMs = Math.max(baseDelayMs, options.maxBackoffMs ?? 30_000);
   const fetchImpl = options.fetchImpl ?? fetch;

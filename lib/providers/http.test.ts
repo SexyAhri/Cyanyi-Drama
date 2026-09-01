@@ -24,10 +24,27 @@ describe("provider http retry", () => {
       fetchImpl,
       sleep,
       baseDelayMs: 100,
+      maxAttempts: 2,
     });
 
     expect(response.status).toBe(200);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledWith(4_000);
+  });
+
+  it("does not retry provider failures unless a caller explicitly opts in", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(null, { status: 429 }));
+    const sleep = vi.fn(async () => undefined);
+
+    const response = await fetchWithProviderRetry("https://provider.test", {}, {
+      fetchImpl,
+      sleep,
+    });
+
+    expect(response.status).toBe(429);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
   });
 });

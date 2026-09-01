@@ -44,7 +44,6 @@ describe("OpenAI-compatible media provider", () => {
       size: "2048x2048",
       n: 3,
       quality: "high",
-      response_format: "url",
     });
   });
 
@@ -92,6 +91,25 @@ describe("OpenAI-compatible media provider", () => {
     expect(requestBody).toBeInstanceOf(FormData);
     expect(requestBody.get("model")).toBe("gpt-image-2");
     expect(requestBody.getAll("image[]")).toHaveLength(1);
+    expect(requestBody.get("response_format")).toBeNull();
+  });
+
+  it("accepts inline base64 image output when URL format is unavailable", async () => {
+    fetchWithProviderRetry.mockResolvedValue(
+      Response.json({ data: [{ b64_json: "AQID" }] }),
+    );
+
+    const assets = await openAiCompatibleMediaProvider.generate({
+      protocol: "openai-compatible",
+      providerKey: "custom",
+      baseUrl: "https://provider.test/v1",
+      apiKey: "key-1",
+      model: "gpt-image-2",
+      kind: "image",
+      request: { prompt: "cinematic shot" },
+    });
+
+    expect(assets[0].url).toBe("data:image/png;base64,AQID");
   });
 
   it("does not silently discard references when the provider rejects them", async () => {

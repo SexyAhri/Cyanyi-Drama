@@ -88,7 +88,10 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
   const keys = output
     ? []
     : (JSON.parse(decryptSecret(channel.encryptedApiKeys)) as string[]);
-  const apiKeys = [...new Set(keys.map((key) => key?.trim()).filter(Boolean))];
+  const apiKeys = [...new Set(keys.map((key) => key?.trim()).filter(Boolean))].slice(
+    0,
+    1,
+  );
   if (!apiKeys.length && !output) throw new Error("MEDIA_TASK_API_KEY_MISSING");
   const mediaProtocol = isMediaChannelProtocol(channel.protocol)
     ? channel.protocol
