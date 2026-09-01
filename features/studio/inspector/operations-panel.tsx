@@ -241,6 +241,7 @@ function OperationRow({
           locale,
           item.workflow.workflowType,
           item.step,
+          item.workflow.displayName,
         );
   const errorMessage = operationErrorMessage(
     item.kind === "task" ? item.task.error : item.step.error,

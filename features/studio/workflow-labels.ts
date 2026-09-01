@@ -147,7 +147,10 @@ export function workflowStepOperationLabel(
   locale: StudioLocale,
   workflowType: string,
   step: Pick<WorkflowStepSummary, "key" | "type">,
+  targetName?: string,
 ) {
+  if (workflowType === "asset-visual-design" && targetName)
+    return `${workflowLabel(locale, workflowType)}-${targetName}`;
   const stepLabel = workflowStepLabel(locale, step.type || step.key);
   const department =
     step.type === "voice_analyze" || step.key === "voice"

@@ -52,6 +52,20 @@ describe("studio operation labels", () => {
     ).toBe("AI 视觉设计-生成资产视觉设定");
   });
 
+  it("includes the resolved asset name in visual design labels", () => {
+    expect(
+      workflowStepOperationLabel(
+        "zh-CN",
+        "asset-visual-design",
+        {
+          key: "design_asset_visual",
+          type: "design_asset_visual",
+        } as WorkflowStepSummary,
+        "韩宇",
+      ),
+    ).toBe("AI 视觉设计-韩宇");
+  });
+
   it("names storyboard prompt design as its own visible operation", () => {
     expect(
       workflowStepOperationLabel("zh-CN", "storyboard-prompt-design", {

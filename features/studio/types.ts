@@ -57,6 +57,9 @@ export type WorkflowRunSummary = {
   projectId: string;
   episodeId?: string;
   workflowType: string;
+  targetType?: string;
+  targetId?: string;
+  displayName?: string;
   status: string;
   error?: Record<string, unknown>;
   createdAt: string;

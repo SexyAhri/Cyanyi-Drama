@@ -22,17 +22,30 @@ export async function GET(request: Request, context: RouteContext) {
       Response.json({ message: "项目不存在" }, { status: 404 }),
       sessionId,
     );
-  const taskTargets = await resolveTaskTargets(
-    projectId,
-    tasks.map((task) => ({ targetId: task.targetId, targetType: task.targetType })),
-  );
+  const operationTargets = await resolveOperationTargets(projectId, [
+    ...workflows.map((workflow) => ({
+      targetId: workflow.targetId,
+      targetType: workflow.targetType,
+    })),
+    ...tasks.map((task) => ({
+      targetId: task.targetId,
+      targetType: task.targetType,
+    })),
+  ]);
   return attachSessionCookie(
     Response.json({
       project: { ...project, episodes },
-      workflows,
+      workflows: workflows.map((workflow) => ({
+        ...workflow,
+        ...operationTargets.get(
+          operationTargetKey(workflow.targetType, workflow.targetId),
+        ),
+      })),
       tasks: tasks.map((task) => ({
         ...task,
-        ...taskTargets.get(taskTargetKey(task.targetType, task.targetId)),
+        ...operationTargets.get(
+          operationTargetKey(task.targetType, task.targetId),
+        ),
         request:
           task.targetType === "vfx_element" || task.targetType === "vfx_composite"
             ? publicVfxRequest(task.request)
@@ -43,7 +56,7 @@ export async function GET(request: Request, context: RouteContext) {
   );
 }
 
-async function resolveTaskTargets(
+async function resolveOperationTargets(
   projectId: string,
   tasks: Array<{ targetId?: string; targetType?: string }>,
 ) {
@@ -55,13 +68,29 @@ async function resolveTaskTargets(
         ),
       ),
     );
-  const [appearances, locations, props, panels, voiceLines] = await Promise.all([
+  const [
+    characters,
+    appearances,
+    locations,
+    locationImages,
+    props,
+    panels,
+    voiceLines,
+  ] = await Promise.all([
+    prisma.novelCharacter.findMany({
+      where: { id: { in: ids("character") }, projectId },
+      select: { id: true, name: true },
+    }),
     prisma.characterAppearance.findMany({
       where: {
         id: { in: ids("character_appearance") },
         character: { projectId },
       },
       select: { id: true, character: { select: { name: true } } },
+    }),
+    prisma.novelLocation.findMany({
+      where: { id: { in: ids("location") }, projectId },
+      select: { id: true, name: true },
     }),
     prisma.locationImage.findMany({
       where: {
@@ -93,23 +122,31 @@ async function resolveTaskTargets(
     string,
     { displayName?: string; displayIndex?: number; displaySummary?: string }
   >();
+  for (const row of characters)
+    result.set(operationTargetKey("character", row.id), {
+      displayName: row.name,
+    });
   for (const row of appearances)
-    result.set(taskTargetKey("character_appearance", row.id), {
+    result.set(operationTargetKey("character_appearance", row.id), {
       displayName: row.character.name,
     });
   for (const row of locations)
-    result.set(taskTargetKey("location_image", row.id), {
+    result.set(operationTargetKey("location", row.id), {
+      displayName: row.name,
+    });
+  for (const row of locationImages)
+    result.set(operationTargetKey("location_image", row.id), {
       displayName: row.location.name,
     });
   for (const row of props)
-    result.set(taskTargetKey("prop", row.id), { displayName: row.name });
+    result.set(operationTargetKey("prop", row.id), { displayName: row.name });
   for (const row of panels)
-    result.set(taskTargetKey("storyboard_panel", row.id), {
+    result.set(operationTargetKey("storyboard_panel", row.id), {
       displayIndex: row.panelIndex + 1,
       displaySummary: row.description ?? undefined,
     });
   for (const row of voiceLines)
-    result.set(taskTargetKey("voice_line", row.id), {
+    result.set(operationTargetKey("voice_line", row.id), {
       displayName: row.speaker,
       displayIndex: row.lineIndex + 1,
       displaySummary: row.content,
@@ -117,7 +154,7 @@ async function resolveTaskTargets(
   return result;
 }
 
-function taskTargetKey(targetType?: string, targetId?: string) {
+function operationTargetKey(targetType?: string, targetId?: string) {
   return `${targetType ?? ""}:${targetId ?? ""}`;
 }
 
