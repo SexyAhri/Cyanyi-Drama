@@ -7,10 +7,14 @@ import {
   type NovelParseInput,
 } from "@/lib/novel/parser-runtime";
 import { buildEpisodeStoryboard } from "@/lib/novel/script-to-storyboard-runtime";
+import { splitEpisodeIntoClips } from "@/lib/novel/story-to-script-runtime";
 import {
-  convertEpisodeClipsToScreenplays,
-  splitEpisodeIntoClips,
-} from "@/lib/novel/story-to-script-runtime";
+  assembleEpisodeScreenplays,
+  generateEpisodeScreenplayBeats,
+  generateEpisodeScreenplayDialogue,
+  generateEpisodeScreenplayEffects,
+  generateEpisodeScreenplayNarration,
+} from "@/lib/novel/staged-screenplay-runtime";
 import { prisma } from "@/lib/server/prisma";
 import { analyzeEpisodeVoices } from "@/lib/voice/analyze";
 import {
@@ -184,6 +188,8 @@ async function processClaimedWorkflowJob(
           artifactType,
           refId,
         }),
+      loadRunArtifact: (artifactType, refId) =>
+        loadRunArtifact({ runId, artifactType, refId }),
     });
     await assertWorkflowRunActive({ runId, workerId });
     const outputJson = toInputJson(output);
@@ -303,7 +309,8 @@ async function processClaimedWorkflowJob(
       }
       throw control;
     }
-    const failureMessage = error instanceof Error ? error.message : String(error);
+    const failureMessage =
+      error instanceof Error ? error.message : String(error);
     const retryExhausted = attemptNumber >= step.maxAttempts;
     const failure = {
       code: classifyWorkflowFailureCode(failureMessage),
@@ -394,6 +401,10 @@ async function runStep(
       artifactType: string,
       refId: string,
     ) => Promise<unknown | null>;
+    loadRunArtifact: (
+      artifactType: string,
+      refId: string,
+    ) => Promise<unknown | null>;
   },
 ) {
   if (step.stepType === "parse_novel") {
@@ -444,26 +455,40 @@ async function runStep(
       runtime,
     );
   }
-  if (step.stepType === "convert_screenplay") {
+  if (
+    [
+      "generate_screenplay_beats",
+      "generate_screenplay_dialogue",
+      "generate_screenplay_narration",
+      "generate_screenplay_effects",
+      "assemble_screenplay",
+    ].includes(step.stepType)
+  ) {
     if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
     const input = mergedStepInput(run.input, step.input);
     const channelId = getString(input.channelId);
     const model = getString(input.model);
     if (!channelId || !model)
       throw new Error("WORKFLOW_SCREENPLAY_INPUT_REQUIRED");
-    return convertEpisodeClipsToScreenplays(
-      userId,
-      {
-        projectId: run.projectId,
-        episodeId: run.episodeId,
-        channelId,
-        model,
-        locale: getString(input.locale) === "en" ? "en" : "zh",
-        concurrency: getNumber(input.concurrency),
-        resumeExisting: runtime.attempt > 1,
-      },
-      runtime,
-    );
+    const stageInput = {
+      projectId: run.projectId,
+      episodeId: run.episodeId,
+      channelId,
+      model,
+      locale:
+        getString(input.locale) === "en" ? ("en" as const) : ("zh" as const),
+      concurrency: getNumber(input.concurrency),
+      resumeExisting: runtime.attempt > 1,
+    };
+    if (step.stepType === "generate_screenplay_beats")
+      return generateEpisodeScreenplayBeats(userId, stageInput, runtime);
+    if (step.stepType === "generate_screenplay_dialogue")
+      return generateEpisodeScreenplayDialogue(userId, stageInput, runtime);
+    if (step.stepType === "generate_screenplay_narration")
+      return generateEpisodeScreenplayNarration(userId, stageInput, runtime);
+    if (step.stepType === "generate_screenplay_effects")
+      return generateEpisodeScreenplayEffects(userId, stageInput, runtime);
+    return assembleEpisodeScreenplays(userId, stageInput, runtime);
   }
   if (step.stepType === "build_storyboard") {
     if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
@@ -688,6 +713,23 @@ async function loadIncrementalArtifact(input: {
       artifactType: input.artifactType,
       refId: input.refId,
     },
+    select: { payload: true },
+  });
+  return artifact?.payload ?? null;
+}
+
+async function loadRunArtifact(input: {
+  runId: string;
+  artifactType: string;
+  refId: string;
+}) {
+  const artifact = await prisma.workflowArtifact.findFirst({
+    where: {
+      runId: input.runId,
+      artifactType: input.artifactType,
+      refId: input.refId,
+    },
+    orderBy: { createdAt: "desc" },
     select: { payload: true },
   });
   return artifact?.payload ?? null;

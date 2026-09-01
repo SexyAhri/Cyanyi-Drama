@@ -42,7 +42,7 @@ const riskFocus = z.enum([
   "vfx_continuity",
 ]);
 
-const actionDesignSchema = z
+export const actionDesignSchema = z
   .object({
     kind: z.enum(ACTION_DESIGN_KINDS),
     performer: text,
@@ -136,7 +136,7 @@ export const clipSegmentationSchema = z
   })
   .strict();
 
-const screenplayContentSchema = z.discriminatedUnion("type", [
+export const screenplayContentSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("action"),
@@ -168,6 +168,110 @@ const screenplayContentSchema = z.discriminatedUnion("type", [
     })
     .strict(),
 ]);
+
+export const screenplayBeatPlanSchema = z
+  .object({
+    clipId: text,
+    scenes: z
+      .array(
+        z
+          .object({
+            heading: z
+              .object({
+                intExt: z.enum(["INT", "EXT"]),
+                location: text,
+                time: text,
+              })
+              .strict(),
+            description: z.string(),
+            characters: stringList,
+            beats: z
+              .array(z.object({ text: exactText }).strict())
+              .min(1)
+              .max(200),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(200),
+  })
+  .strict();
+
+const orderedPlacementFields = {
+  sceneIndex: z.number().int().nonnegative(),
+  afterBeatIndex: z.number().int().nonnegative().nullable(),
+};
+
+export const screenplayDialoguePlanSchema = z
+  .object({
+    clipId: text,
+    lines: z
+      .array(
+        z
+          .object({
+            ...orderedPlacementFields,
+            character: text,
+            parenthetical: optionalText,
+            lines: exactText,
+          })
+          .strict(),
+      )
+      .max(300),
+  })
+  .strict();
+
+export const screenplayNarrationPlanSchema = z
+  .object({
+    clipId: text,
+    lines: z
+      .array(
+        z
+          .object({
+            ...orderedPlacementFields,
+            character: optionalText,
+            text: exactText,
+          })
+          .strict(),
+      )
+      .max(300),
+  })
+  .strict();
+
+export const screenplayEffectsPlanSchema = z
+  .object({
+    clipId: text,
+    designs: z
+      .array(
+        z
+          .object({
+            sceneIndex: z.number().int().nonnegative(),
+            beatIndex: z.number().int().nonnegative(),
+            actionDesign: actionDesignSchema,
+          })
+          .strict(),
+      )
+      .max(200),
+  })
+  .strict();
+
+export const screenplayAssemblySceneSchema = z
+  .object({
+    scene: z
+      .object({
+        heading: z
+          .object({
+            intExt: z.enum(["INT", "EXT"]),
+            location: text,
+            time: text,
+          })
+          .strict(),
+        description: z.string(),
+        characters: stringList,
+        content: z.array(screenplayContentSchema).min(1).max(500),
+      })
+      .strict(),
+  })
+  .strict();
 
 export const screenplayConversionSchema = z
   .object({
@@ -681,7 +785,11 @@ export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
   [PROMPT_IDS.STORY_CHARACTER_ANALYSIS]: characterAnalysisSchema,
   [PROMPT_IDS.STORY_LOCATION_PROP_ANALYSIS]: locationPropAnalysisSchema,
   [PROMPT_IDS.STORY_CLIP_SEGMENTATION]: clipSegmentationSchema,
-  [PROMPT_IDS.STORY_SCREENPLAY_CONVERSION]: screenplayConversionSchema,
+  [PROMPT_IDS.STORY_SCREENPLAY_BEATS]: screenplayBeatPlanSchema,
+  [PROMPT_IDS.STORY_SCREENPLAY_DIALOGUE]: screenplayDialoguePlanSchema,
+  [PROMPT_IDS.STORY_SCREENPLAY_NARRATION]: screenplayNarrationPlanSchema,
+  [PROMPT_IDS.STORY_SCREENPLAY_EFFECTS]: screenplayEffectsPlanSchema,
+  [PROMPT_IDS.STORY_SCREENPLAY_ASSEMBLY]: screenplayAssemblySceneSchema,
   [PROMPT_IDS.STORY_SCREENPLAY_REVISION]: screenplayConversionSchema,
   [PROMPT_IDS.STORY_STORYBOARD_PLANNING]: storyboardPlanningSchema,
   [PROMPT_IDS.STORY_CINEMATOGRAPHY]: cinematographySchema,

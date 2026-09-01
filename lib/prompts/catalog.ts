@@ -44,13 +44,12 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       ],
     }),
   },
-  [PROMPT_IDS.STORY_SCREENPLAY_CONVERSION]: {
-    pathStem: "domain/story_screenplay_conversion",
-    version: 14,
+  [PROMPT_IDS.STORY_SCREENPLAY_BEATS]: {
+    pathStem: "domain/story_screenplay_beats",
+    version: 2,
     variables: [
       "clip_id",
       "clip_text",
-      "source_events_json",
       "production_plan_json",
       "character_library",
       "location_library",
@@ -58,18 +57,108 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       "world_bible_json",
       "project_style",
       "story_world_directive",
+    ],
+    agent: defineAgent({
+      id: "screenplay_beat_editor",
+      responsibility:
+        "Write ordered scenes and filmable action beats for one source clip.",
+      prohibited: [
+        "writing dialogue",
+        "writing narration",
+        "designing VFX or SFX",
+      ],
+      stopRules: ["Stop when the clip has been expressed as filmable action"],
+      retryPolicy: { maxSemanticCorrections: 0, mode: "targeted" },
+    }),
+  },
+  [PROMPT_IDS.STORY_SCREENPLAY_DIALOGUE]: {
+    pathStem: "domain/story_screenplay_dialogue",
+    version: 2,
+    variables: [
+      "clip_id",
+      "clip_text",
+      "beat_plan_json",
+      "production_plan_json",
+      "character_library",
+    ],
+    agent: defineAgent({
+      id: "screenplay_dialogue_editor",
+      responsibility:
+        "Write or adapt spoken dialogue for the approved ordered scene plan.",
+      prohibited: ["writing narration", "changing scene action"],
+      stopRules: ["Return an empty lines list when the episode needs no dialogue"],
+      retryPolicy: { maxSemanticCorrections: 0, mode: "targeted" },
+    }),
+  },
+  [PROMPT_IDS.STORY_SCREENPLAY_NARRATION]: {
+    pathStem: "domain/story_screenplay_narration",
+    version: 2,
+    variables: [
+      "clip_id",
+      "clip_text",
+      "beat_plan_json",
+      "production_plan_json",
+      "character_library",
+    ],
+    agent: defineAgent({
+      id: "screenplay_narration_editor",
+      responsibility:
+        "Write only the narration, voiceover, and inner voice needed by the screenplay.",
+      prohibited: ["writing dialogue", "changing scene action"],
+      stopRules: ["Return an empty lines list when narration is unnecessary"],
+      retryPolicy: { maxSemanticCorrections: 0, mode: "targeted" },
+    }),
+  },
+  [PROMPT_IDS.STORY_SCREENPLAY_EFFECTS]: {
+    pathStem: "domain/story_screenplay_effects",
+    version: 2,
+    variables: [
+      "clip_id",
+      "clip_text",
+      "beat_plan_json",
+      "production_plan_json",
+      "character_library",
+      "prop_library",
+      "world_bible_json",
+      "project_style",
+      "story_world_directive",
       "effect_library_json",
     ],
     agent: defineAgent({
-      id: "screenwriter",
+      id: "screenplay_effects_designer",
       responsibility:
-        "Convert one clip into screenplay structure while preserving source facts.",
+        "Design executable action, visual effects, and sound effects for selected beats.",
+      prohibited: ["adding plot", "changing dialogue", "changing scene action"],
+      stopRules: ["Return an empty designs list when no beat needs effects"],
+      retryPolicy: { maxSemanticCorrections: 0, mode: "targeted" },
+    }),
+  },
+  [PROMPT_IDS.STORY_SCREENPLAY_ASSEMBLY]: {
+    pathStem: "domain/story_screenplay_assembly",
+    version: 1,
+    variables: [
+      "clip_id",
+      "scene_index",
+      "clip_text",
+      "scene_parts_json",
+      "character_library",
+      "location_library",
+      "prop_library",
+      "world_bible_json",
+      "project_style",
+      "story_world_directive",
+    ],
+    agent: defineAgent({
+      id: "screenplay_scene_editor",
+      responsibility:
+        "Merge one scene's action beats, dialogue, narration, and effects into a production screenplay scene.",
       prohibited: [
-        "expanding the story",
-        "ungrounded inference",
-        "changing dialogue",
+        "adding plot outcomes",
+        "dropping supplied spoken lines",
+        "returning more than one scene",
       ],
-      contextPolicy: { scope: "clip", trust: "untrusted" },
+      stopRules: ["Stop after returning the single requested scene"],
+      retryPolicy: { maxSemanticCorrections: 0, mode: "targeted" },
     }),
   },
   [PROMPT_IDS.STORY_STORYBOARD_PLANNING]: {

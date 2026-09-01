@@ -15,17 +15,8 @@ import {
 } from "@/lib/llm/openai-structured";
 import { StructuredOutputError } from "@/lib/llm/structured-output";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
-import {
-  clipSegmentationSchema,
-  screenplayConversionSchema,
-} from "@/lib/prompts/schemas";
-import {
-  buildSourceEvents,
-  normalizeReusableScreenplaySourceContract,
-  normalizeScreenplaySourceContract,
-  validateClipSegmentation,
-  validateScreenplayConversion,
-} from "@/lib/prompts/validators";
+import { clipSegmentationSchema } from "@/lib/prompts/schemas";
+import { validateClipSegmentation } from "@/lib/prompts/validators";
 import {
   listProductionClips,
   listProductionProps,
@@ -39,8 +30,6 @@ import { prisma } from "@/lib/server/prisma";
 import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { listNovelCharacters, listNovelLocations } from "./domain-store";
-import { normalizeScreenplayDialogue } from "./screenplay-dialogue";
-import { normalizeScreenplayProviderPayload } from "./screenplay-provider-normalization";
 
 export { extractProjectEffectLibrary } from "@/lib/production/effect-library";
 
@@ -62,24 +51,16 @@ export type StoryToScriptRuntimeHooks = {
     refId: string,
     payload: unknown,
   ) => Promise<void>;
+  loadRunArtifact?: (
+    artifactType: string,
+    refId: string,
+  ) => Promise<unknown | null>;
 };
 
 type CanonicalContext = {
   characters: string[];
   locations: string[];
   props: string[];
-};
-
-type ScreenplayBatchResult = {
-  clipId: string;
-  clipIndex: number;
-  success: boolean;
-  reused: boolean;
-  degraded?: boolean;
-  fallbackReason?: string;
-  sceneCount: number;
-  trace?: PromptExecutionTrace;
-  error?: string;
 };
 
 type SegmentedClip = {
@@ -107,19 +88,6 @@ type ModelSegmentedClip = {
 };
 
 export const MAX_SCREENPLAY_CLIP_CHARS = 1_600;
-
-export class ScreenplayBatchError extends Error {
-  constructor(readonly results: ScreenplayBatchResult[]) {
-    const failed = results.filter((result) => !result.success);
-    const preview = failed
-      .slice(0, 3)
-      .map((result) => `${result.clipId}:${result.error ?? "unknown"}`)
-      .join(" | ");
-    super(
-      `SCREENPLAY_CONVERT_PARTIAL_FAILED:${failed.length}/${results.length}:${preview}`,
-    );
-  }
-}
 
 export async function splitEpisodeIntoClips(
   userId: string,
@@ -166,50 +134,46 @@ export async function splitEpisodeIntoClips(
       context.canonical,
       context.screenplayClipMaxChars,
     );
-  } else try {
-    const sourceUnits = buildSourceUnits(context.sourceText);
-    const result = await requestOpenAiStructured({
-      ...context.provider,
-      prompt: renderPrompt({
-        id: PROMPT_IDS.STORY_CLIP_SEGMENTATION,
-        locale: input.locale ?? "zh",
-        variables: {
-          source_units_json: JSON.stringify(sourceUnits),
-          character_library: JSON.stringify(context.characters),
-          location_library: JSON.stringify(context.locations),
-          prop_library: JSON.stringify(context.props),
-        },
-      }),
-      schema: clipSegmentationSchema,
-      validate: (data) =>
-        validateClipSegmentation(data, {
-          sourceUnits,
-          canonical: context.canonical,
+  } else
+    try {
+      const sourceUnits = buildSourceUnits(context.sourceText);
+      const result = await requestOpenAiStructured({
+        ...context.provider,
+        prompt: renderPrompt({
+          id: PROMPT_IDS.STORY_CLIP_SEGMENTATION,
+          locale: input.locale ?? "zh",
+          variables: {
+            source_units_json: JSON.stringify(sourceUnits),
+            character_library: JSON.stringify(context.characters),
+            location_library: JSON.stringify(context.locations),
+            prop_library: JSON.stringify(context.props),
+          },
         }),
-    });
-    segmentedClips = restoreSourceBackedClips(
-      result.data.clips,
-      sourceUnits,
-    );
-    promptTraces.push(result.trace);
-  } catch (error) {
-    if (!isSegmentationContractFailure(error)) throw error;
-    segmentedClips = buildDeterministicClipSegmentation(
-      context.sourceText,
-      context.canonical,
-      context.screenplayClipMaxChars,
-    );
-    degraded = true;
-    fallbackReason = error instanceof Error ? error.message : String(error);
-  }
+        schema: clipSegmentationSchema,
+        validate: (data) =>
+          validateClipSegmentation(data, {
+            sourceUnits,
+            canonical: context.canonical,
+          }),
+      });
+      segmentedClips = restoreSourceBackedClips(result.data.clips, sourceUnits);
+      promptTraces.push(result.trace);
+    } catch (error) {
+      if (!isSegmentationContractFailure(error)) throw error;
+      segmentedClips = buildDeterministicClipSegmentation(
+        context.sourceText,
+        context.canonical,
+        context.screenplayClipMaxChars,
+      );
+      degraded = true;
+      fallbackReason = error instanceof Error ? error.message : String(error);
+    }
   segmentedClips = normalizeScreenplayClipSizes(
     segmentedClips,
     context.canonical,
     context.screenplayClipMaxChars,
   );
-  if (
-    segmentedClips.map((clip) => clip.text).join("") !== context.sourceText
-  )
+  if (segmentedClips.map((clip) => clip.text).join("") !== context.sourceText)
     throw new Error("SOURCE_BACKFILL_COVERAGE_MISMATCH");
 
   await hooks.assertActive();
@@ -354,7 +318,7 @@ export function buildBeatAwareClipSegmentation(
 ): SegmentedClip[] {
   const spans = resolveProductionBeatSpans(sourceText, plan);
   const limit = Math.max(200, maxChars);
-  const groups: typeof spans[] = [];
+  const groups: (typeof spans)[] = [];
   let current: typeof spans = [];
   for (const span of spans) {
     const currentLength = current.length
@@ -370,7 +334,9 @@ export function buildBeatAwareClipSegmentation(
   if (current.length) groups.push(current);
   return groups.map((group) => {
     const text = sourceText.slice(group[0].start, group.at(-1)!.end);
-    const characters = canonical.characters.filter((name) => text.includes(name));
+    const characters = canonical.characters.filter((name) =>
+      text.includes(name),
+    );
     const props = canonical.props.filter((name) => text.includes(name));
     return {
       start: text.slice(0, Math.min(40, text.length)),
@@ -443,18 +409,20 @@ export function buildClipProductionContracts(
     const start = cursor;
     const end = start + clip.content.length;
     cursor = end;
-    const beats = spans.filter((span) => span.start >= start && span.end <= end);
-    if (
-      !beats.length ||
-      beats[0].start !== start ||
-      beats.at(-1)!.end !== end
-    )
+    const beats = spans.filter(
+      (span) => span.start >= start && span.end <= end,
+    );
+    if (!beats.length || beats[0].start !== start || beats.at(-1)!.end !== end)
       throw new Error(`PRODUCTION_CLIP_BEAT_ALIGNMENT_MISMATCH:${clip.id}`);
     const beatIds = new Set(beats.map((span) => span.beat.beatId));
     result.set(clip.id, {
       beats: beats.map((span) => span.beat),
-      dialoguePlan: plan.dialoguePlan.filter((line) => beatIds.has(line.beatId)),
-      narrationPlan: plan.narrationPlan.filter((line) => beatIds.has(line.beatId)),
+      dialoguePlan: plan.dialoguePlan.filter((line) =>
+        beatIds.has(line.beatId),
+      ),
+      narrationPlan: plan.narrationPlan.filter((line) =>
+        beatIds.has(line.beatId),
+      ),
     });
   }
   if (cursor !== sourceText.length)
@@ -508,179 +476,6 @@ function splitAtEditorialBoundaries(sourceText: string, maxChars: number) {
   return chunks;
 }
 
-export async function convertEpisodeClipsToScreenplays(
-  userId: string,
-  input: StoryToScriptStepInput,
-  hooks: StoryToScriptRuntimeHooks,
-) {
-  await hooks.assertActive();
-  const context = await loadStoryContext(userId, input);
-  const clips = await listProductionClips(
-    userId,
-    input.projectId,
-    input.episodeId,
-  );
-  if (!clips?.length) throw new Error("STORY_CLIPS_REQUIRED");
-  const productionPlansByClip = context.productionPlan
-    ? buildClipProductionContracts(context.sourceText, clips, context.productionPlan)
-    : new Map<string, EpisodeProductionContractSubset>();
-
-  const results = await mapWithConcurrency(
-    clips,
-    normalizeConcurrency(input.concurrency ?? context.workflowConcurrency),
-    async (clip): Promise<ScreenplayBatchResult> => {
-      await hooks.assertActive();
-      const stored = parseReusableScreenplay(
-        clip.screenplay,
-        clip.id,
-        clip.content,
-        context.canonical,
-        context.productionKnowledgeText,
-        productionPlansByClip.get(clip.id),
-      );
-      if (stored) {
-        await prisma.storyClip.update({
-          where: { id: clip.id },
-          data: { status: "screenplay_ready" },
-        });
-        const reusedResult = {
-          clipId: clip.id,
-          clipIndex: clip.clipIndex,
-          success: true,
-          reused: true,
-          sceneCount: stored.scenes.length,
-          screenplay: stored,
-        };
-        await hooks.persistArtifact("screenplay.clip", clip.id, reusedResult);
-        return reusedResult;
-      }
-
-      try {
-        await prisma.storyClip.update({
-          where: { id: clip.id },
-          data: { status: "screenplay_running" },
-        });
-        const sourceEvents = buildSourceEvents(clip.content);
-        const productionPlan = productionPlansByClip.get(clip.id);
-        const sourceContract = {
-          clipId: clip.id,
-          clipText: clip.content,
-          sourceEvents,
-          knowledgeText: context.productionKnowledgeText,
-        };
-        const result = await requestOpenAiStructured({
-          ...context.provider,
-          prompt: renderPrompt({
-            id: PROMPT_IDS.STORY_SCREENPLAY_CONVERSION,
-            locale: input.locale ?? "zh",
-            variables: {
-              clip_id: clip.id,
-              clip_text: clip.content,
-              source_events_json: JSON.stringify(sourceEvents),
-              production_plan_json: JSON.stringify(productionPlan ?? {}),
-              character_library: JSON.stringify(context.characters),
-              location_library: JSON.stringify(context.locations),
-              prop_library: JSON.stringify(context.props),
-              world_bible_json: context.worldBibleText,
-              project_style: context.projectStyleDirective,
-              story_world_directive: context.storyWorldDirective,
-              effect_library_json: JSON.stringify(context.effectLibrary),
-            },
-          }),
-          schema: screenplayConversionSchema,
-          normalizeRaw: (value) =>
-            normalizeScreenplayProviderPayload(value, {
-              clipText: clip.content,
-              characters: context.canonical.characters,
-              sourceEvents,
-            }),
-          validate: (data) =>
-            validateScreenplayConversion(
-              normalizeScreenplayDialogue(
-                normalizeScreenplaySourceContract(data, sourceContract),
-              ),
-              {
-                clipId: clip.id,
-                clipText: clip.content,
-                canonical: context.canonical,
-                sourceEvents,
-                knowledgeText: context.productionKnowledgeText,
-                productionPlan,
-              },
-            ),
-        });
-        const screenplay = normalizeScreenplayDialogue(
-          normalizeScreenplaySourceContract(result.data, sourceContract),
-        );
-        const normalizationIssues = validateScreenplayConversion(screenplay, {
-          clipId: clip.id,
-          clipText: clip.content,
-          canonical: context.canonical,
-          sourceEvents,
-          knowledgeText: context.productionKnowledgeText,
-          productionPlan,
-        });
-        if (normalizationIssues.length)
-          throw new Error(
-            `SCREENPLAY_DIALOGUE_NORMALIZATION_INVALID:${normalizationIssues.map((item) => item.code).join(",")}`,
-          );
-        await hooks.assertActive();
-        await prisma.storyClip.update({
-          where: { id: clip.id },
-          data: {
-            screenplay: JSON.stringify(screenplay),
-            status: "screenplay_ready",
-          },
-        });
-        const successResult = {
-          clipId: clip.id,
-          clipIndex: clip.clipIndex,
-          success: true,
-          reused: false,
-          sceneCount: screenplay.scenes.length,
-          screenplay,
-          trace: result.trace,
-        };
-        await hooks.persistArtifact("screenplay.clip", clip.id, successResult);
-        await hooks.persistArtifact("prompt.trace", clip.id, result.trace);
-        return successResult;
-      } catch (error) {
-        await hooks.assertActive();
-        const message = error instanceof Error ? error.message : String(error);
-        await prisma.storyClip.update({
-          where: { id: clip.id },
-          data: { status: "screenplay_failed" },
-        });
-        const failedResult = {
-          clipId: clip.id,
-          clipIndex: clip.clipIndex,
-          success: false,
-          reused: false,
-          sceneCount: 0,
-          error: message,
-        };
-        await hooks.persistArtifact("screenplay.clip", clip.id, failedResult);
-        return failedResult;
-      }
-    },
-  );
-
-  if (results.some((result) => !result.success))
-    throw new ScreenplayBatchError(results);
-  const promptTraces = results.flatMap((result) =>
-    result.trace ? [result.trace] : [],
-  );
-  return {
-    clipCount: results.length,
-    convertedCount: results.filter((result) => !result.reused).length,
-    degradedCount: results.filter((result) => result.degraded).length,
-    reusedCount: results.filter((result) => result.reused).length,
-    totalScenes: results.reduce((sum, result) => sum + result.sceneCount, 0),
-    results,
-    promptTraces,
-  };
-}
-
 export function buildDeterministicScreenplay(
   clipId: string,
   clipText: string,
@@ -696,11 +491,6 @@ export function buildDeterministicScreenplay(
   return {
     clipId,
     originalText: clipText,
-    coverage: buildSourceEvents(clipText).map((event) => ({
-      ...event,
-      modes: ["visual" as const],
-      reason: null,
-    })),
     scenes: [
       {
         sceneNumber: 0,
@@ -760,43 +550,10 @@ export async function mapWithConcurrency<T, R>(
   return results;
 }
 
-function parseReusableScreenplay(
-  value: string | null,
-  clipId: string,
-  clipText: string,
-  canonical: CanonicalContext,
-  knowledgeText: string,
-  productionPlan?: EpisodeProductionContractSubset,
+export async function loadStoryContext(
+  userId: string,
+  input: StoryToScriptStepInput,
 ) {
-  if (!value) return null;
-  try {
-    const parsed = screenplayConversionSchema.safeParse(JSON.parse(value));
-    if (!parsed.success) return null;
-    const sourceEvents = buildSourceEvents(clipText);
-    const screenplay = normalizeScreenplayDialogue(
-      normalizeReusableScreenplaySourceContract(parsed.data, {
-        clipId,
-        clipText,
-        sourceEvents,
-        knowledgeText,
-      }),
-    );
-    return validateScreenplayConversion(screenplay, {
-      clipId,
-      clipText,
-      canonical,
-      sourceEvents,
-      knowledgeText,
-      productionPlan,
-    }).length
-      ? null
-      : screenplay;
-  } catch {
-    return null;
-  }
-}
-
-async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
   const [
     episode,
     channel,
@@ -807,44 +564,43 @@ async function loadStoryContext(userId: string, input: StoryToScriptStepInput) {
     worldBible,
     effectLibrary,
     runtimeSettings,
-  ] =
-    await Promise.all([
-      prisma.episode.findFirst({
-        where: {
-          id: input.episodeId,
-          projectId: input.projectId,
-          project: { userId },
+  ] = await Promise.all([
+    prisma.episode.findFirst({
+      where: {
+        id: input.episodeId,
+        projectId: input.projectId,
+        project: { userId },
+      },
+      select: {
+        name: true,
+        description: true,
+        novelText: true,
+        activeSourceId: true,
+        sourceVersions: {
+          select: { id: true, content: true, productionPlan: true },
         },
-        select: {
-          name: true,
-          description: true,
-          novelText: true,
-          activeSourceId: true,
-          sourceVersions: {
-            select: { id: true, content: true, productionPlan: true },
-          },
-          project: {
-            select: { config: { select: { artStyle: true } } },
-          },
+        project: {
+          select: { config: { select: { artStyle: true } } },
         },
-      }),
-      prisma.channel.findFirst({
-        where: accessibleChannelWhere(userId, input.channelId),
-      }),
-      prisma.providerModel.findFirst({
-        where: {
-          channelId: input.channelId,
-          modelId: input.model,
-          selected: true,
-        },
-      }),
-      listNovelCharacters(userId, input.projectId),
-      listNovelLocations(userId, input.projectId),
-      listProductionProps(userId, input.projectId),
-      loadApprovedWorldBible(userId, input.projectId),
-      loadProjectEffectLibrary(input.projectId),
-      loadUserRuntimeSettings(userId),
-    ]);
+      },
+    }),
+    prisma.channel.findFirst({
+      where: accessibleChannelWhere(userId, input.channelId),
+    }),
+    prisma.providerModel.findFirst({
+      where: {
+        channelId: input.channelId,
+        modelId: input.model,
+        selected: true,
+      },
+    }),
+    listNovelCharacters(userId, input.projectId),
+    listNovelLocations(userId, input.projectId),
+    listProductionProps(userId, input.projectId),
+    loadApprovedWorldBible(userId, input.projectId),
+    loadProjectEffectLibrary(input.projectId),
+    loadUserRuntimeSettings(userId),
+  ]);
   if (!episode) throw new Error("STORY_EPISODE_NOT_FOUND");
   if (!channel) throw new Error("STORY_CHANNEL_NOT_FOUND");
   if (!configuredModel) throw new Error("STORY_MODEL_NOT_CONFIGURED");

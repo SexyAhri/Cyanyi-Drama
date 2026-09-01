@@ -49,7 +49,7 @@ describe("studio inspector view model", () => {
               id: "step-screenplay",
               completedAt: "2026-01-01T00:03:00.000Z",
               key: "screenplay",
-              type: "convert_screenplay",
+              type: "generate_screenplay_beats",
             },
           ],
         },

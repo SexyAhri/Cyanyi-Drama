@@ -14,7 +14,7 @@ const LOCALES: PromptLocale[] = ["zh", "en"];
 
 describe("prompt registry", () => {
   it("provides catalog-aligned Chinese and English templates", () => {
-    expect(PROMPT_ID_LIST).toHaveLength(19);
+    expect(PROMPT_ID_LIST).toHaveLength(23);
 
     for (const id of PROMPT_ID_LIST) {
       for (const locale of LOCALES) {
@@ -92,7 +92,7 @@ describe("prompt registry", () => {
       expect(entry.version).toBe(expectedVersion(id));
       expect(entry.agent.contextPolicy.trust).toBe("untrusted");
       expect(entry.agent.retryPolicy).toEqual({
-        maxSemanticCorrections: 1,
+        maxSemanticCorrections: noSemanticRetryPromptIds.has(id) ? 0 : 1,
         mode: "targeted",
       });
       expect(rendered.agentId).toBe(entry.agent.id);
@@ -130,6 +130,14 @@ function variablesFor(id: PromptId) {
   );
 }
 
+const noSemanticRetryPromptIds = new Set<PromptId>([
+  PROMPT_IDS.STORY_SCREENPLAY_BEATS,
+  PROMPT_IDS.STORY_SCREENPLAY_DIALOGUE,
+  PROMPT_IDS.STORY_SCREENPLAY_NARRATION,
+  PROMPT_IDS.STORY_SCREENPLAY_EFFECTS,
+  PROMPT_IDS.STORY_SCREENPLAY_ASSEMBLY,
+]);
+
 function contractError(code: string, id: PromptId, detail: string) {
   return new PromptContractError(code, id, detail);
 }
@@ -139,7 +147,11 @@ function expectedVersion(id: PromptId) {
     [PROMPT_IDS.STORY_CHARACTER_ANALYSIS]: 3,
     [PROMPT_IDS.STORY_LOCATION_PROP_ANALYSIS]: 5,
     [PROMPT_IDS.STORY_CLIP_SEGMENTATION]: 4,
-    [PROMPT_IDS.STORY_SCREENPLAY_CONVERSION]: 14,
+    [PROMPT_IDS.STORY_SCREENPLAY_BEATS]: 2,
+    [PROMPT_IDS.STORY_SCREENPLAY_DIALOGUE]: 2,
+    [PROMPT_IDS.STORY_SCREENPLAY_NARRATION]: 2,
+    [PROMPT_IDS.STORY_SCREENPLAY_EFFECTS]: 2,
+    [PROMPT_IDS.STORY_SCREENPLAY_ASSEMBLY]: 1,
     [PROMPT_IDS.STORY_STORYBOARD_PLANNING]: 12,
     [PROMPT_IDS.STORY_CINEMATOGRAPHY]: 7,
     [PROMPT_IDS.STORY_ACTING_DIRECTION]: 8,

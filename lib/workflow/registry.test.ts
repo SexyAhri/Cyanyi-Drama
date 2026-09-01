@@ -9,7 +9,11 @@ describe("workflow registry", () => {
     expect(template?.steps.map((step) => step.key)).toEqual([
       "parse",
       "split",
-      "screenplay",
+      "screenplay_beats",
+      "screenplay_dialogue",
+      "screenplay_narration",
+      "screenplay_effects",
+      "assemble_screenplay",
     ]);
     expect(template?.steps[1]).toMatchObject({
       dependsOn: ["parse"],
@@ -19,9 +23,22 @@ describe("workflow registry", () => {
     });
     expect(template?.steps[2]).toMatchObject({
       dependsOn: ["split"],
-      artifactTypes: ["screenplay.clip", "prompt.trace"],
+      artifactTypes: [
+        "screenplay.beats",
+        "screenplay.beats.raw",
+        "prompt.trace",
+      ],
       retryable: true,
       maxAttempts: 3,
+    });
+    expect(template?.steps[6]).toMatchObject({
+      dependsOn: ["screenplay_effects"],
+      artifactTypes: [
+        "screenplay.scene",
+        "screenplay.assembly.raw",
+        "screenplay.clip",
+        "prompt.trace",
+      ],
     });
   });
 

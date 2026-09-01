@@ -27,18 +27,15 @@ import {
   storyboardRefinementSchema,
 } from "@/lib/prompts/schemas";
 import {
-  buildSourceEvents,
   estimateSpeechDurationSeconds,
   normalizeActingDirectionContract,
   normalizeCinematographyContract,
-  normalizeReusableScreenplaySourceContract,
   normalizeStoryboardPlanningContract,
   normalizeStoryboardRefinementContract,
   sameStoryboardCharacterSet,
   validateActingCoverage,
   validateCinematographyCoverage,
   validateContinuityReview,
-  validateScreenplayConversion,
   validateStoryboardPlanning,
   validateStoryboardRefinement,
 } from "@/lib/prompts/validators";
@@ -62,6 +59,7 @@ import {
   STORYBOARD_DIALOGUE_TIMING_VERSION,
 } from "./storyboard-dialogue-timing";
 import { normalizeScreenplayDialogue } from "./screenplay-dialogue";
+import { isProducibleScreenplay } from "./staged-screenplay-runtime";
 import {
   buildClipProductionContracts,
   mapWithConcurrency,
@@ -102,12 +100,6 @@ export type ScriptToStoryboardRuntimeHooks = {
     artifactType: string,
     refId: string,
   ) => Promise<unknown | null>;
-};
-
-type CanonicalContext = {
-  characters: string[];
-  locations: string[];
-  props: string[];
 };
 
 type StoryboardClipResult = {
@@ -963,12 +955,7 @@ type ClipContext = ReturnType<typeof buildClipContext>;
 
 function buildClipContext(clip: ProductionClip, context: LoadedContext) {
   const productionPlan = context.productionContractsByClip.get(clip.id);
-  const screenplay = parseScreenplay(
-    clip,
-    context.canonical,
-    context.worldBibleText,
-    productionPlan,
-  );
+  const screenplay = parseScreenplay(clip);
   const screenplayCharacterNames = Array.from(
     new Set(
       screenplay.scenes.flatMap((scene) => [
@@ -2303,12 +2290,7 @@ function parseStoredJson<T>(value: string | null, fallback: T): T {
   }
 }
 
-function parseScreenplay(
-  clip: ProductionClip,
-  canonical: CanonicalContext,
-  knowledgeText: string,
-  productionPlan?: EpisodeProductionContractSubset,
-) {
+function parseScreenplay(clip: ProductionClip) {
   if (!clip.screenplay)
     throw new Error(`STORYBOARD_SCREENPLAY_REQUIRED:${clip.id}`);
   try {
@@ -2316,26 +2298,8 @@ function parseScreenplay(
       JSON.parse(clip.screenplay),
     );
     if (!parsed.success) throw new Error("invalid screenplay");
-    const sourceEvents = buildSourceEvents(clip.content);
-    const screenplay = normalizeScreenplayDialogue(
-      normalizeReusableScreenplaySourceContract(parsed.data, {
-        clipId: clip.id,
-        clipText: clip.content,
-        sourceEvents,
-        knowledgeText,
-      }),
-    );
-    if (
-      validateScreenplayConversion(screenplay, {
-        clipId: clip.id,
-        clipText: clip.content,
-        canonical,
-        sourceEvents,
-        knowledgeText,
-        productionPlan,
-      }).length
-    )
-      throw new Error("invalid screenplay");
+    const screenplay = normalizeScreenplayDialogue(parsed.data);
+    if (!isProducibleScreenplay(screenplay)) throw new Error("invalid screenplay");
     return screenplay;
   } catch {
     throw new Error(`STORYBOARD_SCREENPLAY_INVALID:${clip.id}`);

@@ -31,8 +31,7 @@ export function buildOperationItems(
           (step): OperationItem => ({
             id: step.id,
             kind: "workflow-step",
-            updatedAt:
-              step.completedAt ?? step.startedAt ?? workflow.updatedAt,
+            updatedAt: step.completedAt ?? step.startedAt ?? workflow.updatedAt,
             workflow,
             step,
           }),
@@ -40,8 +39,7 @@ export function buildOperationItems(
       ),
     ...snapshot.tasks
       .filter(
-        (task) =>
-          !episodeId || !task.episodeId || task.episodeId === episodeId,
+        (task) => !episodeId || !task.episodeId || task.episodeId === episodeId,
       )
       .map(
         (task): OperationItem => ({
@@ -107,7 +105,10 @@ export function operationErrorMessage(
   );
   if (transport) {
     const stage = providerStageLabel(transport[1], locale);
-    const elapsedSeconds = Math.max(1, Math.round(Number(transport[4]) / 1_000));
+    const elapsedSeconds = Math.max(
+      1,
+      Math.round(Number(transport[4]) / 1_000),
+    );
     const timeoutSeconds = Math.round(Number(transport[3]) / 1_000);
     const detail = [transport[5], transport[6]]
       .filter((value) => value && value !== "unknown")
@@ -212,7 +213,15 @@ const traceNameCopy: Record<StudioLocale, Record<string, string>> = {
     split: "剧情分片",
     split_clips: "剧情分片",
     screenplay: "剧本生成",
-    convert_screenplay: "剧本生成",
+    screenplay_beats: "场次与节拍",
+    generate_screenplay_beats: "场次与节拍",
+    screenplay_dialogue: "对白创作",
+    generate_screenplay_dialogue: "对白创作",
+    screenplay_narration: "旁白创作",
+    generate_screenplay_narration: "旁白创作",
+    screenplay_effects: "动作与特效",
+    generate_screenplay_effects: "动作与特效",
+    assemble_screenplay: "AI 分场合成",
     storyboard: "分镜生成",
     build_storyboard: "分镜生成",
     voice: "配音分析",
@@ -220,7 +229,11 @@ const traceNameCopy: Record<StudioLocale, Record<string, string>> = {
     story_character_analysis: "角色分析",
     story_location_prop_analysis: "场景与道具分析",
     story_clip_segmentation: "剧情分片",
-    story_screenplay_conversion: "剧本转换",
+    story_screenplay_beats: "场次与节拍",
+    story_screenplay_dialogue: "对白创作",
+    story_screenplay_narration: "旁白创作",
+    story_screenplay_effects: "动作与特效",
+    story_screenplay_assembly: "AI 分场合成",
     story_screenplay_revision: "剧本修订",
     story_storyboard_planning: "分镜规划",
     story_cinematography: "摄影设计",
@@ -238,7 +251,15 @@ const traceNameCopy: Record<StudioLocale, Record<string, string>> = {
     split: "Story segmentation",
     split_clips: "Story segmentation",
     screenplay: "Screenplay generation",
-    convert_screenplay: "Screenplay generation",
+    screenplay_beats: "Scenes and beats",
+    generate_screenplay_beats: "Scenes and beats",
+    screenplay_dialogue: "Dialogue writing",
+    generate_screenplay_dialogue: "Dialogue writing",
+    screenplay_narration: "Narration writing",
+    generate_screenplay_narration: "Narration writing",
+    screenplay_effects: "Action and effects",
+    generate_screenplay_effects: "Action and effects",
+    assemble_screenplay: "AI scene assembly",
     storyboard: "Storyboard generation",
     build_storyboard: "Storyboard generation",
     voice: "Voice analysis",
@@ -246,7 +267,11 @@ const traceNameCopy: Record<StudioLocale, Record<string, string>> = {
     story_character_analysis: "Character analysis",
     story_location_prop_analysis: "Location and prop analysis",
     story_clip_segmentation: "Story segmentation",
-    story_screenplay_conversion: "Screenplay conversion",
+    story_screenplay_beats: "Scenes and beats",
+    story_screenplay_dialogue: "Dialogue writing",
+    story_screenplay_narration: "Narration writing",
+    story_screenplay_effects: "Action and effects",
+    story_screenplay_assembly: "AI scene assembly",
     story_screenplay_revision: "Screenplay revision",
     story_storyboard_planning: "Storyboard planning",
     story_cinematography: "Cinematography design",
@@ -259,6 +284,16 @@ const traceNameCopy: Record<StudioLocale, Record<string, string>> = {
 
 const artifactNameCopy: Record<StudioLocale, Record<string, string>> = {
   "zh-CN": {
+    "screenplay.beats": "场次与节拍",
+    "screenplay.beats.raw": "节拍原始输出",
+    "screenplay.dialogue": "对白",
+    "screenplay.dialogue.raw": "对白原始输出",
+    "screenplay.narration": "旁白",
+    "screenplay.narration.raw": "旁白原始输出",
+    "screenplay.effects": "动作与特效",
+    "screenplay.effects.raw": "特效原始输出",
+    "screenplay.scene": "合成场次",
+    "screenplay.assembly.raw": "分场合成原始输出",
     "screenplay.clip": "剧本片段",
     "storyboard.clip.fallback": "分镜片段（降级结果）",
     "storyboard.clip.phase1": "分镜规划",
@@ -268,6 +303,16 @@ const artifactNameCopy: Record<StudioLocale, Record<string, string>> = {
     "storyboard.clip.continuity": "连续性检查",
   },
   en: {
+    "screenplay.beats": "Scenes and beats",
+    "screenplay.beats.raw": "Raw beat output",
+    "screenplay.dialogue": "Dialogue",
+    "screenplay.dialogue.raw": "Raw dialogue output",
+    "screenplay.narration": "Narration",
+    "screenplay.narration.raw": "Raw narration output",
+    "screenplay.effects": "Action and effects",
+    "screenplay.effects.raw": "Raw effects output",
+    "screenplay.scene": "Assembled scene",
+    "screenplay.assembly.raw": "Raw scene assembly output",
     "screenplay.clip": "Screenplay clip",
     "storyboard.clip.fallback": "Storyboard clip (fallback)",
     "storyboard.clip.phase1": "Storyboard planning",
@@ -288,7 +333,8 @@ export function traceSpanLabel(
   }
   if (span.kind === "workflow_artifact") {
     const artifactType = stringAttribute(span.attributes.artifactType);
-    const label = artifactNameCopy[locale][artifactType] ?? artifactType ?? span.name;
+    const label =
+      artifactNameCopy[locale][artifactType] ?? artifactType ?? span.name;
     const clipIndex = numberAttribute(span.attributes.clipIndex);
     return clipIndex === undefined
       ? label

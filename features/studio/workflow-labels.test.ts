@@ -11,13 +11,25 @@ describe("studio operation labels", () => {
     const steps = [
       { key: "parse", type: "parse_novel" },
       { key: "split", type: "split_clips" },
-      { key: "screenplay", type: "convert_screenplay" },
+      { key: "screenplay_beats", type: "generate_screenplay_beats" },
+      { key: "screenplay_dialogue", type: "generate_screenplay_dialogue" },
+      { key: "screenplay_narration", type: "generate_screenplay_narration" },
+      { key: "screenplay_effects", type: "generate_screenplay_effects" },
+      { key: "assemble_screenplay", type: "assemble_screenplay" },
     ] as WorkflowStepSummary[];
     expect(
       steps.map((step) =>
         workflowStepOperationLabel("zh-CN", "story-to-script", step),
       ),
-    ).toEqual(["编剧-小说解析", "编剧-剧情分片", "编剧-剧本转换"]);
+    ).toEqual([
+      "编剧-小说解析",
+      "编剧-剧情分片",
+      "编剧-场次与节拍",
+      "编剧-对白创作",
+      "编剧-旁白创作",
+      "编剧-动作与特效",
+      "编剧-AI 分场合成",
+    ]);
   });
 
   it("includes the resolved asset target in media task labels", () => {

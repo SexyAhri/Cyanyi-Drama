@@ -60,14 +60,12 @@ import {
   buildDeterministicClipSegmentation,
   buildDeterministicScreenplay,
   buildSourceUnits,
-  convertEpisodeClipsToScreenplays,
   extractProjectEffectLibrary,
   hasCompleteClipCoverage,
   mapWithConcurrency,
   MAX_SCREENPLAY_CLIP_CHARS,
   normalizeScreenplayClipSizes,
   restoreSourceBackedClips,
-  ScreenplayBatchError,
   splitEpisodeIntoClips,
 } from "./story-to-script-runtime";
 import type { EpisodeProductionPlan } from "@/lib/episodes/production-plan";
@@ -520,141 +518,6 @@ describe("story-to-script runtime", () => {
     });
   });
 
-  it("keeps successful clips and retries only failed screenplay work", async () => {
-    currentClips = [
-      clip("clip-1", 0, "甲说：你好。"),
-      clip("clip-2", 1, "乙走进书房。"),
-    ];
-    listProductionClips.mockImplementation(async () => currentClips);
-    requestOpenAiStructured
-      .mockResolvedValueOnce(structuredScreenplay("clip-1", "甲说：你好。"))
-      .mockRejectedValueOnce(new Error("provider unavailable"));
-    const firstHooks = runtimeHooks();
-
-    await expect(
-      convertEpisodeClipsToScreenplays(
-        "user-1",
-        { ...runtimeInput, concurrency: 1 },
-        firstHooks,
-      ),
-    ).rejects.toBeInstanceOf(ScreenplayBatchError);
-
-    expect(currentClips[0].status).toBe("screenplay_ready");
-    expect(currentClips[0].screenplay).not.toBeNull();
-    expect(currentClips[1].status).toBe("screenplay_failed");
-    expect(firstHooks.persistArtifact).toHaveBeenCalledWith(
-      "screenplay.clip",
-      "clip-1",
-      expect.objectContaining({ success: true }),
-    );
-
-    requestOpenAiStructured.mockReset();
-    requestOpenAiStructured.mockResolvedValueOnce(
-      structuredScreenplay("clip-2", "乙走进书房。"),
-    );
-    const retryHooks = runtimeHooks();
-    const retried = await convertEpisodeClipsToScreenplays(
-      "user-1",
-      { ...runtimeInput, concurrency: 1 },
-      retryHooks,
-    );
-
-    expect(requestOpenAiStructured).toHaveBeenCalledTimes(1);
-    expect(retried.reusedCount).toBe(1);
-    expect(retried.convertedCount).toBe(1);
-    expect(currentClips.every((item) => item.status === "screenplay_ready"))
-      .toBe(true);
-  });
-
-  it("reuses successful screenplays after source-event boundary normalization", async () => {
-    const source = "“哇！”海丹麟坠落于地。";
-    currentClips = [
-      {
-        ...clip("clip-1", 0, source),
-        status: "screenplay_ready",
-        screenplay: JSON.stringify({
-          clipId: "clip-1",
-          originalText: source,
-          coverage: [
-            {
-              eventId: "E001",
-              evidence: "“哇！",
-              modes: ["visual"],
-              reason: null,
-            },
-            {
-              eventId: "E002",
-              evidence: "”海丹麟坠落于地。",
-              modes: ["visual"],
-              reason: null,
-            },
-          ],
-          scenes: [
-            {
-              sceneNumber: 0,
-              heading: { intExt: "INT", location: "书房", time: "日" },
-              description: "",
-              characters: ["乙"],
-              content: [{ type: "action", text: source }],
-            },
-          ],
-        }),
-      },
-    ];
-    listProductionClips.mockImplementation(async () => currentClips);
-
-    const result = await convertEpisodeClipsToScreenplays(
-      "user-1",
-      { ...runtimeInput, concurrency: 1 },
-      runtimeHooks(),
-    );
-
-    expect(requestOpenAiStructured).not.toHaveBeenCalled();
-    expect(result.reusedCount).toBe(1);
-    expect(currentClips[0].status).toBe("screenplay_ready");
-  });
-
-  it("calls the model for missing screenplays when a workflow retry resumes", async () => {
-    currentClips = [
-      clip("clip-1", 0, "甲说：你好。"),
-      clip("clip-2", 1, "乙走进书房。"),
-    ];
-    listProductionClips.mockImplementation(async () => currentClips);
-    requestOpenAiStructured
-      .mockResolvedValueOnce(structuredScreenplay("clip-1", "甲说：你好。"))
-      .mockResolvedValueOnce(structuredScreenplay("clip-2", "乙走进书房。"));
-    const result = await convertEpisodeClipsToScreenplays(
-      "user-1",
-      { ...runtimeInput, concurrency: 2, resumeExisting: true },
-      runtimeHooks(),
-    );
-
-    expect(requestOpenAiStructured).toHaveBeenCalledTimes(2);
-    expect(result.degradedCount).toBe(0);
-    expect(currentClips.every((item) => item.status === "screenplay_ready"))
-      .toBe(true);
-    expect(
-      currentClips.map((item) => JSON.parse(item.screenplay ?? "{}").originalText),
-    ).toEqual(["甲说：你好。", "乙走进书房。"]);
-  });
-
-  it("does not degrade temporary screenplay provider failures", async () => {
-    currentClips = [clip("clip-1", 0, "甲说：你好。")];
-    listProductionClips.mockImplementation(async () => currentClips);
-    requestOpenAiStructured.mockRejectedValue(
-      new Error("STRUCTURED_PROVIDER_FAILED:524:Provider gateway timeout"),
-    );
-
-    await expect(
-      convertEpisodeClipsToScreenplays(
-        "user-1",
-        runtimeInput,
-        runtimeHooks(),
-      ),
-    ).rejects.toBeInstanceOf(ScreenplayBatchError);
-    expect(currentClips[0].status).toBe("screenplay_failed");
-  });
-
   it("builds a validator-safe deterministic screenplay", () => {
     const screenplay = buildDeterministicScreenplay(
       "clip-1",
@@ -707,48 +570,6 @@ function productionBeat(beatId: string, text: string, location: string) {
     performanceIntent: "动作连续",
     interactions: [],
     effects: [],
-  };
-}
-
-function clip(id: string, clipIndex: number, content: string) {
-  return { id, clipIndex, content, screenplay: null, status: "split_ready" };
-}
-
-function structuredScreenplay(clipId: string, originalText: string) {
-  const dialogue = originalText.includes("你好")
-    ? [
-        {
-          type: "dialogue" as const,
-          character: "甲",
-          parenthetical: null,
-          lines: "你好",
-        },
-      ]
-    : [{ type: "action" as const, text: originalText }];
-  return {
-    data: {
-      clipId,
-      originalText,
-      coverage: originalText
-        .split(/(?<=[。！？!?；;\n])/u)
-        .filter((value) => Boolean(value.trim()))
-        .map((evidence, index) => ({
-          eventId: `E${String(index + 1).padStart(3, "0")}`,
-          evidence,
-          modes: [originalText.includes("你好") ? ("dialogue" as const) : ("visual" as const)],
-          reason: null,
-        })),
-      scenes: [
-        {
-          sceneNumber: 0,
-          heading: { intExt: "INT" as const, location: "书房", time: "日" },
-          description: "",
-          characters: originalText.includes("你好") ? ["甲"] : ["乙"],
-          content: dialogue,
-        },
-      ],
-    },
-    trace: trace("story_screenplay_conversion"),
   };
 }
 
