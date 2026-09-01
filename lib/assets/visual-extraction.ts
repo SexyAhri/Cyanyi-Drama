@@ -81,7 +81,7 @@ export async function extractProjectVisualAssets(
     sourceAssetIds: assets.map((asset) => asset.id),
     sampledReferenceCount: Math.min(references.length, 12),
     persisted,
-    trace: result.trace,
+    trace: { ...result.trace, rawOutput: result.outputText },
   };
 }
 
@@ -142,7 +142,7 @@ export async function extractCharacterReferenceDescription(input: {
         metadataJson: JSON.stringify({
           uncertainties: result.data.uncertainties,
           sourceAssetIds: assets.map((asset) => asset.id),
-          promptTrace: result.trace,
+          promptTrace: { ...result.trace, rawOutput: result.outputText },
         }),
       },
     });
@@ -153,14 +153,16 @@ export async function extractCharacterReferenceDescription(input: {
     entityType,
     entityId,
     role: "description_source",
-    metadata: { promptTrace: result.trace },
+    metadata: {
+      promptTrace: { ...result.trace, rawOutput: result.outputText },
+    },
   });
   return {
     ...result.data,
     characterId: character.id,
     appearanceId: input.appearanceId ?? null,
     sourceAssetIds: assets.map((asset) => asset.id),
-    trace: result.trace,
+    trace: { ...result.trace, rawOutput: result.outputText },
   };
 }
 

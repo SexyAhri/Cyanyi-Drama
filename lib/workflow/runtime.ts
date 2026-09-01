@@ -5,6 +5,7 @@ import {
   generateProjectAssetVisualProfile,
   type VisualDesignTargetType,
 } from "@/lib/assets/visual-design";
+import { extractProjectVisualAssets } from "@/lib/assets/visual-extraction";
 import { adaptEpisodeSource } from "@/lib/episodes/adaptation";
 import { splitEpisodesWithAi } from "@/lib/episodes/split";
 import { designStoryboardMediaPrompt } from "@/lib/media/storyboard-prompt-design";
@@ -450,6 +451,35 @@ async function runStep(
         ? [result.profile.promptTrace]
         : [],
     };
+  }
+  if (step.stepType === "extract_visual_assets") {
+    const input = mergedStepInput(run.input, step.input);
+    const channelId = getString(input.channelId);
+    const model = getString(input.model);
+    const assetIds = parseStringArray(input.assetIds ?? null);
+    if (!channelId || !model || !assetIds.length)
+      throw new Error("WORKFLOW_VISUAL_EXTRACTION_INPUT_REQUIRED");
+    const result = await extractProjectVisualAssets({
+      userId,
+      projectId: run.projectId,
+      assetIds,
+      channelId,
+      model,
+      kindHint: getString(input.kindHint),
+      locale: getString(input.locale) === "en" ? "en" : "zh",
+      persist: input.persist === true,
+    });
+    const targetId = assetIds.join(":");
+    await runtime.persistArtifact(
+      "asset.visual-extraction",
+      targetId,
+      result,
+    );
+    await runtime.persistArtifact("asset.visual-extraction.raw", targetId, {
+      rawOutput: result.trace.rawOutput,
+    });
+    await runtime.persistArtifact("prompt.trace", targetId, result.trace);
+    return { ...result, promptTraces: [result.trace] };
   }
   if (step.stepType === "design_storyboard_media_prompt") {
     if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");

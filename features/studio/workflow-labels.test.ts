@@ -79,6 +79,15 @@ describe("studio operation labels", () => {
     ).toBe("AI 分集规划-规划剧集边界");
   });
 
+  it("names visual asset extraction as its own visible operation", () => {
+    expect(
+      workflowStepOperationLabel("zh-CN", "visual-asset-extraction", {
+        key: "extract_visual_assets",
+        type: "extract_visual_assets",
+      } as WorkflowStepSummary),
+    ).toBe("AI 视觉资产识别-识别角色、场景与道具");
+  });
+
   it("formats storyboard image and video tasks with shot indices", () => {
     const base = {
       targetType: "storyboard_panel",

@@ -85,6 +85,7 @@ beforeEach(() => {
   });
   requestOpenAiStructured.mockResolvedValue({
     data: { characters: [], locations: [], props: [] },
+    outputText: '{"characters":[],"locations":[],"props":[]}',
     trace: { promptId: "asset_visual_extraction" },
   });
 });
@@ -122,6 +123,7 @@ describe("visual asset extraction", () => {
     );
     expect(result.sourceAssetIds).toEqual(["image-1", "video-1"]);
     expect(result.sampledReferenceCount).toBe(3);
+    expect(result.trace.rawOutput).toContain('"characters"');
   });
 
   it("requires explicit image-input capability", async () => {

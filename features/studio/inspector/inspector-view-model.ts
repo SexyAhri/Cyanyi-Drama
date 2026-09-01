@@ -213,6 +213,8 @@ const traceNameCopy: Record<StudioLocale, Record<string, string>> = {
     design_storyboard_media_prompt: "设计镜头提示词",
     "voice-performance-design": "AI 配音设计",
     design_voice_performance: "设计角色声线与表演",
+    "visual-asset-extraction": "AI 视觉资产识别",
+    extract_visual_assets: "识别角色、场景与道具",
     "story-to-script": "小说转剧本",
     "script-to-storyboard": "剧本转分镜",
     analyze_novel: "小说分析",
@@ -259,6 +261,8 @@ const traceNameCopy: Record<StudioLocale, Record<string, string>> = {
     design_storyboard_media_prompt: "Design shot prompt",
     "voice-performance-design": "AI voice design",
     design_voice_performance: "Design voices and delivery",
+    "visual-asset-extraction": "AI visual asset extraction",
+    extract_visual_assets: "Identify characters, locations, and props",
     "story-to-script": "Story to screenplay",
     "script-to-storyboard": "Screenplay to storyboard",
     analyze_novel: "Novel analysis",
@@ -301,6 +305,8 @@ const traceNameCopy: Record<StudioLocale, Record<string, string>> = {
 const artifactNameCopy: Record<StudioLocale, Record<string, string>> = {
   "zh-CN": {
     "asset.visual-profile": "资产视觉设定",
+    "asset.visual-extraction": "视觉资产识别结果",
+    "asset.visual-extraction.raw": "视觉资产识别原始输出",
     "episode.split-plan": "分集规划",
     "episode.split-plan.raw": "分集规划原始输出",
     "screenplay.beats": "场次与节拍",
@@ -327,6 +333,8 @@ const artifactNameCopy: Record<StudioLocale, Record<string, string>> = {
   },
   en: {
     "asset.visual-profile": "Asset visual profile",
+    "asset.visual-extraction": "Visual asset extraction",
+    "asset.visual-extraction.raw": "Raw visual extraction output",
     "episode.split-plan": "Episode plan",
     "episode.split-plan.raw": "Raw episode plan output",
     "screenplay.beats": "Scenes and beats",
