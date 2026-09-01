@@ -1,3 +1,5 @@
+import { parseAssetVisualDesignText } from "./visual-design-parser";
+
 export type AssetVisualProfileSpec = {
   visualIdentity: string;
   shapeAndStructure: string;
@@ -38,9 +40,10 @@ export function parseAssetVisualProfile(
 ): AssetVisualProfile | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return;
   const profile = value as Record<string, unknown>;
-  const spec = profile.spec;
-  if (!spec || typeof spec !== "object" || Array.isArray(spec)) return;
-  const item = spec as Record<string, unknown>;
+  const specValue = profile.spec;
+  if (!specValue || typeof specValue !== "object" || Array.isArray(specValue))
+    return;
+  const item = specValue as Record<string, unknown>;
   const textFields = [
     "visualIdentity",
     "shapeAndStructure",
@@ -54,6 +57,27 @@ export function parseAssetVisualProfile(
   const consistencyRules = stringList(item.consistencyRules);
   const inferenceNotes = stringList(item.inferenceNotes);
   const storyWorld = parseStoryWorldLock(profile.storyWorld);
+  const parsedSpec = {
+    visualIdentity: item.visualIdentity as string,
+    shapeAndStructure: item.shapeAndStructure as string,
+    surfaceAndStyling: item.surfaceAndStyling as string,
+    colorPalette: item.colorPalette as string,
+    lightingAndPresentation: item.lightingAndPresentation as string,
+    signatureDetails,
+    consistencyRules,
+    negativePrompt: item.negativePrompt as string,
+    inferenceNotes,
+  };
+  const rawOutput =
+    profile.promptTrace &&
+    typeof profile.promptTrace === "object" &&
+    !Array.isArray(profile.promptTrace) &&
+    typeof (profile.promptTrace as Record<string, unknown>).rawOutput === "string"
+      ? ((profile.promptTrace as Record<string, unknown>).rawOutput as string)
+      : "";
+  const spec = isCollapsedLegacySpec(parsedSpec, rawOutput)
+    ? parseAssetVisualDesignText(rawOutput)
+    : parsedSpec;
   return {
     version: 1,
     source: profile.source === "manual" ? "manual" : "model",
@@ -66,17 +90,7 @@ export function parseAssetVisualProfile(
       ? { projectArtStyle: profile.projectArtStyle }
       : {}),
     ...(storyWorld ? { storyWorld } : {}),
-    spec: {
-      visualIdentity: item.visualIdentity as string,
-      shapeAndStructure: item.shapeAndStructure as string,
-      surfaceAndStyling: item.surfaceAndStyling as string,
-      colorPalette: item.colorPalette as string,
-      lightingAndPresentation: item.lightingAndPresentation as string,
-      signatureDetails,
-      consistencyRules,
-      negativePrompt: item.negativePrompt as string,
-      inferenceNotes,
-    },
+    spec,
     ...(profile.promptTrace &&
     typeof profile.promptTrace === "object" &&
     !Array.isArray(profile.promptTrace)
@@ -101,6 +115,24 @@ export function compileAssetVisualProfile(profile?: AssetVisualProfile) {
     `一致性规则：${spec.consistencyRules.join("；")}`,
     `排除项：${spec.negativePrompt}`,
   ].filter((line) => !line.endsWith("：")).join("\n");
+}
+
+function isCollapsedLegacySpec(
+  spec: AssetVisualProfileSpec,
+  rawOutput: string,
+) {
+  return (
+    rawOutput.trim().length > 0 &&
+    spec.visualIdentity.trim() === rawOutput.trim() &&
+    !spec.shapeAndStructure &&
+    !spec.surfaceAndStyling &&
+    !spec.colorPalette &&
+    !spec.lightingAndPresentation &&
+    spec.signatureDetails.length === 0 &&
+    spec.consistencyRules.length === 0 &&
+    !spec.negativePrompt &&
+    spec.inferenceNotes.length === 0
+  );
 }
 
 function parseStoryWorldLock(value: unknown): AssetStoryWorldLock | undefined {

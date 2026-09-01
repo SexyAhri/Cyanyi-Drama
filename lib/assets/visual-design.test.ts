@@ -42,6 +42,7 @@ import {
   parseAssetVisualDesignText,
   saveProjectAssetVisualProfile,
 } from "./visual-design";
+import { parseAssetVisualProfile } from "./visual-profile";
 
 const spec = {
   visualIdentity: "A restrained swordsman with a silver hair clasp",
@@ -222,6 +223,92 @@ describe("asset visual design", () => {
       consistencyRules: ["保持剑眉与苍白脸色"],
       inferenceNotes: ["衣袍颜色为视觉推断"],
       signatureDetails: [],
+    });
+  });
+
+  it("places Markdown heading sections into their matching fields", () => {
+    expect(
+      parseAssetVisualDesignText(
+        [
+          "## 韩宇｜角色标准视觉设定",
+          "### 视觉身份",
+          "十六岁的古代东方修炼世界少年。",
+          "### 形体与结构",
+          "- 修长削瘦",
+          "- 四肢紧实",
+          "### 识别细节",
+          "1. 黑色长发",
+          "2. 深青灰交领练功衣",
+          "### 排除项",
+          "- 排除现代短发",
+        ].join("\n"),
+      ),
+    ).toMatchObject({
+      visualIdentity: "十六岁的古代东方修炼世界少年。",
+      shapeAndStructure: "- 修长削瘦\n- 四肢紧实",
+      signatureDetails: ["黑色长发", "深青灰交领练功衣"],
+      negativePrompt: "- 排除现代短发",
+    });
+  });
+
+  it("merges domain-specific location headings into reusable fields", () => {
+    expect(
+      parseAssetVisualDesignText(
+        [
+          "### 视觉身份",
+          "偏僻的古代院落。",
+          "### 父级与子区域关系",
+          "院落依附山脚。",
+          "### 形体与空间结构",
+          "主屋居后，侧屋分列。",
+          "### 前、中、后景组织",
+          "前景为竹门，中景为院地，后景为山坡。",
+          "### 主要实际光源",
+          "日间自然光，夜间油灯。",
+          "### 参考图呈现",
+          "三分之四鸟瞰全景。",
+        ].join("\n"),
+      ),
+    ).toMatchObject({
+      visualIdentity: "偏僻的古代院落。",
+      shapeAndStructure:
+        "父级与子区域关系：\n院落依附山脚。\n形体与空间结构：\n主屋居后，侧屋分列。\n前、中、后景组织：\n前景为竹门，中景为院地，后景为山坡。",
+      lightingAndPresentation:
+        "主要实际光源：\n日间自然光，夜间油灯。\n参考图呈现：\n三分之四鸟瞰全景。",
+    });
+  });
+
+  it("locally repairs a legacy profile collapsed into visualIdentity", () => {
+    const rawOutput = [
+      "### 视觉身份",
+      "十六岁的古代东方修炼世界少年。",
+      "### 形体与结构",
+      "修长削瘦，四肢紧实。",
+      "### 造型与材质",
+      "深青灰交领练功衣。",
+    ].join("\n");
+    const profile = parseAssetVisualProfile({
+      version: 1,
+      source: "model",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      spec: {
+        visualIdentity: rawOutput,
+        shapeAndStructure: "",
+        surfaceAndStyling: "",
+        colorPalette: "",
+        lightingAndPresentation: "",
+        signatureDetails: [],
+        consistencyRules: [],
+        negativePrompt: "",
+        inferenceNotes: [],
+      },
+      promptTrace: { rawOutput },
+    });
+
+    expect(profile?.spec).toMatchObject({
+      visualIdentity: "十六岁的古代东方修炼世界少年。",
+      shapeAndStructure: "修长削瘦，四肢紧实。",
+      surfaceAndStyling: "深青灰交领练功衣。",
     });
   });
 
