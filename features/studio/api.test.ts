@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { adaptStudioEpisode } from "./api";
+import {
+  adaptStudioEpisode,
+  generateStudioAssetVisualProfile,
+} from "./api";
 
 describe("studio adaptation stream", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -80,5 +83,66 @@ describe("studio adaptation stream", () => {
         locale: "zh",
       }),
     ).rejects.toThrow("模型请求失败，请在任务列表重试");
+  });
+});
+
+describe("studio asset visual design stream", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("announces the workflow and resolves a permissive visual profile", async () => {
+    const profile = {
+      version: 1,
+      source: "model",
+      updatedAt: "2026-09-01T10:00:00.000Z",
+      spec: {
+        visualIdentity: "病弱而温和的中年男子",
+        shapeAndStructure: "",
+        surfaceAndStyling: "深灰旧袍",
+        colorPalette: "",
+        lightingAndPresentation: "",
+        signatureDetails: [],
+        consistencyRules: ["保持剑眉与苍白脸色"],
+        negativePrompt: "",
+        inferenceNotes: [],
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          [
+            JSON.stringify({
+              type: "started",
+              workflowId: "workflow-visual-1",
+            }),
+            JSON.stringify({
+              type: "completed",
+              target: { id: "character-1", type: "character", name: "韩子枫" },
+              profile,
+            }),
+            "",
+          ].join("\n"),
+          { status: 200 },
+        ),
+      ),
+    );
+    const onWorkflowStarted = vi.fn();
+
+    const result = await generateStudioAssetVisualProfile(
+      "project-1",
+      {
+        targetType: "character",
+        targetId: "character-1",
+        channelId: "channel-1",
+        model: "model-1",
+        locale: "zh",
+      },
+      { onWorkflowStarted },
+    );
+
+    expect(onWorkflowStarted).toHaveBeenCalledWith("workflow-visual-1");
+    expect(result.profile.spec.consistencyRules).toEqual([
+      "保持剑眉与苍白脸色",
+    ]);
   });
 });

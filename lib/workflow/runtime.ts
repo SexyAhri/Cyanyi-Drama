@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { Prisma } from "@prisma/client";
+import {
+  generateProjectAssetVisualProfile,
+  type VisualDesignTargetType,
+} from "@/lib/assets/visual-design";
 import { adaptEpisodeSource } from "@/lib/episodes/adaptation";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import {
@@ -408,6 +412,42 @@ async function runStep(
     ) => Promise<unknown | null>;
   },
 ) {
+  if (step.stepType === "design_asset_visual") {
+    const input = mergedStepInput(run.input, step.input);
+    const channelId = getString(input.channelId);
+    const model = getString(input.model);
+    const targetId = getString(input.targetId);
+    const targetType = getString(input.targetType);
+    if (
+      !channelId ||
+      !model ||
+      !targetId ||
+      !isVisualDesignTargetType(targetType)
+    )
+      throw new Error("WORKFLOW_ASSET_VISUAL_DESIGN_INPUT_REQUIRED");
+    const result = await generateProjectAssetVisualProfile({
+      userId,
+      projectId: run.projectId,
+      channelId,
+      model,
+      targetId,
+      targetType,
+      locale: getString(input.locale) === "en" ? "en" : "zh",
+    });
+    await runtime.persistArtifact("asset.visual-profile", targetId, result);
+    if (result.profile.promptTrace)
+      await runtime.persistArtifact(
+        "prompt.trace",
+        targetId,
+        result.profile.promptTrace,
+      );
+    return {
+      ...result,
+      promptTraces: result.profile.promptTrace
+        ? [result.profile.promptTrace]
+        : [],
+    };
+  }
   if (step.stepType === "adapt_episode") {
     if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
     const input = mergedStepInput(run.input, step.input);
@@ -622,6 +662,11 @@ function getNumber(value: Prisma.JsonValue | undefined) {
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
+}
+function isVisualDesignTargetType(
+  value: string | undefined,
+): value is VisualDesignTargetType {
+  return value === "character" || value === "location" || value === "prop";
 }
 function parseStringArray(value: Prisma.JsonValue | null) {
   return Array.isArray(value)

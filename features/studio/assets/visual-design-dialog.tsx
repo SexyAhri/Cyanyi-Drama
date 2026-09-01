@@ -80,6 +80,10 @@ export function VisualDesignDialog({
         channelId: model.channelId,
         model: model.modelId,
         locale: locale === "en" ? "en" : "zh",
+      }, {
+        onWorkflowStarted: () => {
+          void onCompleted();
+        },
       });
       setSpec(result.profile.spec);
       toast.success(copy.visualDesignGenerated);

@@ -9,12 +9,14 @@ import type {
 const labels = {
   "zh-CN": {
     workflows: {
+      "asset-visual-design": "AI 视觉设计",
       "episode-adaptation": "AI 改编",
       "story-to-script": "剧本解析",
       "script-to-storyboard": "分镜生成",
     },
     steps: {
       adapt_episode: "创作改编稿",
+      design_asset_visual: "生成资产视觉设定",
       analyze_novel: "小说解析",
       build_storyboard: "镜头规划",
       screenplay_beats: "场次与节拍",
@@ -54,12 +56,14 @@ const labels = {
   },
   en: {
     workflows: {
+      "asset-visual-design": "AI visual design",
       "episode-adaptation": "AI adaptation",
       "story-to-script": "Script analysis",
       "script-to-storyboard": "Storyboard generation",
     },
     steps: {
       adapt_episode: "Write adaptation",
+      design_asset_visual: "Design asset visual",
       analyze_novel: "Analyze source",
       build_storyboard: "Build storyboard",
       screenplay_beats: "Scenes and beats",

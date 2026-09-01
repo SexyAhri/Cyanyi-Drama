@@ -25,7 +25,10 @@ export function buildOperationItems(
 ): OperationItem[] {
   return [
     ...snapshot.workflows
-      .filter((workflow) => !episodeId || workflow.episodeId === episodeId)
+      .filter(
+        (workflow) =>
+          !episodeId || !workflow.episodeId || workflow.episodeId === episodeId,
+      )
       .flatMap((workflow) =>
         workflow.steps.map(
           (step): OperationItem => ({
@@ -205,6 +208,8 @@ export function traceEventDisplayStatus(
 
 const traceNameCopy: Record<StudioLocale, Record<string, string>> = {
   "zh-CN": {
+    "asset-visual-design": "AI 视觉设计",
+    design_asset_visual: "生成资产视觉设定",
     "story-to-script": "小说转剧本",
     "script-to-storyboard": "剧本转分镜",
     analyze_novel: "小说分析",
@@ -243,6 +248,8 @@ const traceNameCopy: Record<StudioLocale, Record<string, string>> = {
     story_continuity_review: "连续性检查",
   },
   en: {
+    "asset-visual-design": "AI visual design",
+    design_asset_visual: "Design asset visual",
     "story-to-script": "Story to screenplay",
     "script-to-storyboard": "Screenplay to storyboard",
     analyze_novel: "Novel analysis",
@@ -284,6 +291,7 @@ const traceNameCopy: Record<StudioLocale, Record<string, string>> = {
 
 const artifactNameCopy: Record<StudioLocale, Record<string, string>> = {
   "zh-CN": {
+    "asset.visual-profile": "资产视觉设定",
     "screenplay.beats": "场次与节拍",
     "screenplay.beats.raw": "节拍原始输出",
     "screenplay.dialogue": "对白",
@@ -303,6 +311,7 @@ const artifactNameCopy: Record<StudioLocale, Record<string, string>> = {
     "storyboard.clip.continuity": "连续性检查",
   },
   en: {
+    "asset.visual-profile": "Asset visual profile",
     "screenplay.beats": "Scenes and beats",
     "screenplay.beats.raw": "Raw beat output",
     "screenplay.dialogue": "Dialogue",

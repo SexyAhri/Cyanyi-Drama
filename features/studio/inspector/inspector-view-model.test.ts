@@ -29,6 +29,18 @@ describe("studio inspector view model", () => {
       project: { episodes: [] },
       workflows: [
         {
+          id: "run-project",
+          updatedAt: "2026-01-05T00:00:00.000Z",
+          steps: [
+            {
+              id: "step-visual-design",
+              completedAt: "2026-01-05T00:01:00.000Z",
+              key: "design_asset_visual",
+              type: "design_asset_visual",
+            },
+          ],
+        },
+        {
           id: "run-1",
           episodeId: "episode-1",
           updatedAt: "2026-01-01T00:00:00.000Z",
@@ -62,6 +74,7 @@ describe("studio inspector view model", () => {
     } as unknown as WorkspaceSnapshot;
 
     expect(buildOperationItems(snapshot, "episode-1").map((item) => item.id)).toEqual([
+      "step-visual-design",
       "task-project",
       "task-1",
       "step-screenplay",
@@ -268,6 +281,27 @@ describe("studio inspector view model", () => {
     } satisfies StudioExecutionSpan;
 
     expect(traceSpanLabel(artifact, "zh-CN")).toBe("剧本片段 1");
+    expect(
+      traceSpanLabel(
+        {
+          ...artifact,
+          name: "asset-visual-design",
+          kind: "workflow_run",
+          attributes: {},
+        },
+        "zh-CN",
+      ),
+    ).toBe("AI 视觉设计");
+    expect(
+      traceSpanLabel(
+        {
+          ...artifact,
+          name: "asset.visual-profile",
+          attributes: { artifactType: "asset.visual-profile" },
+        },
+        "zh-CN",
+      ),
+    ).toBe("资产视觉设定");
     expect(traceSpanKindLabel(artifact.kind, "zh-CN")).toBe("中间结果");
     expect(traceEventLabel("artifact_committed", "zh-CN")).toBe(
       "中间结果已保存",

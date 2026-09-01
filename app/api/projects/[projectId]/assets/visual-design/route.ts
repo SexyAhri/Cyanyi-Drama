@@ -1,11 +1,15 @@
 import {
-  generateProjectAssetVisualProfile,
   saveProjectAssetVisualProfile,
   type VisualDesignTargetType,
 } from "@/lib/assets/visual-design";
 import { ProjectAssetError } from "@/lib/assets/project-store";
-import type { AssetVisualProfileSpec } from "@/lib/assets/visual-profile";
+import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
+import {
+  createOrReuseWorkflowRun,
+  getWorkflowRun,
+} from "@/lib/workflow/store";
 
 type Context = { params: Promise<{ projectId: string }> };
 
@@ -25,20 +29,62 @@ export async function POST(request: Request, context: Context) {
       ),
       sessionId,
     );
-  try {
-    const result = await generateProjectAssetVisualProfile({
+  const input = {
+    channelId,
+    model,
+    targetType,
+    targetId,
+    locale: body.locale === "en" ? ("en" as const) : ("zh" as const),
+  };
+  const runtimeSettings = await loadUserRuntimeSettings(user.id);
+  const result = await createOrReuseWorkflowRun({
+    id: `workflow_${crypto.randomUUID()}`,
+    userId: user.id,
+    projectId,
+    workflowType: "asset-visual-design",
+    targetType,
+    targetId,
+    input,
+    steps: [
+      {
+        key: "design_asset_visual",
+        type: "design_asset_visual",
+        artifactTypes: ["asset.visual-profile", "prompt.trace"],
+        input,
+        retryable: true,
+        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
+      },
+    ],
+    maxAttempts: runtimeSettings.workflowStepMaxAttempts,
+  });
+  if (!result)
+    return attachSessionCookie(
+      Response.json({ message: "项目不存在" }, { status: 404 }),
+      sessionId,
+    );
+  if (!result.reused)
+    await enqueueWorkflowJob({
+      runId: result.workflow.id,
       userId: user.id,
       projectId,
-      targetType,
-      targetId,
-      channelId,
-      model,
-      locale: body.locale === "en" ? "en" : "zh",
+      maxAttempts: 1,
     });
-    return attachSessionCookie(Response.json(result), sessionId);
-  } catch (error) {
-    return assetErrorResponse(error, sessionId);
-  }
+  if (request.headers.get("accept")?.includes("application/x-ndjson"))
+    return visualDesignStreamResponse(
+      {
+        userId: user.id,
+        runId: result.workflow.id,
+        locale: input.locale,
+      },
+      sessionId,
+    );
+  return attachSessionCookie(
+    Response.json(
+      { workflow: result.workflow, reused: result.reused },
+      { status: result.reused ? 200 : 202 },
+    ),
+    sessionId,
+  );
 }
 
 export async function PUT(request: Request, context: Context) {
@@ -61,12 +107,100 @@ export async function PUT(request: Request, context: Context) {
       projectId,
       targetType,
       targetId,
-      spec: body.spec as AssetVisualProfileSpec,
+      spec: body.spec,
     });
     return attachSessionCookie(Response.json({ profile }), sessionId);
   } catch (error) {
     return assetErrorResponse(error, sessionId);
   }
+}
+
+function visualDesignStreamResponse(
+  input: { userId: string; runId: string; locale: "zh" | "en" },
+  sessionId: string | null,
+) {
+  const encoder = new TextEncoder();
+  let closed = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const send = (event: unknown) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+        } catch {
+          closed = true;
+        }
+      };
+      send({ type: "started", workflowId: input.runId });
+      void waitForVisualDesignWorkflow(input)
+        .then(send)
+        .catch((error: unknown) => {
+          send({
+            type: "failed",
+            message: visualDesignErrorMessage(error, input.locale),
+            detail: error instanceof Error ? error.message : String(error),
+          });
+        })
+        .finally(() => {
+          if (!closed) controller.close();
+          closed = true;
+        });
+    },
+    cancel() {
+      closed = true;
+    },
+  });
+  return attachSessionCookie(
+    new Response(stream, {
+      headers: {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        "X-Accel-Buffering": "no",
+      },
+    }),
+    sessionId,
+  );
+}
+
+async function waitForVisualDesignWorkflow(input: {
+  userId: string;
+  runId: string;
+  locale: "zh" | "en";
+}) {
+  while (true) {
+    const workflow = await getWorkflowRun(input.userId, input.runId);
+    if (!workflow) throw new Error("WORKFLOW_RUN_NOT_FOUND");
+    if (workflow.status === "succeeded") {
+      if (isVisualDesignResult(workflow.output))
+        return { type: "completed", ...workflow.output };
+      throw new Error("WORKFLOW_VISUAL_DESIGN_OUTPUT_MISSING");
+    }
+    if (["failed", "blocked", "canceled"].includes(workflow.status))
+      throw new Error(workflowErrorMessage(workflow.error));
+    await new Promise((resolve) => setTimeout(resolve, 750));
+  }
+}
+
+function isVisualDesignResult(value: unknown): value is {
+  target: { id: string; type: string; name: string };
+  profile: Record<string, unknown>;
+} {
+  if (!isObject(value)) return false;
+  return isObject(value.target) && isObject(value.profile);
+}
+
+function workflowErrorMessage(error: Record<string, unknown> | undefined) {
+  return typeof error?.message === "string" && error.message.trim()
+    ? error.message
+    : "WORKFLOW_VISUAL_DESIGN_FAILED";
+}
+
+function visualDesignErrorMessage(error: unknown, locale: "zh" | "en") {
+  if (error instanceof ProjectAssetError) return error.message;
+  const detail = error instanceof Error ? error.message : String(error);
+  return locale === "en"
+    ? `Visual design failed: ${detail}`
+    : `视觉设计失败：${detail}`;
 }
 
 function assetErrorResponse(error: unknown, sessionId: string | null) {

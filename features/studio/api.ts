@@ -1,4 +1,8 @@
 import type { MediaTask } from "@/lib/media/task-contract";
+import {
+  parseAssetVisualProfile,
+  type AssetVisualProfile,
+} from "@/lib/assets/visual-profile";
 import type {
   EpisodeRecord,
   EpisodeSourceVersionRecord,
@@ -612,15 +616,67 @@ export async function generateStudioAssetVisualProfile(
     model: string;
     locale: "en" | "zh";
   },
+  callbacks?: { onWorkflowStarted?: (workflowId: string) => void },
 ) {
-  return request<{
-    target: { id: string; type: string; name: string };
-    profile: import("@/lib/assets/visual-profile").AssetVisualProfile;
-  }>(`/api/projects/${encodeURIComponent(projectId)}/assets/visual-design`, {
-    body: JSON.stringify(input),
-    headers: { "Content-Type": "application/json" },
-    method: "POST",
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/assets/visual-design`,
+    {
+      body: JSON.stringify(input),
+      credentials: "same-origin",
+      headers: {
+        Accept: "application/x-ndjson",
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+    },
+  ).catch(() => {
+    throw new StudioApiError(studioRequestFallback(), 0);
   });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as Record<
+      string,
+      unknown
+    > | null;
+    const message = typeof body?.message === "string" ? body.message.trim() : "";
+    throw new StudioApiError(
+      isRuntimeLocaleCompatible(message) ? message : studioRequestFallback(),
+      response.status,
+    );
+  }
+  if (!response.body) throw new StudioApiError(studioRequestFallback(), 0);
+
+  let target: { id: string; type: string; name: string } | undefined;
+  let profile: AssetVisualProfile | undefined;
+  for await (const event of readJsonLineStream(response.body)) {
+    if (event.type === "started" && typeof event.workflowId === "string")
+      callbacks?.onWorkflowStarted?.(event.workflowId);
+    if (event.type === "completed") {
+      target = parseAssetVisualTarget(event.target);
+      profile = parseAssetVisualProfile(event.profile);
+    }
+    if (event.type === "failed")
+      throw new StudioApiError(
+        typeof event.message === "string" && event.message.trim()
+          ? event.message
+          : studioRequestFallback(),
+        500,
+      );
+  }
+  if (!target || !profile)
+    throw new StudioApiError(studioRequestFallback(), 0);
+  return { target, profile };
+}
+
+function parseAssetVisualTarget(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const target = value as Record<string, unknown>;
+  if (
+    typeof target.id !== "string" ||
+    typeof target.type !== "string" ||
+    typeof target.name !== "string"
+  )
+    return;
+  return { id: target.id, type: target.type, name: target.name };
 }
 
 export async function saveStudioAssetVisualProfile(

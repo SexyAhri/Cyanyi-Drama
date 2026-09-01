@@ -43,6 +43,15 @@ describe("studio operation labels", () => {
     );
   });
 
+  it("names project-level AI visual design work", () => {
+    expect(
+      workflowStepOperationLabel("zh-CN", "asset-visual-design", {
+        key: "design_asset_visual",
+        type: "design_asset_visual",
+      } as WorkflowStepSummary),
+    ).toBe("AI 视觉设计-生成资产视觉设定");
+  });
+
   it("formats storyboard image and video tasks with shot indices", () => {
     const base = {
       targetType: "storyboard_panel",
