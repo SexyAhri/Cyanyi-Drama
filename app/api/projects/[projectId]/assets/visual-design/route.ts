@@ -2,14 +2,10 @@ import {
   saveProjectAssetVisualProfile,
   type VisualDesignTargetType,
 } from "@/lib/assets/visual-design";
+import { createAssetVisualDesignWorkflow } from "@/lib/assets/visual-design-workflow";
 import { ProjectAssetError } from "@/lib/assets/project-store";
-import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
-import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
-import {
-  createOrReuseWorkflowRun,
-  getWorkflowRun,
-} from "@/lib/workflow/store";
+import { getWorkflowRun } from "@/lib/workflow/store";
 
 type Context = { params: Promise<{ projectId: string }> };
 
@@ -30,45 +26,20 @@ export async function POST(request: Request, context: Context) {
       sessionId,
     );
   const input = {
+    userId: user.id,
+    projectId,
     channelId,
     model,
     targetType,
     targetId,
     locale: body.locale === "en" ? ("en" as const) : ("zh" as const),
   };
-  const runtimeSettings = await loadUserRuntimeSettings(user.id);
-  const result = await createOrReuseWorkflowRun({
-    id: `workflow_${crypto.randomUUID()}`,
-    userId: user.id,
-    projectId,
-    workflowType: "asset-visual-design",
-    targetType,
-    targetId,
-    input,
-    steps: [
-      {
-        key: "design_asset_visual",
-        type: "design_asset_visual",
-        artifactTypes: ["asset.visual-profile", "prompt.trace"],
-        input,
-        retryable: true,
-        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
-      },
-    ],
-    maxAttempts: runtimeSettings.workflowStepMaxAttempts,
-  });
+  const result = await createAssetVisualDesignWorkflow(input);
   if (!result)
     return attachSessionCookie(
       Response.json({ message: "项目不存在" }, { status: 404 }),
       sessionId,
     );
-  if (!result.reused)
-    await enqueueWorkflowJob({
-      runId: result.workflow.id,
-      userId: user.id,
-      projectId,
-      maxAttempts: 1,
-    });
   if (request.headers.get("accept")?.includes("application/x-ndjson"))
     return visualDesignStreamResponse(
       {

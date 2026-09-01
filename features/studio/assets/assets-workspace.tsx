@@ -56,6 +56,7 @@ import {
   type StudioAssetEntity,
   type StudioAssetKind,
 } from "./asset-view-model";
+import { BatchVisualDesignDialog } from "./batch-visual-design-dialog";
 import { VisualProfilePanel } from "./visual-profile-panel";
 
 type AssetTab = StudioAssetKind | "source";
@@ -292,19 +293,34 @@ export function AssetsWorkspace({
           {isDomainAssetTab(tab) ? (
             <>
               {checkedEntities.length ? (
-                <GenerateAssetDialog
-                  locale={locale}
-                  models={imageModels}
-                  onCompleted={refreshAll}
-                  projectId={projectId}
-                  targets={checkedEntities}
-                  trigger={
-                    <Button size="sm" variant="outline">
-                      <Sparkles className="size-4" />
-                      {copy.generateSelected} · {checkedEntities.length}
-                    </Button>
-                  }
-                />
+                <>
+                  <BatchVisualDesignDialog
+                    entities={checkedEntities}
+                    locale={locale}
+                    models={analysisModels}
+                    onCompleted={refreshAll}
+                    projectId={projectId}
+                    trigger={
+                      <Button size="sm" variant="outline">
+                        <Sparkles className="size-4" />
+                        {copy.batchVisualDesign} · {checkedEntities.length}
+                      </Button>
+                    }
+                  />
+                  <GenerateAssetDialog
+                    locale={locale}
+                    models={imageModels}
+                    onCompleted={refreshAll}
+                    projectId={projectId}
+                    targets={checkedEntities}
+                    trigger={
+                      <Button size="sm" variant="outline">
+                        <ImagePlus className="size-4" />
+                        {copy.generateSelected} · {checkedEntities.length}
+                      </Button>
+                    }
+                  />
+                </>
               ) : null}
               <AssetEntityDialog
                 kind={tab}

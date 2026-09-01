@@ -696,6 +696,28 @@ export async function saveStudioAssetVisualProfile(
   });
 }
 
+export async function generateStudioAssetVisualProfilesBatch(
+  projectId: string,
+  input: {
+    channelId: string;
+    model: string;
+    locale: "en" | "zh";
+    items: Array<{
+      targetType: "character" | "location" | "prop";
+      targetId: string;
+    }>;
+  },
+) {
+  return request<{ count: number }>(
+    `/api/projects/${encodeURIComponent(projectId)}/assets/visual-design-batch`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+}
+
 export async function generateStudioAsset(
   projectId: string,
   input: {
