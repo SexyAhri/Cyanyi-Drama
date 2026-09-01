@@ -158,4 +158,53 @@ describe("episode split persistence", () => {
     ]);
     expect(executeRaw).toHaveBeenCalledTimes(1);
   });
+
+  it("does not treat workflow history alone as production data", async () => {
+    const original = `第1章 初见\n${"少年推开院门。".repeat(30)}`;
+    const revised = `${original}\n风雨将至。`;
+    const existing = {
+      id: "episode-1",
+      episodeNumber: 1,
+      novelText: original,
+      activeSourceId: "source-1",
+      activeSourceKind: "original",
+      storyboard: null,
+      editorProject: null,
+      sourceVersions: [],
+      _count: {
+        mediaTasks: 0,
+        clips: 0,
+        shots: 0,
+        voiceLines: 0,
+        audioTracks: 0,
+        assetReferences: 0,
+        workflowRuns: 2,
+        productionDeliverables: 0,
+      },
+    };
+    episodeFindMany.mockReset();
+    episodeFindMany
+      .mockResolvedValueOnce([existing])
+      .mockResolvedValueOnce([{ ...existing, novelText: revised }]);
+
+    await expect(
+      persistEpisodeSplits({
+        userId: "user-1",
+        projectId: "project-1",
+        episodes: [
+          {
+            number: 1,
+            title: "初见",
+            summary: "少年推开院门。",
+            content: revised,
+            wordCount: revised.length,
+            startIndex: 0,
+            endIndex: revised.length,
+          },
+        ],
+      }),
+    ).resolves.toHaveLength(1);
+
+    expect(executeRaw).toHaveBeenCalledTimes(1);
+  });
 });

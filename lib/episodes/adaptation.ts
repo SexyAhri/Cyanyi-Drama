@@ -388,7 +388,6 @@ async function findOwnedEpisodeWithDownstream(input: {
           voiceLines: true,
           audioTracks: true,
           assetReferences: true,
-          workflowRuns: true,
           productionDeliverables: true,
         },
       },
@@ -396,7 +395,9 @@ async function findOwnedEpisodeWithDownstream(input: {
   });
 }
 
-function downstreamLabels(episode: NonNullable<Awaited<ReturnType<typeof findOwnedEpisodeWithDownstream>>>) {
+export function downstreamLabels(
+  episode: NonNullable<Awaited<ReturnType<typeof findOwnedEpisodeWithDownstream>>>,
+) {
   const labels: string[] = [];
   if (episode._count.clips) labels.push("剧本片段");
   if (episode.storyboard || episode._count.shots) labels.push("分镜");
@@ -404,7 +405,6 @@ function downstreamLabels(episode: NonNullable<Awaited<ReturnType<typeof findOwn
   if (episode.editorProject || episode._count.productionDeliverables)
     labels.push("后期与交付");
   if (episode._count.mediaTasks || episode._count.assetReferences) labels.push("媒体任务");
-  if (episode._count.workflowRuns) labels.push("工作流记录");
   return [...new Set(labels)];
 }
 

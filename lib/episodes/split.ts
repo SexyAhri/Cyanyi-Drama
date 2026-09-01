@@ -275,7 +275,6 @@ export async function persistEpisodeSplits(input: {
             voiceLines: true,
             audioTracks: true,
             assetReferences: true,
-            workflowRuns: true,
             productionDeliverables: true,
           },
         },
@@ -292,7 +291,13 @@ export async function persistEpisodeSplits(input: {
       const hasDownstream = current
         ? Boolean(current.storyboard) ||
           Boolean(current.editorProject) ||
-          Object.values(current._count).some((count) => count > 0)
+          current._count.mediaTasks > 0 ||
+          current._count.clips > 0 ||
+          current._count.shots > 0 ||
+          current._count.voiceLines > 0 ||
+          current._count.audioTracks > 0 ||
+          current._count.assetReferences > 0 ||
+          current._count.productionDeliverables > 0
         : false;
       if (current?.novelText !== episode.content && hasDownstream)
         throw new EpisodeSplitError(
