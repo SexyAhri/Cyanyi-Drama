@@ -10,6 +10,7 @@
 7. 输出目标是干净人声。不要要求背景音乐、环境音、动作音效、混响、空间特效或额外台词；这些由后期声音阶段处理。
 8. emotionStrength 为 0 到 1，表示本句情绪外显程度；克制不等于无情绪，激烈不等于喊叫。
 9. 只返回严格 JSON，不得包含解释或额外字段。
+10. established_voices_json 是项目内已经确定的跨集声线合同。存在同名 speaker 时，voiceProfilePrompt 必须逐字复制已有值，不得重新设计；仅为没有既有合同的新 speaker 设计声线。voicePresetId 由本地继承，不需要输出。
 
 输出格式：
 {"speakers":[{"speaker":"角色名","voiceProfilePrompt":"稳定声线身份"}],"lines":[{"lineId":"输入中的台词ID","emotionPrompt":"逐句表演指令","emotionStrength":0.65}]}
@@ -19,6 +20,8 @@
 分镜资料：{{panels_json}}
 
 已批准台词：{{voice_lines_json}}
+
+项目既有声线合同：{{established_voices_json}}
 
 剧集原文：
 {{source_text}}

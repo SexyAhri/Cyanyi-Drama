@@ -14,6 +14,10 @@ import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
 import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
+import {
+  loadProjectVoiceIdentities,
+  mergeProjectVoiceIdentities,
+} from "./identity";
 
 type VoicePerformanceDesign = z.infer<typeof voicePerformanceDesignSchema>;
 
@@ -44,58 +48,70 @@ export async function designEpisodeVoicePerformance(input: {
   });
   if (!episode) throw new VoiceDesignError("项目或剧集不存在", 404);
 
-  const [voiceLines, characters, panels, provider] = await Promise.all([
-    prisma.voiceLine.findMany({
-      where: { episodeId: input.episodeId },
-      orderBy: { lineIndex: "asc" },
-      select: {
-        id: true,
-        lineIndex: true,
-        speaker: true,
-        content: true,
-        delivery: true,
-        matchedPanelId: true,
-      },
-    }),
-    prisma.novelCharacter.findMany({
-      where: { projectId: input.projectId },
-      orderBy: { name: "asc" },
-      select: {
-        name: true,
-        aliases: true,
-        introduction: true,
-        profileJson: true,
-      },
-    }),
-    prisma.storyboardPanel.findMany({
-      where: {
-        storyboard: {
-          projectId: input.projectId,
-          episodeId: input.episodeId,
+  const [voiceLines, characters, panels, provider, projectVoiceIdentities] =
+    await Promise.all([
+      prisma.voiceLine.findMany({
+        where: { episodeId: input.episodeId },
+        orderBy: { lineIndex: "asc" },
+        select: {
+          id: true,
+          lineIndex: true,
+          speaker: true,
+          content: true,
+          delivery: true,
+          matchedPanelId: true,
+          voicePresetId: true,
+          voiceProfilePrompt: true,
         },
-      },
-      orderBy: { panelIndex: "asc" },
-      select: {
-        id: true,
-        panelIndex: true,
-        sceneNumber: true,
-        description: true,
-        speakingCharacter: true,
-        lipSyncText: true,
-        voiceoverText: true,
-        actingNotesJson: true,
-        motionBeatsJson: true,
-        startStateJson: true,
-        endStateJson: true,
-        sourceEvidenceJson: true,
-      },
-    }),
-    resolveVoiceDesignProvider(input),
-  ]);
+      }),
+      prisma.novelCharacter.findMany({
+        where: { projectId: input.projectId },
+        orderBy: { name: "asc" },
+        select: {
+          name: true,
+          aliases: true,
+          introduction: true,
+          profileJson: true,
+        },
+      }),
+      prisma.storyboardPanel.findMany({
+        where: {
+          storyboard: {
+            projectId: input.projectId,
+            episodeId: input.episodeId,
+          },
+        },
+        orderBy: { panelIndex: "asc" },
+        select: {
+          id: true,
+          panelIndex: true,
+          sceneNumber: true,
+          description: true,
+          speakingCharacter: true,
+          lipSyncText: true,
+          voiceoverText: true,
+          actingNotesJson: true,
+          motionBeatsJson: true,
+          startStateJson: true,
+          endStateJson: true,
+          sourceEvidenceJson: true,
+        },
+      }),
+      resolveVoiceDesignProvider(input),
+      loadProjectVoiceIdentities(input.userId, input.projectId),
+    ]);
   if (!voiceLines.length)
     throw new VoiceDesignError("请先分析并确认台词，再进行 AI 配音设计");
 
   const panelIndices = new Map(panels.map((panel) => [panel.id, panel.panelIndex]));
+  const establishedVoiceIdentities = mergeProjectVoiceIdentities([
+    ...voiceLines.map((line) => ({
+      speaker: line.speaker,
+      voiceProfilePrompt: line.voiceProfilePrompt,
+      voicePresetId: line.voicePresetId,
+    })),
+    ...projectVoiceIdentities.values(),
+  ]);
   const prompt = renderPrompt({
     id: PROMPT_IDS.STORY_VOICE_PERFORMANCE_DESIGN,
     locale: input.locale,
@@ -139,6 +155,11 @@ export async function designEpisodeVoicePerformance(input: {
             ? (panelIndices.get(line.matchedPanelId) ?? null)
             : null,
         })),
+        null,
+        2,
+      ),
+      established_voices_json: JSON.stringify(
+        [...establishedVoiceIdentities.values()],
         null,
         2,
       ),
@@ -191,6 +212,8 @@ export async function designEpisodeVoicePerformance(input: {
         content: true,
         delivery: true,
         matchedPanelId: true,
+        voicePresetId: true,
+        voiceProfilePrompt: true,
       },
     });
     if (!sameVoiceLineContract(voiceLines, current))
@@ -201,10 +224,16 @@ export async function designEpisodeVoicePerformance(input: {
     await Promise.all(
       current.map((line) => {
         const lineDesign = designByLineId.get(line.id)!;
+        const established = establishedVoiceIdentities.get(line.speaker);
         return tx.voiceLine.update({
           where: { id: line.id },
           data: {
-            voiceProfilePrompt: profileBySpeaker.get(line.speaker)!,
+            voiceProfilePrompt:
+              line.voiceProfilePrompt ??
+              established?.voiceProfilePrompt ??
+              profileBySpeaker.get(line.speaker)!,
+            voicePresetId:
+              line.voicePresetId ?? established?.voicePresetId ?? null,
             emotionPrompt: lineDesign.emotionPrompt,
             emotionStrength: lineDesign.emotionStrength,
           },
@@ -276,6 +305,8 @@ function sameVoiceLineContract(
     content: string;
     delivery: string;
     matchedPanelId: string | null;
+    voicePresetId: string | null;
+    voiceProfilePrompt: string | null;
   }>,
   right: Array<{
     id: string;
@@ -284,6 +315,8 @@ function sameVoiceLineContract(
     content: string;
     delivery: string;
     matchedPanelId: string | null;
+    voicePresetId: string | null;
+    voiceProfilePrompt: string | null;
   }>,
 ) {
   return JSON.stringify(left) === JSON.stringify(right);

@@ -10,6 +10,7 @@ Hard rules:
 7. Target clean dry speech. Never request music, ambience, action sound effects, reverb, spatial effects, or extra words; sound post handles them later.
 8. emotionStrength ranges from 0 to 1 and controls outward emotional intensity. Restraint is not emotionless; intensity is not automatically shouting.
 9. Return strict JSON only, with no explanation or extra fields.
+10. established_voices_json contains approved project-wide voice contracts from earlier episodes. For a matching speaker, copy voiceProfilePrompt verbatim instead of redesigning it. Design a new stable voice only for speakers without an established contract. voicePresetId is inherited locally and must not be returned.
 
 Output:
 {"speakers":[{"speaker":"Exact speaker","voiceProfilePrompt":"Stable voice identity"}],"lines":[{"lineId":"Exact input line ID","emotionPrompt":"Line performance direction","emotionStrength":0.65}]}
@@ -19,6 +20,8 @@ Character records: {{characters_json}}
 Storyboard records: {{panels_json}}
 
 Approved voice lines: {{voice_lines_json}}
+
+Established project voice contracts: {{established_voices_json}}
 
 Episode source:
 {{source_text}}

@@ -346,12 +346,13 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_VOICE_PERFORMANCE_DESIGN]: {
     pathStem: "domain/story_voice_performance_design",
-    version: 2,
+    version: 3,
     variables: [
       "source_text",
       "characters_json",
       "panels_json",
       "voice_lines_json",
+      "established_voices_json",
     ],
     agent: defineAgent({
       id: "voice_director",

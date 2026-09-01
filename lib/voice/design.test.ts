@@ -64,6 +64,8 @@ const sourceLines = [
     content: "别回头。",
     delivery: "dialogue",
     matchedPanelId: "panel-1",
+    voicePresetId: null,
+    voiceProfilePrompt: null,
   },
   {
     id: "line-2",
@@ -72,6 +74,8 @@ const sourceLines = [
     content: "继续往前走。",
     delivery: "dialogue",
     matchedPanelId: "panel-1",
+    voicePresetId: null,
+    voiceProfilePrompt: null,
   },
 ];
 
@@ -80,7 +84,9 @@ beforeEach(() => {
   mocks.episodeFindFirst.mockResolvedValue({
     novelText: "追兵逼近，林岚压低声音提醒同伴。",
   });
-  mocks.voiceLineFindMany.mockResolvedValue(sourceLines);
+  mocks.voiceLineFindMany.mockImplementation((args: { where?: Record<string, unknown> }) =>
+    args.where && "episodeId" in args.where ? sourceLines : [],
+  );
   mocks.transactionVoiceLineFindMany.mockResolvedValue(sourceLines);
   mocks.novelCharacterFindMany.mockResolvedValue([
     {
@@ -173,6 +179,43 @@ describe("AI voice performance design", () => {
     expect(result.promptTrace).toEqual({
       promptId: "story_voice_performance_design",
       rawOutput: "{\"speakers\":[],\"lines\":[]}",
+    });
+  });
+
+  it("inherits an established project voice and preset across episodes", async () => {
+    mocks.voiceLineFindMany.mockImplementation(
+      (args: { where?: Record<string, unknown> }) =>
+        args.where && "episodeId" in args.where
+          ? sourceLines
+          : [
+              {
+                speaker: "林岚",
+                voiceProfilePrompt:
+                  "既有年轻女中音，音色冷静收束，咬字清楚，呼吸稳定。",
+                voicePresetId: "preset-established",
+              },
+            ],
+    );
+
+    await designEpisodeVoicePerformance({
+      userId: "user-1",
+      projectId: "project-1",
+      episodeId: "episode-2",
+      channelId: "channel-1",
+      model: "analysis-model",
+      locale: "zh",
+    });
+
+    const request = mocks.requestOpenAiStructured.mock.calls[0][0];
+    expect(request.prompt.text).toContain("项目既有声线合同");
+    expect(request.prompt.text).toContain("既有年轻女中音");
+    expect(mocks.voiceLineUpdate).toHaveBeenCalledWith({
+      where: { id: "line-1" },
+      data: expect.objectContaining({
+        voiceProfilePrompt:
+          "既有年轻女中音，音色冷静收束，咬字清楚，呼吸稳定。",
+        voicePresetId: "preset-established",
+      }),
     });
   });
 
