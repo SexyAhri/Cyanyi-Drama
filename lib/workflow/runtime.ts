@@ -6,6 +6,7 @@ import {
   type VisualDesignTargetType,
 } from "@/lib/assets/visual-design";
 import { adaptEpisodeSource } from "@/lib/episodes/adaptation";
+import { designStoryboardMediaPrompt } from "@/lib/media/storyboard-prompt-design";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import {
   parseNovelAndPersist,
@@ -446,6 +447,50 @@ async function runStep(
       promptTraces: result.profile.promptTrace
         ? [result.profile.promptTrace]
         : [],
+    };
+  }
+  if (step.stepType === "design_storyboard_media_prompt") {
+    if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
+    const input = mergedStepInput(run.input, step.input);
+    const channelId = getString(input.channelId);
+    const model = getString(input.model);
+    const panelId = getString(input.panelId);
+    const kind = getString(input.kind);
+    const mode = getString(input.mode);
+    if (
+      !channelId ||
+      !model ||
+      !panelId ||
+      !["image", "video"].includes(kind ?? "")
+    )
+      throw new Error("WORKFLOW_STORYBOARD_PROMPT_DESIGN_INPUT_REQUIRED");
+    const result = await designStoryboardMediaPrompt({
+      userId,
+      projectId: run.projectId,
+      episodeId: run.episodeId,
+      panelId,
+      channelId,
+      model,
+      kind: kind as "image" | "video",
+      mode: mode === "first-last" ? "first-last" : "reference",
+      currentPrompt: getString(input.currentPrompt),
+      locale: getString(input.locale) === "en" ? "en" : "zh",
+    });
+    await runtime.persistArtifact(
+      "storyboard.prompt-design",
+      panelId,
+      result.design,
+    );
+    await runtime.persistArtifact("storyboard.prompt-design.raw", panelId, {
+      rawOutput: result.rawOutput,
+    });
+    await runtime.persistArtifact("prompt.trace", panelId, {
+      ...result.trace,
+      rawOutput: result.rawOutput,
+    });
+    return {
+      ...result,
+      promptTraces: [{ ...result.trace, rawOutput: result.rawOutput }],
     };
   }
   if (step.stepType === "adapt_episode") {

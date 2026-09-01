@@ -52,6 +52,15 @@ describe("studio operation labels", () => {
     ).toBe("AI 视觉设计-生成资产视觉设定");
   });
 
+  it("names storyboard prompt design as its own visible operation", () => {
+    expect(
+      workflowStepOperationLabel("zh-CN", "storyboard-prompt-design", {
+        key: "design_storyboard_media_prompt",
+        type: "design_storyboard_media_prompt",
+      } as WorkflowStepSummary),
+    ).toBe("AI 分镜提示设计-设计镜头提示词");
+  });
+
   it("formats storyboard image and video tasks with shot indices", () => {
     const base = {
       targetType: "storyboard_panel",

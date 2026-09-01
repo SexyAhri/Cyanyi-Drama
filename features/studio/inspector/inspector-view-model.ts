@@ -207,6 +207,8 @@ const traceNameCopy: Record<StudioLocale, Record<string, string>> = {
   "zh-CN": {
     "asset-visual-design": "AI 视觉设计",
     design_asset_visual: "生成资产视觉设定",
+    "storyboard-prompt-design": "AI 分镜提示设计",
+    design_storyboard_media_prompt: "设计镜头提示词",
     "story-to-script": "小说转剧本",
     "script-to-storyboard": "剧本转分镜",
     analyze_novel: "小说分析",
@@ -247,6 +249,8 @@ const traceNameCopy: Record<StudioLocale, Record<string, string>> = {
   en: {
     "asset-visual-design": "AI visual design",
     design_asset_visual: "Design asset visual",
+    "storyboard-prompt-design": "AI storyboard prompt design",
+    design_storyboard_media_prompt: "Design shot prompt",
     "story-to-script": "Story to screenplay",
     "script-to-storyboard": "Screenplay to storyboard",
     analyze_novel: "Novel analysis",
@@ -306,6 +310,8 @@ const artifactNameCopy: Record<StudioLocale, Record<string, string>> = {
     "storyboard.clip.phase2.acting": "表演设计",
     "storyboard.clip.phase3": "分镜细化",
     "storyboard.clip.continuity": "连续性检查",
+    "storyboard.prompt-design": "镜头提示设计",
+    "storyboard.prompt-design.raw": "镜头提示原始输出",
   },
   en: {
     "asset.visual-profile": "Asset visual profile",
@@ -326,6 +332,8 @@ const artifactNameCopy: Record<StudioLocale, Record<string, string>> = {
     "storyboard.clip.phase2.acting": "Acting direction",
     "storyboard.clip.phase3": "Storyboard refinement",
     "storyboard.clip.continuity": "Continuity review",
+    "storyboard.prompt-design": "Shot prompt design",
+    "storyboard.prompt-design.raw": "Raw shot prompt output",
   },
 };
 

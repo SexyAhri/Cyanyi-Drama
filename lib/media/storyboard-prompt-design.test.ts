@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const requestOpenAiStructured = vi.hoisted(() => vi.fn());
+const requestOpenAiText = vi.hoisted(() => vi.fn());
 const storyboardPanelFindFirst = vi.hoisted(() => vi.fn());
 const storyboardPanelFindMany = vi.hoisted(() => vi.fn());
 const projectFindFirst = vi.hoisted(() => vi.fn());
@@ -10,7 +10,7 @@ const characterFindMany = vi.hoisted(() => vi.fn());
 const locationFindFirst = vi.hoisted(() => vi.fn());
 const propFindMany = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/llm/openai-structured", () => ({ requestOpenAiStructured }));
+vi.mock("@/lib/llm/openai-structured", () => ({ requestOpenAiText }));
 vi.mock("@/lib/server/crypto", () => ({
   decryptSecret: () => '["test-key"]',
 }));
@@ -36,7 +36,10 @@ vi.mock("@/lib/server/prisma", () => ({
   },
 }));
 
-import { designStoryboardMediaPrompt } from "./storyboard-prompt-design";
+import {
+  designStoryboardMediaPrompt,
+  parseStoryboardMediaPromptDesignText,
+} from "./storyboard-prompt-design";
 
 const profile = JSON.stringify({
   version: 1,
@@ -138,12 +141,14 @@ beforeEach(() => {
     visualProfileJson: profile,
   });
   propFindMany.mockResolvedValue([{ name: "铁盒", visualProfileJson: profile }]);
-  requestOpenAiStructured.mockResolvedValue({
-    data: {
+  const outputText = JSON.stringify({
       prompt: "中景静态关键帧，韩宇双手刚接住铁盒，抬眼看向父亲。",
       designNotes: ["锁定递接动作的接触瞬间"],
       continuitySafeguards: ["铁盒从父亲手中交到韩宇双手"],
-    },
+  });
+  requestOpenAiText.mockResolvedValue({
+    text: outputText,
+    outputText,
     trace: { promptId: "storyboard_media_prompt_design" },
   });
 });
@@ -162,7 +167,7 @@ describe("storyboard media prompt design", () => {
       locale: "zh",
     });
 
-    const request = requestOpenAiStructured.mock.calls[0][0];
+    const request = requestOpenAiText.mock.calls[0][0];
     expect(request.prompt.text).toContain("媒体类型：图片");
     expect(request.prompt.text).toContain("父子坐在院中");
     expect(request.prompt.text).toContain("韩宇看清铁盒纹样");
@@ -184,12 +189,24 @@ describe("storyboard media prompt design", () => {
       locale: "zh",
     });
 
-    const text = requestOpenAiStructured.mock.calls[0][0].prompt.text;
+    const text = requestOpenAiText.mock.calls[0][0].prompt.text;
     expect(text).toContain("生成模式：首尾帧");
     expect(text).toContain("韩子枫递出铁盒");
     expect(text).toContain("双手接盒");
     expect(text).toContain("铁盒边缘冷光");
     expect(text).toContain("衣袖摩擦与铁盒轻响");
     expect(text).toContain('"ironBox": "韩宇双手托住"');
+  });
+
+  it("keeps a freeform model response as an editable prompt", () => {
+    expect(
+      parseStoryboardMediaPromptDesignText(
+        "中景，韩宇双手接住铁盒，抬眼看向父亲。保持父子视线轴线。",
+      ),
+    ).toEqual({
+      prompt: "中景，韩宇双手接住铁盒，抬眼看向父亲。保持父子视线轴线。",
+      designNotes: [],
+      continuitySafeguards: [],
+    });
   });
 });

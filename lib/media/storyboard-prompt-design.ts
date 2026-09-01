@@ -1,14 +1,12 @@
-import { z } from "zod";
+import { jsonrepair } from "jsonrepair";
 
-import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import {
   compileAssetVisualProfile,
   parseAssetVisualProfile,
 } from "@/lib/assets/visual-profile";
-import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
+import { requestOpenAiText } from "@/lib/llm/openai-structured";
 import { getProjectArtStyleDirective } from "@/lib/projects/art-style";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
-import { storyboardMediaPromptDesignSchema } from "@/lib/prompts/schemas";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
@@ -17,9 +15,11 @@ import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 
 export type StoryboardMediaPromptKind = "image" | "video";
 export type StoryboardVideoMode = "reference" | "first-last";
-export type StoryboardMediaPromptDesign = z.infer<
-  typeof storyboardMediaPromptDesignSchema
->;
+export type StoryboardMediaPromptDesign = {
+  prompt: string;
+  designNotes: string[];
+  continuitySafeguards: string[];
+};
 
 export class StoryboardPromptDesignError extends Error {
   constructor(
@@ -146,15 +146,35 @@ export async function designStoryboardMediaPrompt(input: {
       current_prompt: currentPrompt || (locale === "en" ? "Not supplied" : "未提供"),
     },
   });
-  const result = await requestOpenAiStructured({
+  const result = await requestOpenAiText({
     ...provider,
     prompt,
-    schema: storyboardMediaPromptDesignSchema,
     temperature: 0.35,
   });
   return {
-    design: result.data,
+    design: parseStoryboardMediaPromptDesignText(result.text),
+    rawOutput: result.outputText,
     trace: result.trace,
+  };
+}
+
+export function parseStoryboardMediaPromptDesignText(
+  value: string,
+): StoryboardMediaPromptDesign {
+  const raw = value.trim();
+  const parsed = parseDesignJson(raw);
+  if (parsed) {
+    const prompt = textValue(parsed.prompt);
+    return {
+      prompt: prompt || raw,
+      designNotes: stringList(parsed.designNotes),
+      continuitySafeguards: stringList(parsed.continuitySafeguards),
+    };
+  }
+  return {
+    prompt: stripMarkdownFence(raw),
+    designNotes: [],
+    continuitySafeguards: [],
   };
 }
 
@@ -186,11 +206,6 @@ async function resolvePromptDesignProvider(input: {
     apiKeys,
     model: input.model,
     ...structuredRequestOptions(settings),
-    structuredOutputMode: supportsStoredStructuredOutputs(
-      configuredModel.capabilitiesJson,
-    )
-      ? ("json_schema" as const)
-      : ("json_object" as const),
   };
 }
 
@@ -295,6 +310,51 @@ function parseJson(value: string | null) {
   } catch {
     return null;
   }
+}
+
+function parseDesignJson(value: string) {
+  const start = value.indexOf("{");
+  const end = value.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    const parsed: unknown = JSON.parse(jsonrepair(value.slice(start, end + 1)));
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function stringList(value: unknown) {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? [value]
+      : [];
+  return values.flatMap((item) =>
+    typeof item === "string"
+      ? item
+          .split(/\r?\n|；/u)
+          .map((entry) =>
+            entry.replace(/^\s*(?:[-*•]|\d+[.)、])\s*/u, "").trim(),
+          )
+          .filter(Boolean)
+      : [],
+  );
+}
+
+function textValue(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function stripMarkdownFence(value: string) {
+  return value
+    .replace(/^\s*```(?:json|text)?\s*/iu, "")
+    .replace(/\s*```\s*$/u, "")
+    .trim();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function parseApiKeys(value: string) {
