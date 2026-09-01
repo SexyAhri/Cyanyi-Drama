@@ -140,9 +140,17 @@ function adaptationErrorMessage(error: unknown, locale: "zh" | "en" = "zh") {
   if (error instanceof EpisodeSourceError || error instanceof EpisodeSplitError)
     return error.message;
   if (error instanceof StructuredOutputError) {
-    if (locale === "en")
-      return "The model output did not pass source-evidence and synopsis validation, so no adaptation version was saved.";
-    return "模型输出未通过原文证据与本集梗概校验，因此没有保存为改编版本。";
+    if (error.code === "STRUCTURED_JSON_INVALID")
+      return locale === "en"
+        ? "The model response was incomplete or was not valid JSON, so no adaptation version was saved."
+        : "模型响应不完整或不是有效 JSON，因此没有保存改编版本。";
+    if (error.code === "STRUCTURED_SCHEMA_INVALID")
+      return locale === "en"
+        ? "The model response did not contain usable adaptation text, so no adaptation version was saved."
+        : "模型响应中没有可用的改编正文，因此没有保存改编版本。";
+    return locale === "en"
+      ? "The model response could not be saved as an adaptation version."
+      : "模型响应无法保存为改编版本。";
   }
   const detail = error instanceof Error ? error.message : String(error);
   if (locale === "en") return `The adaptation request failed: ${detail}`;

@@ -1,14 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  buildAdaptationEventAnchors,
   buildEpisodeContinuityContext,
-  buildSourceEvidenceCandidates,
   createJsonStringFieldStream,
   extractPartialJsonStringField,
-  validateAdaptationSummary,
-  validateAdaptationEventCoverage,
-  validateSourceEvidence,
+  normalizeEpisodeAdaptationOutput,
 } from "./adaptation";
 
 describe("episode adaptation streaming preview", () => {
@@ -52,83 +48,42 @@ describe("episode adaptation streaming preview", () => {
   });
 });
 
-describe("episode adaptation evidence", () => {
-  it("accepts only verbatim excerpts from the original source", () => {
-    const source = "韩风推开木门，看见桌上放着一封未拆的信。";
-
-    expect(validateSourceEvidence(["推开木门", "一封未拆的信"], source)).toEqual([]);
-    expect(validateSourceEvidence(["推开房门"], source)).toEqual([
-      {
-        code: "SOURCE_EVIDENCE_NOT_FOUND",
-        path: "sourceEvidence.0",
-        message: "sourceEvidence must be copied verbatim from source_text",
-      },
-    ]);
-  });
-
-  it("offers exact evidence candidates across the complete source", () => {
-    const source = [
-      "开场时韩宇在寒夜练武，凭苦修举起沉重铁石。",
-      "回家后他发现受伤的父亲仍在准备晚饭。",
-      "父亲取出母亲留下的无字典籍并交给韩宇。",
-      "韩宇得知母亲仍然在世，却必须达到阴阳之境才有希望相见。",
-    ].join("\n");
-    const candidates = buildSourceEvidenceCandidates(source);
-
-    expect(candidates.length).toBe(4);
-    expect(candidates.every((quote) => source.includes(quote))).toBe(true);
-    expect(candidates[0]).toContain("寒夜练武");
-    expect(candidates.at(-1)).toContain("阴阳之境");
-  });
-
-  it("requires every source event to map to exact adapted text", () => {
-    const source = [
-      "韩宇在寒夜练武。",
-      "父亲交给他母亲留下的无字古籍。",
-      "韩宇得知母亲仍然在世。",
-    ].join("\n");
-    const anchors = buildAdaptationEventAnchors(source);
-    const adaptedText = "寒夜里韩宇继续练武。父亲把无字古籍交给韩宇，他终于得知母亲仍在人世。";
-    const coverage = anchors.map((anchor, index) => ({
-      eventId: anchor.eventId,
-      sourceEvidence: anchor.evidence,
-      adaptedEvidence:
-        index === 0
-          ? "寒夜里韩宇继续练武"
-          : index === 1
-            ? "父亲把无字古籍交给韩宇"
-            : "他终于得知母亲仍在人世",
-    }));
-
+describe("episode adaptation normalization", () => {
+  it("keeps usable model text and removes obsolete planning fields", () => {
     expect(
-      validateAdaptationEventCoverage(coverage, anchors, adaptedText),
-    ).toEqual([]);
-    expect(
-      validateAdaptationEventCoverage(coverage.slice(0, -1), anchors, adaptedText)
-        .map((issue) => issue.code),
-    ).toContain("ADAPTATION_EVENT_MISSING");
-    expect(
-      validateAdaptationEventCoverage(
-        [{ ...coverage[0], adaptedEvidence: "不存在的改编片段" }, ...coverage.slice(1)],
-        anchors,
-        adaptedText,
-      ).map((issue) => issue.code),
-    ).toContain("ADAPTATION_EVENT_OUTPUT_NOT_FOUND");
+      normalizeEpisodeAdaptationOutput(
+        {
+          status: "ready",
+          title: " 第一集 ",
+          adaptedText: " 改编正文 ",
+          productionPlan: { beats: [] },
+        },
+        { title: "原始标题" },
+      ),
+    ).toEqual({
+      title: "第一集",
+      summary: "改编正文",
+      adaptedText: "改编正文",
+      changeSummary: [],
+    });
   });
 
-  it("keeps every event instead of sampling away middle events", () => {
-    const source = Array.from(
-      { length: 40 },
-      (_, index) => `第${index + 1}段发生一个不可跳过的连续剧情事件。`,
-    ).join("\n");
-    const anchors = buildAdaptationEventAnchors(source);
-
-    expect(anchors).toHaveLength(40);
-    expect(anchors[0].evidence).toContain("第1段");
-    expect(anchors.at(-1)?.evidence).toContain("第40段");
-    expect(anchors[19].evidence).toContain("第20段");
+  it("accepts common local aliases without another model request", () => {
+    expect(
+      normalizeEpisodeAdaptationOutput(
+        { content: "可用正文", synopsis: "本集梗概", changeSummary: [" 精简说明 ", 1] },
+        { title: "默认标题" },
+      ),
+    ).toEqual({
+      title: "默认标题",
+      summary: "本集梗概",
+      adaptedText: "可用正文",
+      changeSummary: ["精简说明"],
+    });
   });
+});
 
+describe("episode adaptation continuity", () => {
   it("separates prior continuity from the next-episode hard boundary", () => {
     const context = buildEpisodeContinuityContext({
       episodeNumber: 2,
@@ -151,26 +106,5 @@ describe("episode adaptation evidence", () => {
     expect(context.nextEpisode?.boundaryText).toContain("下一集开场");
     expect(context.nextEpisode?.boundaryText).not.toContain("后".repeat(1_250));
     expect(context.policy).toContain("do not consume");
-  });
-});
-
-describe("episode adaptation summary", () => {
-  it("rejects a shallow opening excerpt and accepts a complete plot synopsis", () => {
-    const source = "少年遭遇追杀。".repeat(200);
-
-    expect(validateAdaptationSummary("少年遭遇追杀。", source)).toEqual([
-      {
-        code: "EPISODE_SUMMARY_TOO_SHALLOW",
-        path: "summary",
-        message:
-          "summary must be regenerated from the complete source and cover setup, conflict, turning point, and ending state",
-      },
-    ]);
-    expect(
-      validateAdaptationSummary(
-        "少年在归途中遭遇妖狼追杀，被迫利用山势周旋；危急时刻他发现妖狼受伤的弱点，改变逃跑路线并设下反击。经过正面冲突，他成功击退妖狼，也意识到幕后仍有人操控这次袭击，最终带着新的线索继续赶路。",
-        source,
-      ),
-    ).toEqual([]);
   });
 });

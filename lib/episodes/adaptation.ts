@@ -5,19 +5,11 @@ import { Prisma } from "@prisma/client";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import { episodeAdaptationSchema } from "@/lib/prompts/schemas";
-import { buildSourceEvents } from "@/lib/prompts/validators";
 import type { EpisodeSourceVersionRecord } from "@/lib/projects/types";
 import { prisma } from "@/lib/server/prisma";
 
 import { EpisodeSourceError } from "./errors";
-import {
-  buildAdaptationSourceUnits,
-  DEFAULT_EPISODE_TARGET_SECONDS,
-  EPISODE_PRODUCTION_PLAN_VERSION,
-  finalizeEpisodeProductionPlan,
-  MAX_ADAPTATION_SOURCE_UNITS,
-  validateEpisodeAdaptationOutput,
-} from "./production-plan";
+import { DEFAULT_EPISODE_TARGET_SECONDS } from "./production-plan";
 import { resolveEpisodeTextProvider } from "./provider";
 
 export type EpisodeAdaptationMode =
@@ -29,10 +21,9 @@ export type EpisodeAdaptationMode =
 export type EpisodeAdaptationProgress =
   | { type: "reset" }
   | { type: "delta"; delta: string }
-  | { type: "phase"; phase: "generating" | "validating" | "correcting" };
+  | { type: "phase"; phase: "generating" | "validating" };
 
 const MAX_ADAPTATION_SOURCE_CHARS = 500_000;
-export const MAX_ADAPTATION_EVENT_ANCHORS = 120;
 
 export async function listEpisodeSources(input: {
   userId: string;
@@ -81,12 +72,6 @@ export async function adaptEpisodeSource(input: {
     );
 
   const provider = await resolveEpisodeTextProvider(input);
-  const sourceUnits = buildAdaptationSourceUnits(original.content);
-  if (sourceUnits.length > MAX_ADAPTATION_SOURCE_UNITS)
-    throw new EpisodeSourceError(
-      `本集包含 ${sourceUnits.length} 个需要逐项核对的原文单元，超过单次改编可可靠处理的 ${MAX_ADAPTATION_SOURCE_UNITS} 个；请确认章节边界`,
-      409,
-    );
   const targetDurationSeconds =
     episode.project.config?.episodeTargetDurationSeconds ??
     DEFAULT_EPISODE_TARGET_SECONDS;
@@ -95,22 +80,14 @@ export async function adaptEpisodeSource(input: {
     episodeNumber: episode.episodeNumber,
   });
   let preview = createJsonStringFieldStream("adaptedText");
-  let outputStarts = 0;
   const result = await requestOpenAiStructured({
     ...provider,
     prompt: renderPrompt({
       id: PROMPT_IDS.EPISODE_ADAPTATION,
       locale: input.locale,
       variables: {
-        source_units_json: JSON.stringify(sourceUnits),
-        runtime_contract_json: JSON.stringify({
-          targetDurationSeconds,
-          hardMaxDurationSeconds: 90,
-          preferredDurationRangeSeconds: [70, 90],
-          preferredShotCountRange: [16, 22],
-          narrationMaximumLines: 2,
-          narrationMaximumChineseCharacters: 60,
-        }),
+        source_text: original.content,
+        target_duration_seconds: String(targetDurationSeconds),
         manuscript_context: JSON.stringify({
           title: original.manuscript?.title ?? "",
           author: original.manuscript?.author ?? "",
@@ -126,23 +103,16 @@ export async function adaptEpisodeSource(input: {
       },
     }),
     schema: episodeAdaptationSchema,
-    validate: (data) => [
-      ...(data.status === "ready"
-        ? validateAdaptationSummary(data.summary, original.content)
-        : []),
-      ...validateEpisodeAdaptationOutput({
-        output: data,
-        sourceUnits,
-        targetDurationSeconds,
+    normalizeRaw: (value) =>
+      normalizeEpisodeAdaptationOutput(value, {
+        title: original.title ?? episode.name,
       }),
-    ],
     temperature: 0.2,
     onOutputStart: () => {
-      outputStarts += 1;
       preview = createJsonStringFieldStream("adaptedText");
       input.onProgress?.({
         type: "phase",
-        phase: outputStarts === 1 ? "generating" : "correcting",
+        phase: "generating",
       });
       input.onProgress?.({ type: "reset" });
     },
@@ -154,23 +124,6 @@ export async function adaptEpisodeSource(input: {
   });
 
   input.onProgress?.({ type: "phase", phase: "validating" });
-  if (result.data.status === "split_recommended")
-    throw new EpisodeSourceError(
-      "本章在 90 秒内无法同时保留全部关键事件，建议确认拆集边界",
-      409,
-      {
-        code: "EPISODE_SPLIT_RECOMMENDED",
-        reason: result.data.reason,
-        suggestedBoundarySourceUnitId:
-          result.data.suggestedBoundarySourceUnitId,
-        firstPartHook: result.data.firstPartHook,
-        secondPartOpening: result.data.secondPartOpening,
-      },
-    );
-  const productionPlan = finalizeEpisodeProductionPlan(
-    result.data.productionPlan,
-    original.content,
-  );
 
   const latest = await prisma.episodeSourceVersion.findFirst({
     where: { episodeId: input.episodeId, kind: "adapted" },
@@ -190,9 +143,12 @@ export async function adaptEpisodeSource(input: {
       adaptationMode: input.mode,
       instructions: input.instructions?.trim() || null,
       changeSummary: toJson(result.data.changeSummary),
-      promptTrace: toJson(result.trace),
-      productionPlan: toJson(productionPlan),
-      productionPlanVersion: EPISODE_PRODUCTION_PLAN_VERSION,
+      promptTrace: toJson({
+        ...result.trace,
+        rawOutput: result.outputText,
+      }),
+      productionPlan: Prisma.JsonNull,
+      productionPlanVersion: null,
       channelId: input.channelId,
       model: input.model,
       sourceHash: textHash(result.data.adaptedText),
@@ -254,127 +210,41 @@ export async function assertEpisodeHasNoDownstream(input: {
     );
 }
 
-export function validateSourceEvidence(evidence: string[], source: string) {
-  return evidence.flatMap((quote, index) =>
-    source.includes(quote)
-      ? []
-      : [
-          {
-            code: "SOURCE_EVIDENCE_NOT_FOUND",
-            path: `sourceEvidence.${index}`,
-            message: "sourceEvidence must be copied verbatim from source_text",
-          },
-        ],
+export function normalizeEpisodeAdaptationOutput(
+  value: unknown,
+  fallback: { title: string },
+) {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const adaptedText = firstNonEmptyString(
+    record.adaptedText,
+    record.content,
+    record.text,
+    record.script,
   );
+  const summary = firstNonEmptyString(
+    record.summary,
+    record.synopsis,
+    adaptedText?.slice(0, 280),
+  );
+  return {
+    title: firstNonEmptyString(record.title, fallback.title) ?? fallback.title,
+    summary: summary ?? "待人工补充梗概",
+    adaptedText: adaptedText ?? "",
+    changeSummary: Array.isArray(record.changeSummary)
+      ? record.changeSummary.flatMap((item) =>
+          typeof item === "string" && item.trim() ? [item.trim()] : [],
+        )
+      : [],
+  };
 }
 
-export function buildSourceEvidenceCandidates(source: string) {
-  return buildDistributedEvidenceCandidates(source, 8, 40);
-}
-
-function buildDistributedEvidenceCandidates(
-  source: string,
-  maximumCount: number,
-  maximumLength: number,
-) {
-  const segments = (source.match(/[^。！？!?\r\n]+[。！？!?]?/gu) ?? [])
-    .map((segment) => segment.trim())
-    .filter((segment) => segment.length >= 10);
-  if (!segments.length) {
-    const fallback = source.trim().slice(0, maximumLength);
-    return fallback ? [fallback] : [];
-  }
-  const candidates: string[] = [];
-  const count = Math.min(maximumCount, segments.length);
-  for (let index = 0; index < count; index += 1) {
-    const segmentIndex = Math.round(
-      (index * (segments.length - 1)) / Math.max(1, count - 1),
-    );
-    const quote = segments[segmentIndex].slice(0, maximumLength);
-    if (!candidates.includes(quote)) candidates.push(quote);
-  }
-  return candidates;
-}
-
-export type AdaptationEventAnchor = {
-  eventId: string;
-  evidence: string;
-};
-
-export function buildAdaptationEventAnchors(
-  source: string,
-): AdaptationEventAnchor[] {
-  return buildSourceEvents(source)
-    .flatMap((event) => splitAdaptationEventEvidence(event.evidence))
-    .map((evidence, index) => ({
-      eventId: `A${String(index + 1).padStart(3, "0")}`,
-      evidence,
-    }));
-}
-
-function splitAdaptationEventEvidence(value: string, maximumLength = 800) {
-  if (value.length <= maximumLength) return [value];
-  const parts: string[] = [];
-  for (let start = 0; start < value.length; start += maximumLength) {
-    const part = value.slice(start, start + maximumLength).trim();
-    if (part) parts.push(part);
-  }
-  return parts;
-}
-
-export function validateAdaptationEventCoverage(
-  coverage: Array<{
-    eventId: string;
-    sourceEvidence: string;
-    adaptedEvidence: string;
-  }>,
-  anchors: readonly AdaptationEventAnchor[],
-  adaptedText: string,
-) {
-  const issues: Array<{
-    code: string;
-    path: string;
-    message: string;
-  }> = [];
-  const expected = new Map(anchors.map((anchor) => [anchor.eventId, anchor]));
-  const seen = new Set<string>();
-  coverage.forEach((item, index) => {
-    const anchor = expected.get(item.eventId);
-    if (!anchor)
-      issues.push({
-        code: "ADAPTATION_EVENT_UNKNOWN",
-        path: `eventCoverage.${index}.eventId`,
-        message: `Unknown adaptation event anchor ${item.eventId}`,
-      });
-    else if (item.sourceEvidence !== anchor.evidence)
-      issues.push({
-        code: "ADAPTATION_EVENT_SOURCE_CHANGED",
-        path: `eventCoverage.${index}.sourceEvidence`,
-        message: `Source evidence for ${item.eventId} must remain verbatim`,
-      });
-    if (seen.has(item.eventId))
-      issues.push({
-        code: "ADAPTATION_EVENT_DUPLICATE",
-        path: `eventCoverage.${index}.eventId`,
-        message: `Adaptation event anchor ${item.eventId} appears more than once`,
-      });
-    seen.add(item.eventId);
-    if (!adaptedText.includes(item.adaptedEvidence))
-      issues.push({
-        code: "ADAPTATION_EVENT_OUTPUT_NOT_FOUND",
-        path: `eventCoverage.${index}.adaptedEvidence`,
-        message: `Adapted evidence for ${item.eventId} must be copied verbatim from adaptedText`,
-      });
-  });
-  anchors.forEach((anchor) => {
-    if (!seen.has(anchor.eventId))
-      issues.push({
-        code: "ADAPTATION_EVENT_MISSING",
-        path: "eventCoverage",
-        message: `Adaptation event anchor ${anchor.eventId} is not accounted for`,
-      });
-  });
-  return issues;
+function firstNonEmptyString(...values: unknown[]) {
+  return values.find(
+    (value): value is string => typeof value === "string" && Boolean(value.trim()),
+  )?.trim();
 }
 
 export type EpisodeContinuityContext = {
@@ -473,26 +343,6 @@ function episodeBoundaryText(
   return edge === "start"
     ? `${text.slice(0, 1_200)}...`
     : `...${text.slice(-1_200)}`;
-}
-
-export function validateAdaptationSummary(summary: string, source: string) {
-  const normalized = summary.replace(/\s+/gu, "").trim();
-  const sourceLength = source.replace(/\s+/gu, "").length;
-  const minimumLength = Math.min(
-    sourceLength,
-    180,
-    Math.max(30, Math.ceil(sourceLength * 0.03)),
-  );
-  return normalized.length >= minimumLength
-    ? []
-    : [
-        {
-          code: "EPISODE_SUMMARY_TOO_SHALLOW",
-          path: "summary",
-          message:
-            "summary must be regenerated from the complete source and cover setup, conflict, turning point, and ending state",
-        },
-      ];
 }
 
 export function extractPartialJsonStringField(raw: string, field: string) {

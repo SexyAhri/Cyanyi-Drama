@@ -374,10 +374,10 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.EPISODE_ADAPTATION]: {
     pathStem: "domain/episode_adaptation",
-    version: 6,
+    version: 7,
     variables: [
-      "source_units_json",
-      "runtime_contract_json",
+      "source_text",
+      "target_duration_seconds",
       "manuscript_context",
       "project_context",
       "episode_continuity_context",
@@ -387,7 +387,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
     agent: defineAgent({
       id: "episode_adaptation_editor",
       responsibility:
-        "Create one runtime-budgeted, production-oriented episode adaptation and its enforceable beat plan.",
+        "Create one coherent episode adaptation for a human to review before screenplay production.",
       prohibited: [
         "overwriting or pretending to replace the source",
         "inventing plot events, identities, relationships, powers, props, dialogue facts, or outcomes",
@@ -395,13 +395,8 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
         "turning visual art-style settings into unsupported story facts",
       ],
       contextPolicy: { scope: "episode", trust: "untrusted" },
-      evidencePolicy: { required: true, mode: "input_references" },
       qualityGates: [
         "schema_valid",
-        "source_unit_coverage",
-        "runtime_budget_valid",
-        "action_transition_materialized",
-        "dialogue_narration_budget_valid",
         "adaptation_mode_followed",
       ],
     }),
