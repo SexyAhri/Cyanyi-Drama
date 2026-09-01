@@ -1,11 +1,15 @@
 import {
-  adaptEpisodeSource,
   listEpisodeSources,
   type EpisodeAdaptationMode,
 } from "@/lib/episodes/adaptation";
 import { EpisodeSourceError, EpisodeSplitError } from "@/lib/episodes/errors";
-import { StructuredOutputError } from "@/lib/llm/structured-output";
+import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
+import {
+  createOrReuseWorkflowRun,
+  getWorkflowRun,
+} from "@/lib/workflow/store";
 
 type Context = {
   params: Promise<{ projectId: string; episodeId: string }>;
@@ -44,24 +48,64 @@ export async function POST(request: Request, context: Context) {
     instructions: stringValue(body.instructions),
     locale: body.locale === "en" ? ("en" as const) : ("zh" as const),
   };
+  const runtimeSettings = await loadUserRuntimeSettings(user.id);
+  const result = await createOrReuseWorkflowRun({
+    id: `workflow_${crypto.randomUUID()}`,
+    userId: user.id,
+    projectId,
+    episodeId,
+    workflowType: "episode-adaptation",
+    targetType: "episode",
+    targetId: episodeId,
+    input: adaptationInput,
+    steps: [
+      {
+        key: "adapt_episode",
+        type: "adapt_episode",
+        artifactTypes: ["adaptation.source", "prompt.trace"],
+        input: adaptationInput,
+        retryable: true,
+        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
+      },
+    ],
+    maxAttempts: runtimeSettings.workflowStepMaxAttempts,
+  });
+  if (!result)
+    return attachSessionCookie(
+      Response.json({ message: "项目或剧集不存在" }, { status: 404 }),
+      sessionId,
+    );
+  if (!result.reused)
+    await enqueueWorkflowJob({
+      runId: result.workflow.id,
+      userId: user.id,
+      projectId,
+      maxAttempts: 1,
+    });
   if (request.headers.get("accept")?.includes("application/x-ndjson"))
-    return adaptationStreamResponse(adaptationInput, sessionId);
-  try {
-    const source = await adaptEpisodeSource(adaptationInput);
-    return attachSessionCookie(Response.json({ source }, { status: 201 }), sessionId);
-  } catch (error) {
-    return sourceErrorResponse(error, sessionId);
-  }
+    return adaptationStreamResponse(
+      {
+        userId: user.id,
+        runId: result.workflow.id,
+        locale: adaptationInput.locale,
+      },
+      sessionId,
+    );
+  return attachSessionCookie(
+    Response.json(
+      { workflow: result.workflow, reused: result.reused },
+      { status: result.reused ? 200 : 202 },
+    ),
+    sessionId,
+  );
 }
 
 function adaptationStreamResponse(
-  input: Parameters<typeof adaptEpisodeSource>[0],
+  input: { userId: string; runId: string; locale: "zh" | "en" },
   sessionId: string | null,
 ) {
   const encoder = new TextEncoder();
   let closed = false;
-  let pendingDelta = "";
-  let flushTimer: ReturnType<typeof setTimeout> | null = null;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const send = (event: unknown) => {
@@ -72,55 +116,22 @@ function adaptationStreamResponse(
           closed = true;
         }
       };
-      const flushDelta = () => {
-        if (flushTimer) clearTimeout(flushTimer);
-        flushTimer = null;
-        if (!pendingDelta) return;
-        send({ type: "delta", delta: pendingDelta });
-        pendingDelta = "";
-      };
-      const progress = (
-        event: Parameters<NonNullable<typeof input.onProgress>>[0],
-      ) => {
-        if (event.type === "phase") {
-          flushDelta();
-          send(event);
-          return;
-        }
-        if (event.type === "reset") {
-          pendingDelta = "";
-          if (flushTimer) clearTimeout(flushTimer);
-          flushTimer = null;
-          send(event);
-          return;
-        }
-        pendingDelta += event.delta;
-        flushTimer ??= setTimeout(flushDelta, 40);
-      };
-      send({ type: "started" });
-      void adaptEpisodeSource({
-        ...input,
-        onProgress: progress,
-      })
-        .then((source) => {
-          flushDelta();
-          send({ type: "completed", source });
-          if (!closed) controller.close();
-          closed = true;
-        })
+      send({ type: "started", workflowId: input.runId });
+      void waitForAdaptationWorkflow(input)
+        .then(send)
         .catch((error: unknown) => {
-          flushDelta();
           send({
             type: "failed",
             message: adaptationErrorMessage(error, input.locale),
             detail: error instanceof Error ? error.message : String(error),
           });
+        })
+        .finally(() => {
           if (!closed) controller.close();
           closed = true;
         });
     },
     cancel() {
-      if (flushTimer) clearTimeout(flushTimer);
       closed = true;
     },
   });
@@ -136,22 +147,44 @@ function adaptationStreamResponse(
   );
 }
 
+async function waitForAdaptationWorkflow(input: {
+  userId: string;
+  runId: string;
+  locale: "zh" | "en";
+}) {
+  while (true) {
+    const workflow = await getWorkflowRun(input.userId, input.runId);
+    if (!workflow) throw new Error("WORKFLOW_RUN_NOT_FOUND");
+    if (workflow.status === "succeeded") {
+      const source = workflow.output?.source;
+      if (isEpisodeSource(source)) return { type: "completed", source };
+      throw new Error("WORKFLOW_ADAPTATION_SOURCE_MISSING");
+    }
+    if (["failed", "blocked", "canceled"].includes(workflow.status))
+      throw new Error(workflowErrorMessage(workflow.error));
+    await new Promise((resolve) => setTimeout(resolve, 750));
+  }
+}
+
+function isEpisodeSource(value: unknown) {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof (value as { id?: unknown }).id === "string" &&
+    typeof (value as { content?: unknown }).content === "string"
+  );
+}
+
+function workflowErrorMessage(error: Record<string, unknown> | undefined) {
+  return typeof error?.message === "string" && error.message.trim()
+    ? error.message
+    : "WORKFLOW_ADAPTATION_FAILED";
+}
+
 function adaptationErrorMessage(error: unknown, locale: "zh" | "en" = "zh") {
   if (error instanceof EpisodeSourceError || error instanceof EpisodeSplitError)
     return error.message;
-  if (error instanceof StructuredOutputError) {
-    if (error.code === "STRUCTURED_JSON_INVALID")
-      return locale === "en"
-        ? "The model response was incomplete or was not valid JSON, so no adaptation version was saved."
-        : "模型响应不完整或不是有效 JSON，因此没有保存改编版本。";
-    if (error.code === "STRUCTURED_SCHEMA_INVALID")
-      return locale === "en"
-        ? "The model response did not contain usable adaptation text, so no adaptation version was saved."
-        : "模型响应中没有可用的改编正文，因此没有保存改编版本。";
-    return locale === "en"
-      ? "The model response could not be saved as an adaptation version."
-      : "模型响应无法保存为改编版本。";
-  }
   const detail = error instanceof Error ? error.message : String(error);
   if (locale === "en") return `The adaptation request failed: ${detail}`;
   return `改编请求失败：${detail}`;

@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildEpisodeContinuityContext,
   parseAdaptationText,
-  summarizeAdaptation,
 } from "./adaptation";
 
 describe("episode adaptation local metadata", () => {
@@ -11,7 +10,6 @@ describe("episode adaptation local metadata", () => {
     expect(
       parseAdaptationText(
         "标题：寒门少年\n梗概：韩宇苦练后得知母亲仍在世。\n正文：\n凛冽冬夜，韩宇仍在练武。",
-        "第一集",
       ),
     ).toEqual({
       title: "寒门少年",
@@ -21,20 +19,11 @@ describe("episode adaptation local metadata", () => {
   });
 
   it("keeps unformatted AI prose instead of failing a format check", () => {
-    expect(parseAdaptationText("凛冽冬夜，韩宇仍在练武。", "第一集")).toEqual({
-      title: "第一集",
-      summary: "凛冽冬夜，韩宇仍在练武。",
+    expect(parseAdaptationText("凛冽冬夜，韩宇仍在练武。")).toEqual({
+      title: null,
+      summary: null,
       content: "凛冽冬夜，韩宇仍在练武。",
     });
-  });
-
-  it("derives a compact synopsis without constraining the generated prose", () => {
-    expect(summarizeAdaptation(" 第一段。\n\n第二段。 ")).toBe(
-      "第一段。 第二段。",
-    );
-    expect(summarizeAdaptation("甲".repeat(300))).toBe(
-      `${"甲".repeat(280)}...`,
-    );
   });
 });
 

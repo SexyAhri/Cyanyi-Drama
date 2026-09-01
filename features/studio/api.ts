@@ -494,10 +494,11 @@ export async function adaptStudioEpisode(
     instructions?: string;
     locale: "en" | "zh";
   },
-    callbacks?: {
-      onReset?: () => void;
-      onContent?: (content: string) => void;
-      onPhase?: (phase: "generating" | "saving") => void;
+  callbacks?: {
+    onReset?: () => void;
+    onContent?: (content: string) => void;
+    onPhase?: (phase: "generating" | "saving") => void;
+    onWorkflowStarted?: (workflowId: string) => void;
   },
 ) {
   const response = await fetch(
@@ -530,6 +531,8 @@ export async function adaptStudioEpisode(
   let source: EpisodeSourceVersionRecord | undefined;
   let content = "";
   for await (const event of readJsonLineStream(response.body)) {
+    if (event.type === "started" && typeof event.workflowId === "string")
+      callbacks?.onWorkflowStarted?.(event.workflowId);
     if (event.type === "reset") {
       content = "";
       callbacks?.onReset?.();

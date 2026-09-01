@@ -374,7 +374,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.EPISODE_ADAPTATION]: {
     pathStem: "domain/episode_adaptation",
-    version: 8,
+    version: 9,
     variables: [
       "source_text",
       "target_duration_seconds",
@@ -396,7 +396,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       ],
       contextPolicy: { scope: "episode", trust: "untrusted" },
       qualityGates: [
-        "schema_valid",
+        "source_grounded_title_and_synopsis",
         "adaptation_mode_followed",
       ],
     }),

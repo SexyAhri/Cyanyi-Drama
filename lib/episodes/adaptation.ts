@@ -114,7 +114,7 @@ export async function adaptEpisodeSource(input: {
   });
 
   input.onProgress?.({ type: "phase", phase: "saving" });
-  const adaptation = parseAdaptationText(result.text, episode.name);
+  const adaptation = parseAdaptationText(result.text);
 
   const latest = await prisma.episodeSourceVersion.findFirst({
     where: { episodeId: input.episodeId, kind: "adapted" },
@@ -201,7 +201,7 @@ export async function assertEpisodeHasNoDownstream(input: {
     );
 }
 
-export function parseAdaptationText(value: string, fallbackTitle: string) {
+export function parseAdaptationText(value: string) {
   const normalized = value.trim();
   const titleMatch = normalized.match(
     /(?:^|\n)\s*(?:#{1,6}\s*)?(?:标题|title)\s*[：:]\s*(.+?)\s*(?:\n|$)/iu,
@@ -214,16 +214,10 @@ export function parseAdaptationText(value: string, fallbackTitle: string) {
   );
   const content = contentMatch?.[1].trim() || normalized;
   return {
-    title: cleanSingleLine(titleMatch?.[1]) || fallbackTitle,
-    summary:
-      summaryMatch?.[1].trim() || summarizeAdaptation(content),
+    title: cleanSingleLine(titleMatch?.[1]) || null,
+    summary: summaryMatch?.[1].trim() || null,
     content,
   };
-}
-
-export function summarizeAdaptation(value: string) {
-  const normalized = value.replace(/\s+/gu, " ").trim();
-  return normalized.length > 280 ? `${normalized.slice(0, 280)}...` : normalized;
 }
 
 function cleanSingleLine(value: string | undefined) {

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { Prisma } from "@prisma/client";
+import { adaptEpisodeSource } from "@/lib/episodes/adaptation";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import {
   parseNovelAndPersist,
@@ -407,6 +408,40 @@ async function runStep(
     ) => Promise<unknown | null>;
   },
 ) {
+  if (step.stepType === "adapt_episode") {
+    if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
+    const input = mergedStepInput(run.input, step.input);
+    const channelId = getString(input.channelId);
+    const model = getString(input.model);
+    const mode = getString(input.mode);
+    if (
+      !channelId ||
+      !model ||
+      !["faithful", "polish", "drama", "custom"].includes(mode ?? "")
+    )
+      throw new Error("WORKFLOW_ADAPTATION_INPUT_REQUIRED");
+    const source = await adaptEpisodeSource({
+      userId,
+      projectId: run.projectId,
+      episodeId: run.episodeId,
+      channelId,
+      model,
+      mode: mode as "faithful" | "polish" | "drama" | "custom",
+      instructions: getString(input.instructions),
+      locale: getString(input.locale) === "en" ? "en" : "zh",
+    });
+    await runtime.persistArtifact("adaptation.source", source.id, { source });
+    if (source.promptTrace)
+      await runtime.persistArtifact(
+        "prompt.trace",
+        source.id,
+        source.promptTrace,
+      );
+    return {
+      source,
+      promptTraces: source.promptTrace ? [source.promptTrace] : [],
+    };
+  }
   if (step.stepType === "parse_novel") {
     const runInput = isRecord(run.input) ? run.input : {};
     const stepInput = isRecord(step.input) ? step.input : {};

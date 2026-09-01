@@ -9,7 +9,9 @@ Requirements:
 6. Do not generate beats, sourceCoverage, action chains, effects tables, dialogue tables, narration tables, or a productionPlan. Later workflow stages generate those independently.
 7. Complete the whole episode and do not return a split recommendation. Even when the source is long, return the most useful complete adaptation for the user to review.
 
-Create the episode title, complete synopsis, and adapted prose in the same response. Prefer the following natural-text labels. They are local placement hints, not a hard schema. Do not return JSON, arrays, or a code block:
+Create the episode title, complete synopsis, and adapted prose directly from the Episode source. The title should identify the episode's most distinctive event or hook. The synopsis should cover the source episode's main events, conflict, reveals, and ending state. Do not substitute the project name, manuscript title, file name, or a generic "Episode N" label, and do not infer story events that are absent from the source.
+
+Prefer the following natural-text labels. They are local placement hints, not a hard schema. Do not return JSON, arrays, or a code block:
 
 Title: Episode title
 Summary: Complete episode synopsis

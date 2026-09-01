@@ -15,11 +15,11 @@ describe("studio adaptation stream", () => {
       vi.fn<typeof fetch>().mockResolvedValue(
         new Response(
           [
-            JSON.stringify({ type: "started" }),
+            JSON.stringify({ type: "started", workflowId: "workflow-1" }),
             JSON.stringify({ type: "phase", phase: "generating" }),
             JSON.stringify({ type: "reset" }),
             JSON.stringify({ type: "delta", delta: "第一段" }),
-            JSON.stringify({ type: "phase", phase: "validating" }),
+            JSON.stringify({ type: "phase", phase: "saving" }),
             JSON.stringify({ type: "delta", delta: "\n第二段" }),
             JSON.stringify({ type: "completed", source }),
             "",
@@ -31,6 +31,7 @@ describe("studio adaptation stream", () => {
     const onReset = vi.fn();
     const onContent = vi.fn();
     const onPhase = vi.fn();
+    const onWorkflowStarted = vi.fn();
 
     const result = await adaptStudioEpisode(
       "project-1",
@@ -41,7 +42,7 @@ describe("studio adaptation stream", () => {
         mode: "polish",
         locale: "zh",
       },
-      { onReset, onContent, onPhase },
+      { onReset, onContent, onPhase, onWorkflowStarted },
     );
 
     expect(onReset).toHaveBeenCalledTimes(1);
@@ -51,19 +52,20 @@ describe("studio adaptation stream", () => {
     ]);
     expect(onPhase.mock.calls.map(([phase]) => phase)).toEqual([
       "generating",
-      "validating",
+      "saving",
     ]);
+    expect(onWorkflowStarted).toHaveBeenCalledWith("workflow-1");
     expect(result.source).toEqual(source);
   });
 
-  it("surfaces a streamed validation failure", async () => {
+  it("surfaces a streamed workflow failure", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn<typeof fetch>().mockResolvedValue(
         new Response(
           `${JSON.stringify({
             type: "failed",
-            message: "模型输出未通过原文证据与本集梗概校验，因此没有保存为改编版本。",
+            message: "模型请求失败，请在任务列表重试。",
           })}\n`,
           { status: 200 },
         ),
@@ -77,6 +79,6 @@ describe("studio adaptation stream", () => {
         mode: "polish",
         locale: "zh",
       }),
-    ).rejects.toThrow("模型输出未通过原文证据与本集梗概校验");
+    ).rejects.toThrow("模型请求失败，请在任务列表重试");
   });
 });

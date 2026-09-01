@@ -300,6 +300,9 @@ export function WritingWorkspace({
             ? { ...current, status: "running", phase, error: undefined }
             : current,
         ),
+      onWorkflowStarted: () => {
+        void onRefresh();
+      },
     })
       .then(async (result) => {
         if (episodeIdRef.current !== requestEpisodeId) return;
@@ -500,7 +503,6 @@ export function WritingWorkspace({
                   isSaving={isSaving}
                   kind={kind}
                   locale={locale}
-                  manuscriptSynopsis={sourceCatalog?.manuscript?.synopsis}
                   onActivate={(next) => void activateSource(next)}
                   onChange={setNovelText}
                   onDismissAdaptation={() => setAdaptationDraft(null)}
@@ -632,7 +634,6 @@ function SourceVersionPane({
   isSaving,
   kind,
   locale,
-  manuscriptSynopsis,
   onActivate,
   onChange,
   onDismissAdaptation,
@@ -649,7 +650,6 @@ function SourceVersionPane({
   isSaving: boolean;
   kind: "original" | "adapted";
   locale: StudioLocale;
-  manuscriptSynopsis?: string | null;
   onActivate: (source: EpisodeSourceVersionRecord) => void;
   onChange: (value: string) => void;
   onDismissAdaptation: () => void;
@@ -715,48 +715,16 @@ function SourceVersionPane({
         </div>
       </div>
 
-      {manuscriptSynopsis ? (
+      {kind === "adapted" && (source.title || source.summary) ? (
         <div className="border-b py-3 text-sm">
-          <p className="text-xs font-medium text-muted-foreground">
-            {copy.manuscriptSynopsis}
-          </p>
-          <p className="mt-1 line-clamp-3 leading-6">{manuscriptSynopsis}</p>
-        </div>
-      ) : null}
-
-      {source.summary || source.changeSummary.length ? (
-        <div className="grid gap-3 border-b py-3 text-sm lg:grid-cols-2">
+          {source.title ? (
+            <p className="font-medium leading-6">{source.title}</p>
+          ) : null}
           {source.summary ? (
-            <div>
-              <p className="text-xs font-medium text-muted-foreground">
-                {kind === "adapted"
-                  ? copy.episodeSynopsis
-                  : copy.episodeExcerpt}
-              </p>
-              <p className="mt-1 line-clamp-3 leading-6">{source.summary}</p>
-            </div>
+            <p className="mt-1 line-clamp-2 leading-6 text-muted-foreground">
+              {source.summary}
+            </p>
           ) : null}
-          {source.changeSummary.length ? (
-            <div>
-              <p className="text-xs font-medium text-muted-foreground">
-                {copy.changeSummary}
-              </p>
-              <p className="mt-1 line-clamp-3 leading-6">
-                {source.changeSummary.join("；")}
-              </p>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {productionPlanSummary(source.productionPlan, copy.productionRuntimeSummary) ? (
-        <div className="border-b py-3 text-sm">
-          <p className="text-xs font-medium text-muted-foreground">
-            {copy.productionPlan}
-          </p>
-          <p className="mt-1 leading-6">
-            {productionPlanSummary(source.productionPlan, copy.productionRuntimeSummary)}
-          </p>
         </div>
       ) : null}
 
@@ -842,22 +810,6 @@ function adaptationPhaseLabel(
 ) {
   if (phase === "saving") return copy.adaptationSaving;
   return copy.adaptationGenerating;
-}
-
-function productionPlanSummary(value: Record<string, unknown> | null, template: string) {
-  if (!value || typeof value.runtime !== "object" || !value.runtime) return null;
-  const runtime = value.runtime as Record<string, unknown>;
-  const planned = runtime.plannedDurationSeconds;
-  const target = runtime.targetDurationSeconds;
-  const shots = runtime.estimatedShotCount;
-  const spoken = runtime.estimatedSpokenSeconds;
-  if (![planned, target, shots, spoken].every((entry) => typeof entry === "number"))
-    return null;
-  return template
-    .replace("{planned}", String(planned))
-    .replace("{target}", String(target))
-    .replace("{shots}", String(shots))
-    .replace("{spoken}", String(spoken));
 }
 
 function WorkflowActions({
