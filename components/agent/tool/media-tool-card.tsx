@@ -37,12 +37,10 @@ import {
 } from "./media-tool-card-data";
 
 export function MediaToolCard({
-  embedded = false,
   onUseAsReferenceImage,
   toolCall,
 }: {
   createdAt?: string;
-  embedded?: boolean;
   onUseAsReferenceImage?: (referenceImage: AgentComposerReferenceImage) => void;
   toolCall: AgentToolCall;
 }) {
@@ -66,8 +64,7 @@ export function MediaToolCard({
     <>
       <figure
         className={cn(
-          "w-full overflow-hidden rounded-lg border bg-card",
-          !embedded && "mx-auto max-w-157",
+          "w-full max-w-104 self-start overflow-hidden rounded-lg border bg-card",
           (media.lifecycle === "error" || media.lifecycle === "denied") &&
             "border-destructive/35",
         )}

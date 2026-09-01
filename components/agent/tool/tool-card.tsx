@@ -148,7 +148,6 @@ export function ToolCard({
     return (
       <MediaToolCard
         createdAt={createdAt}
-        embedded={embedded}
         onUseAsReferenceImage={onUseAsReferenceImage}
         toolCall={toolCall}
       />
