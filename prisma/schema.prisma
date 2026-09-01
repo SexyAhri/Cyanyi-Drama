@@ -360,7 +360,7 @@ model MediaTask {
   payload           Json
   error             Json?
   retryCount        Int              @default(0) @map("retry_count")
-  maxRetries        Int              @default(2) @map("max_retries")
+  maxRetries        Int              @default(0) @map("max_retries")
   progress          Int              @default(0)
   progressMessage   String?          @map("progress_message") @db.Text
   queueJobId        String?          @map("queue_job_id")

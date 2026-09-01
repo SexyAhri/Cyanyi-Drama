@@ -25,7 +25,7 @@ export async function enqueuePersistedMediaTask(
       episodeId: task.episodeId,
       channelId: task.channelId,
       kind: task.kind,
-      maxAttempts: task.maxRetries + 1,
+      maxAttempts: 1,
     });
     return queued;
   } catch (error) {

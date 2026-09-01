@@ -144,7 +144,7 @@ export function createMediaTask(input: {
     request: input.request,
     providerTaskId: input.providerTaskId,
     retryCount: 0,
-    maxRetries: Math.max(0, input.maxRetries ?? 2),
+    maxRetries: Math.max(0, input.maxRetries ?? 0),
     progress: 0,
     createdAt: now,
     updatedAt: now,
@@ -245,9 +245,6 @@ export function transitionMediaTask(
   }
 
   assertStatus(task, ["failed"], "retry");
-  if (task.retryCount >= task.maxRetries) {
-    throw new Error("MEDIA_TASK_RETRY_LIMIT_REACHED");
-  }
   return {
     ...task,
     status: "queued",

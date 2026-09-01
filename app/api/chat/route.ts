@@ -1133,7 +1133,7 @@ async function* createMediaGenerationEvents({
     episodeId: runtime.episodeId,
     channelId: runtime.channelId,
     kind: mediaTaskKind,
-    maxAttempts: mediaTask.maxRetries + 1,
+    maxAttempts: 1,
   });
 
   try {
@@ -1285,7 +1285,7 @@ async function enqueueAndWaitMediaGeneration({
     projectId: runtime.projectId,
     episodeId: runtime.episodeId,
     kind,
-    maxAttempts: task.maxRetries + 1,
+    maxAttempts: 1,
   });
   const completed = await waitForQueuedMediaTask(store, task.id);
   if (completed.status !== "succeeded")

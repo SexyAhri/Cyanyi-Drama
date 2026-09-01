@@ -127,7 +127,7 @@ export async function POST(request: Request) {
       typeof body.targetType === "string" ? body.targetType : undefined,
     targetId: typeof body.targetId === "string" ? body.targetId : undefined,
     request: requestPayload,
-    maxRetries: typeof body.maxRetries === "number" ? body.maxRetries : 2,
+    maxRetries: typeof body.maxRetries === "number" ? body.maxRetries : 0,
   });
   await store.create(task);
   try {

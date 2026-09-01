@@ -36,7 +36,7 @@ describe("media task contract", () => {
     );
   });
 
-  it("limits retries and preserves a retryable provider error", () => {
+  it("uses one automatic attempt and allows unlimited explicit retries", () => {
     const task = createMediaTask({
       id: "task-2",
       kind: "image",
@@ -55,18 +55,33 @@ describe("media task contract", () => {
     );
     const retrying = transitionMediaTask(failed, { type: "retry" });
 
+    expect(task.maxRetries).toBe(1);
     expect(retrying.status).toBe("queued");
     expect(retrying.retryCount).toBe(1);
-    expect(() =>
-      transitionMediaTask(
-        transitionMediaTask(retrying, { type: "start" }),
-        {
-          type: "fail",
-          error: { message: "again", retryable: true },
-        },
-      ),
-    ).not.toThrow();
-    expect(() => transitionMediaTask(failed, { type: "retry" })).not.toThrow();
+    const failedAgain = transitionMediaTask(
+      transitionMediaTask(retrying, { type: "start" }),
+      {
+        type: "fail",
+        error: { message: "again", retryable: true },
+      },
+    );
+    expect(transitionMediaTask(failedAgain, { type: "retry" })).toMatchObject({
+      retryCount: 2,
+      status: "queued",
+    });
+  });
+
+  it("defaults new media tasks to no automatic retries", () => {
+    const task = createMediaTask({
+      id: "task-no-auto-retry",
+      kind: "image",
+      provider: "ark",
+      protocol: "volcengine-ark",
+      model: "image-model",
+      request: {},
+    });
+
+    expect(task.maxRetries).toBe(0);
   });
 
   it("tracks progress and requests cancellation without changing a running task", () => {

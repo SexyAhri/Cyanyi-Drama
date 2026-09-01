@@ -21,7 +21,6 @@ import {
 } from "@/lib/projects/art-style";
 import type { MediaGenerationDefaults } from "@/lib/settings/runtime-contract";
 import {
-  findStoryWorldTextConflicts,
   getStoryWorldDirective,
   loadProjectAssetStoryWorldContext,
   type AssetStoryWorldContext,
@@ -97,15 +96,6 @@ export async function createProjectImageTask(
     assetName: assetTarget.name,
     assetFacts: assetTarget.facts,
   });
-  const storyWorldConflicts = findStoryWorldTextConflicts(
-    input.prompt,
-    storyWorld,
-  );
-  if (storyWorldConflicts.length)
-    throw new ProjectAssetTaskError(
-      `当前视觉设定与故事时代冲突：检测到${storyWorldConflicts.join("、")}。请先重新进行 AI 视觉设计，再提交生图。`,
-      422,
-    );
   const explicitReferenceImages = input.referenceAssetIds?.length
     ? await findExplicitReferenceImages(input)
     : [];
@@ -267,7 +257,6 @@ export async function createStoryboardPanelImageTask(input: {
     generationPrompt,
     productionDesign,
   );
-  assertStoryboardPromptStoryWorld(generationPrompt, productionDesign);
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
@@ -487,7 +476,6 @@ export async function createStoryboardPanelVideoTask(input: {
     prompt,
     productionDesign,
   );
-  assertStoryboardPromptStoryWorld(prompt, productionDesign);
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
@@ -782,17 +770,6 @@ export async function previewStoryboardPanelPrompt(input: {
       productionDesign,
     );
   }
-
-  const storyWorldConflicts = storyboardPromptStoryWorldConflicts(
-    generationPrompt,
-    productionDesign,
-  );
-  if (storyWorldConflicts.length)
-    issues.push({
-      blocking: true,
-      code: "story_world_conflict",
-      message: `镜头提示与项目时代冲突：${storyWorldConflicts.join("、")}`,
-    });
 
   const sanitized = sanitizeMediaPrompt(compiledPrompt);
   if (sanitized.changes.length)
@@ -1494,31 +1471,6 @@ function parseStoredJsonValue<T>(value: string | null | undefined, fallback: T):
   } catch {
     return fallback;
   }
-}
-
-function assertStoryboardPromptStoryWorld(
-  prompt: string,
-  productionDesign: StoryboardProductionDesign,
-) {
-  const conflicts = storyboardPromptStoryWorldConflicts(
-    prompt,
-    productionDesign,
-  );
-  if (!conflicts.length) return;
-  throw new ProjectAssetTaskError(
-    `镜头提示与项目故事时代冲突：检测到${conflicts.join("、")}。请先修正分镜提示或对应视觉设定。`,
-    422,
-  );
-}
-
-function storyboardPromptStoryWorldConflicts(
-  prompt: string,
-  productionDesign: StoryboardProductionDesign,
-) {
-  return findStoryWorldTextConflicts(
-    [...productionDesign.visualProfiles, prompt].join("\n"),
-    productionDesign.storyWorld,
-  );
 }
 
 function parseStoredProfile(value: string | null) {

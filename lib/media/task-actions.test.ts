@@ -103,8 +103,33 @@ describe("media task actions", () => {
     });
     expect(mocks.update).toHaveBeenCalledTimes(1);
     expect(mocks.enqueueMediaJob).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "project-a", taskId: failed.id }),
+      expect.objectContaining({
+        maxAttempts: 1,
+        projectId: "project-a",
+        taskId: failed.id,
+      }),
     );
+  });
+
+  it("allows another explicit retry after the stored retry count is exhausted", async () => {
+    const failed = task({
+      error: { message: "failed again", retryable: false },
+      maxRetries: 0,
+      retryCount: 7,
+      status: "failed",
+    });
+    mocks.get.mockResolvedValue(failed);
+    mocks.update.mockImplementation(async (value) => value);
+    mocks.enqueueMediaJob.mockResolvedValue({ id: failed.id });
+
+    await expect(
+      controlMediaTask({
+        action: "retry",
+        projectId: "project-a",
+        taskId: failed.id,
+        userId: "user-1",
+      }),
+    ).resolves.toMatchObject({ retryCount: 8, status: "queued" });
   });
 
   it("deletes failed or canceled media tasks", async () => {

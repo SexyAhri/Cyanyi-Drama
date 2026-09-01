@@ -49,6 +49,9 @@ describe("media task submission", () => {
     expect(mocks.update).toHaveBeenCalledWith(
       expect.objectContaining({ queueJobId: "task-1", status: "queued" }),
     );
+    expect(mocks.enqueueMediaJob).toHaveBeenCalledWith(
+      expect.objectContaining({ maxAttempts: 1 }),
+    );
     expect(queued.queueJobId).toBe("task-1");
   });
 });

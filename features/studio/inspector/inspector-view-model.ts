@@ -57,10 +57,7 @@ export function buildOperationItems(
 
 export function isOperationRetryable(item: OperationItem) {
   if (item.kind === "task")
-    return (
-      item.task.status === "failed" &&
-      item.task.retryCount < item.task.maxRetries
-    );
+    return item.task.status === "failed";
   return (
     ["blocked", "failed"].includes(item.step.status) &&
     ["blocked", "failed"].includes(item.workflow.status)

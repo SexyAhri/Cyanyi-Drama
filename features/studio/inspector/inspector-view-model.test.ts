@@ -124,7 +124,7 @@ describe("studio inspector view model", () => {
     expect(summarizeUsageCosts(costs)).toEqual({ quantity: 5, total: 0.5 });
   });
 
-  it("keeps media retry limits but allows explicit workflow retries", () => {
+  it("allows explicit retries for every failed media task and workflow step", () => {
     const task = {
       id: "task-1",
       kind: "task",
@@ -149,7 +149,7 @@ describe("studio inspector view model", () => {
           error: { message: "timeout", retryable: true },
         },
       } as OperationItem),
-    ).toBe(false);
+    ).toBe(true);
 
     const step = {
       id: "step-1",
