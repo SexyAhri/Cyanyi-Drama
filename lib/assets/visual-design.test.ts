@@ -37,7 +37,6 @@ vi.mock("@/lib/server/prisma", () => ({
   },
 }));
 
-import { StructuredOutputError } from "@/lib/llm/structured-output";
 import {
   generateProjectAssetVisualProfile,
   saveProjectAssetVisualProfile,
@@ -120,6 +119,7 @@ describe("asset visual design", () => {
     expect(request.prompt.text).toContain("画风与视觉改编世界是两套独立约束");
     expect(request.prompt.text).toContain("本资产制作字段要求");
     expect(request.prompt.text).toContain("韩子枫曾是韩家庄的天才");
+    expect(request.validate).toBeUndefined();
     expect(result.profile).toMatchObject({
       source: "model",
       model: "analysis-model",
@@ -138,32 +138,20 @@ describe("asset visual design", () => {
     });
   });
 
-  it("uses targeted semantic correction for modern details in a premodern world", async () => {
+  it("keeps story-world guidance advisory and persists the model result", async () => {
     const modernSpec = {
       ...spec,
       shapeAndStructure: "Middle-aged man with a modern crew cut",
       surfaceAndStyling: "White dress shirt, business suit, and slacks",
     };
-    requestOpenAiStructured.mockImplementationOnce(
-      async (request: {
-        validate?: (data: typeof spec) => Array<{ path: string }>;
-      }) => {
-        expect(request.validate?.(modernSpec)).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ path: "shapeAndStructure" }),
-            expect.objectContaining({ path: "surfaceAndStyling" }),
-          ]),
-        );
-        return {
-          data: spec,
-          trace: {
-            promptId: "asset_visual_design",
-            version: 2,
-            correctionAttempts: 1,
-          },
-        };
+    requestOpenAiStructured.mockResolvedValueOnce({
+      data: modernSpec,
+      trace: {
+        promptId: "asset_visual_design",
+        version: 2,
+        correctionAttempts: 0,
       },
-    );
+    });
 
     const result = await generateProjectAssetVisualProfile({
       userId: "user-1",
@@ -176,41 +164,10 @@ describe("asset visual design", () => {
     });
 
     expect(result.profile).toMatchObject({
-      spec,
-      promptTrace: { correctionAttempts: 1 },
+      spec: modernSpec,
+      promptTrace: { correctionAttempts: 0 },
     });
     expect(characterUpdateMany).toHaveBeenCalledTimes(1);
-  });
-
-  it("returns a clear conflict when targeted correction is exhausted", async () => {
-    requestOpenAiStructured.mockRejectedValueOnce(
-      new StructuredOutputError(
-        "STRUCTURED_SEMANTIC_INVALID",
-        [
-          "surfaceAndStyling: [STORY_WORLD_CONFLICT] 该字段包含现代商务服装",
-        ],
-        JSON.stringify({
-          ...spec,
-          surfaceAndStyling: "White dress shirt and business suit",
-        }),
-      ),
-    );
-
-    await expect(
-      generateProjectAssetVisualProfile({
-        userId: "user-1",
-        projectId: "project-1",
-        targetType: "character",
-        targetId: "character-1",
-        channelId: "channel-1",
-        model: "analysis-model",
-        locale: "zh",
-      }),
-    ).rejects.toMatchObject({
-      message: expect.stringContaining("模型定向修正后"),
-      status: 422,
-    });
-    expect(characterUpdateMany).not.toHaveBeenCalled();
   });
 
   it("validates and records manual revisions separately", async () => {
@@ -230,21 +187,22 @@ describe("asset visual design", () => {
     expect(requestOpenAiStructured).not.toHaveBeenCalled();
   });
 
-  it("rejects a conflicting manual revision without calling the model", async () => {
-    await expect(
-      saveProjectAssetVisualProfile({
-        userId: "user-1",
-        projectId: "project-1",
-        targetType: "character",
-        targetId: "character-1",
-        spec: {
-          ...spec,
-          shapeAndStructure: "Middle-aged man with a modern crew cut",
-          surfaceAndStyling: "White dress shirt and business suit",
-        },
-      }),
-    ).rejects.toThrow("视觉设定与故事时代冲突");
+  it("allows a human revision that differs from local story-world heuristics", async () => {
+    const manualSpec = {
+      ...spec,
+      shapeAndStructure: "Middle-aged man with a modern crew cut",
+      surfaceAndStyling: "White dress shirt and business suit",
+    };
+    const result = await saveProjectAssetVisualProfile({
+      userId: "user-1",
+      projectId: "project-1",
+      targetType: "character",
+      targetId: "character-1",
+      spec: manualSpec,
+    });
+
+    expect(result.spec).toEqual(manualSpec);
     expect(requestOpenAiStructured).not.toHaveBeenCalled();
-    expect(characterUpdateMany).not.toHaveBeenCalled();
+    expect(characterUpdateMany).toHaveBeenCalledTimes(1);
   });
 });
