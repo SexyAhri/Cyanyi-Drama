@@ -150,7 +150,7 @@ describe("OpenAI structured requests", () => {
     expect(result.data).toEqual({ value: 8 });
   });
 
-  it("reconnects when a provider terminates the response body", async () => {
+  it("stops when a provider terminates the response body", async () => {
     const terminated = {
       status: 200,
       ok: true,
@@ -170,22 +170,23 @@ describe("OpenAI structured requests", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await requestOpenAiStructured({
-      baseUrl: "https://provider.test/v1",
-      apiKeys: ["test-key"],
-      model: "test-model",
-      prompt: renderPrompt({
-        id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
-        variables: { source_text: "source", character_library: "[]" },
+    await expect(
+      requestOpenAiStructured({
+        baseUrl: "https://provider.test/v1",
+        apiKeys: ["test-key"],
+        model: "test-model",
+        prompt: renderPrompt({
+          id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+          variables: { source_text: "source", character_library: "[]" },
+        }),
+        schema,
       }),
-      schema,
-    });
+    ).rejects.toThrow(/attempts=1/);
 
-    expect(result.data).toEqual({ value: 9 });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("retries an empty structured response payload", async () => {
+  it("does not retry an empty structured response payload", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
@@ -196,22 +197,23 @@ describe("OpenAI structured requests", () => {
       .mockResolvedValueOnce(jsonResponse('{"value":9}'));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await requestOpenAiStructured({
-      baseUrl: "https://provider.test/v1",
-      apiKeys: ["test-key"],
-      model: "test-model",
-      prompt: renderPrompt({
-        id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
-        variables: { source_text: "source", character_library: "[]" },
+    await expect(
+      requestOpenAiStructured({
+        baseUrl: "https://provider.test/v1",
+        apiKeys: ["test-key"],
+        model: "test-model",
+        prompt: renderPrompt({
+          id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+          variables: { source_text: "source", character_library: "[]" },
+        }),
+        schema,
       }),
-      schema,
-    });
+    ).rejects.toThrow(/attempts=1/);
 
-    expect(result.data).toEqual({ value: 9 });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("reports exhausted empty payload retries with the response stage", async () => {
+  it("reports an empty payload at the response stage", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ choices: [{ message: {} }] }), {
         status: 200,
@@ -231,12 +233,12 @@ describe("OpenAI structured requests", () => {
         schema,
       }),
     ).rejects.toThrow(
-      /STRUCTURED_PROVIDER_TRANSPORT_FAILED:stage=response_payload;attempts=3;.*reason=empty structured response content;causeCode=STRUCTURED_PROVIDER_TEXT_MISSING/,
+      /STRUCTURED_PROVIDER_TRANSPORT_FAILED:stage=response_payload;attempts=1;.*reason=empty structured response content;causeCode=STRUCTURED_PROVIDER_TEXT_MISSING/,
     );
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("reports where transport retries were exhausted and includes the timeout limit", async () => {
+  it("reports the failed transport stage and timeout without retrying", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
       status: 200,
       ok: true,
@@ -264,12 +266,12 @@ describe("OpenAI structured requests", () => {
     });
 
     await expect(result).rejects.toThrow(
-      /STRUCTURED_PROVIDER_TRANSPORT_FAILED:stage=response_body;attempts=3;timeoutMs=600000;.*reason=terminated;causeCode=UND_ERR_SOCKET/,
+      /STRUCTURED_PROVIDER_TRANSPORT_FAILED:stage=response_body;attempts=1;timeoutMs=600000;.*reason=terminated;causeCode=UND_ERR_SOCKET/,
     );
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("uses the configured transport retry limit", async () => {
+  it("does not let callers re-enable transport retries", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
       status: 200,
       ok: true,
@@ -290,8 +292,8 @@ describe("OpenAI structured requests", () => {
         schema,
         maxTransportAttempts: 5,
       }),
-    ).rejects.toThrow(/attempts=5/);
-    expect(fetchMock).toHaveBeenCalledTimes(5);
+    ).rejects.toThrow(/attempts=1/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a complete structured event-stream result when the socket closes", async () => {
@@ -443,7 +445,7 @@ describe("OpenAI structured requests", () => {
     ]);
   });
 
-  it("keeps semantic correction within one API key and accumulates usage", async () => {
+  it("returns the first semantic validation failure without correction", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
@@ -466,25 +468,21 @@ describe("OpenAI structured requests", () => {
       variables: { source_text: "source", character_library: "[]" },
     });
 
-    const result = await requestOpenAiStructured({
-      baseUrl: "https://provider.test/v1",
-      apiKeys: ["first-key", "second-key"],
-      model: "test-model",
-      prompt,
-      schema,
-      validate: (data) =>
-        data.value === 2
-          ? []
-          : [{ code: "VALUE_INVALID", path: "value", message: "must be 2" }],
-    });
+    await expect(
+      requestOpenAiStructured({
+        baseUrl: "https://provider.test/v1",
+        apiKeys: ["first-key", "second-key"],
+        model: "test-model",
+        prompt,
+        schema,
+        validate: (data) =>
+          data.value === 2
+            ? []
+            : [{ code: "VALUE_INVALID", path: "value", message: "must be 2" }],
+      }),
+    ).rejects.toMatchObject({ code: "STRUCTURED_SEMANTIC_INVALID" });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(result.trace.correctionAttempts).toBe(1);
-    expect(result.trace.tokenUsage).toEqual({
-      inputTokens: 24,
-      outputTokens: 5,
-      totalTokens: 29,
-    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     for (const call of fetchMock.mock.calls) {
       const headers = call[1]?.headers as Record<string, string>;
       expect(headers.Authorization).toBe("Bearer first-key");
@@ -514,7 +512,7 @@ describe("OpenAI structured requests", () => {
       }),
     ).rejects.toMatchObject({ code: "STRUCTURED_SEMANTIC_INVALID" });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     for (const call of fetchMock.mock.calls) {
       const headers = call[1]?.headers as Record<string, string>;
       expect(headers.Authorization).toBe("Bearer first-key");
@@ -550,7 +548,7 @@ describe("OpenAI structured requests", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("still rotates API keys for provider failures", async () => {
+  it("does not rotate API keys for provider failures", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
@@ -565,24 +563,21 @@ describe("OpenAI structured requests", () => {
       variables: { source_text: "source", character_library: "[]" },
     });
 
-    const result = await requestOpenAiStructured({
-      baseUrl: "https://provider.test/v1",
-      apiKeys: ["bad-key", "good-key"],
-      model: "test-model",
-      prompt,
-      schema,
-    });
+    await expect(
+      requestOpenAiStructured({
+        baseUrl: "https://provider.test/v1",
+        apiKeys: ["bad-key", "good-key"],
+        model: "test-model",
+        prompt,
+        schema,
+      }),
+    ).rejects.toThrow("STRUCTURED_PROVIDER_FAILED:401:unauthorized");
 
-    expect(result.data).toEqual({ value: 7 });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(
       (fetchMock.mock.calls[0][1]?.headers as Record<string, string>)
         .Authorization,
     ).toBe("Bearer bad-key");
-    expect(
-      (fetchMock.mock.calls[1][1]?.headers as Record<string, string>)
-        .Authorization,
-    ).toBe("Bearer good-key");
   });
 
   it("reports provider timeouts with the configured duration", async () => {
@@ -677,7 +672,7 @@ describe("OpenAI structured requests", () => {
     );
   });
 
-  it("does not reset the semantic budget when correction changes API key", async () => {
+  it("does not issue a correction request after semantic validation fails", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse('{"value":1}'))
@@ -706,13 +701,13 @@ describe("OpenAI structured requests", () => {
       }),
     ).rejects.toMatchObject({ code: "STRUCTURED_SEMANTIC_INVALID" });
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(
       fetchMock.mock.calls.map(
         (call) =>
           (call[1]?.headers as Record<string, string>).Authorization,
       ),
-    ).toEqual(["Bearer first-key", "Bearer first-key", "Bearer second-key"]);
+    ).toEqual(["Bearer first-key"]);
   });
 });
 

@@ -112,12 +112,8 @@ export type ShellCopy = {
   settingsStructuredStreaming: string;
   settingsStreamingEnabled: string;
   settingsStreamingDisabled: string;
-  settingsTransportAttempts: string;
-  settingsTransportAttemptsHint: string;
   settingsWorkflowExecution: string;
   settingsWorkflowExecutionDescription: string;
-  settingsWorkflowAttempts: string;
-  settingsWorkflowAttemptsHint: string;
   settingsWorkflowConcurrency: string;
   settingsWorkflowConcurrencyHint: string;
   settingsClipMaxChars: string;
@@ -303,19 +299,15 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
       "Control model request reliability and workflow execution defaults.",
     settingsRuntimeRequests: "Model requests",
     settingsRuntimeRequestsDescription:
-      "Global request behavior for all structured model calls.",
+      "Global request behavior for all model calls. Network failures stop the current attempt.",
     settingsStructuredTimeout: "Request timeout (seconds)",
     settingsStructuredTimeoutHint: "10-3600 seconds per request.",
     settingsStructuredStreaming: "Response mode",
     settingsStreamingEnabled: "Streaming",
     settingsStreamingDisabled: "Non-streaming",
-    settingsTransportAttempts: "Transport attempts",
-    settingsTransportAttemptsHint: "1-10 attempts for connection failures.",
     settingsWorkflowExecution: "Workflow execution",
     settingsWorkflowExecutionDescription:
-      "Defaults used when a workflow does not provide an explicit value.",
-    settingsWorkflowAttempts: "Step attempts",
-    settingsWorkflowAttemptsHint: "1-10 attempts before a step is exhausted.",
+      "Shared defaults for task concurrency and content segmentation.",
     settingsWorkflowConcurrency: "Default concurrency",
     settingsWorkflowConcurrencyHint: "1-8 clips processed at the same time.",
     settingsClipMaxChars: "Clip character limit",
@@ -498,19 +490,15 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsRuntimeDescription: "控制模型请求可靠性和工作流执行默认值。",
     settingsRuntimeRequests: "模型请求",
     settingsRuntimeRequestsDescription:
-      "统一作用于所有结构化模型调用，新任务会使用保存后的参数。",
+      "统一作用于所有模型调用；网络故障会停止当前 attempt，不会自动重试。",
     settingsStructuredTimeout: "单次请求超时（秒）",
     settingsStructuredTimeoutHint: "范围 10-3600 秒。",
     settingsStructuredStreaming: "响应模式",
     settingsStreamingEnabled: "流式响应",
     settingsStreamingDisabled: "非流式响应",
-    settingsTransportAttempts: "传输尝试次数",
-    settingsTransportAttemptsHint: "连接中断时尝试 1-10 次。",
     settingsWorkflowExecution: "工作流执行",
     settingsWorkflowExecutionDescription:
-      "工作流没有显式指定参数时使用这些全局默认值。",
-    settingsWorkflowAttempts: "步骤尝试次数",
-    settingsWorkflowAttemptsHint: "单步骤用尽 1-10 次后标记失败。",
+      "统一控制任务并发和内容分段，新旧入口不再各自保存默认值。",
     settingsWorkflowConcurrency: "默认并发数",
     settingsWorkflowConcurrencyHint: "同时处理 1-8 个剧本片段。",
     settingsClipMaxChars: "剧本分段字符上限",

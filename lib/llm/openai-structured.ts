@@ -63,10 +63,11 @@ export async function requestOpenAiStructured<T>(input: {
     systemPrompt: input.prompt.systemText,
     validate: input.validate,
     normalizeRaw: input.normalizeRaw,
-    maxCorrectionAttempts: input.prompt.maxSemanticCorrections,
+    maxCorrectionAttempts: 0,
     request: async (messages) => {
       let lastError: unknown;
-      for (let offset = 0; offset < input.apiKeys.length; offset += 1) {
+      const maxApiKeyAttempts = 1;
+      for (let offset = 0; offset < maxApiKeyAttempts; offset += 1) {
         const candidateIndex = (apiKeyIndex + offset) % input.apiKeys.length;
         try {
           const response = await requestText({
@@ -133,11 +134,11 @@ async function requestText(input: {
 }) {
   let lastError: unknown;
   const startedAt = Date.now();
-  const maxAttempts = normalizeTransportAttempts(input.maxTransportAttempts);
+  const maxAttempts = 1;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       input.onOutputStart?.();
-      return await requestTextAttempt(input);
+      return await requestTextAttempt({ ...input, maxTransportAttempts: 1 });
     } catch (error) {
       lastError = error;
       if (!isRetryableTextTransportError(error)) throw error;
@@ -156,12 +157,6 @@ async function requestText(input: {
   throw lastError instanceof Error
     ? lastError
     : new Error("STRUCTURED_PROVIDER_REQUEST_FAILED");
-}
-
-function normalizeTransportAttempts(value: number | undefined) {
-  return typeof value === "number" && Number.isFinite(value)
-    ? Math.max(1, Math.min(10, Math.floor(value)))
-    : 3;
 }
 
 async function requestTextAttempt(input: {
@@ -204,6 +199,7 @@ async function requestTextAttempt(input: {
         signal: AbortSignal.timeout(timeoutMs),
         cache: "no-store",
       },
+      { maxAttempts: 1 },
     );
   } catch (error) {
     throw buildProviderRequestError({

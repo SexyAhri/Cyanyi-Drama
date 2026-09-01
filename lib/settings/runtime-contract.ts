@@ -41,8 +41,8 @@ export type RuntimeSettings = z.infer<typeof runtimeSettingsSchema>;
 export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = {
   structuredRequestTimeoutSeconds: 600,
   structuredOutputStreaming: true,
-  structuredTransportMaxAttempts: 3,
-  workflowStepMaxAttempts: 3,
+  structuredTransportMaxAttempts: 1,
+  workflowStepMaxAttempts: 1,
   workflowConcurrency: 2,
   screenplayClipMaxChars: 1_600,
   imageGenerationRatio: "1:1",
@@ -69,6 +69,6 @@ export function structuredRequestOptions(settings: RuntimeSettings) {
   return {
     timeoutMs: settings.structuredRequestTimeoutSeconds * 1_000,
     stream: settings.structuredOutputStreaming,
-    maxTransportAttempts: settings.structuredTransportMaxAttempts,
+    maxTransportAttempts: 1,
   };
 }

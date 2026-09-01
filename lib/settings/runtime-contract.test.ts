@@ -11,8 +11,8 @@ describe("runtime settings", () => {
     expect(DEFAULT_RUNTIME_SETTINGS).toEqual({
       structuredRequestTimeoutSeconds: 600,
       structuredOutputStreaming: true,
-      structuredTransportMaxAttempts: 3,
-      workflowStepMaxAttempts: 3,
+      structuredTransportMaxAttempts: 1,
+      workflowStepMaxAttempts: 1,
       workflowConcurrency: 2,
       screenplayClipMaxChars: 1_600,
       imageGenerationRatio: "1:1",
@@ -66,6 +66,6 @@ describe("runtime settings", () => {
         structuredOutputStreaming: false,
         structuredTransportMaxAttempts: 6,
       }),
-    ).toEqual({ timeoutMs: 45_000, stream: false, maxTransportAttempts: 6 });
+    ).toEqual({ timeoutMs: 45_000, stream: false, maxTransportAttempts: 1 });
   });
 });

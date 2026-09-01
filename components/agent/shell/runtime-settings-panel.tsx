@@ -105,7 +105,7 @@ export function RuntimeSettingsPanel({
         description={copy.settingsRuntimeRequestsDescription}
         title={copy.settingsRuntimeRequests}
       >
-        <div className="grid items-start gap-4 sm:grid-cols-3">
+        <div className="grid items-start gap-4 sm:grid-cols-2">
           <NumberField
             disabled={loading || saving}
             hint={copy.settingsStructuredTimeoutHint}
@@ -127,15 +127,6 @@ export function RuntimeSettingsPanel({
             ]}
             value={settings.structuredOutputStreaming ? "stream" : "non-stream"}
           />
-          <NumberField
-            disabled={loading || saving}
-            hint={copy.settingsTransportAttemptsHint}
-            label={copy.settingsTransportAttempts}
-            max={10}
-            min={1}
-            onChange={(value) => update("structuredTransportMaxAttempts", value)}
-            value={settings.structuredTransportMaxAttempts}
-          />
         </div>
       </SettingsSection>
 
@@ -143,16 +134,7 @@ export function RuntimeSettingsPanel({
         description={copy.settingsWorkflowExecutionDescription}
         title={copy.settingsWorkflowExecution}
       >
-        <div className="grid items-start gap-4 sm:grid-cols-3">
-          <NumberField
-            disabled={loading || saving}
-            hint={copy.settingsWorkflowAttemptsHint}
-            label={copy.settingsWorkflowAttempts}
-            max={10}
-            min={1}
-            onChange={(value) => update("workflowStepMaxAttempts", value)}
-            value={settings.workflowStepMaxAttempts}
-          />
+        <div className="grid items-start gap-4 sm:grid-cols-2">
           <NumberField
             disabled={loading || saving}
             hint={copy.settingsWorkflowConcurrencyHint}

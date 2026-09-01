@@ -21,7 +21,12 @@ export async function saveUserRuntimeSettings(
   userId: string,
   settings: RuntimeSettings,
 ) {
-  const data = runtimeSettingsSchema.parse(settings);
+  const parsed = runtimeSettingsSchema.parse(settings);
+  const data = {
+    ...parsed,
+    structuredTransportMaxAttempts: 1,
+    workflowStepMaxAttempts: 1,
+  };
   const row = await prisma.userRuntimeSettings.upsert({
     where: { userId },
     create: { id: randomUUID(), userId, ...data },
@@ -34,8 +39,8 @@ function toRuntimeSettings(row: UserRuntimeSettings) {
   return runtimeSettingsSchema.parse({
     structuredRequestTimeoutSeconds: row.structuredRequestTimeoutSeconds,
     structuredOutputStreaming: row.structuredOutputStreaming,
-    structuredTransportMaxAttempts: row.structuredTransportMaxAttempts,
-    workflowStepMaxAttempts: row.workflowStepMaxAttempts,
+    structuredTransportMaxAttempts: 1,
+    workflowStepMaxAttempts: 1,
     workflowConcurrency: row.workflowConcurrency,
     screenplayClipMaxChars: row.screenplayClipMaxChars,
     imageGenerationRatio: row.imageGenerationRatio,
