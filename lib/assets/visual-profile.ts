@@ -75,9 +75,15 @@ export function parseAssetVisualProfile(
     typeof (profile.promptTrace as Record<string, unknown>).rawOutput === "string"
       ? ((profile.promptTrace as Record<string, unknown>).rawOutput as string)
       : "";
-  const spec = isCollapsedLegacySpec(parsedSpec, rawOutput)
-    ? parseAssetVisualDesignText(rawOutput)
-    : parsedSpec;
+  const collapsedSource =
+    rawOutput.trim() && parsedSpec.visualIdentity.trim() === rawOutput.trim()
+      ? rawOutput
+      : parsedSpec.visualIdentity;
+  const recoveredSpec = parseAssetVisualDesignText(collapsedSource);
+  const spec =
+    isCollapsedLegacySpec(parsedSpec) && hasRecoveredSections(recoveredSpec)
+      ? recoveredSpec
+      : parsedSpec;
   return {
     version: 1,
     source: profile.source === "manual" ? "manual" : "model",
@@ -119,11 +125,9 @@ export function compileAssetVisualProfile(profile?: AssetVisualProfile) {
 
 function isCollapsedLegacySpec(
   spec: AssetVisualProfileSpec,
-  rawOutput: string,
 ) {
   return (
-    rawOutput.trim().length > 0 &&
-    spec.visualIdentity.trim() === rawOutput.trim() &&
+    spec.visualIdentity.trim().length > 0 &&
     !spec.shapeAndStructure &&
     !spec.surfaceAndStyling &&
     !spec.colorPalette &&
@@ -132,6 +136,19 @@ function isCollapsedLegacySpec(
     spec.consistencyRules.length === 0 &&
     !spec.negativePrompt &&
     spec.inferenceNotes.length === 0
+  );
+}
+
+function hasRecoveredSections(spec: AssetVisualProfileSpec) {
+  return (
+    Boolean(spec.shapeAndStructure) ||
+    Boolean(spec.surfaceAndStyling) ||
+    Boolean(spec.colorPalette) ||
+    Boolean(spec.lightingAndPresentation) ||
+    spec.signatureDetails.length > 0 ||
+    spec.consistencyRules.length > 0 ||
+    Boolean(spec.negativePrompt) ||
+    spec.inferenceNotes.length > 0
   );
 }
 

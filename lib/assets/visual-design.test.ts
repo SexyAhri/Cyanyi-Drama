@@ -312,6 +312,41 @@ describe("asset visual design", () => {
     });
   });
 
+  it("repairs bold inline sections without a saved raw output", () => {
+    const collapsed = [
+      "**视觉身份**：破旧却温馨的古代东方卧房。",
+      "",
+      "**形体与结构**：紧凑长方形布局，木床靠墙。",
+      "",
+      "**造型与材质**：木构、夯土墙与棉布床铺。",
+      "",
+      "**排除项**：排除现代家具与电灯。",
+    ].join("\n");
+    const profile = parseAssetVisualProfile({
+      version: 1,
+      source: "manual",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      spec: {
+        visualIdentity: collapsed,
+        shapeAndStructure: "",
+        surfaceAndStyling: "",
+        colorPalette: "",
+        lightingAndPresentation: "",
+        signatureDetails: [],
+        consistencyRules: [],
+        negativePrompt: "",
+        inferenceNotes: [],
+      },
+    });
+
+    expect(profile?.spec).toMatchObject({
+      visualIdentity: "破旧却温馨的古代东方卧房。",
+      shapeAndStructure: "紧凑长方形布局，木床靠墙。",
+      surfaceAndStyling: "木构、夯土墙与棉布床铺。",
+      negativePrompt: "排除现代家具与电灯。",
+    });
+  });
+
   it("keeps unformatted model prose as usable visual identity", () => {
     expect(parseAssetVisualDesignText("病弱、温和，穿深灰旧袍。")).toMatchObject({
       visualIdentity: "病弱、温和，穿深灰旧袍。",
