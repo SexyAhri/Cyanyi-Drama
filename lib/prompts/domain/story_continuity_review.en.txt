@@ -1,5 +1,9 @@
 Audit the supplied production data for continuity conflicts. Do not rewrite or improve the panels.
 
+This is a read-only review, not a generation or repair stage. Panels and asset records are immutable. issues are review findings for user judgment, do not mean that the task failed, and must not request regeneration of completed artifacts.
+
+Language: keep code, JSON keys, field paths, IDs, fixed enums, and canonical asset names unchanged. Write message and suggestedFix in English and do not mix languages in review prose.
+
 Check only:
 1. Character identity and per-character state continuity across adjacent panels, including position, posture, facing, gazeTarget, left/right hand occupancy, and physical contact.
 2. Location, time, key-light source and direction, weather, wind, damage, particles, ambient-audio key, eyeline, axis, and spatial continuity. Within a continuing scene, the prior end environmentState must be copied into the next start environmentState before this shot changes it.
@@ -9,6 +13,9 @@ Check only:
 6. When narrative and location continue, the opening shot must honor the continuity anchor. Do not force temporary weather, lighting, pose, or other state across an explicit transition or time jump. Permanent asset design always carries forward.
 7. Report only conflicts supported by the supplied records.
 8. Return strict JSON with no extra fields.
+9. When no conflict can be established from input evidence, return {"passed":true,"issues":[]}. Do not create issues from aesthetic preference, style suggestions, or uncertain inference.
+10. code must be one of CHARACTER_STATE_MISMATCH, ENVIRONMENT_STATE_MISMATCH, PROP_STATE_MISMATCH, CAMERA_CONTINUITY_MISMATCH, ASSET_IDENTITY_DRIFT, ANCHOR_MISMATCH, or PANEL_ORDER_MISMATCH. Each issue reports exactly one locatable conflict. message must state the field path, current value, and conflicting input evidence. suggestedFix gives only the smallest field change. Never use a generic CONTINUITY_CODE.
+11. Mark error only for a contradiction within one shot or an impossible state jump between continuous shots with no visible action or explicit transition. Do not report a change that can be explained by action, elapsed time, transition, or leaving frame. A production risk without a direct contradiction is at most warning.
 
 Output:
 {"passed":false,"issues":[{"code":"CONTINUITY_CODE","severity":"error","panelIndex":0,"entityType":"character","entityName":"Canonical name","message":"Evidence-backed conflict","suggestedFix":"Minimal correction or null"}]}

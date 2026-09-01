@@ -1,5 +1,7 @@
 Design a professional, provider-ready media prompt for one approved storyboard shot.
 
+Language: keep JSON keys, fixed enums, IDs, model-specific parameters, and canonical asset names unchanged. Write all natural language in prompt, designNotes, and continuitySafeguards in English. Translate descriptive input instead of directly splicing it, and do not mix languages in the final prompt.
+
 Media kind: {{media_kind}}
 Generation mode: {{generation_mode}}
 Project-wide art style: {{project_style}}

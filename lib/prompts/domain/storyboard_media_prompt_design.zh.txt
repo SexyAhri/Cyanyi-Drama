@@ -1,5 +1,7 @@
 请为一个已批准分镜设计可直接用于媒体生成的专业提示词。
 
+语言要求：JSON 字段名、固定枚举、ID、模型专用参数和规范资产名保持原值；prompt、designNotes、continuitySafeguards 的自然语言必须全部使用简体中文。输入中的英文视觉描述要准确转述为中文，不得直接拼接，最终 prompt 禁止出现中英混杂句子。
+
 媒体类型：{{media_kind}}
 生成模式：{{generation_mode}}
 项目统一画风：{{project_style}}
