@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { MediaTask } from "@/lib/media/task-contract";
 
 import {
+  getAssetCatalogWorkflowRevision,
   getStudioStageStates,
   getTaskOutputRevision,
   getTasksForStage,
@@ -154,6 +155,44 @@ describe("studio runtime revisions", () => {
     );
     expect(getTaskOutputRevision([completed])).not.toBe(
       getTaskOutputRevision([current]),
+    );
+  });
+
+  it("changes the asset catalog revision as asset workflows progress", () => {
+    const queued = workflow(
+      "asset-visual-design",
+      "queued",
+      "2026-08-26T01:00:00Z",
+    );
+    const running = { ...queued, status: "running" };
+    const completed = {
+      ...running,
+      status: "succeeded",
+      completedAt: "2026-08-26T01:00:06Z",
+    };
+
+    expect(getAssetCatalogWorkflowRevision([running])).not.toBe(
+      getAssetCatalogWorkflowRevision([queued]),
+    );
+    expect(getAssetCatalogWorkflowRevision([completed])).not.toBe(
+      getAssetCatalogWorkflowRevision([running]),
+    );
+  });
+
+  it("ignores unrelated workflows in the asset catalog revision", () => {
+    const assetWorkflow = workflow(
+      "visual-asset-extraction",
+      "succeeded",
+      "2026-08-26T01:00:00Z",
+    );
+    const unrelated = workflow(
+      "story-to-script",
+      "running",
+      "2026-08-26T02:00:00Z",
+    );
+
+    expect(getAssetCatalogWorkflowRevision([assetWorkflow, unrelated])).toBe(
+      getAssetCatalogWorkflowRevision([assetWorkflow]),
     );
   });
 });

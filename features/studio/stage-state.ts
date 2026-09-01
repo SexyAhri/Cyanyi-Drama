@@ -20,6 +20,11 @@ export const STUDIO_STAGE_IDS: StudioStageId[] = [
 
 const ACTIVE_STATUSES = new Set(["queued", "running", "canceling"]);
 const FAILED_STATUSES = new Set(["failed", "blocked"]);
+const ASSET_CATALOG_WORKFLOW_TYPES = new Set([
+  "asset-visual-design",
+  "character-reference-extraction",
+  "visual-asset-extraction",
+]);
 
 export function getWorkflowContentRevision(workflow?: WorkflowRunSummary) {
   if (!workflow) return "none";
@@ -40,6 +45,18 @@ export function getTaskOutputRevision(tasks: MediaTask[]) {
         `${task.id}:${task.status}:${task.retryCount}:${task.completedAt ?? ""}`,
     )
     .join("|");
+}
+
+export function getAssetCatalogWorkflowRevision(
+  workflows: WorkflowRunSummary[],
+) {
+  return workflows
+    .filter((workflow) =>
+      ASSET_CATALOG_WORKFLOW_TYPES.has(workflow.workflowType),
+    )
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map(getWorkflowContentRevision)
+    .join("||");
 }
 
 export function getStudioStageStates(

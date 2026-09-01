@@ -32,7 +32,10 @@ import {
   uploadStudioAsset,
 } from "../api";
 import { getStudioCopy } from "../i18n";
-import { getTaskOutputRevision } from "../stage-state";
+import {
+  getAssetCatalogWorkflowRevision,
+  getTaskOutputRevision,
+} from "../stage-state";
 import type {
   ProjectAssetCatalog,
   ProjectMediaAsset,
@@ -91,6 +94,7 @@ export function AssetsWorkspace({
   const sourceInputRef = useRef<HTMLInputElement>(null);
   const projectId = snapshot.project.id;
   const revision = getTaskOutputRevision(snapshot.tasks);
+  const workflowRevision = getAssetCatalogWorkflowRevision(snapshot.workflows);
   const sourceAssets = useMemo(
     () =>
       catalog
@@ -128,7 +132,7 @@ export function AssetsWorkspace({
     const controller = new AbortController();
     void load(controller.signal);
     return () => controller.abort();
-  }, [load, revision]);
+  }, [load, revision, workflowRevision]);
 
   const entities = useMemo(
     () =>
