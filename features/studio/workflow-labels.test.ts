@@ -61,6 +61,15 @@ describe("studio operation labels", () => {
     ).toBe("AI 分镜提示设计-设计镜头提示词");
   });
 
+  it("names voice performance design as its own visible operation", () => {
+    expect(
+      workflowStepOperationLabel("zh-CN", "voice-performance-design", {
+        key: "design_voice_performance",
+        type: "design_voice_performance",
+      } as WorkflowStepSummary),
+    ).toBe("AI 配音设计-设计角色声线与表演");
+  });
+
   it("formats storyboard image and video tasks with shot indices", () => {
     const base = {
       targetType: "storyboard_panel",

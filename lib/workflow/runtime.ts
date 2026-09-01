@@ -23,6 +23,7 @@ import {
 } from "@/lib/novel/staged-screenplay-runtime";
 import { prisma } from "@/lib/server/prisma";
 import { analyzeEpisodeVoices } from "@/lib/voice/analyze";
+import { designEpisodeVoicePerformance } from "@/lib/voice/design";
 import {
   assertWorkflowRunActive,
   WorkflowControlError,
@@ -663,6 +664,41 @@ async function runStep(
       degraded: result.degraded,
       fallbackReason: result.fallbackReason,
       promptTraces: result.promptTraces,
+    };
+  }
+  if (step.stepType === "design_voice_performance") {
+    if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
+    const input = mergedStepInput(run.input, step.input);
+    const channelId = getString(input.channelId);
+    const model = getString(input.model);
+    if (!channelId || !model)
+      throw new Error("WORKFLOW_VOICE_DESIGN_INPUT_REQUIRED");
+    const result = await designEpisodeVoicePerformance({
+      userId,
+      projectId: run.projectId,
+      episodeId: run.episodeId,
+      channelId,
+      model,
+      locale: getString(input.locale) === "en" ? "en" : "zh",
+    });
+    await runtime.persistArtifact(
+      "voice.performance-design",
+      run.episodeId,
+      { voiceLines: result.voiceLines },
+    );
+    await runtime.persistArtifact(
+      "voice.performance-design.raw",
+      run.episodeId,
+      { rawOutput: result.promptTrace.rawOutput },
+    );
+    await runtime.persistArtifact(
+      "prompt.trace",
+      run.episodeId,
+      result.promptTrace,
+    );
+    return {
+      ...result,
+      promptTraces: [result.promptTrace],
     };
   }
   throw new Error(`WORKFLOW_STEP_HANDLER_NOT_IMPLEMENTED:${step.stepType}`);

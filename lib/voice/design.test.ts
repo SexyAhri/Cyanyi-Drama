@@ -138,6 +138,7 @@ beforeEach(() => {
         },
       ],
     },
+    outputText: "{\"speakers\":[],\"lines\":[]}",
     trace: { promptId: "story_voice_performance_design" },
   });
   mocks.voiceLineUpdate.mockResolvedValue({});
@@ -171,6 +172,7 @@ describe("AI voice performance design", () => {
     });
     expect(result.promptTrace).toEqual({
       promptId: "story_voice_performance_design",
+      rawOutput: "{\"speakers\":[],\"lines\":[]}",
     });
   });
 

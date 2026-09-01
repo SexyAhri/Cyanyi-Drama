@@ -219,7 +219,7 @@ export async function designEpisodeVoicePerformance(input: {
       input.projectId,
       input.episodeId,
     ),
-    promptTrace: result.trace,
+    promptTrace: { ...result.trace, rawOutput: result.outputText },
   };
 }
 
