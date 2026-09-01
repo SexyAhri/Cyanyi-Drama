@@ -1,14 +1,17 @@
 import { createHash } from "node:crypto";
 
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
-import {
-  extractCharacterReferenceDescription,
-} from "@/lib/assets/visual-extraction";
 import { ProjectAssetError } from "@/lib/assets/project-store";
 import {
   createProjectImageTask,
   ProjectAssetTaskError,
 } from "@/lib/media/project-asset-tasks";
+import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
+import {
+  createOrReuseWorkflowRun,
+  getWorkflowRun,
+} from "@/lib/workflow/store";
 
 type Context = { params: Promise<{ projectId: string }> };
 
@@ -34,10 +37,10 @@ export async function POST(request: Request, context: Context) {
     );
   try {
     if (body.extractOnly === true) {
-      const result = await extractCharacterReferenceDescription({
+      const result = await runCharacterReferenceWorkflow({
         userId: user.id,
         projectId,
-        assetIds,
+        referenceAssetIds: assetIds,
         channelId,
         model,
         characterId,
@@ -91,6 +94,96 @@ export async function POST(request: Request, context: Context) {
       );
     throw error;
   }
+}
+
+async function runCharacterReferenceWorkflow(input: {
+  userId: string;
+  projectId: string;
+  referenceAssetIds: string[];
+  channelId: string;
+  model: string;
+  characterId: string;
+  appearanceId?: string;
+  locale: "en" | "zh";
+}) {
+  const workflowInput = {
+    assetIds: input.referenceAssetIds,
+    channelId: input.channelId,
+    model: input.model,
+    characterId: input.characterId,
+    appearanceId: input.appearanceId,
+    locale: input.locale,
+  };
+  const runtimeSettings = await loadUserRuntimeSettings(input.userId);
+  const created = await createOrReuseWorkflowRun({
+    id: `workflow_${crypto.randomUUID()}`,
+    userId: input.userId,
+    projectId: input.projectId,
+    workflowType: "character-reference-extraction",
+    targetType: input.appearanceId ? "character_appearance" : "character",
+    targetId: input.appearanceId ?? input.characterId,
+    input: workflowInput,
+    steps: [
+      {
+        key: "extract_character_reference",
+        type: "extract_character_reference",
+        artifactTypes: [
+          "asset.character-reference",
+          "asset.character-reference.raw",
+          "prompt.trace",
+        ],
+        input: workflowInput,
+        retryable: true,
+        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
+      },
+    ],
+    maxAttempts: runtimeSettings.workflowStepMaxAttempts,
+  });
+  if (!created) throw new ProjectAssetError("项目不存在", 404);
+  try {
+    if (!created.reused)
+      await enqueueWorkflowJob({
+        runId: created.workflow.id,
+        userId: input.userId,
+        projectId: input.projectId,
+        maxAttempts: 1,
+      });
+    while (true) {
+      const workflow = await getWorkflowRun(input.userId, created.workflow.id);
+      if (!workflow) throw new Error("WORKFLOW_RUN_NOT_FOUND");
+      if (workflow.status === "succeeded") {
+        if (!isCharacterReferenceOutput(workflow.output))
+          throw new Error("WORKFLOW_CHARACTER_REFERENCE_OUTPUT_MISSING");
+        return { ...workflow.output, workflowId: created.workflow.id };
+      }
+      if (["failed", "blocked", "canceled"].includes(workflow.status))
+        throw new Error(workflowErrorMessage(workflow.error));
+      await new Promise((resolve) => setTimeout(resolve, 750));
+    }
+  } catch (error) {
+    if (error instanceof ProjectAssetError) throw error;
+    throw new ProjectAssetError(
+      error instanceof Error ? error.message : "角色参考识别失败",
+      502,
+    );
+  }
+}
+
+function isCharacterReferenceOutput(value: unknown): value is Record<string, unknown> & {
+  description: string;
+} {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof (value as { description?: unknown }).description === "string"
+  );
+}
+
+function workflowErrorMessage(error: Record<string, unknown> | undefined) {
+  return typeof error?.message === "string" && error.message.trim()
+    ? error.message
+    : "WORKFLOW_CHARACTER_REFERENCE_FAILED";
 }
 
 function referenceIdempotencyKey(value: Record<string, unknown>) {

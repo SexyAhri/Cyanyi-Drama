@@ -5,7 +5,10 @@ import {
   generateProjectAssetVisualProfile,
   type VisualDesignTargetType,
 } from "@/lib/assets/visual-design";
-import { extractProjectVisualAssets } from "@/lib/assets/visual-extraction";
+import {
+  extractCharacterReferenceDescription,
+  extractProjectVisualAssets,
+} from "@/lib/assets/visual-extraction";
 import { adaptEpisodeSource } from "@/lib/episodes/adaptation";
 import { splitEpisodesWithAi } from "@/lib/episodes/split";
 import { designStoryboardMediaPrompt } from "@/lib/media/storyboard-prompt-design";
@@ -476,6 +479,37 @@ async function runStep(
       result,
     );
     await runtime.persistArtifact("asset.visual-extraction.raw", targetId, {
+      rawOutput: result.trace.rawOutput,
+    });
+    await runtime.persistArtifact("prompt.trace", targetId, result.trace);
+    return { ...result, promptTraces: [result.trace] };
+  }
+  if (step.stepType === "extract_character_reference") {
+    const input = mergedStepInput(run.input, step.input);
+    const channelId = getString(input.channelId);
+    const model = getString(input.model);
+    const characterId = getString(input.characterId);
+    const appearanceId = getString(input.appearanceId);
+    const assetIds = parseStringArray(input.assetIds ?? null);
+    if (!channelId || !model || !characterId || !assetIds.length)
+      throw new Error("WORKFLOW_CHARACTER_REFERENCE_INPUT_REQUIRED");
+    const result = await extractCharacterReferenceDescription({
+      userId,
+      projectId: run.projectId,
+      assetIds,
+      channelId,
+      model,
+      characterId,
+      appearanceId,
+      locale: getString(input.locale) === "en" ? "en" : "zh",
+    });
+    const targetId = appearanceId ?? characterId;
+    await runtime.persistArtifact(
+      "asset.character-reference",
+      targetId,
+      result,
+    );
+    await runtime.persistArtifact("asset.character-reference.raw", targetId, {
       rawOutput: result.trace.rawOutput,
     });
     await runtime.persistArtifact("prompt.trace", targetId, result.trace);

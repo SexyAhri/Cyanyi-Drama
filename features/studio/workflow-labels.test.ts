@@ -88,6 +88,15 @@ describe("studio operation labels", () => {
     ).toBe("AI 视觉资产识别-识别角色、场景与道具");
   });
 
+  it("names character reference extraction as its own visible operation", () => {
+    expect(
+      workflowStepOperationLabel("zh-CN", "character-reference-extraction", {
+        key: "extract_character_reference",
+        type: "extract_character_reference",
+      } as WorkflowStepSummary),
+    ).toBe("AI 角色参考识别-提取角色外观描述");
+  });
+
   it("formats storyboard image and video tasks with shot indices", () => {
     const base = {
       targetType: "storyboard_panel",

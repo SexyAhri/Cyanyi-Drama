@@ -10,6 +10,7 @@ const labels = {
   "zh-CN": {
     workflows: {
       "asset-visual-design": "AI 视觉设计",
+      "character-reference-extraction": "AI 角色参考识别",
       "episode-adaptation": "AI 改编",
       "episode-split-planning": "AI 分集规划",
       "storyboard-prompt-design": "AI 分镜提示设计",
@@ -21,6 +22,7 @@ const labels = {
     steps: {
       adapt_episode: "创作改编稿",
       design_asset_visual: "生成资产视觉设定",
+      extract_character_reference: "提取角色外观描述",
       plan_episode_split: "规划剧集边界",
       design_storyboard_media_prompt: "设计镜头提示词",
       design_voice_performance: "设计角色声线与表演",
@@ -65,6 +67,7 @@ const labels = {
   en: {
     workflows: {
       "asset-visual-design": "AI visual design",
+      "character-reference-extraction": "AI character reference extraction",
       "episode-adaptation": "AI adaptation",
       "episode-split-planning": "AI episode planning",
       "storyboard-prompt-design": "AI storyboard prompt design",
@@ -76,6 +79,7 @@ const labels = {
     steps: {
       adapt_episode: "Write adaptation",
       design_asset_visual: "Design asset visual",
+      extract_character_reference: "Extract character appearance",
       plan_episode_split: "Plan episode boundaries",
       design_storyboard_media_prompt: "Design shot prompt",
       design_voice_performance: "Design voices and delivery",
