@@ -6,6 +6,7 @@ import {
   type VisualDesignTargetType,
 } from "@/lib/assets/visual-design";
 import { adaptEpisodeSource } from "@/lib/episodes/adaptation";
+import { splitEpisodesWithAi } from "@/lib/episodes/split";
 import { designStoryboardMediaPrompt } from "@/lib/media/storyboard-prompt-design";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import {
@@ -526,6 +527,47 @@ async function runStep(
     return {
       source,
       promptTraces: source.promptTrace ? [source.promptTrace] : [],
+    };
+  }
+  if (step.stepType === "plan_episode_split") {
+    const input = mergedStepInput(run.input, step.input);
+    const channelId = getString(input.channelId);
+    const model = getString(input.model);
+    const manuscriptId = getString(input.manuscriptId);
+    if (!channelId || !model || !manuscriptId)
+      throw new Error("WORKFLOW_EPISODE_SPLIT_INPUT_REQUIRED");
+    const manuscript = await prisma.manuscript.findFirst({
+      where: {
+        id: manuscriptId,
+        projectId: run.projectId,
+        project: { userId },
+      },
+      select: { id: true, sourceText: true },
+    });
+    if (!manuscript) throw new Error("WORKFLOW_MANUSCRIPT_NOT_FOUND");
+    const result = await splitEpisodesWithAi({
+      userId,
+      projectId: run.projectId,
+      content: manuscript.sourceText,
+      channelId,
+      model,
+      locale: getString(input.locale) === "en" ? "en" : "zh",
+    });
+    const episodes = result.episodes.map((episode) => ({
+      ...episode,
+      content: "",
+    }));
+    await runtime.persistArtifact("episode.split-plan", manuscript.id, {
+      episodes,
+    });
+    await runtime.persistArtifact("episode.split-plan.raw", manuscript.id, {
+      rawOutput: result.trace.rawOutput,
+    });
+    await runtime.persistArtifact("prompt.trace", manuscript.id, result.trace);
+    return {
+      episodes,
+      trace: result.trace,
+      promptTraces: [result.trace],
     };
   }
   if (step.stepType === "parse_novel") {

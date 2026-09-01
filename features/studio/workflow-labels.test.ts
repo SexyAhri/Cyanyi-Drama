@@ -70,6 +70,15 @@ describe("studio operation labels", () => {
     ).toBe("AI 配音设计-设计角色声线与表演");
   });
 
+  it("names AI episode planning as its own visible operation", () => {
+    expect(
+      workflowStepOperationLabel("zh-CN", "episode-split-planning", {
+        key: "plan_episode_split",
+        type: "plan_episode_split",
+      } as WorkflowStepSummary),
+    ).toBe("AI 分集规划-规划剧集边界");
+  });
+
   it("formats storyboard image and video tasks with shot indices", () => {
     const base = {
       targetType: "storyboard_panel",

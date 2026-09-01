@@ -11,6 +11,7 @@ const labels = {
     workflows: {
       "asset-visual-design": "AI 视觉设计",
       "episode-adaptation": "AI 改编",
+      "episode-split-planning": "AI 分集规划",
       "storyboard-prompt-design": "AI 分镜提示设计",
       "voice-performance-design": "AI 配音设计",
       "story-to-script": "剧本解析",
@@ -19,6 +20,7 @@ const labels = {
     steps: {
       adapt_episode: "创作改编稿",
       design_asset_visual: "生成资产视觉设定",
+      plan_episode_split: "规划剧集边界",
       design_storyboard_media_prompt: "设计镜头提示词",
       design_voice_performance: "设计角色声线与表演",
       analyze_novel: "小说解析",
@@ -62,6 +64,7 @@ const labels = {
     workflows: {
       "asset-visual-design": "AI visual design",
       "episode-adaptation": "AI adaptation",
+      "episode-split-planning": "AI episode planning",
       "storyboard-prompt-design": "AI storyboard prompt design",
       "voice-performance-design": "AI voice design",
       "story-to-script": "Script analysis",
@@ -70,6 +73,7 @@ const labels = {
     steps: {
       adapt_episode: "Write adaptation",
       design_asset_visual: "Design asset visual",
+      plan_episode_split: "Plan episode boundaries",
       design_storyboard_media_prompt: "Design shot prompt",
       design_voice_performance: "Design voices and delivery",
       analyze_novel: "Analyze source",

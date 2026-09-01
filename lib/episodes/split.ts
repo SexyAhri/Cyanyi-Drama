@@ -174,7 +174,7 @@ export async function splitEpisodesWithAi(input: {
   });
   return {
     episodes: resolveAiEpisodeBoundaries(result.data.episodes, input.content),
-    trace: result.trace,
+    trace: { ...result.trace, rawOutput: result.outputText },
   };
 }
 

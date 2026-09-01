@@ -4,12 +4,17 @@ import {
   MAX_MANUSCRIPT_CHARS,
   persistEpisodeSplits,
   saveManuscript,
-  splitEpisodesWithAi,
   updateManuscriptMetadata,
   type EpisodeSplitDraft,
 } from "@/lib/episodes/split";
 import { extractManuscriptMetadata } from "@/lib/episodes/manuscript-metadata";
+import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
+import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
+import {
+  createOrReuseWorkflowRun,
+  getWorkflowRun,
+} from "@/lib/workflow/store";
 
 type Context = { params: Promise<{ projectId: string }> };
 
@@ -72,6 +77,7 @@ export async function POST(request: Request, context: Context) {
     let method: "markers" | "ai";
     let episodes: EpisodeSplitDraft[];
     let trace;
+    let workflowId: string | undefined;
     if (mode !== "ai" && markers.hasMarkers) {
       method = "markers";
       episodes = markers.episodes;
@@ -83,16 +89,17 @@ export async function POST(request: Request, context: Context) {
       if (!channelId || !model)
         throw new EpisodeSplitError("未检测到章节标记，请选择 AI 分集模型后重试");
       method = "ai";
-      const result = await splitEpisodesWithAi({
+      const result = await runAiSplitWorkflow({
         userId: user.id,
         projectId,
-        content,
+        manuscriptId: manuscript.id,
         channelId,
         model,
         locale: body.locale === "en" ? "en" : "zh",
       });
       episodes = result.episodes;
       trace = result.trace;
+      workflowId = result.workflowId;
     }
     const persisted =
       body.persist === true
@@ -112,6 +119,7 @@ export async function POST(request: Request, context: Context) {
         episodes: withoutEpisodeContent(episodes),
         persisted,
         trace: trace ?? null,
+        workflowId,
       }),
       sessionId,
     );
@@ -123,6 +131,92 @@ export async function POST(request: Request, context: Context) {
       );
     throw error;
   }
+}
+
+async function runAiSplitWorkflow(input: {
+  userId: string;
+  projectId: string;
+  manuscriptId: string;
+  channelId: string;
+  model: string;
+  locale: "en" | "zh";
+}) {
+  const workflowInput = {
+    manuscriptId: input.manuscriptId,
+    channelId: input.channelId,
+    model: input.model,
+    locale: input.locale,
+  };
+  const runtimeSettings = await loadUserRuntimeSettings(input.userId);
+  const result = await createOrReuseWorkflowRun({
+    id: `workflow_${crypto.randomUUID()}`,
+    userId: input.userId,
+    projectId: input.projectId,
+    workflowType: "episode-split-planning",
+    targetType: "manuscript",
+    targetId: input.manuscriptId,
+    input: workflowInput,
+    steps: [
+      {
+        key: "plan_episode_split",
+        type: "plan_episode_split",
+        artifactTypes: [
+          "episode.split-plan",
+          "episode.split-plan.raw",
+          "prompt.trace",
+        ],
+        input: workflowInput,
+        retryable: true,
+        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
+      },
+    ],
+    maxAttempts: runtimeSettings.workflowStepMaxAttempts,
+  });
+  if (!result) throw new EpisodeSplitError("项目不存在", 404);
+  try {
+    if (!result.reused)
+      await enqueueWorkflowJob({
+        runId: result.workflow.id,
+        userId: input.userId,
+        projectId: input.projectId,
+        maxAttempts: 1,
+      });
+    while (true) {
+      const workflow = await getWorkflowRun(input.userId, result.workflow.id);
+      if (!workflow) throw new Error("WORKFLOW_RUN_NOT_FOUND");
+      if (workflow.status === "succeeded") {
+        if (!isEpisodeSplitOutput(workflow.output))
+          throw new Error("WORKFLOW_EPISODE_SPLIT_OUTPUT_MISSING");
+        return { ...workflow.output, workflowId: result.workflow.id };
+      }
+      if (["failed", "blocked", "canceled"].includes(workflow.status))
+        throw new Error(workflowErrorMessage(workflow.error));
+      await new Promise((resolve) => setTimeout(resolve, 750));
+    }
+  } catch (error) {
+    throw new EpisodeSplitError(
+      error instanceof Error ? error.message : "AI 分集失败",
+      502,
+    );
+  }
+}
+
+function isEpisodeSplitOutput(value: unknown): value is {
+  episodes: EpisodeSplitDraft[];
+  trace: Record<string, unknown>;
+} {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Array.isArray((value as { episodes?: unknown }).episodes)
+  );
+}
+
+function workflowErrorMessage(error: Record<string, unknown> | undefined) {
+  return typeof error?.message === "string" && error.message.trim()
+    ? error.message
+    : "WORKFLOW_EPISODE_SPLIT_FAILED";
 }
 
 function episodeDrafts(value: unknown): EpisodeSplitDraft[] {
