@@ -38,7 +38,7 @@
 | --- | --- | --- | --- |
 | 分类现有改动 | Git 工作树和迁移目录 | 每个文件归类为提交、删除或仅本地保留 | 已完成 |
 | 删除空迁移 | `20260825162000_production_tasks` | Prisma 不再报 `P3015` | 已完成 |
-| 强化应用密钥 | `lib/server/crypto.ts`、`lib/storage/local.ts`、`.env.example` | 生产环境缺少或使用公开值时失败 | 已完成 |
+| 强化应用密钥 | `lib/server/crypto.ts`、`.env.example` | 生产环境缺少或使用公开值时失败 | 已完成 |
 | 验证 Schema | `prisma/schema.prisma` | `prisma validate` 成功 | 已完成 |
 | 验证完整迁移 | 11 组非空 Migration | 全新 MySQL 数据库执行成功且无 Schema 漂移 | 已完成 |
 | 验证代码 | 当前源码和测试 | TypeScript、测试、变更文件 ESLint 通过 | 已完成 |

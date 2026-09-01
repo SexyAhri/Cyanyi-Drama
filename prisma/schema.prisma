@@ -1229,9 +1229,10 @@ model WorkflowStepAttempt {
 model MediaHash {
   id         String   @id @default(uuid())
   sha256     String   @unique
-  storageKey String   @map("storage_key") @db.VarChar(512)
+  storageKey String   @unique @map("storage_key") @db.VarChar(512)
   mimeType   String?  @map("mime_type")
   sizeBytes  BigInt?  @map("size_bytes")
+  data       Bytes?   @db.ByteA
   createdAt  DateTime @default(now()) @map("created_at")
 
   @@index([sha256])

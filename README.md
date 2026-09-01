@@ -72,7 +72,7 @@ Cyanyi Drama 的目标不是单纯提供一个聊天窗口，而是把 AI 能力
 | 模型协议 | OpenAI Compatible、Anthropic、Google Gemini、Volcengine Ark |
 | 数据库 | Prisma ORM / PostgreSQL 17 |
 | 队列与缓存 | Redis、BullMQ |
-| 对象存储 | S3 兼容存储（本地开发使用 MinIO） |
+| 媒体存储 | PostgreSQL `bytea` / Base64 Data URL |
 | 认证 | HttpOnly Session Cookie |
 | 测试 | Vitest、TypeScript、ESLint |
 
@@ -162,7 +162,9 @@ OPENAI_COMPATIBLE_IMAGE_EDIT_FILE_FIELD=image[]
 
 ## 用户身份和数据
 
-用户、Session、渠道、模型、项目和媒体任务统一保存到 PostgreSQL，连接地址由 `DATABASE_URL` 配置。Redis 用于 BullMQ 队列、任务事件和分布式锁；媒体文件使用 S3 兼容对象存储，默认连接本地 MinIO。项目不使用本地数据库文件。
+用户、Session、渠道、模型、项目、媒体任务和媒体二进制统一保存到 PostgreSQL，连接地址由 `DATABASE_URL` 配置。Redis 只用于 BullMQ 队列、任务事件和分布式锁。图片、视频和语音以 `bytea` 保存，读取时由服务端转换为 Base64 Data URL，无需部署对象存储服务。
+
+`pnpm db:reset-business` 只预览业务数据重置范围；追加 `-- --execute` 后执行。脚本保留管理员账号、渠道及其模型配置，清空其他业务表。
 
 首页、登录页和注册页允许未登录访问；项目与创作工作区要求正式账号。业务接口在需要时会创建匿名用户和 HttpOnly Session，注册成功后把当前浏览器的匿名项目数据迁入正式账号。账号接口如下：
 
@@ -214,7 +216,7 @@ OpenAI Compatible 图片/视频模型可在 `models[].capabilities.mediaTemplate
 - `GET /api/media/tasks/:taskId`：读取单个媒体任务
 - `/api/agent`：LangGraph HITL 示例运行时
 
-图片、视频和语音任务会经过统一状态机，记录 queued、running、succeeded 和 failed 等状态，并按用户隔离查询。火山方舟的视频生成支持异步创建、轮询和结果处理。服务商返回的媒体会优先转存到 S3/MinIO，并通过媒体资产接口返回签名 URL。
+图片、视频和语音任务会经过统一状态机，记录 queued、running、succeeded 和 failed 等状态，并按用户隔离查询。火山方舟的视频生成支持异步创建、轮询和结果处理。服务商返回的媒体会转存到 PostgreSQL，媒体资产接口直接返回可渲染的 Base64 Data URL。
 
 媒体任务接口还支持：
 

@@ -27,7 +27,7 @@ describe("image generation runtime", () => {
     ).toBe(true);
     expect(isSourceMediaDownloadFailure(new Error("fetch failed"))).toBe(true);
     expect(
-      isSourceMediaDownloadFailure(new Error("S3_BUCKET must be configured.")),
+      isSourceMediaDownloadFailure(new Error("DATABASE_MEDIA_NOT_FOUND")),
     ).toBe(false);
   });
 

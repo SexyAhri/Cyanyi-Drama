@@ -1,59 +1,29 @@
 import { prisma } from "@/lib/server/prisma";
 import { sha256Hex } from "@/lib/media/hash";
-import {
-  deleteLocalObject,
-  getLocalObjectUrl,
-  readLocalObject,
-  uploadLocalObject,
-} from "./local";
-import {
-  deleteObject as deleteS3Object,
-  getObjectUrl as getS3ObjectUrl,
-  uploadObject as uploadS3Object,
-} from "./s3";
 
-export type StorageProvider = "s3" | "local";
-
-export function getStorageProvider(): StorageProvider {
-  return process.env.STORAGE_PROVIDER === "s3" ? "s3" : "local";
-}
-
-export async function uploadObject(
-  key: string,
-  body: Uint8Array | string,
-  contentType?: string,
-) {
-  return getStorageProvider() === "local"
-    ? uploadLocalObject(key, body)
-    : uploadS3Object(key, body, contentType);
-}
-
-export async function resolveStoredMediaUrl(key: string, expiresIn = 3600) {
-  return getStorageProvider() === "local"
-    ? getLocalObjectUrl(key, expiresIn)
-    : getS3ObjectUrl(key, expiresIn);
+export async function resolveStoredMediaUrl(key: string) {
+  const media = await storedMedia(key);
+  return asDataUrl(media.data, media.mimeType || contentTypeForKey(key));
 }
 
 export async function resolveStoredMediaInput(
   key: string,
   mimeType?: string | null,
 ) {
-  if (getStorageProvider() !== "local") return getS3ObjectUrl(key);
-  const bytes = await readLocalObject(key);
-  const contentType = mimeType?.trim() || contentTypeForKey(key);
-  return `data:${contentType};base64,${bytes.toString("base64")}`;
+  const media = await storedMedia(key);
+  return asDataUrl(
+    media.data,
+    mimeType?.trim() || media.mimeType || contentTypeForKey(key),
+  );
 }
 
 export async function deleteObject(key: string) {
-  return getStorageProvider() === "local"
-    ? deleteLocalObject(key)
-    : deleteS3Object(key);
+  await prisma.mediaHash.deleteMany({ where: { storageKey: key } });
 }
 
 export async function readStoredObject(key: string) {
-  if (getStorageProvider() !== "local")
-    throw new Error("STORAGE_DIRECT_READ_LOCAL_ONLY");
-  return readLocalObject(key);
+  const media = await storedMedia(key);
+  return Buffer.from(media.data);
 }
 
 export async function downloadAndStoreMedia(
@@ -77,10 +47,7 @@ export async function storeMediaBytes(
   contentType?: string,
 ) {
   const sha256 = sha256Hex(body);
-  const existing = await prisma.mediaHash.findUnique({ where: { sha256 } });
-  if (existing) return existing.storageKey;
-
-  await uploadObject(key, body, contentType);
+  const data = Buffer.from(body);
   const record = await prisma.mediaHash.upsert({
     where: { sha256 },
     create: {
@@ -88,11 +55,28 @@ export async function storeMediaBytes(
       storageKey: key,
       mimeType: contentType,
       sizeBytes: BigInt(body.byteLength),
+      data,
     },
-    update: {},
+    update: {
+      data,
+      mimeType: contentType,
+      sizeBytes: BigInt(body.byteLength),
+    },
   });
-  if (record.storageKey !== key) await deleteObject(key).catch(() => undefined);
   return record.storageKey;
+}
+
+async function storedMedia(key: string) {
+  const media = await prisma.mediaHash.findUnique({
+    where: { storageKey: key },
+    select: { data: true, mimeType: true },
+  });
+  if (!media?.data?.byteLength) throw new Error("DATABASE_MEDIA_NOT_FOUND");
+  return { data: Buffer.from(media.data), mimeType: media.mimeType };
+}
+
+function asDataUrl(data: Uint8Array, contentType: string) {
+  return `data:${contentType};base64,${Buffer.from(data).toString("base64")}`;
 }
 
 function contentTypeForKey(key: string) {
@@ -110,7 +94,7 @@ function contentTypeForKey(key: string) {
       ogg: "audio/ogg",
       png: "image/png",
       wav: "audio/wav",
-      webm: "application/octet-stream",
+      webm: "video/webm",
       webp: "image/webp",
     }[extension ?? ""] ?? "application/octet-stream"
   );
