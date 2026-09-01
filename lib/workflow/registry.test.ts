@@ -35,9 +35,7 @@ describe("workflow registry", () => {
       dependsOn: ["screenplay_effects"],
       artifactTypes: [
         "screenplay.scene",
-        "screenplay.assembly.raw",
         "screenplay.clip",
-        "prompt.trace",
       ],
     });
   });

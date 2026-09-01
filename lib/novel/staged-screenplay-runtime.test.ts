@@ -36,6 +36,7 @@ import {
   normalizeBeatPlanPayload,
 } from "./screenplay-stage-normalization";
 import {
+  assembleEpisodeScreenplays,
   assembleSceneLocally,
   generateEpisodeScreenplayBeats,
   isProducibleScreenplay,
@@ -248,6 +249,57 @@ describe("staged screenplay generation", () => {
     );
     expect(requests[0]).toContain("韩宇捧着典籍");
     expect(requests[1]).not.toContain("韩宇捧着典籍");
+  });
+
+  it("assembles approved stage outputs locally without another model request", async () => {
+    const hooks = runtimeHooks();
+    await hooks.persistArtifact("screenplay.beats", "clip-1", {
+      clipId: "clip-1",
+      scenes: [
+        {
+          heading: { intExt: "INT", location: "卧房", time: "夜" },
+          description: "灯火摇曳。",
+          characters: ["韩子枫"],
+          beats: [{ text: "韩子枫转身。" }],
+        },
+      ],
+    });
+    await hooks.persistArtifact("screenplay.dialogue", "clip-1", {
+      clipId: "clip-1",
+      lines: [
+        {
+          sceneIndex: 0,
+          afterBeatIndex: 0,
+          character: "韩子枫",
+          parenthetical: null,
+          lines: "宇儿，你回来了。",
+        },
+      ],
+    });
+    await hooks.persistArtifact("screenplay.narration", "clip-1", {
+      clipId: "clip-1",
+      lines: [],
+    });
+    await hooks.persistArtifact("screenplay.effects", "clip-1", {
+      clipId: "clip-1",
+      designs: [],
+    });
+
+    await assembleEpisodeScreenplays("user-1", runtimeInput, hooks);
+
+    expect(requestOpenAiStructured).not.toHaveBeenCalled();
+    const screenplay = JSON.parse(
+      storyClipUpdate.mock.calls.at(-1)?.[0].data.screenplay,
+    );
+    expect(screenplay.scenes[0].content).toEqual([
+      { type: "action", text: "韩子枫转身。" },
+      {
+        type: "dialogue",
+        character: "韩子枫",
+        parenthetical: null,
+        lines: "宇儿，你回来了。",
+      },
+    ]);
   });
 });
 

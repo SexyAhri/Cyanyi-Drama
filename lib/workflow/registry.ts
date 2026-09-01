@@ -87,9 +87,7 @@ const templates = new Map<string, WorkflowTemplate>([
           dependsOn: ["screenplay_effects"],
           artifactTypes: [
             "screenplay.scene",
-            "screenplay.assembly.raw",
             "screenplay.clip",
-            "prompt.trace",
           ],
           retryable: true,
           maxAttempts: 3,

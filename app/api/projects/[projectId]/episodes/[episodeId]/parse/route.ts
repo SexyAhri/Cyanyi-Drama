@@ -116,9 +116,7 @@ export async function POST(request: Request, context: Context) {
         dependsOn: ["screenplay_effects"],
         artifactTypes: [
           "screenplay.scene",
-          "screenplay.assembly.raw",
           "screenplay.clip",
-          "prompt.trace",
         ],
         input: { channelId, model, locale, concurrency },
         retryable: true,

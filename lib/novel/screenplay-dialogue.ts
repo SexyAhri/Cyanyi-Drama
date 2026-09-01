@@ -51,108 +51,124 @@ export function normalizeScreenplayDialogue(
       return {
         ...scene,
         content: scene.content.flatMap((content) => {
-        const unspokenDialogue =
-          content.type === "dialogue" &&
-          !isDirectSpeechExcerpt(
-            content.lines,
-            content.character,
-            screenplay.originalText,
-          );
-        if (content.type === "dialogue" && !unspokenDialogue)
-          mostRecentSpeaker = content.character;
-        const generatedNarratorVoiceover =
-          content.type === "voiceover" &&
-          content.character === null &&
-          !isExplicitNarratorVoiceover(content.text, screenplay.originalText);
-        const recoveredSpeaker =
-          generatedNarratorVoiceover && content.type === "voiceover"
-            ? inferAttributedSpeechSpeaker(
-                content.text,
-                screenplay.originalText,
-                scene.characters,
-                mostRecentSpeaker,
-              )
-            : undefined;
-        const candidate = unspokenDialogue
-          ? ({
-              type: "action" as const,
-              text: content.lines,
-            } satisfies ScreenplayContent)
-          : recoveredSpeaker && content.type === "voiceover"
-            ? ({
-                type: "dialogue" as const,
-                character: recoveredSpeaker,
-                parenthetical: null,
-                lines: content.text,
-              } satisfies ScreenplayContent)
-            : generatedNarratorVoiceover && content.type === "voiceover"
+          const invalidCharacterVoiceover =
+            content.type === "voiceover" &&
+            typeof content.character === "string" &&
+            !scene.characters.includes(content.character);
+          const unspokenDialogue =
+            content.type === "dialogue" &&
+            !isDirectSpeechExcerpt(
+              content.lines,
+              content.character,
+              screenplay.originalText,
+            );
+          if (content.type === "dialogue" && !unspokenDialogue)
+            mostRecentSpeaker = content.character;
+          const generatedNarratorVoiceover =
+            content.type === "voiceover" &&
+            content.character === null &&
+            !isExplicitNarratorVoiceover(content.text, screenplay.originalText);
+          const recoveredSpeaker =
+            generatedNarratorVoiceover && content.type === "voiceover"
+              ? inferAttributedSpeechSpeaker(
+                  content.text,
+                  screenplay.originalText,
+                  scene.characters,
+                  mostRecentSpeaker,
+                )
+              : undefined;
+          const candidate =
+            invalidCharacterVoiceover && content.type === "voiceover"
               ? ({
                   type: "action" as const,
                   text: content.text,
                 } satisfies ScreenplayContent)
-              : content;
-        if (candidate.type === "dialogue")
-          mostRecentSpeaker = candidate.character;
-        const resolvedContent =
-          candidate.type === "action" &&
-          candidate.origin === undefined &&
-          isImplicitVisualBridgeAction(candidate.text, screenplay.originalText)
-            ? {
-                ...candidate,
-                origin: "bridge" as const,
-                evidence: [findBestSourceEvidence(candidate.text, screenplay.originalText)],
-              }
-            : candidate;
-        if (
-          resolvedContent.type !== "action" ||
-          resolvedContent.origin === "bridge" ||
-          resolvedContent.origin === "inferred"
-        )
-          return [resolvedContent];
-        const explicitlyMentionedActor = firstMentionedCharacter(
-          resolvedContent.text,
-          scene.characters,
-        );
-        const actorHint = /^(?:若|如果)(?:自己|我)/.test(
-          resolvedContent.text,
-        )
-          ? mostRecentActor
-          : explicitlyMentionedActor ??
-            mostRecentActor ??
-            (unspokenDialogue && content.type === "dialogue"
-              ? content.character
-              : undefined);
-        const normalized = splitQuotedDialogue(
-          resolvedContent.text,
-          scene.characters,
-        )
-          .flatMap((quoted) =>
+              : unspokenDialogue
+                ? ({
+                    type: "action" as const,
+                    text: content.lines,
+                  } satisfies ScreenplayContent)
+                : recoveredSpeaker && content.type === "voiceover"
+                  ? ({
+                      type: "dialogue" as const,
+                      character: recoveredSpeaker,
+                      parenthetical: null,
+                      lines: content.text,
+                    } satisfies ScreenplayContent)
+                  : generatedNarratorVoiceover && content.type === "voiceover"
+                    ? ({
+                        type: "action" as const,
+                        text: content.text,
+                      } satisfies ScreenplayContent)
+                    : content;
+          if (candidate.type === "dialogue")
+            mostRecentSpeaker = candidate.character;
+          const resolvedContent =
+            candidate.type === "action" &&
+            candidate.origin === undefined &&
+            isImplicitVisualBridgeAction(
+              candidate.text,
+              screenplay.originalText,
+            )
+              ? {
+                  ...candidate,
+                  origin: "bridge" as const,
+                  evidence: [
+                    findBestSourceEvidence(
+                      candidate.text,
+                      screenplay.originalText,
+                    ),
+                  ],
+                }
+              : candidate;
+          if (
+            resolvedContent.type !== "action" ||
+            resolvedContent.origin === "bridge" ||
+            resolvedContent.origin === "inferred"
+          )
+            return [resolvedContent];
+          const explicitlyMentionedActor = firstMentionedCharacter(
+            resolvedContent.text,
+            scene.characters,
+          );
+          const actorHint = /^(?:若|如果)(?:自己|我)/.test(
+            resolvedContent.text,
+          )
+            ? mostRecentActor
+            : explicitlyMentionedActor ??
+              mostRecentActor ??
+              (unspokenDialogue && content.type === "dialogue"
+                ? content.character
+                : undefined);
+          const normalized = splitQuotedDialogue(
+            resolvedContent.text,
+            scene.characters,
+          ).flatMap((quoted) =>
             quoted.type === "action"
               ? splitInnerMonologue(
                   quoted.text,
                   scene.characters,
                   actorHint,
-                ).flatMap(
-                  (segment) =>
-                    segment.type === "action"
-                      ? splitAttributedSpeech(segment.text, scene.characters)
-                      : [segment],
+                ).flatMap((segment) =>
+                  segment.type === "action"
+                    ? splitAttributedSpeech(segment.text, scene.characters)
+                    : [segment],
                 )
               : [quoted],
           );
-        const expanded = normalized.flatMap((segment) =>
-          segment.type === "action"
-            ? expandFilmableStateChanges(
-                segment,
-                scene.characters,
-                actorHint,
-                screenplay.originalText,
-              )
-            : [segment],
-        );
-        mostRecentActor = explicitlyMentionedActor ?? mostRecentActor;
-        return expanded;
-      }),
+          const expanded = normalized.flatMap((segment) =>
+            segment.type === "action"
+              ? expandFilmableStateChanges(
+                  segment,
+                  scene.characters,
+                  actorHint,
+                  screenplay.originalText,
+                )
+              : [segment],
+          );
+          mostRecentActor = explicitlyMentionedActor ?? mostRecentActor;
+          return expanded;
+        }),
       };
     }),
   };
@@ -379,7 +395,7 @@ function splitAttributedSpeech(
   if (!candidates.length) return [{ type: "action" as const, text }];
 
   const speechVerb =
-    "说(?:道)?|问(?:道)?|答(?:道)?|回答|回应|喊(?!一声)(?:道)?|叫(?!(?:进|到|来|住|醒|一声))(?:道)?|喝(?!一声)(?:道)?|叹(?!一声)(?:道)?|笑(?:道)?|开口|低声(?:说)?|轻声(?:说)?|安慰|劝(?:说|慰)?|安抚|鼓励";
+    "说(?:道)?|问(?:道)?|答(?:道)?|回答|回应|喊(?!一声)(?:道)?|叫(?!(?:进|到|来|住|醒|一声))(?:道)?|喝(?!一声)(?:道)?|叹道|叹息(?:着)?说|笑道|笑(?:着)?说|开口|低声(?:说)?|轻声(?:说)?|安慰|劝(?:说|慰)?|安抚|鼓励";
   const pattern = new RegExp(
     `(${candidates.join("|")})([^。！？!?“”\\"]{0,24}?)(${speechVerb})([^。！？!?“”\\"]{0,24}?)[：:，,]\\s*([^。！？!?]+[。！？!?]?)`,
     "g",

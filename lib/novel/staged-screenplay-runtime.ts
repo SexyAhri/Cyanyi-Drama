@@ -19,7 +19,6 @@ import { listProductionClips } from "@/lib/production/domain-store";
 import { prisma } from "@/lib/server/prisma";
 
 import {
-  normalizeAssemblyScenePayload,
   normalizeBeatPlanPayload,
   normalizeDialoguePlanPayload,
   normalizeEffectsPlanPayload,
@@ -306,75 +305,17 @@ export async function assembleEpisodeScreenplays(
           };
       }
       try {
-        const result = await requestOpenAiStructured({
-          ...context.provider,
-          prompt: renderPrompt({
-            id: PROMPT_IDS.STORY_SCREENPLAY_ASSEMBLY,
-            locale: input.locale ?? "zh",
-            variables: {
-              clip_id: target.clip.id,
-              scene_index: String(target.sceneIndex),
-              clip_text: target.clip.content,
-              scene_parts_json: JSON.stringify(target.parts),
-              character_library: JSON.stringify(context.characters),
-              location_library: JSON.stringify(context.locations),
-              prop_library: JSON.stringify(context.props),
-              world_bible_json: context.worldBibleText,
-              project_style: context.projectStyleDirective,
-              story_world_directive: context.storyWorldDirective,
-            },
-          }),
-          schema: screenplayAssemblySceneSchema,
-          normalizeRaw: (value) =>
-            normalizeAssemblyScenePayload(value, target.fallback),
-          maxTransportAttempts: 1,
-        });
-        await persistRawArtifact(hooks, "screenplay.assembly.raw", refId, {
-          clipId: target.clip.id,
-          clipIndex: target.clip.clipIndex,
-          sceneIndex: target.sceneIndex,
-          promptId: PROMPT_IDS.STORY_SCREENPLAY_ASSEMBLY,
-          outputText: result.outputText,
-          locallyConverted: false,
-        });
-        const scene = normalizeAssemblyScenePayload(
-          result.data,
-          target.fallback,
-        );
+        const scene = target.fallback;
         await hooks.persistArtifact("screenplay.scene", refId, scene);
-        await hooks.persistArtifact("prompt.trace", refId, result.trace);
         return {
           clipId: target.clip.id,
           clipIndex: target.clip.clipIndex,
           success: true,
           reused: false,
           locallyConverted: false,
-          trace: result.trace,
           scene,
         };
       } catch (error) {
-        const converted = await convertStructuredFailure({
-          error,
-          hooks,
-          rawArtifactType: "screenplay.assembly.raw",
-          artifactType: "screenplay.scene",
-          refId,
-          promptId: PROMPT_IDS.STORY_SCREENPLAY_ASSEMBLY,
-          clip: target.clip,
-          sceneIndex: target.sceneIndex,
-          schema: screenplayAssemblySceneSchema,
-          normalize: (value) =>
-            normalizeAssemblyScenePayload(value, target.fallback),
-        });
-        if (converted)
-          return {
-            clipId: target.clip.id,
-            clipIndex: target.clip.clipIndex,
-            success: true,
-            reused: false,
-            locallyConverted: true,
-            scene: converted,
-          };
         const message = errorMessage(error);
         await hooks.persistArtifact("screenplay.scene.failure", refId, {
           clipId: target.clip.id,

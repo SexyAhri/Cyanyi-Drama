@@ -14,7 +14,7 @@ const LOCALES: PromptLocale[] = ["zh", "en"];
 
 describe("prompt registry", () => {
   it("provides catalog-aligned Chinese and English templates", () => {
-    expect(PROMPT_ID_LIST).toHaveLength(23);
+    expect(PROMPT_ID_LIST).toHaveLength(22);
 
     for (const id of PROMPT_ID_LIST) {
       for (const locale of LOCALES) {
@@ -135,7 +135,6 @@ const noSemanticRetryPromptIds = new Set<PromptId>([
   PROMPT_IDS.STORY_SCREENPLAY_DIALOGUE,
   PROMPT_IDS.STORY_SCREENPLAY_NARRATION,
   PROMPT_IDS.STORY_SCREENPLAY_EFFECTS,
-  PROMPT_IDS.STORY_SCREENPLAY_ASSEMBLY,
 ]);
 
 function contractError(code: string, id: PromptId, detail: string) {
@@ -151,7 +150,6 @@ function expectedVersion(id: PromptId) {
     [PROMPT_IDS.STORY_SCREENPLAY_DIALOGUE]: 3,
     [PROMPT_IDS.STORY_SCREENPLAY_NARRATION]: 3,
     [PROMPT_IDS.STORY_SCREENPLAY_EFFECTS]: 3,
-    [PROMPT_IDS.STORY_SCREENPLAY_ASSEMBLY]: 2,
     [PROMPT_IDS.STORY_STORYBOARD_PLANNING]: 13,
     [PROMPT_IDS.STORY_CINEMATOGRAPHY]: 8,
     [PROMPT_IDS.STORY_ACTING_DIRECTION]: 9,

@@ -20,8 +20,6 @@ export const PROMPT_CANARY_MANIFEST = {
   "story_screenplay_narration:en": "fffa9f05a9bcdfb68542f41b3ce1bac76a4a3099acc730e3d0a1d4052991ea76",
   "story_screenplay_effects:zh": "7807a8ee4c53c38944f24b98b8d39ad28fd62f96c4e6f0b3417e62bd79f6cc36",
   "story_screenplay_effects:en": "df3fcc95cb6db89a7945d96a90d3745135ce835c6293a50cf7debc87e795e268",
-  "story_screenplay_assembly:zh": "abd53ba28c92917af12326e9d24a8a4247aadd20d22b01c975ff374db171efe1",
-  "story_screenplay_assembly:en": "194c3ff6e14796cf86f8ef3fe79106041b9cc033bd42decb5142f996575764ce",
   "story_screenplay_revision:zh": "85c7b63347925dfaac6c85bbd53725bf0455df2b09fb6484e9181d1f7b3955ef",
   "story_screenplay_revision:en": "1e2f206e0c23ca7ca1dcd3e4a8edbecaa2a7e50131675a62b3414381d3a8ef28",
   "story_storyboard_planning:zh": "94bf1616c6755225a9ee2978a356e90598c8bb18e70d31491183fee40b520eb2",

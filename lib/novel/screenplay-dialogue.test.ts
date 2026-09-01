@@ -279,4 +279,60 @@ describe("screenplay dialogue normalization", () => {
       expect.objectContaining({ type: "dialogue" }),
     );
   });
+
+  it("does not turn a sigh and facial expression into spoken dialogue", () => {
+    const screenplay = normalizeScreenplayDialogue({
+      clipId: "clip-1",
+      originalText: "父亲叹息，眸中闪过欣慰与无奈。",
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT", location: "卧房", time: "夜" },
+          description: "",
+          characters: ["韩子枫"],
+          content: [
+            {
+              type: "voiceover",
+              character: null,
+              text: "韩子枫叹息，眸中闪过欣慰与无奈。",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(screenplay.scenes[0].content).toContainEqual({
+      type: "action",
+      text: "韩子枫叹息，眸中闪过欣慰与无奈。",
+    });
+    expect(screenplay.scenes[0].content).not.toContainEqual(
+      expect.objectContaining({ type: "dialogue" }),
+    );
+  });
+
+  it("demotes voiceover attributed to an asset id instead of a character", () => {
+    const screenplay = normalizeScreenplayDialogue({
+      clipId: "clip-1",
+      originalText: "韩宇心中一紧，站在门口。",
+      scenes: [
+        {
+          sceneNumber: 0,
+          heading: { intExt: "INT", location: "屋内", time: "夜" },
+          description: "",
+          characters: ["韩宇"],
+          content: [
+            {
+              type: "voiceover",
+              character: "23a746d6-ae33-48ff-90a9-8665b11359a0",
+              text: "韩宇心中一紧，站在门口。",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(screenplay.scenes[0].content).toEqual([
+      { type: "action", text: "韩宇心中一紧，站在门口。" },
+    ]);
+  });
 });

@@ -6,7 +6,6 @@ export const PROMPT_IDS = {
   STORY_SCREENPLAY_DIALOGUE: "story_screenplay_dialogue",
   STORY_SCREENPLAY_NARRATION: "story_screenplay_narration",
   STORY_SCREENPLAY_EFFECTS: "story_screenplay_effects",
-  STORY_SCREENPLAY_ASSEMBLY: "story_screenplay_assembly",
   STORY_SCREENPLAY_REVISION: "story_screenplay_revision",
   STORY_STORYBOARD_PLANNING: "story_storyboard_planning",
   STORY_CINEMATOGRAPHY: "story_cinematography",

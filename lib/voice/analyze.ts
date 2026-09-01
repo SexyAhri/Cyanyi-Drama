@@ -341,7 +341,30 @@ export function buildScreenplayVoiceAnalysis(input: {
       }),
     );
   });
-  return voiceAnalysisSchema.parse({ lines });
+  return voiceAnalysisSchema.parse({ lines: dedupePerformedVoiceLines(lines) });
+}
+
+function dedupePerformedVoiceLines<
+  T extends {
+    matchedPanelIndex: number | null;
+    speaker: string;
+    content: string;
+    delivery: string;
+  },
+>(lines: T[]) {
+  const seen = new Set<string>();
+  return lines.filter((line) => {
+    if (line.matchedPanelIndex === null) return true;
+    const key = JSON.stringify([
+      line.matchedPanelIndex,
+      line.speaker,
+      line.delivery,
+      line.content,
+    ]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function findPerformedSegments(

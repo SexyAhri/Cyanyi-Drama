@@ -247,6 +247,60 @@ describe("voice analysis", () => {
     ]);
   });
 
+  it("deduplicates the same performed line emitted in multiple scenes", () => {
+    const dialogue = {
+      type: "dialogue" as const,
+      character: "韩子枫",
+      parenthetical: null,
+      lines: "宇儿，你回来了。",
+    };
+    const data = buildScreenplayVoiceAnalysis({
+      clips: [
+        {
+          id: "clip-1",
+          screenplay: JSON.stringify({
+            clipId: "clip-1",
+            originalText: "韩子枫说：宇儿，你回来了。",
+            scenes: [
+              {
+                sceneNumber: 0,
+                heading: { intExt: "INT", location: "屋内", time: "夜" },
+                description: "",
+                characters: ["韩子枫"],
+                content: [dialogue],
+              },
+              {
+                sceneNumber: 1,
+                heading: { intExt: "INT", location: "屋内", time: "夜" },
+                description: "",
+                characters: ["韩子枫"],
+                content: [dialogue],
+              },
+            ],
+          }),
+        },
+      ],
+      panels: [
+        {
+          clipId: "clip-1",
+          panelIndex: 3,
+          description: "韩子枫开口",
+          subtitleText: "",
+          speakingCharacter: "韩子枫",
+          lipSyncText: "宇儿，你回来了。",
+        },
+      ],
+    });
+
+    expect(data?.lines).toEqual([
+      expect.objectContaining({
+        speaker: "韩子枫",
+        content: "宇儿，你回来了。",
+        matchedPanelIndex: 3,
+      }),
+    ]);
+  });
+
   it("does not silently drop a clip whose screenplay is missing", () => {
     const data = buildScreenplayVoiceAnalysis({
       clips: [

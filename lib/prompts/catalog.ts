@@ -134,34 +134,6 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       retryPolicy: { maxSemanticCorrections: 0, mode: "targeted" },
     }),
   },
-  [PROMPT_IDS.STORY_SCREENPLAY_ASSEMBLY]: {
-    pathStem: "domain/story_screenplay_assembly",
-    version: 2,
-    variables: [
-      "clip_id",
-      "scene_index",
-      "clip_text",
-      "scene_parts_json",
-      "character_library",
-      "location_library",
-      "prop_library",
-      "world_bible_json",
-      "project_style",
-      "story_world_directive",
-    ],
-    agent: defineAgent({
-      id: "screenplay_scene_editor",
-      responsibility:
-        "Merge one scene's action beats, dialogue, narration, and effects into a production screenplay scene.",
-      prohibited: [
-        "adding plot outcomes",
-        "dropping supplied spoken lines",
-        "returning more than one scene",
-      ],
-      stopRules: ["Stop after returning the single requested scene"],
-      retryPolicy: { maxSemanticCorrections: 0, mode: "targeted" },
-    }),
-  },
   [PROMPT_IDS.STORY_STORYBOARD_PLANNING]: {
     pathStem: "domain/story_storyboard_planning",
     version: 13,

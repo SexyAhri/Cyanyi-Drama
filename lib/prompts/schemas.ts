@@ -776,7 +776,6 @@ export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
   [PROMPT_IDS.STORY_SCREENPLAY_DIALOGUE]: screenplayDialoguePlanSchema,
   [PROMPT_IDS.STORY_SCREENPLAY_NARRATION]: screenplayNarrationPlanSchema,
   [PROMPT_IDS.STORY_SCREENPLAY_EFFECTS]: screenplayEffectsPlanSchema,
-  [PROMPT_IDS.STORY_SCREENPLAY_ASSEMBLY]: screenplayAssemblySceneSchema,
   [PROMPT_IDS.STORY_SCREENPLAY_REVISION]: screenplayConversionSchema,
   [PROMPT_IDS.STORY_STORYBOARD_PLANNING]: storyboardPlanningSchema,
   [PROMPT_IDS.STORY_CINEMATOGRAPHY]: cinematographySchema,
