@@ -68,7 +68,6 @@ import {
   validateStoryboardRefinement,
 } from "@/lib/prompts/validators";
 import {
-  assertStoryboardEpisodeDuration,
   buildDeterministicStoryboardPhases,
   buildEpisodeStoryboard,
   normalizeStoryboardPlanningProviderPayload,
@@ -131,14 +130,6 @@ beforeEach(() => {
 });
 
 describe("script-to-storyboard runtime", () => {
-  it("accepts 89/90 seconds and rejects a 91-second episode", () => {
-    expect(() => assertStoryboardEpisodeDuration(89, 89)).not.toThrow();
-    expect(() => assertStoryboardEpisodeDuration(90, 90)).not.toThrow();
-    expect(() => assertStoryboardEpisodeDuration(91, 91)).toThrow(
-      "STORYBOARD_EPISODE_DURATION_OVERFLOW:91",
-    );
-  });
-
   it("stitches state and frame linkage across continuous clip boundaries", () => {
     const endState = {
       body: "甲立于书桌旁",
@@ -267,6 +258,22 @@ describe("script-to-storyboard runtime", () => {
       "phase1",
       "phase2.cine",
     ]);
+  });
+
+  it("does not attach semantic hard validators to storyboard requests", async () => {
+    requestOpenAiStructured.mockImplementation((input: PhaseRequest) => {
+      expect(input).not.toHaveProperty("validate");
+      return successfulPhaseResponse(input);
+    });
+
+    const result = await buildEpisodeStoryboard(
+      "user-1",
+      runtimeInput,
+      artifactHooks(),
+    );
+
+    expect(result.panelCount).toBe(1);
+    expect(requestOpenAiStructured).toHaveBeenCalledTimes(5);
   });
 
   it.each([

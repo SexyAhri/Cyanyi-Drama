@@ -33,11 +33,6 @@ import {
   normalizeStoryboardPlanningContract,
   normalizeStoryboardRefinementContract,
   sameStoryboardCharacterSet,
-  validateActingCoverage,
-  validateCinematographyCoverage,
-  validateContinuityReview,
-  validateStoryboardPlanning,
-  validateStoryboardRefinement,
 } from "@/lib/prompts/validators";
 import {
   listProductionClips,
@@ -163,7 +158,6 @@ export async function buildEpisodeStoryboard(
         const reusableFallback = parseStoryboardFallbackArtifact(
           storedFallback,
           fallbackInputHash,
-          clipContext,
         );
         if (reusableFallback) {
           await prisma.storyClip.update({
@@ -253,57 +247,37 @@ export async function buildEpisodeStoryboard(
         };
       } catch (error) {
         await hooks.assertActive();
-        let failure = error;
+        const failure = error;
         if (
           clipContext &&
           (isRetryableStructuredProviderError(error) ||
             isStructuredModelContractError(error))
         ) {
           const fallback = buildDeterministicStoryboardPhases(clipContext);
-          const fallbackIssues = validateStoryboardPlanning(
-            fallback.planning,
-            {
-              sourceText: clipContext.sourceText,
-              canonical: clipContext.canonical,
-              screenplay: clipContext.screenplay,
-              productionPlan: clipContext.productionPlan,
+          const fallbackReason = structuredProviderFailureCode(error);
+          await hooks.persistArtifact("storyboard.clip.fallback", clip.id, {
+            success: true,
+            degraded: true,
+            inputHash: storyboardFallbackInputHash(clipContext),
+            fallbackReason,
+            data: fallback,
+          });
+          await prisma.storyClip.update({
+            where: { id: clip.id },
+            data: {
+              status: "storyboard_ready",
+              shotCount: fallback.refinement.panels.length,
             },
-          );
-          if (!fallbackIssues.length) {
-            const fallbackReason = structuredProviderFailureCode(error);
-            await hooks.persistArtifact(
-              "storyboard.clip.fallback",
-              clip.id,
-              {
-                success: true,
-                degraded: true,
-                inputHash: storyboardFallbackInputHash(clipContext),
-                fallbackReason,
-                data: fallback,
-              },
-            );
-            await prisma.storyClip.update({
-              where: { id: clip.id },
-              data: {
-                status: "storyboard_ready",
-                shotCount: fallback.refinement.panels.length,
-              },
-            });
-            return {
-              clipId: clip.id,
-              clipIndex: clip.clipIndex,
-              success: true,
-              reusedPhases: [],
-              degraded: true,
-              fallbackReason,
-              ...fallback,
-            };
-          }
-          failure = new Error(
-            `STORYBOARD_FALLBACK_INVALID:${fallbackIssues
-              .map((issue) => issue.code)
-              .join(",")}`,
-          );
+          });
+          return {
+            clipId: clip.id,
+            clipIndex: clip.clipIndex,
+            success: true,
+            reusedPhases: [],
+            degraded: true,
+            fallbackReason,
+            ...fallback,
+          };
         }
         const message =
           failure instanceof Error ? failure.message : String(failure);
@@ -379,16 +353,6 @@ export async function buildEpisodeStoryboard(
     }));
   });
   const panels = stitchStoryboardClipBoundaries(rawPanels);
-  if (context.productionPlan) {
-    const actualDuration = panels.reduce(
-      (total, panel) => total + (panel.durationSeconds ?? 0),
-      0,
-    );
-    assertStoryboardEpisodeDuration(
-      actualDuration,
-      context.productionPlan.runtime.plannedDurationSeconds,
-    );
-  }
   const sourceHash = sha256(
     JSON.stringify({
       clips: context.clips.map((clip) => ({
@@ -437,18 +401,6 @@ export async function buildEpisodeStoryboard(
     results: publicResults,
     promptTraces,
   };
-}
-
-export function assertStoryboardEpisodeDuration(
-  actualDuration: number,
-  plannedDuration: number,
-) {
-  if (actualDuration !== plannedDuration)
-    throw new Error(
-      `STORYBOARD_EPISODE_DURATION_MISMATCH:${actualDuration}/${plannedDuration}`,
-    );
-  if (actualDuration > 90)
-    throw new Error(`STORYBOARD_EPISODE_DURATION_OVERFLOW:${actualDuration}`);
 }
 
 type StitchableStoryboardPanel = {
@@ -551,7 +503,6 @@ async function runPlanningPhase(
     }),
     schema: storyboardPlanningSchema,
     normalize,
-    validate: (data) => validateStoryboardPlanning(data, validationContext),
     hooks,
     request: () =>
       requestOpenAiStructured({
@@ -559,10 +510,6 @@ async function runPlanningPhase(
         prompt,
         schema: storyboardPlanningSchema,
         normalizeRaw: normalizeStoryboardPlanningProviderPayload,
-        validate: (data) =>
-          validateStoryboardPlanning(normalize(data), validationContext).filter(
-            (issue) => issue.code !== "DIALOGUE_DURATION_OVERFLOW",
-          ),
       }),
   });
 }
@@ -685,7 +632,6 @@ async function runCinematographyPhase(
       story_world_directive: context.storyWorldDirective,
     },
   });
-  const expectedIndices = planning.panels.map((panel) => panel.panelIndex);
   const normalize = (data: Cinematography) =>
     normalizeCinematographyContract(data, planning.panels);
   return resolvePhase({
@@ -701,15 +647,12 @@ async function runCinematographyPhase(
     }),
     schema: cinematographySchema,
     normalize,
-    validate: (data) => validateCinematographyCoverage(data, expectedIndices),
     hooks,
     request: () =>
       requestOpenAiStructured({
         ...context.provider,
         prompt,
         schema: cinematographySchema,
-        validate: (data) =>
-          validateCinematographyCoverage(normalize(data), expectedIndices),
       }),
   });
 }
@@ -745,15 +688,12 @@ async function runActingPhase(
     }),
     schema: actingDirectionSchema,
     normalize,
-    validate: (data) => validateActingCoverage(data, planning.panels),
     hooks,
     request: () =>
       requestOpenAiStructured({
         ...context.provider,
         prompt,
         schema: actingDirectionSchema,
-        validate: (data) =>
-          validateActingCoverage(normalize(data), planning.panels),
       }),
   });
 }
@@ -792,7 +732,6 @@ async function runRefinementPhase(
     }),
     schema: storyboardRefinementSchema,
     normalize,
-    validate: (data) => validateStoryboardRefinement(data, planning.panels),
     hooks,
     request: () =>
       requestOpenAiStructured({
@@ -800,8 +739,6 @@ async function runRefinementPhase(
         prompt,
         schema: storyboardRefinementSchema,
         normalizeRaw: normalizeStoryboardRefinementProviderPayload,
-        validate: (data) =>
-          validateStoryboardRefinement(normalize(data), planning.panels),
       }),
   });
 }
@@ -840,7 +777,6 @@ async function runContinuityPhase(
       continuity_anchor_json: context.continuityAnchorText,
     },
   });
-  const panelIndices = refinement.panels.map((panel) => panel.panelIndex);
   return resolvePhase({
     artifactType: "storyboard.clip.continuity",
     traceRefId: `${context.clip.id}:continuity`,
@@ -856,22 +792,12 @@ async function runContinuityPhase(
       continuityAnchor: context.continuityAnchorText,
     }),
     schema: continuityReviewSchema,
-    validate: (data) =>
-      validateContinuityReview(data, {
-        panelIndices,
-        canonical: context.canonical,
-      }),
     hooks,
     request: () =>
       requestOpenAiStructured({
         ...context.provider,
         prompt,
         schema: continuityReviewSchema,
-        validate: (data) =>
-          validateContinuityReview(data, {
-            panelIndices,
-            canonical: context.canonical,
-          }),
       }),
   });
 }
@@ -883,7 +809,6 @@ async function resolvePhase<T>(input: {
   inputHash: string;
   schema: z.ZodType<T>;
   normalize?: (data: T) => T;
-  validate: (data: T) => readonly unknown[];
   hooks: ScriptToStoryboardRuntimeHooks;
   request: () => Promise<{ data: T; trace: PromptExecutionTrace }>;
 }): Promise<PhaseResult<T>> {
@@ -896,7 +821,6 @@ async function resolvePhase<T>(input: {
     input.inputHash,
     input.schema,
     input.normalize,
-    input.validate,
   );
   if (reused) return { data: reused, reused: true };
 
@@ -906,8 +830,6 @@ async function resolvePhase<T>(input: {
     await input.hooks.assertActive();
     const parsed = input.schema.parse(result.data);
     const data = input.schema.parse(input.normalize?.(parsed) ?? parsed);
-    if (input.validate(data).length)
-      throw new Error("STRUCTURED_OUTPUT_NORMALIZATION_FAILED");
     await input.hooks.persistArtifact(input.artifactType, input.refId, {
       success: true,
       inputHash: input.inputHash,
@@ -935,7 +857,6 @@ function parsePhaseArtifact<T>(
   inputHash: string,
   schema: z.ZodType<T>,
   normalize: ((data: T) => T) | undefined,
-  validate: (data: T) => readonly unknown[],
 ) {
   if (
     !isRecord(value) ||
@@ -946,7 +867,7 @@ function parsePhaseArtifact<T>(
   const parsed = schema.safeParse(value.data);
   if (!parsed.success) return null;
   const normalized = schema.safeParse(normalize?.(parsed.data) ?? parsed.data);
-  if (!normalized.success || validate(normalized.data).length) return null;
+  if (!normalized.success) return null;
   return normalized.data;
 }
 
@@ -2030,11 +1951,6 @@ function compactShotDescription(value: string, maxLength = 240) {
 function parseStoryboardFallbackArtifact(
   value: unknown,
   inputHash: string,
-  context: Pick<ClipContext, "sourceText" | "canonical" | "screenplay"> & {
-    productionPlan?: EpisodeProductionContractSubset;
-    productionPlanVersion?: number;
-    productionTargetDurationSeconds?: number;
-  },
 ) {
   if (
     !isRecord(value) ||
@@ -2060,18 +1976,6 @@ function parseStoryboardFallbackArtifact(
     !acting.success ||
     !refinement.success ||
     !continuity.success
-  )
-    return null;
-  const panelIndices = planning.data.panels.map((panel) => panel.panelIndex);
-  if (
-    validateStoryboardPlanning(planning.data, context).length ||
-    validateCinematographyCoverage(cinematography.data, panelIndices).length ||
-    validateActingCoverage(acting.data, planning.data.panels).length ||
-    validateStoryboardRefinement(refinement.data, planning.data.panels).length ||
-    validateContinuityReview(continuity.data, {
-      panelIndices,
-      canonical: context.canonical,
-    }).length
   )
     return null;
   return {
