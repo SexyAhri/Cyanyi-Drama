@@ -309,11 +309,78 @@ describe("voice analysis", () => {
       fallbackReason: "PROVIDER_TIMEOUT",
       promptTraces: [],
     });
+    expect(requestOpenAiStructured.mock.calls[0]?.[0]).not.toHaveProperty(
+      "validate",
+    );
     expect(voiceLineCreateMany).toHaveBeenCalledWith({
       data: expect.arrayContaining([
         expect.objectContaining({ speaker: "甲", content: "你好。" }),
         expect.objectContaining({ speaker: "乙", content: "进来吧。" }),
       ]),
+    });
+  });
+
+  it("persists screenplay speech without semantic hard validation", async () => {
+    episodeFindFirst.mockResolvedValue({
+      id: "episode-1",
+      novelText: "原文没有这句对白。",
+      clips: [
+        {
+          id: "clip-1",
+          screenplay: JSON.stringify({
+            clipId: "clip-1",
+            originalText: "临时角色说：\"剧本新增对白\"",
+            scenes: [
+              {
+                sceneNumber: 0,
+                heading: { intExt: "INT", location: "书房", time: "夜" },
+                description: "",
+                characters: ["临时角色"],
+                content: [
+                  {
+                    type: "dialogue",
+                    character: "临时角色",
+                    parenthetical: null,
+                    lines: "剧本新增对白",
+                  },
+                ],
+              },
+            ],
+          }),
+        },
+      ],
+      storyboard: {
+        panels: [
+          {
+            id: "panel-1",
+            clipId: "clip-1",
+            panelIndex: 0,
+            description: "临时角色开口",
+            subtitleText: null,
+            speakingCharacter: "临时角色",
+            lipSyncText: "剧本新增对白",
+            voiceoverText: null,
+            sourceEvidenceJson: "[]",
+          },
+        ],
+      },
+    });
+    voiceLineFindMany.mockResolvedValue([
+      { id: "line-1", speaker: "临时角色", content: "剧本新增对白" },
+    ]);
+
+    const result = await analyzeEpisodeVoices(input);
+
+    expect(result.voiceLines).toHaveLength(1);
+    expect(requestOpenAiStructured).not.toHaveBeenCalled();
+    expect(voiceLineCreateMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          speaker: "临时角色",
+          content: "剧本新增对白",
+          matchedPanelId: "panel-1",
+        }),
+      ],
     });
   });
 

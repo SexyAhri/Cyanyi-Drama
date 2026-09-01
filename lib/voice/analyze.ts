@@ -11,7 +11,6 @@ import {
   screenplayConversionSchema,
   voiceAnalysisSchema,
 } from "@/lib/prompts/schemas";
-import { validateVoiceAnalysis } from "@/lib/prompts/validators";
 import { normalizeScreenplayDialogue } from "@/lib/novel/screenplay-dialogue";
 import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
@@ -151,33 +150,6 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
   let fallbackReason: string | undefined;
   if (screenplayLines) {
     analyzedData = screenplayLines;
-    const retainedPanelSpeech = new Set(
-      analyzedData.lines.flatMap((line) =>
-        line.matchedPanelIndex === null
-          ? []
-          : [`${line.matchedPanelIndex}\u0000${line.content}`],
-      ),
-    );
-    const issues = validateVoiceAnalysis(analyzedData, {
-      sourceText: episode.novelText,
-      characters: characters.map((character) => character.name),
-      temporarySpeakers: temporarySpeakerContext.map(
-        (character) => character.name,
-      ),
-      panelIndices: panelContext.map((panel) => panel.panelIndex),
-      panelSpokenText: panelContext.flatMap((panel) => {
-        const text = panel.lipSyncText ?? panel.voiceoverText;
-        return text &&
-          (panel.lipSyncText ||
-            retainedPanelSpeech.has(`${panel.panelIndex}\u0000${text}`))
-          ? [{ panelIndex: panel.panelIndex, text }]
-          : [];
-      }),
-    });
-    if (issues.length)
-      throw new VoiceAnalyzeError(
-        `剧本台词校验失败：${issues.map((item) => item.code).join(",")}`,
-      );
   } else
     try {
       const analyzed = await requestVoiceAnalysis({
@@ -554,49 +526,6 @@ function requestVoiceAnalysis(input: {
       },
     }),
     schema: voiceAnalysisSchema,
-    validate: (data) =>
-      validateVoiceAnalysis(data, {
-        sourceText: input.sourceText,
-        characters: input.characters.flatMap((value) =>
-          value &&
-          typeof value === "object" &&
-          typeof (value as { name?: unknown }).name === "string"
-            ? [(value as { name: string }).name]
-            : [],
-        ),
-        temporarySpeakers: input.panels.flatMap((value) =>
-          value &&
-          typeof value === "object" &&
-          typeof (value as { speakingCharacter?: unknown })
-            .speakingCharacter === "string"
-            ? [(value as { speakingCharacter: string }).speakingCharacter]
-            : [],
-        ),
-        panelIndices: input.panels.flatMap((value) =>
-          value &&
-          typeof value === "object" &&
-          typeof (value as { panelIndex?: unknown }).panelIndex === "number"
-            ? [(value as { panelIndex: number }).panelIndex]
-            : [],
-        ),
-        panelSpokenText: input.panels.flatMap((value) => {
-          if (!value || typeof value !== "object") return [];
-          const panel = value as {
-            panelIndex?: unknown;
-            lipSyncText?: unknown;
-            voiceoverText?: unknown;
-          };
-          const text =
-            typeof panel.lipSyncText === "string"
-              ? panel.lipSyncText
-              : typeof panel.voiceoverText === "string"
-                ? panel.voiceoverText
-                : null;
-          return typeof panel.panelIndex === "number" && text
-            ? [{ panelIndex: panel.panelIndex, text }]
-            : [];
-        }),
-      }),
   });
 }
 
