@@ -95,6 +95,7 @@ function parseVisualDesignSections(value: string) {
     const heading = /^\s*#{1,6}\s+/u.test(line);
     const normalizedLine = line
       .replace(/^\s*#{1,6}\s*/u, "")
+      .replace(/^\*\*([^*]+[：:])\*\*\s*/u, "$1")
       .replace(/^\*\*([^*]+)\*\*(\s*[：:].*)$/u, "$1$2")
       .replace(/^\*\*(.*?)\*\*\s*$/u, "$1")
       .trim();

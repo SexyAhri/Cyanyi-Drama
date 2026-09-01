@@ -347,6 +347,22 @@ describe("asset visual design", () => {
     });
   });
 
+  it("parses a bold field label that contains its colon", () => {
+    expect(
+      parseAssetVisualDesignText(
+        [
+          "**视觉身份：** 古代东方卧房。",
+          "**形体与结构：** 小型木质房间。",
+          "**色彩方案：** 暖木棕褐色。",
+        ].join("\n\n"),
+      ),
+    ).toMatchObject({
+      visualIdentity: "古代东方卧房。",
+      shapeAndStructure: "小型木质房间。",
+      colorPalette: "暖木棕褐色。",
+    });
+  });
+
   it("keeps unformatted model prose as usable visual identity", () => {
     expect(parseAssetVisualDesignText("病弱、温和，穿深灰旧袍。")).toMatchObject({
       visualIdentity: "病弱、温和，穿深灰旧袍。",
