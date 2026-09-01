@@ -92,6 +92,15 @@ async function processClaimedWorkflowJob(
   await prisma.workflowEvent.create({
     data: { runId, type: "running", status: "running" },
   });
+  const interruptedStep = run.steps.find((item) => item.status === "running");
+  if (interruptedStep) {
+    await failInterruptedWorkflowStep({
+      runId,
+      workerId,
+      step: interruptedStep,
+    });
+    return "done";
+  }
   const step = findRunnableStep(run.steps);
   if (!step && run.steps.every((item) => item.status === "succeeded")) {
     await finishRun(runId, workerId, {});
@@ -808,6 +817,79 @@ async function runStep(
     };
   }
   throw new Error(`WORKFLOW_STEP_HANDLER_NOT_IMPLEMENTED:${step.stepType}`);
+}
+
+async function failInterruptedWorkflowStep(input: {
+  runId: string;
+  workerId: string;
+  step: {
+    id: string;
+    attempt: number;
+    maxAttempts: number;
+    retryable: boolean;
+  };
+}) {
+  const failedAt = new Date();
+  const failure = {
+    code: "WORKFLOW_STEP_INTERRUPTED",
+    message: "Worker 中断了正在执行的步骤，请从该步骤手动重试。",
+    attempt: input.step.attempt,
+    maxAttempts: input.step.maxAttempts,
+    retryable:
+      input.step.retryable && input.step.attempt < input.step.maxAttempts,
+    retryExhausted: input.step.attempt >= input.step.maxAttempts,
+  };
+  const failed = await prisma.$transaction(async (tx) => {
+    const owned = await tx.workflowRun.updateMany({
+      where: {
+        id: input.runId,
+        leaseOwner: input.workerId,
+        status: "running",
+      },
+      data: {
+        status: "failed",
+        error: failure,
+        heartbeatAt: failedAt,
+        completedAt: failedAt,
+        activeDedupeKey: null,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        updatedAt: failedAt,
+      },
+    });
+    if (!owned.count) return false;
+    await tx.workflowStep.update({
+      where: { id: input.step.id },
+      data: {
+        status: "failed",
+        error: failure,
+        completedAt: failedAt,
+        updatedAt: failedAt,
+      },
+    });
+    await tx.workflowStepAttempt.updateMany({
+      where: { stepId: input.step.id, status: "running" },
+      data: {
+        status: "failed",
+        errorCode: failure.code,
+        errorMessage: failure.message,
+        finishedAt: failedAt,
+        updatedAt: failedAt,
+      },
+    });
+    return true;
+  });
+  if (failed)
+    await prisma.workflowEvent.create({
+      data: {
+        runId: input.runId,
+        stepId: input.step.id,
+        type: "failed",
+        status: "failed",
+        message: failure.message,
+        payload: failure,
+      },
+    });
 }
 
 function findRunnableStep<
