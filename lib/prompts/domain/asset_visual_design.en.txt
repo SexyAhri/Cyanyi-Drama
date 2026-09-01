@@ -22,15 +22,16 @@ Every inference must be compatible with the project-selected visual adaptation w
 
 For a character, specify facial impression, hair, body proportions, layered wardrobe and materials, footwear, accessories, and stable identifiers. For a location, specify spatial structure, scale, architectural or natural materials, foreground/midground/background, primary light sources, and repeatable anchors. For a prop, specify silhouette, proportions, materials, surface finish, colors, ornament, and stable identifiers.
 
-Return only this JSON:
-{
-  "visualIdentity": "the asset's immediately recognizable visual identity",
-  "shapeAndStructure": "concrete form, proportion, space, or construction",
-  "surfaceAndStyling": "wardrobe, materials, surface treatment, and styling language",
-  "colorPalette": "primary, secondary, and accent colors and their relationship",
-  "lightingAndPresentation": "lighting, background, and presentation for a standard reference image",
-  "signatureDetails": ["stable visible identifying detail"],
-  "consistencyRules": ["rule every downstream image and video must preserve; at least two"],
-  "negativePrompt": "appearance drift, incorrect elements, and presentation problems to exclude",
-  "inferenceNotes": ["non-canonical visual choice inferred from type, era, or project style"]
-}
+Return one complete, usable visual specification. Prefer the following natural-text labels. They are local placement hints, not a hard schema. Let the content determine list length, do not repeat information to satisfy a count, and do not use a code block:
+
+Visual identity: the asset's immediately recognizable visual identity
+Shape and structure: concrete form, proportion, space, or construction
+Surface and styling: wardrobe, materials, surface treatment, and styling language
+Color palette: primary, secondary, and accent colors and their relationship
+Lighting and presentation: lighting, background, and standard reference presentation
+Signature details: stable visible identifying details
+Consistency rules: rules downstream images and videos should preserve
+Negative prompt: appearance drift, incorrect elements, and presentation problems to exclude
+Inference notes: non-canonical visual choices inferred from type, era, or project style
+
+If the labels do not fit your response, prioritize a complete readable visual specification. The system preserves the raw output and places it permissively without requesting regeneration for missing fields or list counts.

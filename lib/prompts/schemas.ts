@@ -737,19 +737,7 @@ export const voicePerformanceDesignSchema = z
 
 export const episodeAdaptationSchema = z.string().trim().min(1);
 
-export const assetVisualDesignSchema = z
-  .object({
-    visualIdentity: z.string().trim().min(1).max(1_200),
-    shapeAndStructure: z.string().trim().min(1).max(2_000),
-    surfaceAndStyling: z.string().trim().min(1).max(2_000),
-    colorPalette: z.string().trim().min(1).max(1_200),
-    lightingAndPresentation: z.string().trim().min(1).max(1_200),
-    signatureDetails: z.array(z.string().trim().min(1).max(600)).min(1).max(12),
-    consistencyRules: z.array(z.string().trim().min(1).max(600)).min(2).max(16),
-    negativePrompt: z.string().trim().min(1).max(2_000),
-    inferenceNotes: z.array(z.string().trim().min(1).max(600)).max(16),
-  })
-  .strict();
+export const assetVisualDesignSchema = z.string().trim().min(1);
 
 export const storyboardMediaPromptDesignSchema = z
   .object({

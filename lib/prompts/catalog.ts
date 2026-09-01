@@ -403,7 +403,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.ASSET_VISUAL_DESIGN]: {
     pathStem: "domain/asset_visual_design",
-    version: 4,
+    version: 5,
     variables: [
       "asset_kind",
       "asset_name",
@@ -432,7 +432,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
         "Continuity rules identify the traits that downstream shots must preserve",
       ],
       qualityGates: [
-        "schema_valid",
+        "usable_visual_specification",
         "story_facts_preserved",
         "visual_specification_complete",
         "inference_provenance_explicit",

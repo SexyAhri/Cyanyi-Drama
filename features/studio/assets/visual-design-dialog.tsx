@@ -92,7 +92,7 @@ export function VisualDesignDialog({
   }
 
   async function save() {
-    if (!isComplete(spec)) return;
+    if (!hasContent(spec)) return;
     setIsSaving(true);
     try {
       await saveStudioAssetVisualProfile(projectId, {
@@ -284,7 +284,7 @@ export function VisualDesignDialog({
             {copy.cancel}
           </Button>
           <Button
-            disabled={busy || !isComplete(spec)}
+            disabled={busy || !hasContent(spec)}
             onClick={() => void save()}
             type="button"
           >
@@ -392,18 +392,9 @@ function normalizeSpec(spec: AssetVisualProfileSpec) {
   };
 }
 
-function isComplete(spec: AssetVisualProfileSpec) {
+function hasContent(spec: AssetVisualProfileSpec) {
   const normalized = normalizeSpec(spec);
-  return (
-    Boolean(
-      normalized.visualIdentity &&
-        normalized.shapeAndStructure &&
-        normalized.surfaceAndStyling &&
-        normalized.colorPalette &&
-        normalized.lightingAndPresentation &&
-        normalized.negativePrompt,
-    ) &&
-    normalized.signatureDetails.length > 0 &&
-    normalized.consistencyRules.length >= 2
+  return Object.values(normalized).some((item) =>
+    Array.isArray(item) ? item.length > 0 : Boolean(item),
   );
 }

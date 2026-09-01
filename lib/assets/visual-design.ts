@@ -1,9 +1,7 @@
-import { z } from "zod";
+import { jsonrepair } from "jsonrepair";
 
-import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
-import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
+import { requestOpenAiText } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
-import { assetVisualDesignSchema } from "@/lib/prompts/schemas";
 import { decryptSecret } from "@/lib/server/crypto";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { prisma } from "@/lib/server/prisma";
@@ -22,8 +20,6 @@ import {
 } from "./story-world";
 
 export type VisualDesignTargetType = "character" | "location" | "prop";
-
-type VisualDesignResult = z.infer<typeof assetVisualDesignSchema>;
 
 export async function generateProjectAssetVisualProfile(input: {
   userId: string;
@@ -73,19 +69,22 @@ export async function generateProjectAssetVisualProfile(input: {
       ),
     },
   });
-  const result = await requestOpenAiStructured({
+  const result = await requestOpenAiText({
     ...provider,
     prompt,
-    schema: assetVisualDesignSchema,
     temperature: 0.35,
   });
+  const spec = parseAssetVisualDesignText(result.text);
   const profile = await persistVisualProfile({
     ...input,
     source: "model",
-    spec: result.data,
+    spec,
     projectArtStyle: context.artStyle,
     storyWorld: storyWorld.lock,
-    promptTrace: result.trace,
+    promptTrace: {
+      ...result.trace,
+      rawOutput: result.outputText,
+    },
   });
   return {
     target: {
@@ -102,7 +101,7 @@ export async function saveProjectAssetVisualProfile(input: {
   projectId: string;
   targetType: VisualDesignTargetType;
   targetId: string;
-  spec: AssetVisualProfileSpec;
+  spec: unknown;
 }) {
   const context = await loadVisualDesignContext(input);
   const storyWorld = await loadProjectAssetStoryWorldContext({
@@ -111,13 +110,11 @@ export async function saveProjectAssetVisualProfile(input: {
     assetName: context.name,
     assetFacts: context.facts,
   });
-  const parsed = assetVisualDesignSchema.safeParse(input.spec);
-  if (!parsed.success)
-    throw new ProjectAssetError("视觉设定字段不完整", 400);
+  const spec = normalizeAssetVisualProfileSpec(input.spec);
   return persistVisualProfile({
     ...input,
     source: "manual",
-    spec: parsed.data,
+    spec,
     projectArtStyle: context.artStyle,
     storyWorld: storyWorld.lock,
   });
@@ -187,7 +184,7 @@ async function persistVisualProfile(input: {
   targetType: VisualDesignTargetType;
   targetId: string;
   source: "model" | "manual";
-  spec: VisualDesignResult;
+  spec: AssetVisualProfileSpec;
   projectArtStyle?: string;
   storyWorld?: AssetVisualProfile["storyWorld"];
   model?: string;
@@ -224,6 +221,125 @@ async function persistVisualProfile(input: {
   return profile;
 }
 
+const VISUAL_DESIGN_LABELS = {
+  visualIdentity: ["视觉身份", "visual identity"],
+  shapeAndStructure: ["形体与结构", "shape and structure"],
+  surfaceAndStyling: ["造型与材质", "表面与造型", "surface and styling"],
+  colorPalette: ["色彩方案", "color palette"],
+  lightingAndPresentation: ["参考图呈现", "光线与展示", "lighting and presentation"],
+  signatureDetails: ["识别细节", "signature details"],
+  consistencyRules: ["一致性规则", "consistency rules"],
+  negativePrompt: ["排除项", "负面提示词", "negative prompt"],
+  inferenceNotes: ["推断记录", "推断说明", "inference notes"],
+} as const;
+
+type VisualDesignField = keyof typeof VISUAL_DESIGN_LABELS;
+
+export function parseAssetVisualDesignText(value: string) {
+  const normalized = value.trim();
+  const record =
+    parseVisualDesignJson(normalized) ?? parseVisualDesignSections(normalized);
+  const spec = normalizeAssetVisualProfileSpec(record);
+  if (!hasVisualProfileContent(spec)) spec.visualIdentity = normalized;
+  return spec;
+}
+
+export function normalizeAssetVisualProfileSpec(
+  value: unknown,
+): AssetVisualProfileSpec {
+  const record = isRecord(value) ? value : {};
+  return {
+    visualIdentity: textValue(record.visualIdentity),
+    shapeAndStructure: textValue(record.shapeAndStructure),
+    surfaceAndStyling: textValue(record.surfaceAndStyling),
+    colorPalette: textValue(record.colorPalette),
+    lightingAndPresentation: textValue(record.lightingAndPresentation),
+    signatureDetails: listValue(record.signatureDetails),
+    consistencyRules: listValue(record.consistencyRules),
+    negativePrompt: textValue(record.negativePrompt),
+    inferenceNotes: listValue(record.inferenceNotes),
+  };
+}
+
+function parseVisualDesignJson(value: string) {
+  const start = value.indexOf("{");
+  const end = value.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    const parsed: unknown = JSON.parse(jsonrepair(value.slice(start, end + 1)));
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseVisualDesignSections(value: string) {
+  const aliases = Object.entries(VISUAL_DESIGN_LABELS).flatMap(
+    ([field, labels]) =>
+      labels.map((label) => ({
+        field: field as VisualDesignField,
+        label,
+      })),
+  );
+  const sections: Partial<Record<VisualDesignField, string[]>> = {};
+  let current: VisualDesignField | null = null;
+  for (const line of value.split(/\r?\n/u)) {
+    const normalizedLine = line.replace(/^\s*#{1,6}\s*/u, "");
+    const match = aliases.find(({ label }) =>
+      new RegExp(`^${escapeRegExp(label)}\\s*[：:]`, "iu").test(normalizedLine),
+    );
+    if (match) {
+      current = match.field;
+      const content = normalizedLine.replace(
+        new RegExp(`^${escapeRegExp(match.label)}\\s*[：:]\\s*`, "iu"),
+        "",
+      );
+      sections[current] = content ? [content] : [];
+      continue;
+    }
+    if (current && line.trim()) sections[current]?.push(line.trim());
+  }
+  return Object.fromEntries(
+    Object.entries(sections).map(([key, lines]) => [key, lines.join("\n")]),
+  );
+}
+
+function hasVisualProfileContent(spec: AssetVisualProfileSpec) {
+  return Object.values(spec).some((item) =>
+    Array.isArray(item) ? item.length > 0 : Boolean(item.trim()),
+  );
+}
+
+function textValue(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function listValue(value: unknown) {
+  const items = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? [value]
+      : [];
+  return items.flatMap((item) =>
+    typeof item === "string"
+      ? item
+          .split(/\r?\n|；/u)
+          .map((entry) =>
+            entry.replace(/^\s*(?:[-*•]|\d+[.)、])\s*/u, "").trim(),
+          )
+          .filter(Boolean)
+      : [],
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
 async function resolveDesignProvider(input: {
   userId: string;
   channelId: string;
@@ -240,6 +356,7 @@ async function resolveDesignProvider(input: {
     throw new ProjectAssetError("视觉设计需要 OpenAI 兼容渠道", 400);
   const configuredModel = await prisma.providerModel.findFirst({
     where: { channelId: input.channelId, modelId: input.model, selected: true },
+    select: { id: true },
   });
   if (!configuredModel) throw new ProjectAssetError("分析模型未配置", 400);
   const apiKeys = parseApiKeys(channel.encryptedApiKeys);
@@ -250,11 +367,6 @@ async function resolveDesignProvider(input: {
     apiKeys,
     model: input.model,
     ...structuredRequestOptions(runtimeSettings),
-    structuredOutputMode: supportsStoredStructuredOutputs(
-      configuredModel.capabilitiesJson,
-    )
-      ? ("json_schema" as const)
-      : ("json_object" as const),
   };
 }
 

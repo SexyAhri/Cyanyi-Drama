@@ -54,7 +54,6 @@ export function parseAssetVisualProfile(
   const consistencyRules = stringList(item.consistencyRules);
   const inferenceNotes = stringList(item.inferenceNotes);
   const storyWorld = parseStoryWorldLock(profile.storyWorld);
-  if (!signatureDetails.length || consistencyRules.length < 2) return;
   return {
     version: 1,
     source: profile.source === "manual" ? "manual" : "model",
@@ -101,7 +100,7 @@ export function compileAssetVisualProfile(profile?: AssetVisualProfile) {
     `识别细节：${spec.signatureDetails.join("；")}`,
     `一致性规则：${spec.consistencyRules.join("；")}`,
     `排除项：${spec.negativePrompt}`,
-  ].join("\n");
+  ].filter((line) => !line.endsWith("：")).join("\n");
 }
 
 function parseStoryWorldLock(value: unknown): AssetStoryWorldLock | undefined {
