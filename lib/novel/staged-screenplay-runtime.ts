@@ -114,6 +114,9 @@ export async function generateEpisodeScreenplayBeats(
       world_bible_json: context.worldBibleText,
       project_style: context.projectStyleDirective,
       story_world_directive: context.storyWorldDirective,
+      previous_episode_context_json: JSON.stringify(
+        clip.clipIndex === 0 ? (context.previousEpisodeHandoff ?? {}) : {},
+      ),
     }),
   });
 }

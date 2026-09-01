@@ -77,6 +77,22 @@ beforeEach(() => {
     projectStyleDirective: "国风动画",
     storyWorldDirective: "前现代世界",
     effectLibrary: [],
+    previousEpisodeHandoff: {
+      episodeId: "episode-0",
+      episodeNumber: 1,
+      episodeName: "第一集",
+      episodeSummary: "韩宇得到无字典籍。",
+      finalScene: null,
+      finalPanel: {
+        panelIndex: 8,
+        description: "韩宇捧着典籍。",
+        locationName: "卧房",
+        characters: ["韩宇"],
+        props: ["无字典籍"],
+        endState: { heldBy: "韩宇" },
+        worldContext: { time: "夜" },
+      },
+    },
     workflowConcurrency: 1,
     provider: {
       baseUrl: "https://provider.test/v1",
@@ -115,6 +131,12 @@ describe("staged screenplay generation", () => {
 
     expect(result.clipCount).toBe(1);
     expect(requestOpenAiStructured).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.stringify(requestOpenAiStructured.mock.calls[0][0]),
+    ).toContain("上一集交接包");
+    expect(
+      JSON.stringify(requestOpenAiStructured.mock.calls[0][0]),
+    ).toContain("韩宇捧着典籍");
     expect(hooks.persistArtifact).toHaveBeenCalledWith(
       "screenplay.beats.raw",
       "clip-1",
@@ -182,6 +204,50 @@ describe("staged screenplay generation", () => {
       where: { id: "clip-1" },
       data: { status: "screenplay_failed" },
     });
+  });
+
+  it("sends the previous-episode handoff only with the first clip", async () => {
+    listProductionClips.mockResolvedValue([
+      {
+        id: "clip-1",
+        clipIndex: 0,
+        content: "韩宇收起典籍。",
+        screenplay: null,
+        status: "split_ready",
+      },
+      {
+        id: "clip-2",
+        clipIndex: 1,
+        content: "韩宇离开卧房。",
+        screenplay: null,
+        status: "split_ready",
+      },
+    ]);
+    requestOpenAiStructured.mockImplementation(async (input) => ({
+      data: {
+        clipId: JSON.stringify(input.prompt).includes("clip-2")
+          ? "clip-2"
+          : "clip-1",
+        scenes: [
+          {
+            heading: { intExt: "INT", location: "卧房", time: "夜" },
+            description: "卧房内",
+            characters: ["韩宇"],
+            beats: [{ text: "韩宇行动。" }],
+          },
+        ],
+      },
+      outputText: "{}",
+      trace: trace("story_screenplay_beats"),
+    }));
+
+    await generateEpisodeScreenplayBeats("user-1", runtimeInput, runtimeHooks());
+
+    const requests = requestOpenAiStructured.mock.calls.map(([request]) =>
+      JSON.stringify(request),
+    );
+    expect(requests[0]).toContain("韩宇捧着典籍");
+    expect(requests[1]).not.toContain("韩宇捧着典籍");
   });
 });
 

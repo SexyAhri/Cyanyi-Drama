@@ -55,6 +55,7 @@ import {
 } from "./storyboard-dialogue-timing";
 import { normalizeScreenplayDialogue } from "./screenplay-dialogue";
 import { isProducibleScreenplay } from "./staged-screenplay-runtime";
+import { loadPreviousEpisodeHandoff } from "./episode-continuity";
 import {
   buildClipProductionContracts,
   mapWithConcurrency,
@@ -2082,7 +2083,7 @@ async function loadStoryboardContext(
         })),
       },
     }),
-    loadPreviousEpisodeEnding(input.projectId, episode.episodeNumber),
+    loadPreviousEpisodeHandoff(input.projectId, episode.episodeNumber),
   ]);
   const locale = input.locale === "en" ? "en" : "zh";
   const artStyle = episode.project.config?.artStyle;
@@ -2132,66 +2133,6 @@ async function loadStoryboardContext(
         : ("json_object" as const),
     },
   };
-}
-
-async function loadPreviousEpisodeEnding(
-  projectId: string,
-  episodeNumber: number,
-) {
-  const previous = await prisma.episode.findFirst({
-    where: { projectId, episodeNumber: { lt: episodeNumber } },
-    orderBy: { episodeNumber: "desc" },
-    select: {
-      id: true,
-      episodeNumber: true,
-      name: true,
-      description: true,
-      storyboard: {
-        select: {
-          status: true,
-          panels: {
-            orderBy: { panelIndex: "desc" },
-            take: 1,
-            select: {
-              panelIndex: true,
-              description: true,
-              locationName: true,
-              charactersJson: true,
-              propsJson: true,
-              endStateJson: true,
-              worldContextJson: true,
-            },
-          },
-        },
-      },
-    },
-  });
-  const panel = previous?.storyboard?.panels[0];
-  if (!previous || !panel) return null;
-  return {
-    episodeId: previous.id,
-    episodeNumber: previous.episodeNumber,
-    episodeName: previous.name,
-    episodeSummary: previous.description,
-    storyboardStatus: previous.storyboard?.status ?? null,
-    finalPanel: {
-      panelIndex: panel.panelIndex,
-      description: panel.description,
-      locationName: panel.locationName,
-      characters: parseStoredJson(panel.charactersJson, []),
-      props: parseStoredJson(panel.propsJson, []),
-      endState: parseStoredJson(panel.endStateJson, {}),
-      worldContext: parseStoredJson(panel.worldContextJson, {}),
-    },
-  };
-}
-
-function parseStoredJson<T>(value: string | null, fallback: T): T {
-  try {
-    return value ? (JSON.parse(value) as T) : fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 function parseScreenplay(clip: ProductionClip) {

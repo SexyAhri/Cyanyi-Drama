@@ -30,6 +30,7 @@ import { prisma } from "@/lib/server/prisma";
 import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { listNovelCharacters, listNovelLocations } from "./domain-store";
+import { loadPreviousEpisodeHandoff } from "./episode-continuity";
 
 export { extractProjectEffectLibrary } from "@/lib/production/effect-library";
 
@@ -572,6 +573,7 @@ export async function loadStoryContext(
         project: { userId },
       },
       select: {
+        episodeNumber: true,
         name: true,
         description: true,
         novelText: true,
@@ -633,6 +635,10 @@ export async function loadStoryContext(
       effectLibrary,
     },
   });
+  const previousEpisodeHandoff = await loadPreviousEpisodeHandoff(
+    input.projectId,
+    episode.episodeNumber,
+  );
   const locale = input.locale === "en" ? "en" : "zh";
   const projectStyleDirective = getProjectArtStyleDirective(
     episode.project?.config?.artStyle,
@@ -654,6 +660,7 @@ export async function loadStoryContext(
     worldBible,
     worldBibleText,
     effectLibrary,
+    previousEpisodeHandoff,
     projectStyleDirective,
     storyWorldDirective,
     productionKnowledgeText: [

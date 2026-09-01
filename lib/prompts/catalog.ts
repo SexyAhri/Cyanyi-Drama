@@ -46,7 +46,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_SCREENPLAY_BEATS]: {
     pathStem: "domain/story_screenplay_beats",
-    version: 3,
+    version: 4,
     variables: [
       "clip_id",
       "clip_text",
@@ -57,6 +57,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       "world_bible_json",
       "project_style",
       "story_world_directive",
+      "previous_episode_context_json",
     ],
     agent: defineAgent({
       id: "screenplay_beat_editor",
