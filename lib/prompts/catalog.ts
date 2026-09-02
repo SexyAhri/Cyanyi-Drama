@@ -26,7 +26,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_CLIP_SEGMENTATION]: {
     pathStem: "domain/story_clip_segmentation",
-    version: 4,
+    version: 5,
     variables: [
       "source_units_json",
       "character_library",
@@ -36,7 +36,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
     agent: defineAgent({
       id: "story_editor",
       responsibility:
-        "Split source text at narrative boundaries without gaps or overlap.",
+        "Split an approved production script at existing scene boundaries without rewriting it.",
       prohibited: [
         "rewriting source text",
         "storyboard planning",
@@ -46,7 +46,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_SCREENPLAY_BEATS]: {
     pathStem: "domain/story_screenplay_beats",
-    version: 4,
+    version: 5,
     variables: [
       "clip_id",
       "clip_text",
@@ -62,7 +62,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
     agent: defineAgent({
       id: "screenplay_beat_editor",
       responsibility:
-        "Write ordered scenes and filmable action beats for one source clip.",
+        "Place approved production-script scenes and actions into ordered filmable beats.",
       prohibited: [
         "writing dialogue",
         "writing narration",
@@ -74,7 +74,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_SCREENPLAY_DIALOGUE]: {
     pathStem: "domain/story_screenplay_dialogue",
-    version: 3,
+    version: 4,
     variables: [
       "clip_id",
       "clip_text",
@@ -85,7 +85,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
     agent: defineAgent({
       id: "screenplay_dialogue_editor",
       responsibility:
-        "Write or adapt spoken dialogue for the approved ordered scene plan.",
+        "Extract approved spoken dialogue and place it on the ordered scene plan.",
       prohibited: ["writing narration", "changing scene action"],
       stopRules: ["Return an empty lines list when the episode needs no dialogue"],
       retryPolicy: { maxSemanticCorrections: 0, mode: "targeted" },
@@ -93,7 +93,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_SCREENPLAY_NARRATION]: {
     pathStem: "domain/story_screenplay_narration",
-    version: 3,
+    version: 4,
     variables: [
       "clip_id",
       "clip_text",
@@ -104,7 +104,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
     agent: defineAgent({
       id: "screenplay_narration_editor",
       responsibility:
-        "Write only the narration, voiceover, and inner voice needed by the screenplay.",
+        "Extract approved narration, voiceover, and inner voice and place them on the scene plan.",
       prohibited: ["writing dialogue", "changing scene action"],
       stopRules: ["Return an empty lines list when narration is unnecessary"],
       retryPolicy: { maxSemanticCorrections: 0, mode: "targeted" },
@@ -112,7 +112,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_SCREENPLAY_EFFECTS]: {
     pathStem: "domain/story_screenplay_effects",
-    version: 3,
+    version: 4,
     variables: [
       "clip_id",
       "clip_text",
@@ -128,7 +128,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
     agent: defineAgent({
       id: "screenplay_effects_designer",
       responsibility:
-        "Design executable action, visual effects, and sound effects for selected beats.",
+        "Place approved action and effects on beats, filling only missing executable detail.",
       prohibited: ["adding plot", "changing dialogue", "changing scene action"],
       stopRules: ["Return an empty designs list when no beat needs effects"],
       retryPolicy: { maxSemanticCorrections: 0, mode: "targeted" },
@@ -348,7 +348,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.EPISODE_ADAPTATION]: {
     pathStem: "domain/episode_adaptation",
-    version: 9,
+    version: 10,
     variables: [
       "source_text",
       "target_duration_seconds",
@@ -361,7 +361,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
     agent: defineAgent({
       id: "episode_adaptation_editor",
       responsibility:
-        "Create one coherent episode adaptation for a human to review before screenplay production.",
+        "Create one complete, timed episode production script with audiovisual direction for human review.",
       prohibited: [
         "overwriting or pretending to replace the source",
         "inventing plot events, identities, relationships, powers, props, dialogue facts, or outcomes",
@@ -372,6 +372,9 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       qualityGates: [
         "source_grounded_title_and_synopsis",
         "adaptation_mode_followed",
+        "approximately_target_runtime",
+        "complete_scene_action_dialogue_sound",
+        "non_conflicting_audiovisual_direction",
       ],
     }),
   },

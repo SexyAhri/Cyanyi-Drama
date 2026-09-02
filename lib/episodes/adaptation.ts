@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 
 import { requestOpenAiText } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
+import { getProjectArtStyleLabel } from "@/lib/projects/art-style";
 import type { EpisodeSourceVersionRecord } from "@/lib/projects/types";
 import { prisma } from "@/lib/server/prisma";
 
@@ -94,6 +95,15 @@ export async function adaptEpisodeSource(input: {
         project_context: JSON.stringify({
           name: episode.project.name,
           description: episode.project.description ?? "",
+          artStyle: getProjectArtStyleLabel(
+            episode.project.config?.artStyle,
+            input.locale === "en" ? "en" : "zh",
+          ),
+          visualEra: episode.project.config?.visualEra ?? "source",
+          visualEraCustom: episode.project.config?.visualEraCustom ?? "",
+          aspectRatio: episode.project.config?.videoRatio ?? "9:16",
+          workflowMode:
+            episode.project.config?.workflowMode ?? "novel-promotion",
         }),
         episode_continuity_context: JSON.stringify(continuityContext),
         adaptation_mode: input.mode,

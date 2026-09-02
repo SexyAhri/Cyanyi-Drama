@@ -46,6 +46,30 @@ describe("episode adaptation local metadata", () => {
       content: "凛冽冬夜，韩宇仍在练武。",
     });
   });
+
+  it("keeps the complete audiovisual production script under the soft body label", () => {
+    const productionScript = [
+      "成片规格：约 120 秒｜9:16 国漫影视动画",
+      "核心剧情：韩宇苦修后从父亲处得知母亲仍在人世。",
+      "全局视听规则：深冬寒夜，冷色环境光与灯火暖光保持一致。",
+      "",
+      "场次 01｜预计时长：12 秒｜外景·韩家练武场·夜",
+      "画面与动作：韩宇握紧铁石，屈膝发力，铁石缓缓离地。",
+      "镜头表达：中景低机位缓慢后移。",
+      "对白/旁白：无",
+      "声音与氛围：寒风与铁石摩擦声。",
+    ].join("\n");
+
+    expect(
+      parseAdaptationText(
+        `标题：寒门少年\n梗概：韩宇苦练后得知母亲仍在世。\n正文：\n${productionScript}`,
+      ),
+    ).toEqual({
+      title: "寒门少年",
+      summary: "韩宇苦练后得知母亲仍在世。",
+      content: productionScript,
+    });
+  });
 });
 
 describe("episode adaptation continuity", () => {
