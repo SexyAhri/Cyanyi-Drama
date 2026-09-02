@@ -54,7 +54,7 @@ describe("M6 system regression", () => {
             kind: "video",
           },
           {
-            url: "https://example.com/frame.png",
+            storageKey: "projects/project-1/media/image/frame.png",
             panelIndex: 1,
             kind: "image",
             durationSeconds: 3,

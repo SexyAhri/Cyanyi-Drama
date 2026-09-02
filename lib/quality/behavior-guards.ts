@@ -2,7 +2,8 @@ import type { MediaAsset, MediaTaskKind } from "@/lib/media/task-contract";
 import type { RenderSpecification } from "@/lib/providers/local/render-spec";
 
 export type GuardedTimelineSegment = {
-  url: string;
+  url?: string;
+  storageKey?: string;
   panelIndex: number;
   kind?: "image" | "video";
   durationSeconds?: number;
@@ -22,7 +23,9 @@ export function assertTimelineRenderBehavior(input: {
     if (panels.has(segment.panelIndex))
       throw new Error(`TIMELINE_RENDER_PANEL_DUPLICATE:${segment.panelIndex}`);
     panels.add(segment.panelIndex);
-    assertFetchableMediaUrl(segment.url);
+    if (segment.url) assertFetchableMediaUrl(segment.url);
+    else if (!segment.storageKey?.trim())
+      throw new Error("TIMELINE_RENDER_MEDIA_SOURCE_REQUIRED");
     if (
       segment.durationSeconds !== undefined &&
       (!Number.isFinite(segment.durationSeconds) ||

@@ -415,6 +415,21 @@ async function resolveAssetUrl(
   return null;
 }
 
+function storedAssetSource(
+  asset:
+    | {
+        url: string | null;
+        storageKey: string | null;
+      }
+    | null
+    | undefined,
+) {
+  if (asset?.storageKey)
+    return { storageKey: asset.storageKey };
+  if (asset?.url) return { url: asset.url };
+  return null;
+}
+
 async function performLipSync(
   episodeId: string | null,
   projectId: string | null,
@@ -558,35 +573,35 @@ async function renderEpisodeTimeline(
   const resolvedTracks: Array<{
     track: (typeof sequence)[number];
     panel: (typeof storyboard.panels)[number];
-    url: string | null;
-    imageUrl: string | null | undefined;
+    source: ReturnType<typeof storedAssetSource>;
+    isImage: boolean;
   }> = [];
   for (const track of sequence) {
     const panel = panels.get(track.id);
     if (!panel) continue;
-    const lipSyncUrl = await resolveAssetUrl(panel.lipSyncAsset);
-    const videoUrl = lipSyncUrl
+    const lipSyncSource = storedAssetSource(panel.lipSyncAsset);
+    const videoSource = lipSyncSource
       ? undefined
-      : await resolveAssetUrl(panel.videoAsset);
-    const imageUrl =
-      lipSyncUrl || videoUrl
+      : storedAssetSource(panel.videoAsset);
+    const imageSource =
+      lipSyncSource || videoSource
         ? undefined
-        : await resolveAssetUrl(panel.imageAsset);
-    const url = lipSyncUrl ?? videoUrl ?? imageUrl;
-    resolvedTracks.push({ track, panel, url: url ?? null, imageUrl });
+        : storedAssetSource(panel.imageAsset);
+    const source = lipSyncSource ?? videoSource ?? imageSource ?? null;
+    resolvedTracks.push({ track, panel, source, isImage: !!imageSource });
   }
   assertTimelineRenderCoverage({
     sequenceIds: sequence.map((track) => track.id),
-    panelMedia: resolvedTracks.map(({ panel, url }) => ({
+    panelMedia: resolvedTracks.map(({ panel, source }) => ({
       id: panel.id,
       panelIndex: panel.panelIndex,
-      url,
+      url: source?.storageKey ?? source?.url ?? null,
     })),
   });
-  const segments = resolvedTracks.map(({ track, panel, url, imageUrl }) => ({
-    url: url!,
+  const segments = resolvedTracks.map(({ track, panel, source, isImage }) => ({
+    ...source!,
     panelIndex: panel.panelIndex,
-    kind: imageUrl ? ("image" as const) : ("video" as const),
+    kind: isImage ? ("image" as const) : ("video" as const),
     durationSeconds: track.duration,
     sourceStartSeconds: track.sourceStart,
     volume: track.volume,
@@ -598,8 +613,11 @@ async function renderEpisodeTimeline(
     where: { episodeId, trackType: "merged" },
     select: { asset: { select: { url: true, storageKey: true } } },
   });
-  const audioUrl = (await resolveAssetUrl(audioTrack?.asset)) ?? undefined;
-  assertTimelineDialogueAudioCoverage(voiceLines.length, audioUrl);
+  const audioSource = storedAssetSource(audioTrack?.asset);
+  assertTimelineDialogueAudioCoverage(
+    voiceLines.length,
+    audioSource?.storageKey ?? audioSource?.url,
+  );
 
   const subtitles = buildTimelineSubtitles(voiceLines, sequence);
 
@@ -608,7 +626,8 @@ async function renderEpisodeTimeline(
   );
   const rendered = await renderTimelineVideo({
     segments,
-    audioUrl,
+    audioUrl: audioSource?.url,
+    audioStorageKey: audioSource?.storageKey,
     subtitles,
     specification,
   });
@@ -623,7 +642,7 @@ async function renderEpisodeTimeline(
         panelCount: segments.length,
         imagePanelCount: segments.filter((segment) => segment.kind === "image")
           .length,
-        hasAudio: !!audioUrl,
+        hasAudio: !!audioSource,
         subtitleCount: subtitles.length,
         specification: rendered.specification,
       },

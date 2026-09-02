@@ -6,6 +6,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import ffmpegStatic from "ffmpeg-static";
 import { assertTimelineRenderBehavior } from "@/lib/quality/behavior-guards";
+import { readStoredObject } from "@/lib/storage";
 import {
   normalizeRenderSpecification,
   type RenderSpecification,
@@ -14,7 +15,8 @@ import {
 const execFileAsync = promisify(execFile);
 
 export interface TimelineSegment {
-  url: string;
+  url?: string;
+  storageKey?: string;
   panelIndex: number;
   kind?: "image" | "video";
   durationSeconds?: number;
@@ -33,13 +35,14 @@ export interface TimelineSubtitleCue {
 export interface RenderTimelineOptions {
   segments: TimelineSegment[];
   audioUrl?: string | null;
+  audioStorageKey?: string | null;
   subtitles?: readonly TimelineSubtitleCue[];
   format?: string;
   specification?: RenderSpecification;
 }
 
 export async function renderTimelineVideo(opts: RenderTimelineOptions) {
-  const segments = opts.segments.filter((s) => s.url);
+  const segments = opts.segments.filter((s) => s.url || s.storageKey);
   const specification =
     opts.specification ?? normalizeRenderSpecification({ format: opts.format });
   assertTimelineRenderBehavior({ segments, specification });
@@ -50,18 +53,18 @@ export async function renderTimelineVideo(opts: RenderTimelineOptions) {
     const inputPaths: string[] = [];
     for (let index = 0; index < segments.length; index += 1) {
       const seg = segments[index];
-      const response = await fetch(seg.url, { cache: "no-store" });
-      if (!response.ok)
-        throw new Error(
-          `TIMELINE_RENDER_DOWNLOAD_FAILED:${seg.panelIndex}:${response.status}`,
-        );
-      const ext = guessMediaExt(seg.url, seg.kind);
+      const ext = guessMediaExt(seg.storageKey ?? seg.url ?? "", seg.kind);
       const sourcePath = join(root, `${String(index).padStart(4, "0")}.${ext}`);
       const normalizedPath = join(
         root,
         `${String(index).padStart(4, "0")}.normalized.mp4`,
       );
-      await writeFile(sourcePath, Buffer.from(await response.arrayBuffer()));
+      await writeMediaSource({
+        url: seg.url,
+        storageKey: seg.storageKey,
+        outputPath: sourcePath,
+        errorCode: `TIMELINE_RENDER_DOWNLOAD_FAILED:${seg.panelIndex}`,
+      });
       const hasSourceAudio =
         seg.kind !== "image" && (await hasAudioStream(sourcePath));
       await executeFfmpeg(
@@ -85,12 +88,14 @@ export async function renderTimelineVideo(opts: RenderTimelineOptions) {
     );
 
     let audioPath: string | null = null;
-    if (opts.audioUrl) {
-      const response = await fetch(opts.audioUrl, { cache: "no-store" });
-      if (!response.ok)
-        throw new Error(`TIMELINE_RENDER_AUDIO_DOWNLOAD_FAILED:${response.status}`);
+    if (opts.audioUrl || opts.audioStorageKey) {
       audioPath = join(root, "soundtrack.audio");
-      await writeFile(audioPath, Buffer.from(await response.arrayBuffer()));
+      await writeMediaSource({
+        url: opts.audioUrl,
+        storageKey: opts.audioStorageKey,
+        outputPath: audioPath,
+        errorCode: "TIMELINE_RENDER_AUDIO_DOWNLOAD_FAILED",
+      });
     }
 
     let subtitlePath: string | null = null;
@@ -121,6 +126,22 @@ export async function renderTimelineVideo(opts: RenderTimelineOptions) {
   } finally {
     await rm(root, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+async function writeMediaSource(input: {
+  url?: string | null;
+  storageKey?: string | null;
+  outputPath: string;
+  errorCode: string;
+}) {
+  if (input.storageKey) {
+    await writeFile(input.outputPath, await readStoredObject(input.storageKey));
+    return;
+  }
+  if (!input.url) throw new Error(`${input.errorCode}:SOURCE_MISSING`);
+  const response = await fetch(input.url, { cache: "no-store" });
+  if (!response.ok) throw new Error(`${input.errorCode}:${response.status}`);
+  await writeFile(input.outputPath, Buffer.from(await response.arrayBuffer()));
 }
 
 function assertRenderTempRoot(root: string) {

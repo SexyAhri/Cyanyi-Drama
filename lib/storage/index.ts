@@ -23,7 +23,7 @@ export async function deleteObject(key: string) {
 
 export async function readStoredObject(key: string) {
   const media = await storedMedia(key);
-  return Buffer.from(media.data);
+  return media.data;
 }
 
 export async function downloadAndStoreMedia(
