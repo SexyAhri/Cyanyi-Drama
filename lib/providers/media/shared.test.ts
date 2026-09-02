@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { localReferencesAsDataUrls } from "./shared";
+import { localReferencesAsDataUrls, providerErrorMessage } from "./shared";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -34,5 +34,13 @@ describe("media references", () => {
     await expect(
       localReferencesAsDataUrls([{ url: "https://media.test/shot.png" }]),
     ).resolves.toEqual(["https://media.test/shot.png"]);
+  });
+});
+
+describe("provider errors", () => {
+  it("falls back to the HTTP status when the provider message is empty", () => {
+    expect(providerErrorMessage({ error: { message: "" } }, 404)).toBe(
+      "Provider request failed (404).",
+    );
   });
 });

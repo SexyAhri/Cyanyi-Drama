@@ -11,14 +11,16 @@ export function providerErrorMessage(payload: unknown, status: number) {
   if (payload && typeof payload === "object") {
     const value = payload as Record<string, unknown>;
     const error = value.error;
-    if (typeof error === "string") return error;
+    if (typeof error === "string" && error.trim()) return error;
     if (
       error &&
       typeof error === "object" &&
-      typeof (error as Record<string, unknown>).message === "string"
+      typeof (error as Record<string, unknown>).message === "string" &&
+      ((error as Record<string, unknown>).message as string).trim()
     )
       return (error as Record<string, unknown>).message as string;
-    if (typeof value.message === "string") return value.message;
+    if (typeof value.message === "string" && value.message.trim())
+      return value.message;
     if (typeof value.msg === "string" && value.msg.trim()) return value.msg;
   }
   return `Provider request failed (${status}).`;

@@ -98,6 +98,31 @@ describe("Alibaba Cloud Model Studio Qwen-Audio TTS provider", () => {
     });
   });
 
+  it("converts a copied Workspace OpenAI URL to the Workspace TTS endpoint", async () => {
+    fetchWithProviderRetry.mockResolvedValue(
+      Response.json({
+        output: {
+          audio: { url: "https://dashscope-result.test/voice.mp3" },
+        },
+      }),
+    );
+
+    await bailianDashScopeMediaProvider.generate({
+      protocol: "bailian-dashscope",
+      providerKey: "alibaba-bailian",
+      baseUrl:
+        "https://workspace-1.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      apiKey: "bailian-key",
+      model: "qwen-audio-3.0-tts-plus",
+      kind: "audio",
+      request: { input: "测试。" },
+    });
+
+    expect(fetchWithProviderRetry.mock.calls[0][0]).toBe(
+      "https://workspace-1.cn-beijing.maas.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer",
+    );
+  });
+
   it("rejects an unresolved Workspace placeholder before making a request", async () => {
     await expect(
       bailianDashScopeMediaProvider.generate({

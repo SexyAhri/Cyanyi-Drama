@@ -118,11 +118,17 @@ function generationEndpoint(baseUrl: string) {
   if (!normalized) throw new Error("BAILIAN_TTS_BASE_URL_REQUIRED");
   if (/[<>{}]/.test(normalized))
     throw new Error("BAILIAN_TTS_WORKSPACE_ID_REQUIRED");
-  return normalized.toLowerCase().endsWith(GENERATION_PATH.toLowerCase())
-    ? normalized
-    : normalized.toLowerCase().endsWith("/api/v1")
-      ? `${normalized}/${GENERATION_PATH}`
-      : `${normalized}/api/v1/${GENERATION_PATH}`;
+  const lower = normalized.toLowerCase();
+  if (lower.endsWith(GENERATION_PATH.toLowerCase())) return normalized;
+
+  // The Workspace console exposes its OpenAI endpoint for copying. TTS uses
+  // the same Workspace host but a different API root.
+  const workspaceBase = lower.endsWith("/compatible-mode/v1")
+    ? normalized.slice(0, -"/compatible-mode/v1".length)
+    : normalized;
+  return workspaceBase.toLowerCase().endsWith("/api/v1")
+    ? `${workspaceBase}/${GENERATION_PATH}`
+    : `${workspaceBase}/api/v1/${GENERATION_PATH}`;
 }
 
 function extractQwenAudioResult(payload: unknown) {
