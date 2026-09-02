@@ -287,7 +287,6 @@ export function WorkspacePage({
                 episode={selectedEpisode}
                 locale={locale}
                 models={analysisModels}
-                onAnalysisModelChange={changeAnalysisModel}
                 onContextChange={setSelection}
                 onRefresh={() => refresh()}
                 snapshot={snapshot}

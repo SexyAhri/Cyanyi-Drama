@@ -46,8 +46,8 @@ export const PROMPT_CANARY_MANIFEST = {
   "character_reference_description:en": "e61b5baa74900ff2db4e36ad88b0881a22af43dbc11d33a6bf87d1e6b46addcc",
   "episode_split:zh": "e2bf3baa71ee40d2355bb973aec8b919be3c8ec01ab682f96c8dad4265e13124",
   "episode_split:en": "f04153d11057bbd8800178d4a310074e9c1a4e7ed937c9fcc9c6b9faeefbdcfb",
-  "episode_adaptation:zh": "13d4bbb2b575ae1ca1be8ffa848380e4df602e344468f9508e50306bfba097af",
-  "episode_adaptation:en": "2d02d4c45813bf8a6ff397b587aebada36f80b8de755aa0384c5cd51df8ea783",
+  "episode_adaptation:zh": "469be093bdc317517db114df1c1bad1ea51c10f469f1f951d5c33bc5bb4a20a0",
+  "episode_adaptation:en": "c72ce6e2200a16ef9f53ba1ad349474e7c1971a6327d77c85e1f0c4d438a261c",
   "studio_workflow_agent:zh": "3cbe91f53fc2e37feb4583a3728f85b63bad8ad6d246572e828c9032c3ad16e6",
   "studio_workflow_agent:en": "88fb5ec9b7c6265bde9deb88192a66200b82ace7797688814bdb177d6219bf79",
 } satisfies Record<CanaryKey, string>;

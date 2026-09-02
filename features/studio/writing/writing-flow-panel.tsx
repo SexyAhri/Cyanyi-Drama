@@ -5,15 +5,12 @@ import { Ban, LoaderCircle, Pause, Play, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
-import { ModelSelect } from "../components/model-select";
 import { StatusIndicator } from "../components/status-indicator";
 import { formatStudioDate, getStudioCopy } from "../i18n";
 import { runtimeStatusToStageStatus } from "../stage-state";
 import type {
   StudioLocale,
-  StudioModelOption,
   WorkflowRunSummary,
-  WorkflowStepSummary,
 } from "../types";
 import { workflowStepLabel } from "../workflow-labels";
 
@@ -22,31 +19,9 @@ const ADAPTATION_STEPS = [
 ] as const;
 
 const PLACEMENT_STEPS = [
-  { key: "analyze_novel", type: "parse_novel", execution: "ai" },
-  { key: "split_clips", type: "split_clips", execution: "local" },
   {
-    key: "screenplay_beats",
-    type: "generate_screenplay_beats",
-    execution: "local",
-  },
-  {
-    key: "screenplay_dialogue",
-    type: "generate_screenplay_dialogue",
-    execution: "local",
-  },
-  {
-    key: "screenplay_narration",
-    type: "generate_screenplay_narration",
-    execution: "local",
-  },
-  {
-    key: "screenplay_effects",
-    type: "generate_screenplay_effects",
-    execution: "local",
-  },
-  {
-    key: "assemble_screenplay",
-    type: "assemble_screenplay",
+    key: "organize_production_script",
+    type: "organize_production_script",
     execution: "local",
   },
 ] as const;
@@ -55,23 +30,17 @@ type WorkflowAction = "cancel" | "retry" | "pause" | "resume";
 
 export function WritingFlowPanel({
   adaptationWorkflow,
-  analysisModelId,
   canStartPlacement,
   isActing,
   locale,
-  models,
-  onAnalysisModelChange,
   onControl,
   onStartPlacement,
   placementWorkflow,
 }: {
   adaptationWorkflow?: WorkflowRunSummary;
-  analysisModelId: string;
   canStartPlacement: boolean;
   isActing: boolean;
   locale: StudioLocale;
-  models: StudioModelOption[];
-  onAnalysisModelChange: (modelId: string) => void;
   onControl: (runId: string, action: WorkflowAction) => void;
   onStartPlacement: () => void;
   placementWorkflow?: WorkflowRunSummary;
@@ -109,20 +78,6 @@ export function WritingFlowPanel({
         </div>
 
         <div className="mt-5 space-y-2 border-t pt-5">
-          <ModelSelect
-            ariaLabel={copy.analysisModel}
-            className="h-8"
-            disabled={isActing || workflowActive}
-            models={models}
-            onChange={onAnalysisModelChange}
-            placeholder={copy.analysisModel}
-            value={analysisModelId}
-          />
-          {!models.length ? (
-            <p className="text-xs leading-5 text-destructive">
-              {copy.noAnalysisModels}
-            </p>
-          ) : null}
           {!workflowActive ? (
             <Button
               className="w-full"
@@ -174,7 +129,7 @@ function WorkflowBlock({
   const steps = workflow?.steps.length
     ? workflow.steps.map((step) => ({
         ...step,
-        execution: isAiStep(workflow.workflowType, step) ? "ai" : "local",
+        execution: isAiStep(workflow.workflowType) ? "ai" : "local",
       }))
     : plannedSteps.map((step, index) => ({
         ...step,
@@ -226,12 +181,8 @@ function WorkflowBlock({
   );
 }
 
-function isAiStep(workflowType: string, step: WorkflowStepSummary) {
-  return (
-    workflowType === "episode-adaptation" ||
-    step.type === "parse_novel" ||
-    step.key === "analyze_novel"
-  );
+function isAiStep(workflowType: string) {
+  return workflowType === "episode-adaptation";
 }
 
 function WorkflowActions({

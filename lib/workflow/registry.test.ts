@@ -3,39 +3,21 @@ import { describe, expect, it } from "vitest";
 import { getWorkflowTemplate } from "./registry";
 
 describe("workflow registry", () => {
-  it("defines the recoverable Story-to-Script dependency chain", () => {
+  it("organizes an approved production script in one local step", () => {
     const template = getWorkflowTemplate("story-to-script");
 
     expect(template?.steps.map((step) => step.key)).toEqual([
-      "parse",
-      "split",
-      "screenplay_beats",
-      "screenplay_dialogue",
-      "screenplay_narration",
-      "screenplay_effects",
-      "assemble_screenplay",
+      "organize_production_script",
     ]);
-    expect(template?.steps[1]).toMatchObject({
-      dependsOn: ["parse"],
-      artifactTypes: ["clips.split"],
-      retryable: true,
-      maxAttempts: 3,
-    });
-    expect(template?.steps[2]).toMatchObject({
-      dependsOn: ["split"],
+    expect(template?.steps[0]).toMatchObject({
       artifactTypes: [
-        "screenplay.beats",
-        "screenplay.beats.raw",
-      ],
-      retryable: true,
-      maxAttempts: 3,
-    });
-    expect(template?.steps[6]).toMatchObject({
-      dependsOn: ["screenplay_effects"],
-      artifactTypes: [
-        "screenplay.scene",
+        "production-script.catalog",
+        "production-script.scenes",
+        "clips.split",
         "screenplay.clip",
       ],
+      retryable: true,
+      maxAttempts: 3,
     });
   });
 

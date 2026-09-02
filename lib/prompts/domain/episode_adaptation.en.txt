@@ -13,14 +13,15 @@ Factual boundaries:
 Writing requirements:
 1. Remove repeated explanation, extended rhetoric, and low-value pauses so the complete story stays near the target runtime stated above. Scene durations are a creative budget and may vary reasonably; never damage the story merely to hit an exact sum.
 2. State the core story in one sentence, then provide concise global audiovisual direction. Derive art style, aspect ratio, era, lighting, camera strategy, and sound policy from project context. Do not fill the result with vague guarantees such as “cinematic,” “100% generatable,” or “zero AI defects.”
-3. Write 6-12 scene sections in story order. Each scene includes an estimated duration, place and time, visible image and complete action, camera expression, dialogue/narration, and sound/atmosphere. Write “None” when a category is absent instead of inventing content.
-4. Every action has a visible opening state, development, feedback, and ending state. Emphasize one primary change at a time. Camera expression describes only the shot size, viewpoint, and movement needed for storytelling; do not stack contradictory lenses, compositions, or camera moves.
-5. Clearly distinguish spoken dialogue, narration, and inner voice. Never turn an expression, mental state, or physical action into dialogue.
+3. After the global audiovisual direction, list the characters, locations, and continuity-critical props that actually appear and need reuse across scenes. Characters must cover every explicit speaker and every identifiable recurring person. Names must match the scene text and dialogue exactly. Write “None” when there are no key props, and never invent an asset to fill the list.
+4. Write 6-12 scene sections in story order. Each scene includes an estimated duration, place and time, visible image and complete action, camera expression, dialogue/narration, and sound/atmosphere. Write “None” when a category is absent instead of inventing content.
+5. Every action has a visible opening state, development, feedback, and ending state. Emphasize one primary change at a time. Camera expression describes only the shot size, viewpoint, and movement needed for storytelling; do not stack contradictory lenses, compositions, or camera moves.
+6. Clearly distinguish spoken dialogue, narration, and inner voice. Never turn an expression, mental state, or physical action into dialogue.
    Put each speaker on a separate line as `Character: line`. Do not place two speakers on one line. Do not invent dialogue merely to connect scenes; use visible action instead.
    Do not leave invisible prose such as "thinks to himself," "realizes," "remembers," or "believes" inside image and action. Convert it to an explicitly labeled inner voice only when essential; otherwise remove it.
-6. Mark titles, cultivation-level explanations, and other designed text as “post-production text” when appropriate instead of asking a video model to render it.
-7. This is the full episode production script before approval, not a final video-model prompt. A later stage will split scenes according to the target model's clip duration and combine them with selected reference assets to produce complete video prompts.
-8. faithful performs necessary compression only; polish improves narrative and spoken rhythm; drama intensifies only source-backed visible action, conflict, and the ending hook; custom follows the custom direction within the factual boundary.
+7. Mark titles, cultivation-level explanations, and other designed text as “post-production text” when appropriate instead of asking a video model to render it.
+8. This is the full episode production script before approval, not a final video-model prompt. A later stage will split scenes according to the target model's clip duration and combine them with selected reference assets to produce complete video prompts.
+9. faithful performs necessary compression only; polish improves narrative and spoken rhythm; drama intensifies only source-backed visible action, conflict, and the ending hook; custom follows the custom direction within the factual boundary.
 
 Prefer the following natural-text format. Labels support local placement and human reading; they are not a JSON contract. The platform keeps useful output even when a label is incomplete and does not request a retry:
 
@@ -30,6 +31,10 @@ Adapted text:
 Finished runtime: approximately the target runtime | project aspect ratio and art style
 Core story: One sentence identifying the character goal, primary change, and ending hook
 Global audiovisual direction: Only the art direction, environment baseline, camera principles, action principles, and sound boundary that must remain consistent in this episode
+Episode assets:
+Characters: Canonical names separated by commas
+Locations: Canonical names separated by commas
+Props: Key props whose appearance or story continuity must persist, separated by commas; write “None” when absent
 
 Scene 01 | Estimated duration: X seconds | INT/EXT - location - time
 Image and action: Visible content from opening state through ending state

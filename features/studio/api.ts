@@ -201,12 +201,7 @@ export async function loadStudioProductionData(
 export async function startStoryToScriptWorkflow(
   projectId: string,
   episodeId: string,
-  input: {
-    channelId: string;
-    model: string;
-    locale: "en" | "zh";
-    concurrency?: number;
-  },
+  input: { locale: "en" | "zh" },
 ) {
   return request<{ workflow: WorkflowRunSummary; reused: boolean }>(
     `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/parse`,

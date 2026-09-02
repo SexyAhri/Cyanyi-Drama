@@ -18,6 +18,7 @@ import {
   type NovelParseInput,
 } from "@/lib/novel/parser-runtime";
 import { buildEpisodeStoryboard } from "@/lib/novel/script-to-storyboard-runtime";
+import { organizeEpisodeProductionScript } from "@/lib/novel/production-script-organizer";
 import { splitEpisodeIntoClips } from "@/lib/novel/story-to-script-runtime";
 import {
   assembleEpisodeScreenplays,
@@ -780,6 +781,19 @@ async function runStep(
       fallbackReason: result.fallbackReason,
       promptTraces: result.promptTraces,
     };
+  }
+  if (step.stepType === "organize_production_script") {
+    if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
+    const input = mergedStepInput(run.input, step.input);
+    return organizeEpisodeProductionScript(
+      userId,
+      {
+        projectId: run.projectId,
+        episodeId: run.episodeId,
+        sourceText: getString(input.sourceText),
+      },
+      runtime,
+    );
   }
   if (step.stepType === "design_voice_performance") {
     if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");

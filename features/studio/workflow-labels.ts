@@ -16,7 +16,7 @@ const labels = {
       "storyboard-prompt-design": "AI 分镜提示设计",
       "voice-performance-design": "AI 配音设计",
       "visual-asset-extraction": "AI 视觉资产识别",
-      "story-to-script": "制作剧本归位",
+      "story-to-script": "场次与资产归位",
       "script-to-storyboard": "分镜生成",
     },
     steps: {
@@ -28,6 +28,7 @@ const labels = {
       design_voice_performance: "设计角色声线与表演",
       extract_visual_assets: "识别角色、场景与道具",
       analyze_novel: "角色、场景与道具识别",
+      organize_production_script: "归位场次与本集资产",
       build_storyboard: "镜头规划",
       screenplay_beats: "场次与动作归位",
       generate_screenplay_beats: "场次与动作归位",
@@ -73,7 +74,7 @@ const labels = {
       "storyboard-prompt-design": "AI storyboard prompt design",
       "voice-performance-design": "AI voice design",
       "visual-asset-extraction": "AI visual asset extraction",
-      "story-to-script": "Production script placement",
+      "story-to-script": "Scene and asset placement",
       "script-to-storyboard": "Storyboard generation",
     },
     steps: {
@@ -85,6 +86,7 @@ const labels = {
       design_voice_performance: "Design voices and delivery",
       extract_visual_assets: "Identify characters, locations, and props",
       analyze_novel: "Identify characters, locations, and props",
+      organize_production_script: "Place scenes and episode assets",
       build_storyboard: "Build storyboard",
       screenplay_beats: "Place scenes and action",
       generate_screenplay_beats: "Place scenes and action",

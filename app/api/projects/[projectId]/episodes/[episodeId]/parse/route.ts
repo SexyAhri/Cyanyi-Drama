@@ -9,23 +9,8 @@ export async function POST(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { projectId, episodeId } = await context.params;
   const body = await readObject(request);
-  const runtimeSettings = await loadUserRuntimeSettings(user.id);
-  const channelId =
-    typeof body.channelId === "string" ? body.channelId.trim() : "";
-  const model = typeof body.model === "string" ? body.model.trim() : "";
   const locale = body.locale === "en" ? "en" : "zh";
-  const concurrency =
-    typeof body.concurrency === "number" && Number.isFinite(body.concurrency)
-      ? Math.max(1, Math.min(8, Math.floor(body.concurrency)))
-      : runtimeSettings.workflowConcurrency;
-  if (!channelId || !model)
-    return attachSessionCookie(
-      Response.json(
-        { message: "channelId 和 model 是必填项" },
-        { status: 400 },
-      ),
-      sessionId,
-    );
+  const runtimeSettings = await loadUserRuntimeSettings(user.id);
   const result = await createOrReuseWorkflowRun({
     id: `workflow_${crypto.randomUUID()}`,
     userId: user.id,
@@ -34,87 +19,18 @@ export async function POST(request: Request, context: Context) {
     workflowType: "story-to-script",
     targetType: "episode",
     targetId: episodeId,
-    input: { channelId, model, locale, concurrency },
+    input: { locale },
     steps: [
       {
-        key: "analyze_novel",
-        type: "parse_novel",
+        key: "organize_production_script",
+        type: "organize_production_script",
         artifactTypes: [
-          "analysis.characters",
-          "analysis.locations",
-          "analysis.props",
-          "prompt.trace",
-        ],
-        input: { channelId, model, locale },
-        retryable: true,
-        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
-      },
-      {
-        key: "split_clips",
-        type: "split_clips",
-        dependsOn: ["analyze_novel"],
-        artifactTypes: ["clips.split"],
-        input: { channelId, model, locale },
-        retryable: true,
-        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
-      },
-      {
-        key: "screenplay_beats",
-        type: "generate_screenplay_beats",
-        dependsOn: ["split_clips"],
-        artifactTypes: [
-          "screenplay.beats",
-          "screenplay.beats.raw",
-        ],
-        input: { channelId, model, locale, concurrency },
-        retryable: true,
-        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
-      },
-      {
-        key: "screenplay_dialogue",
-        type: "generate_screenplay_dialogue",
-        dependsOn: ["screenplay_beats"],
-        artifactTypes: [
-          "screenplay.dialogue",
-          "screenplay.dialogue.raw",
-        ],
-        input: { channelId, model, locale, concurrency },
-        retryable: true,
-        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
-      },
-      {
-        key: "screenplay_narration",
-        type: "generate_screenplay_narration",
-        dependsOn: ["screenplay_dialogue"],
-        artifactTypes: [
-          "screenplay.narration",
-          "screenplay.narration.raw",
-        ],
-        input: { channelId, model, locale, concurrency },
-        retryable: true,
-        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
-      },
-      {
-        key: "screenplay_effects",
-        type: "generate_screenplay_effects",
-        dependsOn: ["screenplay_narration"],
-        artifactTypes: [
-          "screenplay.effects",
-          "screenplay.effects.raw",
-        ],
-        input: { channelId, model, locale, concurrency },
-        retryable: true,
-        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
-      },
-      {
-        key: "assemble_screenplay",
-        type: "assemble_screenplay",
-        dependsOn: ["screenplay_effects"],
-        artifactTypes: [
-          "screenplay.scene",
+          "production-script.catalog",
+          "production-script.scenes",
+          "clips.split",
           "screenplay.clip",
         ],
-        input: { channelId, model, locale, concurrency },
+        input: { locale },
         retryable: true,
         maxAttempts: runtimeSettings.workflowStepMaxAttempts,
       },

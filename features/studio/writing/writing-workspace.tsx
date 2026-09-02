@@ -67,7 +67,6 @@ export function WritingWorkspace({
   episode,
   locale,
   models,
-  onAnalysisModelChange,
   onContextChange,
   onRefresh,
   snapshot,
@@ -76,7 +75,6 @@ export function WritingWorkspace({
   episode: WorkspaceSnapshot["project"]["episodes"][number];
   locale: StudioLocale;
   models: StudioModelOption[];
-  onAnalysisModelChange: (modelId: string) => void;
   onContextChange: (selection?: StudioSelectionContext) => void;
   onRefresh: () => Promise<unknown> | void;
   snapshot: WorkspaceSnapshot;
@@ -336,18 +334,13 @@ export function WritingWorkspace({
   }
 
   async function startWorkflow() {
-    const model = models.find((item) => item.id === analysisModelId);
-    if (!model || !savedText.trim() || isDirty) return;
+    if (!savedText.trim() || isDirty) return;
     setIsActing(true);
     try {
       const result = await startStoryToScriptWorkflow(
         snapshot.project.id,
         episode.id,
-        {
-          channelId: model.channelId,
-          model: model.modelId,
-          locale: locale === "en" ? "en" : "zh",
-        },
+        { locale: locale === "en" ? "en" : "zh" },
       );
       toast.success(result.reused ? copy.workflowReused : copy.workflowStarted);
       await onRefresh();
@@ -542,14 +535,11 @@ export function WritingWorkspace({
 
         <WritingFlowPanel
           adaptationWorkflow={adaptationWorkflow}
-          analysisModelId={analysisModelId}
           canStartPlacement={
-            Boolean(savedText.trim()) && !isDirty && Boolean(analysisModelId)
+            Boolean(savedText.trim()) && !isDirty
           }
           isActing={isActing}
           locale={locale}
-          models={models}
-          onAnalysisModelChange={onAnalysisModelChange}
           onControl={(runId, action) => void controlWorkflow(runId, action)}
           onStartPlacement={() => void startWorkflow()}
           placementWorkflow={placementWorkflow}
