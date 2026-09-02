@@ -231,28 +231,28 @@ model Project {
 }
 
 model ProjectConfig {
-  id                      String   @id
-  projectId               String   @unique @map("project_id")
-  analysisModel           String?  @map("analysis_model")
-  characterModel          String?  @map("character_model")
-  locationModel           String?  @map("location_model")
-  storyboardModel         String?  @map("storyboard_model")
-  editModel               String?  @map("edit_model")
-  videoModel              String?  @map("video_model")
-  audioModel              String?  @map("audio_model")
-  videoRatio              String   @default("9:16") @map("video_ratio")
-  videoResolution         String   @default("720p") @map("video_resolution")
-  artStyle                String   @default("american-comic") @map("art_style")
-  visualEra               String   @default("source") @map("visual_era") @db.VarChar(32)
-  visualEraCustom         String?  @map("visual_era_custom") @db.Text
-  ttsRate                 String   @default("+50%") @map("tts_rate")
-  episodeTargetDurationSeconds Int @default(120) @map("episode_target_duration_seconds")
-  workflowMode            String   @default("novel-promotion") @map("workflow_mode")
-  globalAssetText         String?  @map("global_asset_text") @db.Text
-  capabilityOverridesJson String?  @map("capability_overrides_json") @db.Text
-  createdAt               DateTime @default(now()) @map("created_at")
-  updatedAt               DateTime @updatedAt @map("updated_at")
-  project                 Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id                           String   @id
+  projectId                    String   @unique @map("project_id")
+  analysisModel                String?  @map("analysis_model")
+  characterModel               String?  @map("character_model")
+  locationModel                String?  @map("location_model")
+  storyboardModel              String?  @map("storyboard_model")
+  editModel                    String?  @map("edit_model")
+  videoModel                   String?  @map("video_model")
+  audioModel                   String?  @map("audio_model")
+  videoRatio                   String   @default("9:16") @map("video_ratio")
+  videoResolution              String   @default("720p") @map("video_resolution")
+  artStyle                     String   @default("american-comic") @map("art_style")
+  visualEra                    String   @default("source") @map("visual_era") @db.VarChar(32)
+  visualEraCustom              String?  @map("visual_era_custom") @db.Text
+  ttsRate                      String   @default("+50%") @map("tts_rate")
+  episodeTargetDurationSeconds Int      @default(120) @map("episode_target_duration_seconds")
+  workflowMode                 String   @default("novel-promotion") @map("workflow_mode")
+  globalAssetText              String?  @map("global_asset_text") @db.Text
+  capabilityOverridesJson      String?  @map("capability_overrides_json") @db.Text
+  createdAt                    DateTime @default(now()) @map("created_at")
+  updatedAt                    DateTime @updatedAt @map("updated_at")
+  project                      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@map("project_configs")
 }
@@ -307,28 +307,28 @@ model Manuscript {
 }
 
 model EpisodeSourceVersion {
-  id               String      @id
-  episodeId        String      @map("episode_id")
-  manuscriptId     String?     @map("manuscript_id")
-  kind             String      @db.VarChar(32)
-  version          Int
-  title            String?
-  summary          String?     @db.Text
-  content          String      @db.Text
-  adaptationMode   String?     @map("adaptation_mode") @db.VarChar(32)
-  instructions     String?     @db.Text
-  changeSummary    Json?       @map("change_summary")
-  promptTrace      Json?       @map("prompt_trace")
-  productionPlan   Json?       @map("production_plan")
-  productionPlanVersion Int?   @map("production_plan_version")
-  channelId        String?     @map("channel_id")
-  model            String?
-  sourceHash       String      @map("source_hash") @db.VarChar(64)
-  sourceStartIndex Int?        @map("source_start_index")
-  sourceEndIndex   Int?        @map("source_end_index")
-  createdAt        DateTime    @default(now()) @map("created_at")
-  episode          Episode     @relation(fields: [episodeId], references: [id], onDelete: Cascade)
-  manuscript       Manuscript? @relation(fields: [manuscriptId], references: [id], onDelete: SetNull)
+  id                    String      @id
+  episodeId             String      @map("episode_id")
+  manuscriptId          String?     @map("manuscript_id")
+  kind                  String      @db.VarChar(32)
+  version               Int
+  title                 String?
+  summary               String?     @db.Text
+  content               String      @db.Text
+  adaptationMode        String?     @map("adaptation_mode") @db.VarChar(32)
+  instructions          String?     @db.Text
+  changeSummary         Json?       @map("change_summary")
+  promptTrace           Json?       @map("prompt_trace")
+  productionPlan        Json?       @map("production_plan")
+  productionPlanVersion Int?        @map("production_plan_version")
+  channelId             String?     @map("channel_id")
+  model                 String?
+  sourceHash            String      @map("source_hash") @db.VarChar(64)
+  sourceStartIndex      Int?        @map("source_start_index")
+  sourceEndIndex        Int?        @map("source_end_index")
+  createdAt             DateTime    @default(now()) @map("created_at")
+  episode               Episode     @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  manuscript            Manuscript? @relation(fields: [manuscriptId], references: [id], onDelete: SetNull)
 
   @@unique([episodeId, kind, version])
   @@index([episodeId, createdAt])
@@ -420,6 +420,7 @@ model MediaAsset {
   storyboardPanelImages      StoryboardPanel[]           @relation("StoryboardPanelImage")
   storyboardPanelVideos      StoryboardPanel[]           @relation("StoryboardPanelVideo")
   storyboardPanelLipSync     StoryboardPanel[]           @relation("StoryboardPanelLipSync")
+  storyboardVideoSegments    StoryboardVideoSegment[]    @relation("StoryboardVideoSegmentAsset")
   globalCharAppearanceImages GlobalCharacterAppearance[] @relation("GlobalCharAppearanceImage")
   globalLocImages            GlobalLocationImage[]       @relation("GlobalLocImageAsset")
   storyShotImages            StoryShot[]                 @relation("StoryShotImage")
@@ -545,55 +546,56 @@ model Storyboard {
 }
 
 model StoryboardPanel {
-  id                             String      @id
-  storyboardId                   String      @map("storyboard_id")
-  clipId                         String?     @map("clip_id")
-  clipPanelIndex                 Int?        @map("clip_panel_index")
-  panelIndex                     Int         @map("panel_index")
-  sceneNumber                    Int?        @map("scene_number")
-  shotType                       String?     @map("shot_type")
-  cameraMove                     String?     @map("camera_move") @db.Text
-  description                    String?     @db.Text
-  locationName                   String?     @map("location_name")
-  charactersJson                 String?     @map("characters_json") @db.Text
-  propsJson                      String?     @map("props_json") @db.Text
-  imagePrompt                    String?     @map("image_prompt") @db.Text
-  videoPrompt                    String?     @map("video_prompt") @db.Text
-  imagePromptDesignJson          String?     @map("image_prompt_design_json") @db.Text
-  videoPromptDesignJson          String?     @map("video_prompt_design_json") @db.Text
-  firstLastFramePromptDesignJson String?     @map("first_last_frame_prompt_design_json") @db.Text
-  phase                          String      @default("phase1")
-  status                         String      @default("draft")
-  srtStart                       Float?      @map("srt_start")
-  srtEnd                         Float?      @map("srt_end")
-  durationSeconds                Float?      @map("duration_seconds")
-  subtitleText                   String?     @map("subtitle_text") @db.Text
-  speakingCharacter              String?     @map("speaking_character")
-  lipSyncText                    String?     @map("lip_sync_text") @db.Text
-  voiceoverText                  String?     @map("voiceover_text") @db.Text
-  startStateJson                 String?     @map("start_state_json") @db.Text
-  endStateJson                   String?     @map("end_state_json") @db.Text
-  motionBeatsJson                String?     @map("motion_beats_json") @db.Text
-  productionBeatIdsJson         String?     @map("production_beat_ids_json") @db.Text
-  worldContextJson               String?     @map("world_context_json") @db.Text
-  vfxCuesJson                    String?     @map("vfx_cues_json") @db.Text
-  sfxCuesJson                    String?     @map("sfx_cues_json") @db.Text
-  actingNotesJson                String?     @map("acting_notes_json") @db.Text
-  photographyRules               String?     @map("photography_rules") @db.Text
-  firstLastFramePrompt           String?     @map("first_last_frame_prompt") @db.Text
-  linkedToNextPanel              Boolean     @default(false) @map("linked_to_next_panel")
-  sourceEvidenceJson             String?     @map("source_evidence_json") @db.Text
-  imageAssetId                   String?     @map("image_asset_id")
-  videoAssetId                   String?     @map("video_asset_id")
-  lipSyncAssetId                 String?     @map("lip_sync_asset_id")
-  createdAt                      DateTime    @default(now()) @map("created_at")
-  updatedAt                      DateTime    @updatedAt @map("updated_at")
-  storyboard                     Storyboard  @relation(fields: [storyboardId], references: [id], onDelete: Cascade)
-  clip                           StoryClip?  @relation(fields: [clipId], references: [id], onDelete: SetNull)
-  imageAsset                     MediaAsset? @relation("StoryboardPanelImage", fields: [imageAssetId], references: [id], onDelete: SetNull)
-  videoAsset                     MediaAsset? @relation("StoryboardPanelVideo", fields: [videoAssetId], references: [id], onDelete: SetNull)
-  lipSyncAsset                   MediaAsset? @relation("StoryboardPanelLipSync", fields: [lipSyncAssetId], references: [id], onDelete: SetNull)
+  id                             String                   @id
+  storyboardId                   String                   @map("storyboard_id")
+  clipId                         String?                  @map("clip_id")
+  clipPanelIndex                 Int?                     @map("clip_panel_index")
+  panelIndex                     Int                      @map("panel_index")
+  sceneNumber                    Int?                     @map("scene_number")
+  shotType                       String?                  @map("shot_type")
+  cameraMove                     String?                  @map("camera_move") @db.Text
+  description                    String?                  @db.Text
+  locationName                   String?                  @map("location_name")
+  charactersJson                 String?                  @map("characters_json") @db.Text
+  propsJson                      String?                  @map("props_json") @db.Text
+  imagePrompt                    String?                  @map("image_prompt") @db.Text
+  videoPrompt                    String?                  @map("video_prompt") @db.Text
+  imagePromptDesignJson          String?                  @map("image_prompt_design_json") @db.Text
+  videoPromptDesignJson          String?                  @map("video_prompt_design_json") @db.Text
+  firstLastFramePromptDesignJson String?                  @map("first_last_frame_prompt_design_json") @db.Text
+  phase                          String                   @default("phase1")
+  status                         String                   @default("draft")
+  srtStart                       Float?                   @map("srt_start")
+  srtEnd                         Float?                   @map("srt_end")
+  durationSeconds                Float?                   @map("duration_seconds")
+  subtitleText                   String?                  @map("subtitle_text") @db.Text
+  speakingCharacter              String?                  @map("speaking_character")
+  lipSyncText                    String?                  @map("lip_sync_text") @db.Text
+  voiceoverText                  String?                  @map("voiceover_text") @db.Text
+  startStateJson                 String?                  @map("start_state_json") @db.Text
+  endStateJson                   String?                  @map("end_state_json") @db.Text
+  motionBeatsJson                String?                  @map("motion_beats_json") @db.Text
+  productionBeatIdsJson          String?                  @map("production_beat_ids_json") @db.Text
+  worldContextJson               String?                  @map("world_context_json") @db.Text
+  vfxCuesJson                    String?                  @map("vfx_cues_json") @db.Text
+  sfxCuesJson                    String?                  @map("sfx_cues_json") @db.Text
+  actingNotesJson                String?                  @map("acting_notes_json") @db.Text
+  photographyRules               String?                  @map("photography_rules") @db.Text
+  firstLastFramePrompt           String?                  @map("first_last_frame_prompt") @db.Text
+  linkedToNextPanel              Boolean                  @default(false) @map("linked_to_next_panel")
+  sourceEvidenceJson             String?                  @map("source_evidence_json") @db.Text
+  imageAssetId                   String?                  @map("image_asset_id")
+  videoAssetId                   String?                  @map("video_asset_id")
+  lipSyncAssetId                 String?                  @map("lip_sync_asset_id")
+  createdAt                      DateTime                 @default(now()) @map("created_at")
+  updatedAt                      DateTime                 @updatedAt @map("updated_at")
+  storyboard                     Storyboard               @relation(fields: [storyboardId], references: [id], onDelete: Cascade)
+  clip                           StoryClip?               @relation(fields: [clipId], references: [id], onDelete: SetNull)
+  imageAsset                     MediaAsset?              @relation("StoryboardPanelImage", fields: [imageAssetId], references: [id], onDelete: SetNull)
+  videoAsset                     MediaAsset?              @relation("StoryboardPanelVideo", fields: [videoAssetId], references: [id], onDelete: SetNull)
+  lipSyncAsset                   MediaAsset?              @relation("StoryboardPanelLipSync", fields: [lipSyncAssetId], references: [id], onDelete: SetNull)
   voiceLines                     VoiceLine[]
+  videoSegments                  StoryboardVideoSegment[]
 
   @@unique([storyboardId, panelIndex])
   @@unique([clipId, clipPanelIndex])
@@ -603,6 +605,30 @@ model StoryboardPanel {
   @@index([videoAssetId])
   @@index([lipSyncAssetId])
   @@map("storyboard_panels")
+}
+
+model StoryboardVideoSegment {
+  id              String          @id
+  panelId         String          @map("panel_id")
+  taskId          String?         @unique @map("task_id")
+  segmentIndex    Int             @map("segment_index")
+  startSeconds    Float           @map("start_seconds")
+  endSeconds      Float           @map("end_seconds")
+  durationSeconds Float           @map("duration_seconds")
+  prompt          String          @db.Text
+  action          String?         @db.Text
+  model           String
+  mode            String          @default("reference")
+  videoAssetId    String?         @map("video_asset_id")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+  panel           StoryboardPanel @relation(fields: [panelId], references: [id], onDelete: Cascade)
+  videoAsset      MediaAsset?     @relation("StoryboardVideoSegmentAsset", fields: [videoAssetId], references: [id], onDelete: SetNull)
+
+  @@unique([panelId, segmentIndex])
+  @@index([panelId, updatedAt])
+  @@index([videoAssetId])
+  @@map("storyboard_video_segments")
 }
 
 model StoryClip {

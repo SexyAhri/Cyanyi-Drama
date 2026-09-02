@@ -27,6 +27,8 @@ export type ModelCapabilities = {
   supportsReferenceImages: boolean;
   supportsReferenceVideo: boolean;
   supportsReferenceAudio: boolean;
+  maxDurationSeconds?: number;
+  maxReferenceImages?: number;
   mediaTemplate?: OpenAiCompatibleMediaTemplate;
 };
 
@@ -85,6 +87,8 @@ export function inferModelCapabilities(
         supportsReferenceImages: true,
         supportsReferenceVideo: /2[-_. ]?0/i.test(normalized),
         supportsReferenceAudio: /2[-_. ]?0/i.test(normalized),
+        maxDurationSeconds: 15,
+        maxReferenceImages: 1,
       };
     }
   }
@@ -114,6 +118,9 @@ export function inferModelCapabilities(
     supportsReferenceAudio:
       resolvedModalities.includes("video") ||
       resolvedModalities.includes("audio"),
+    ...(resolvedModalities.includes("video")
+      ? { maxDurationSeconds: 10, maxReferenceImages: 1 }
+      : {}),
   };
 }
 

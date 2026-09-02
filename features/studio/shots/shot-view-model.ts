@@ -16,6 +16,8 @@ export type ShotMediaCandidate = {
   status: MediaTask["status"];
   task?: MediaTask;
   url: string | null;
+  segmentIndex?: number;
+  segmentCount?: number;
 };
 
 export function buildShotMediaCandidates(
@@ -33,6 +35,7 @@ export function buildShotMediaCandidates(
     )
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   const candidates = new Map<string, ShotMediaCandidate>();
+  const videoSegments = kind === "video" ? panel.videoSegments : [];
   const selectedAssetId =
     kind === "image" ? panel.imageAssetId : panel.videoAssetId;
 
@@ -47,30 +50,50 @@ export function buildShotMediaCandidates(
     const task = panelTasks.find((item) =>
       item.output?.some((output) => output.id === asset.id),
     );
+    const segment = videoSegments.find(
+      (item) => item.videoAssetId === asset.id || item.taskId === task?.id,
+    );
     candidates.set(asset.id, {
       assetId: asset.id,
       createdAt: asset.createdAt,
       id: asset.id,
       kind,
-      selected: asset.id === selectedAssetId,
+      selected: segment ? segment.videoAssetId === asset.id : asset.id === selectedAssetId,
       status: task?.status ?? "succeeded",
       task,
       url: asset.url,
+      ...(segment
+        ? {
+            segmentIndex: segment.segmentIndex,
+            segmentCount: videoSegments.length,
+          }
+        : {}),
     });
   }
 
   for (const task of panelTasks) {
     for (const output of task.output ?? []) {
       if (output.kind !== kind || candidates.has(output.id)) continue;
+      const segment = videoSegments.find(
+        (item) => item.videoAssetId === output.id || item.taskId === task.id,
+      );
       candidates.set(output.id, {
         assetId: output.id,
         createdAt: task.updatedAt,
         id: output.id,
         kind,
-        selected: output.id === selectedAssetId,
+        selected: segment
+          ? segment.videoAssetId === output.id
+          : output.id === selectedAssetId,
         status: task.status,
         task,
         url: output.url || null,
+        ...(segment
+          ? {
+              segmentIndex: segment.segmentIndex,
+              segmentCount: videoSegments.length,
+            }
+          : {}),
       });
     }
   }
@@ -105,6 +128,15 @@ export function buildShotMediaCandidates(
       status: task.status,
       task,
       url: null,
+      ...(() => {
+        const segment = videoSegments.find((item) => item.taskId === task.id);
+        return segment
+          ? {
+              segmentIndex: segment.segmentIndex,
+              segmentCount: videoSegments.length,
+            }
+          : {};
+      })(),
     }) satisfies ShotMediaCandidate);
 
   return [...candidates.values(), ...pending].sort((left, right) =>

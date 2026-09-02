@@ -202,7 +202,7 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
       },
     },
   });
-  await linkGeneratedAsset(task, userId, output[0]);
+  await linkGeneratedAsset(task, userId, output[0], request);
   await prisma.mediaTaskEvent.create({
     data: {
       taskId: task.id,
@@ -536,6 +536,12 @@ async function renderEpisodeTimeline(
             imageAsset: { select: { url: true, storageKey: true } },
             videoAsset: { select: { url: true, storageKey: true } },
             lipSyncAsset: { select: { url: true, storageKey: true } },
+            videoSegments: {
+              select: {
+                id: true,
+                videoAsset: { select: { url: true, storageKey: true } },
+              },
+            },
           },
         },
       },
@@ -565,9 +571,17 @@ async function renderEpisodeTimeline(
     parseJsonValue(editorProject?.timelineJson),
   );
   const panels = new Map(storyboard.panels.map((panel) => [panel.id, panel]));
+  const videoSegments = new Map(
+    storyboard.panels.flatMap((panel) =>
+      panel.videoSegments.map((segment) => [
+        segment.id,
+        { panel, videoAsset: segment.videoAsset },
+      ] as const),
+    ),
+  );
   if (!sequence.length) throw new Error("TIMELINE_RENDER_TRACKS_INVALID");
   assertTimelineSubtitleCoverage({
-    timelinePanelIds: sequence.map((track) => track.id),
+    timelinePanelIds: sequence.map((track) => track.panelId ?? track.id),
     lines: voiceLines,
   });
   const resolvedTracks: Array<{
@@ -577,12 +591,23 @@ async function renderEpisodeTimeline(
     isImage: boolean;
   }> = [];
   for (const track of sequence) {
-    const panel = panels.get(track.id);
+    const trackPanelId = track.panelId ?? track.id;
+    const isSegmentTrack = track.id !== trackPanelId;
+    const segment = videoSegments.get(track.id);
+    if (
+      isSegmentTrack &&
+      (!segment || segment.panel.id !== trackPanelId)
+    ) continue;
+    const panel = segment?.panel ?? panels.get(trackPanelId);
     if (!panel) continue;
-    const lipSyncSource = storedAssetSource(panel.lipSyncAsset);
-    const videoSource = lipSyncSource
+    const lipSyncSource = segment
       ? undefined
-      : storedAssetSource(panel.videoAsset);
+      : storedAssetSource(panel.lipSyncAsset);
+    const videoSource = segment
+      ? storedAssetSource(segment.videoAsset)
+      : lipSyncSource
+        ? undefined
+        : storedAssetSource(panel.videoAsset);
     const imageSource =
       lipSyncSource || videoSource
         ? undefined
@@ -592,8 +617,8 @@ async function renderEpisodeTimeline(
   }
   assertTimelineRenderCoverage({
     sequenceIds: sequence.map((track) => track.id),
-    panelMedia: resolvedTracks.map(({ panel, source }) => ({
-      id: panel.id,
+    panelMedia: resolvedTracks.map(({ track, panel, source }) => ({
+      id: track.id,
       panelIndex: panel.panelIndex,
       url: source?.storageKey ?? source?.url ?? null,
     })),
@@ -739,6 +764,21 @@ function parseJsonValue(value: string | null | undefined) {
   }
 }
 
+function stringField(value: unknown, key: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" ? field.trim() : "";
+}
+
+function numberField(value: unknown, key: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return undefined;
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "number" && Number.isFinite(field)
+    ? field
+    : undefined;
+}
+
 async function linkGeneratedAsset(
   task: {
     id: string;
@@ -750,6 +790,7 @@ async function linkGeneratedAsset(
   },
   userId: string,
   asset: MediaAsset | undefined,
+  request: TaskRequest,
 ) {
   if (!asset || !task.targetId || !task.targetType) return;
   if (task.targetType === "global_character_appearance") {
@@ -893,6 +934,30 @@ async function linkGeneratedAsset(
         });
     });
   } else if (task.targetType === "storyboard_panel") {
+    const segmentId = stringField(request, "videoSegmentId");
+    const segmentIndex = numberField(request, "videoSegmentIndex");
+    if (task.kind === "video" && segmentId) {
+      const updated = await prisma.storyboardVideoSegment.updateMany({
+        where: {
+          id: segmentId,
+          panelId: task.targetId,
+          panel: {
+            storyboard: {
+              projectId,
+              episodeId: task.episodeId ?? undefined,
+              project: { userId },
+            },
+          },
+        },
+        data: { videoAssetId: asset.id, updatedAt: new Date() },
+      });
+      if (updated.count && segmentIndex === 0)
+        await prisma.storyboardPanel.update({
+          where: { id: task.targetId },
+          data: { videoAssetId: asset.id, updatedAt: new Date() },
+        });
+      return;
+    }
     await prisma.storyboardPanel.updateMany({
       where: {
         id: task.targetId,

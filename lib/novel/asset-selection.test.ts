@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mediaAssetFindFirst = vi.hoisted(() => vi.fn());
 const storyboardPanelFindFirst = vi.hoisted(() => vi.fn());
 const storyboardPanelUpdate = vi.hoisted(() => vi.fn());
+const storyboardVideoSegmentDeleteMany = vi.hoisted(() => vi.fn());
 const assetReferenceDeleteMany = vi.hoisted(() => vi.fn());
 const assetReferenceCreate = vi.hoisted(() => vi.fn());
 const transaction = vi.hoisted(() => vi.fn());
@@ -27,6 +28,9 @@ beforeEach(() => {
           deleteMany: assetReferenceDeleteMany,
         },
         storyboardPanel: { update: storyboardPanelUpdate },
+        storyboardVideoSegment: {
+          deleteMany: storyboardVideoSegmentDeleteMany,
+        },
       }),
   );
 });

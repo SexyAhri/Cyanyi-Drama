@@ -49,6 +49,63 @@ describe("shot view model", () => {
     ]);
   });
 
+  it("labels pending video tasks with their persisted segment position", () => {
+    const pendingTask = {
+      ...task("video-task-2", "panel-1", "running"),
+      kind: "video" as const,
+    };
+    const candidates = buildShotMediaCandidates(
+      createPanel({
+        videoSegments: [
+          {
+            id: "segment-1",
+            panelId: "panel-1",
+            taskId: "video-task-1",
+            segmentIndex: 0,
+            startSeconds: 0,
+            endSeconds: 9,
+            durationSeconds: 9,
+            prompt: "First segment",
+            action: null,
+            model: "video-model",
+            mode: "reference",
+            videoAssetId: null,
+            createdAt: "2026-08-26T02:00:00Z",
+            updatedAt: "2026-08-26T02:00:00Z",
+          },
+          {
+            id: "segment-2",
+            panelId: "panel-1",
+            taskId: "video-task-2",
+            segmentIndex: 1,
+            startSeconds: 9,
+            endSeconds: 18,
+            durationSeconds: 9,
+            prompt: "Second segment",
+            action: null,
+            model: "video-model",
+            mode: "reference",
+            videoAssetId: null,
+            createdAt: "2026-08-26T02:00:00Z",
+            updatedAt: "2026-08-26T02:00:00Z",
+          },
+        ],
+      }),
+      "video",
+      [],
+      [pendingTask],
+    );
+
+    expect(candidates).toEqual([
+      expect.objectContaining({
+        id: "video-task-2",
+        segmentIndex: 1,
+        segmentCount: 2,
+        status: "running",
+      }),
+    ]);
+  });
+
   it("keeps only the latest task per selected panel for bulk controls", () => {
     const tasks = [
       task("old", "panel-1", "failed", undefined, "2026-08-26T01:00:00Z"),
@@ -141,6 +198,7 @@ function createPanel(
     createdAt: "2026-08-26T00:00:00Z",
     updatedAt: "2026-08-26T00:00:00Z",
     ...input,
+    videoSegments: input.videoSegments ?? [],
     sceneNumber: input.sceneNumber ?? null,
     speakingCharacter: input.speakingCharacter ?? null,
     lipSyncText: input.lipSyncText ?? null,

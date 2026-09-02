@@ -4,17 +4,31 @@ const mocks = vi.hoisted(() => ({
   channelFindFirst: vi.fn(),
   enqueueTask: vi.fn(),
   projectConfigFindUnique: vi.fn(),
-  providerModelCount: vi.fn(),
+  providerModelFindFirst: vi.fn(),
+  mediaTaskCount: vi.fn(),
+  storyboardPanelUpdate: vi.fn(),
   storyboardPanelFindFirst: vi.fn(),
+  storyboardVideoSegmentDeleteMany: vi.fn(),
+  storyboardVideoSegmentUpsert: vi.fn(),
   taskCreate: vi.fn(),
+  transaction: vi.fn(),
 }));
 
 vi.mock("@/lib/server/prisma", () => ({
   prisma: {
     channel: { findFirst: mocks.channelFindFirst },
     projectConfig: { findUnique: mocks.projectConfigFindUnique },
-    providerModel: { count: mocks.providerModelCount },
-    storyboardPanel: { findFirst: mocks.storyboardPanelFindFirst },
+    providerModel: { findFirst: mocks.providerModelFindFirst },
+    mediaTask: { count: mocks.mediaTaskCount },
+    storyboardPanel: {
+      findFirst: mocks.storyboardPanelFindFirst,
+      update: mocks.storyboardPanelUpdate,
+    },
+    storyboardVideoSegment: {
+      deleteMany: mocks.storyboardVideoSegmentDeleteMany,
+      upsert: mocks.storyboardVideoSegmentUpsert,
+    },
+    $transaction: mocks.transaction,
   },
 }));
 
@@ -47,7 +61,14 @@ describe("storyboard prompt preview", () => {
       protocol: "openai-compatible",
       providerKey: "openai",
     });
-    mocks.providerModelCount.mockResolvedValue(1);
+    mocks.providerModelFindFirst.mockResolvedValue({ capabilitiesJson: "{}" });
+    mocks.mediaTaskCount.mockResolvedValue(0);
+    mocks.storyboardPanelUpdate.mockResolvedValue({});
+    mocks.storyboardVideoSegmentDeleteMany.mockResolvedValue({ count: 0 });
+    mocks.storyboardVideoSegmentUpsert.mockResolvedValue({});
+    mocks.transaction.mockImplementation(async (operations) =>
+      Promise.all(operations),
+    );
     mocks.enqueueTask.mockImplementation(async (_userId, task) => ({
       ...task,
       status: "queued",
@@ -123,7 +144,7 @@ describe("storyboard prompt preview", () => {
       expect.arrayContaining([
         expect.objectContaining({
           key: "submission_mode",
-          value: "完整视频提示词原样提交",
+          value: "场次完整视频提示词原样提交",
         }),
         expect.objectContaining({
           key: "audio_mode",
@@ -213,6 +234,46 @@ describe("storyboard prompt preview", () => {
     expect(task.request.referenceImages).toEqual([
       expect.objectContaining({ role: "reference_image" }),
     ]);
+  });
+
+  it("creates one persisted task per local video segment", async () => {
+    mocks.providerModelFindFirst.mockResolvedValue({
+      capabilitiesJson: JSON.stringify({ maxDurationSeconds: 15 }),
+    });
+    mocks.storyboardPanelFindFirst.mockResolvedValue({
+      ...panel(),
+      description: "韩宇看向铁盒。韩子枫打开盒盖。古籍泛起微光。",
+      durationSeconds: 18,
+      videoPrompt:
+        "场景：简陋屋舍\n可见画面与动作：完整动作\n仅生成静音视频。",
+      imageAsset: {
+        url: "data:image/png;base64,AQID",
+        storageKey: null,
+        mimeType: "image/png",
+      },
+    });
+
+    const result = await createStoryboardPanelVideoTask({
+      userId: "user-1",
+      projectId: "project-1",
+      episodeId: "episode-1",
+      panelId: "panel-1",
+      channelId: "channel-1",
+      model: "video-model",
+      mode: "reference",
+    });
+
+    expect(result.tasks).toHaveLength(2);
+    expect(
+      mocks.taskCreate.mock.calls.map(([task]) => task.request.duration),
+    ).toEqual(["9s", "9s"]);
+    expect(mocks.taskCreate.mock.calls[0][0].request.prompt).toContain(
+      "本场次第 1/2 段",
+    );
+    expect(mocks.taskCreate.mock.calls[1][0].request.prompt).toContain(
+      "本场次第 2/2 段",
+    );
+    expect(mocks.storyboardVideoSegmentUpsert).toHaveBeenCalledTimes(2);
   });
 });
 

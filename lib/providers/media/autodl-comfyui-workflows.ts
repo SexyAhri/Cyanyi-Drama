@@ -132,5 +132,7 @@ export function autoDlModelCapabilities(model: string) {
     supportsReferenceImages: Boolean(workflow.maxReferenceImages),
     supportsReferenceVideo: false,
     supportsReferenceAudio: Boolean(workflow.maxReferenceAudios),
+    maxDurationSeconds: workflow.maxDurationSeconds,
+    maxReferenceImages: workflow.maxReferenceImages,
   };
 }

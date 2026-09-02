@@ -393,6 +393,10 @@ async function attachAssetToTarget(
       data: { selectedImageId: input.target.entityId },
     });
   } else if (input.target.entityType === "storyboard_panel") {
+    if (input.kind === "video")
+      await tx.storyboardVideoSegment.deleteMany({
+        where: { panelId: input.target.entityId },
+      });
     await tx.storyboardPanel.update({
       where: { id: input.target.entityId },
       data:

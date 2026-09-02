@@ -91,6 +91,10 @@ export async function selectProjectAsset(input: {
     const selectedAssetId = assetId;
     const role = assetKind === "video" ? "selected_video" : "selected";
     await prisma.$transaction(async (tx) => {
+      if (assetKind === "video")
+        await tx.storyboardVideoSegment.deleteMany({
+          where: { panelId: panel.id },
+        });
       await tx.storyboardPanel.update({
         where: { id: panel.id },
         data:

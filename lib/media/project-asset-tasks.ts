@@ -12,6 +12,7 @@ import {
   listOwnedProjectMediaAssets,
 } from "@/lib/assets/project-store";
 import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
+import type { ChannelProtocol } from "@/lib/agent/provider-types";
 import { sanitizeMediaPrompt } from "@/lib/media/provider-prompt-safety";
 import {
   applyProjectArtStyle,
@@ -27,6 +28,10 @@ import {
   parseAssetVisualProfile,
   type AssetVisualProfile,
 } from "@/lib/assets/visual-profile";
+import {
+  planVideoSegments,
+  resolveVideoModelLimits,
+} from "@/lib/media/video-segment-plan";
 
 export type ProjectAssetTarget = "character" | "location" | "prop";
 
@@ -333,7 +338,7 @@ export async function createStoryboardPanelVideoTask(input: {
       400,
     );
   }
-  const selectedModel = await prisma.providerModel.count({
+  const selectedModel = await prisma.providerModel.findFirst({
     where: {
       channelId: input.channelId,
       modelId: input.model,
@@ -343,6 +348,7 @@ export async function createStoryboardPanelVideoTask(input: {
         { capabilitiesJson: { contains: '"video"' } },
       ],
     },
+    select: { capabilitiesJson: true },
   });
   if (!selectedModel) {
     throw new ProjectAssetTaskError("视频模型未在该渠道中配置或未选中", 400);
@@ -363,6 +369,9 @@ export async function createStoryboardPanelVideoTask(input: {
       linkedToNextPanel: true,
       description: true,
       durationSeconds: true,
+      charactersJson: true,
+      propsJson: true,
+      locationName: true,
       videoPrompt: true,
       firstLastFramePrompt: true,
       imageAsset: {
@@ -383,6 +392,38 @@ export async function createStoryboardPanelVideoTask(input: {
     panel.description?.trim();
   if (!rawBasePrompt)
     throw new ProjectAssetTaskError("分镜格缺少视频提示词", 400);
+  const activeTaskCount = await prisma.mediaTask.count({
+    where: {
+      userId: input.userId,
+      targetType: "storyboard_panel",
+      targetId: panel.id,
+      kind: "video",
+      status: { in: ["queued", "running"] },
+    },
+  });
+  if (activeTaskCount)
+    throw new ProjectAssetTaskError("该场次已有视频片段正在生成", 409);
+  const limits = resolveVideoModelLimits({
+    model: input.model,
+    protocol: channel.protocol,
+    capabilities: parseStoredJsonValue(selectedModel.capabilitiesJson, {}),
+  });
+  const durationSeconds =
+    parseDurationSeconds(input.duration) ??
+    panel.durationSeconds ??
+    parseDurationSeconds(input.mediaDefaults?.videoGenerationDuration) ??
+    5;
+  const segments = planVideoSegments({
+    action: panel.description,
+    durationSeconds,
+    maxDurationSeconds: limits.maxDurationSeconds,
+    prompt: rawBasePrompt,
+  });
+  if (input.mode === "first-last" && segments.length > 1)
+    throw new ProjectAssetTaskError(
+      `当前场次需拆为 ${segments.length} 段，首尾帧模式缺少中间衔接帧，请改用参考图模式`,
+      400,
+    );
   const referenceImages: Array<{
     url: string;
     storageKey?: string;
@@ -426,48 +467,121 @@ export async function createStoryboardPanelVideoTask(input: {
         mimeType: panel.imageAsset?.mimeType ?? undefined,
         role: "reference_image",
       });
+    const supportingReferences = await findStoryboardReferenceImages({
+      projectId: input.projectId,
+      characters: parseStringArray(panel.charactersJson),
+      props: parseStringArray(panel.propsJson),
+      locationName: panel.locationName,
+    });
+    for (const reference of supportingReferences) {
+      if (referenceImages.some((item) => item.url === reference.url)) continue;
+      referenceImages.push({ ...reference, role: "reference_image" });
+    }
   }
-  const durationSeconds =
-    parseDurationSeconds(input.duration) ??
-    panel.durationSeconds ??
-    parseDurationSeconds(input.mediaDefaults?.videoGenerationDuration) ??
-    5;
-  const task = createMediaTask({
-    id: `media_task_${randomUUID()}`,
-    projectId: input.projectId,
-    episodeId: input.episodeId,
-    batchId: input.batchId,
-    channelId: input.channelId,
-    targetType: "storyboard_panel",
-    targetId: panel.id,
-    kind: "video",
-    provider: channel.providerKey,
-    protocol: channel.protocol,
-    model: input.model,
-    request: {
-      prompt: rawBasePrompt,
-      ...(input.iteration ? { generationIteration: input.iteration } : {}),
-      ratio: input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9",
-      resolution:
-        input.resolution ??
-        input.mediaDefaults?.videoGenerationResolution ??
-        "1080p",
-      duration: `${durationSeconds}s`,
-      format: "mp4",
-      audioMode: "none",
-      videoMode: input.mode ?? "reference",
-      ...(referenceImages.length ? { referenceImages: referenceImages.slice(0, 9) } : {}),
-    },
+  const selectedReferences = referenceImages.slice(0, limits.maxReferenceImages);
+  const tasks = segments.map((segment) => {
+    const segmentId = storyboardVideoSegmentId(panel.id, segment.index);
+    return createMediaTask({
+      id: `media_task_${randomUUID()}`,
+      projectId: input.projectId,
+      episodeId: input.episodeId,
+      batchId: input.batchId,
+      channelId: input.channelId,
+      targetType: "storyboard_panel",
+      targetId: panel.id,
+      kind: "video",
+      provider: channel.providerKey,
+      protocol: channel.protocol as ChannelProtocol,
+      model: input.model,
+      request: {
+        prompt: segment.prompt,
+        ...(input.iteration ? { generationIteration: input.iteration } : {}),
+        ratio:
+          input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9",
+        resolution:
+          input.resolution ??
+          input.mediaDefaults?.videoGenerationResolution ??
+          "1080p",
+        duration: `${segment.durationSeconds}s`,
+        format: "mp4",
+        audioMode: "none",
+        videoMode: input.mode ?? "reference",
+        videoSegmentId: segmentId,
+        videoSegmentIndex: segment.index,
+        videoSegmentCount: segments.length,
+        videoSegmentStartSeconds: segment.startSeconds,
+        videoSegmentEndSeconds: segment.endSeconds,
+        ...(selectedReferences.length
+          ? { referenceImages: selectedReferences }
+          : {}),
+      },
+    });
   });
   const store = createDatabaseMediaTaskStore(input.userId);
-  await store.create(task);
-  const queued = await enqueueProjectTask(input.userId, task);
+  for (const task of tasks) await store.create(task);
+  await prisma.$transaction([
+    ...segments.map((segment, index) =>
+      prisma.storyboardVideoSegment.upsert({
+        where: {
+          panelId_segmentIndex: {
+            panelId: panel.id,
+            segmentIndex: segment.index,
+          },
+        },
+        create: {
+          id: storyboardVideoSegmentId(panel.id, segment.index),
+          panelId: panel.id,
+          taskId: tasks[index].id,
+          segmentIndex: segment.index,
+          startSeconds: segment.startSeconds,
+          endSeconds: segment.endSeconds,
+          durationSeconds: segment.durationSeconds,
+          prompt: segment.prompt,
+          action: segment.action || null,
+          model: input.model,
+          mode: input.mode ?? "reference",
+        },
+        update: {
+          taskId: tasks[index].id,
+          startSeconds: segment.startSeconds,
+          endSeconds: segment.endSeconds,
+          durationSeconds: segment.durationSeconds,
+          prompt: segment.prompt,
+          action: segment.action || null,
+          model: input.model,
+          mode: input.mode ?? "reference",
+          videoAssetId: null,
+        },
+      }),
+    ),
+    prisma.storyboardVideoSegment.deleteMany({
+      where: {
+        panelId: panel.id,
+        segmentIndex: { gte: segments.length },
+      },
+    }),
+    prisma.storyboardPanel.update({
+      where: { id: panel.id },
+      data: { videoAssetId: null },
+    }),
+  ]);
+  const queued = [];
+  for (const task of tasks)
+    queued.push(await enqueueProjectTask(input.userId, task));
   return {
-    task: queued,
+    task: queued[0],
+    tasks: queued,
     panel: {
       id: panel.id,
-      referenceCount: referenceImages.length,
+      referenceCount: selectedReferences.length,
       referenceAudioCount: 0,
+      segmentCount: segments.length,
+      segments: segments.map((segment) => ({
+        index: segment.index,
+        startSeconds: segment.startSeconds,
+        endSeconds: segment.endSeconds,
+        durationSeconds: segment.durationSeconds,
+      })),
     },
   };
 }
@@ -482,8 +596,17 @@ export type StoryboardPromptPreview = {
     message: string;
   }>;
   kind: "image" | "video";
-  submissionMode: "compiled" | "verbatim";
+  submissionMode: "compiled" | "verbatim" | "segmented";
   referenceCount: number;
+  maxDurationSeconds?: number;
+  segments?: Array<{
+    action: string;
+    durationSeconds: number;
+    endSeconds: number;
+    index: number;
+    prompt: string;
+    startSeconds: number;
+  }>;
   safetyRewrites: ReturnType<typeof sanitizeMediaPrompt>["changes"];
   sources: Array<{
     key: string;
@@ -504,6 +627,8 @@ export async function previewStoryboardPanelPrompt(input: {
   ratio?: string;
   resolution?: string;
   duration?: string;
+  channelId?: string;
+  model?: string;
   mediaDefaults?: MediaGenerationDefaults;
 }): Promise<StoryboardPromptPreview> {
   const panel = await prisma.storyboardPanel.findFirst({
@@ -572,12 +697,55 @@ export async function previewStoryboardPanelPrompt(input: {
     });
 
   if (input.kind === "video") {
+    let limits = { maxDurationSeconds: 10, maxReferenceImages: 1 };
+    if (input.channelId && input.model) {
+      const channel = await prisma.channel.findFirst({
+        where: accessibleChannelWhere(input.userId, input.channelId),
+        select: {
+          protocol: true,
+          models: {
+            where: { modelId: input.model, selected: true },
+            select: { capabilitiesJson: true },
+            take: 1,
+          },
+        },
+      });
+      if (channel && isMediaChannelProtocol(channel.protocol))
+        limits = resolveVideoModelLimits({
+          model: input.model,
+          protocol: channel.protocol,
+          capabilities: parseStoredJsonValue(
+            channel.models[0]?.capabilitiesJson,
+            {},
+          ),
+        });
+    }
+    const durationSeconds =
+      parseDurationSeconds(input.duration) ??
+      panel.durationSeconds ??
+      parseDurationSeconds(input.mediaDefaults?.videoGenerationDuration) ??
+      5;
+    const segments = planVideoSegments({
+      action: panel.description,
+      durationSeconds,
+      maxDurationSeconds: limits.maxDurationSeconds,
+      prompt: basePrompt,
+    });
+    if (input.mode === "first-last" && segments.length > 1)
+      issues.push({
+        blocking: true,
+        code: "segmented_first_last_unsupported",
+        message: `当前场次需拆为 ${segments.length} 段，首尾帧模式缺少中间衔接帧，请改用参考图模式`,
+      });
     let referenceCount = 0;
     const sources: StoryboardPromptPreview["sources"] = [
       {
         key: "submission_mode",
         label: "提交方式",
-        value: "完整视频提示词原样提交",
+        value:
+          segments.length === 1
+            ? "场次完整视频提示词原样提交"
+            : "按模型上限本地拆分，每段提交完整视频提示词",
       },
       {
         key: "shot_prompt",
@@ -618,25 +786,33 @@ export async function previewStoryboardPanelPrompt(input: {
           code: "missing_reference_frame",
           message: "参考图模式需要先选择当前镜头图片",
         });
-      referenceCount = Number(Boolean(firstFrameUrl));
+      const supportingReferences = await findStoryboardReferenceImages({
+        projectId: input.projectId,
+        characters,
+        props,
+        locationName: panel.locationName,
+      });
+      const referenceUrls = [
+        ...(firstFrameUrl ? [firstFrameUrl] : []),
+        ...supportingReferences.map((reference) => reference.url),
+      ].filter((url, index, values) => values.indexOf(url) === index);
+      referenceCount = Math.min(
+        referenceUrls.length,
+        limits.maxReferenceImages,
+      );
       sources.push({
         key: "frame_mode",
         label: "画面参考",
         value: firstFrameUrl
-          ? "1 张当前镜头参考图（顺序 1）"
+          ? `${referenceCount} 张参考图（分镜首图 + 可用角色 / 场景 / 道具）`
           : "缺少当前镜头参考图",
       });
     }
-    const durationSeconds =
-      parseDurationSeconds(input.duration) ??
-      panel.durationSeconds ??
-      parseDurationSeconds(input.mediaDefaults?.videoGenerationDuration) ??
-      5;
     sources.push(
       {
-        key: "duration",
-        label: "片段时长",
-        value: `${durationSeconds} 秒`,
+        key: "segments",
+        label: "生成拆分",
+        value: `${segments.length} 段 · ${segments.map((segment) => `${segment.durationSeconds} 秒`).join(" + ")}（模型单次上限 ${limits.maxDurationSeconds} 秒）`,
       },
       {
         key: "output",
@@ -655,8 +831,10 @@ export async function previewStoryboardPanelPrompt(input: {
       finalPrompt: basePrompt,
       issues,
       kind: "video",
-      submissionMode: "verbatim",
+      submissionMode: segments.length === 1 ? "verbatim" : "segmented",
       referenceCount,
+      maxDurationSeconds: limits.maxDurationSeconds,
+      segments,
       safetyRewrites: [],
       sources,
     };
@@ -748,6 +926,10 @@ function parseDurationSeconds(value?: string) {
   if (!value) return undefined;
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function storyboardVideoSegmentId(panelId: string, segmentIndex: number) {
+  return `${panelId}_video_segment_${segmentIndex}`;
 }
 
 async function findLastFramePanel(input: {

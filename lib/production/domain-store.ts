@@ -525,6 +525,14 @@ export async function buildEditorTimeline(
             imageAssetId: true,
             videoAssetId: true,
             lipSyncAssetId: true,
+            videoSegments: {
+              orderBy: { segmentIndex: "asc" },
+              select: {
+                id: true,
+                durationSeconds: true,
+                videoAssetId: true,
+              },
+            },
           },
         },
       },
@@ -535,15 +543,31 @@ export async function buildEditorTimeline(
       orderBy: { clipIndex: "asc" },
     }),
   ]);
-  const panelTracks = storyboard?.panels.map((panel) => ({
-    id: panel.id,
-    clipId: panel.clipId,
-    shotIndex: panel.panelIndex,
-    duration: panel.durationSeconds,
-    imageAssetId: panel.imageAssetId,
-    videoAssetId: panel.videoAssetId,
-    lipSyncAssetId: panel.lipSyncAssetId,
-  }));
+  const panelTracks = storyboard?.panels.flatMap((panel) =>
+    panel.videoSegments.length
+      ? panel.videoSegments.map((segment) => ({
+          id: segment.id,
+          panelId: panel.id,
+          clipId: panel.clipId,
+          shotIndex: panel.panelIndex,
+          duration: segment.durationSeconds,
+          imageAssetId: panel.imageAssetId,
+          videoAssetId: segment.videoAssetId,
+          lipSyncAssetId: null,
+        }))
+      : [
+          {
+            id: panel.id,
+            panelId: panel.id,
+            clipId: panel.clipId,
+            shotIndex: panel.panelIndex,
+            duration: panel.durationSeconds,
+            imageAssetId: panel.imageAssetId,
+            videoAssetId: panel.videoAssetId,
+            lipSyncAssetId: panel.lipSyncAssetId,
+          },
+        ],
+  );
   const legacyTracks = clips.flatMap((clip) =>
     clip.shots.map((shot) => ({
       id: shot.id,

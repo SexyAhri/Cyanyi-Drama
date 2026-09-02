@@ -29,6 +29,8 @@ export async function POST(request: Request, context: Context) {
       ratio: stringValue(body.ratio) || undefined,
       resolution: stringValue(body.resolution) || undefined,
       duration: stringValue(body.duration) || undefined,
+      channelId: stringValue(body.channelId) || undefined,
+      model: stringValue(body.model) || undefined,
       mediaDefaults,
     });
     return attachSessionCookie(Response.json({ preview }), sessionId);

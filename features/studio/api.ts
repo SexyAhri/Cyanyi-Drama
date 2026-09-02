@@ -163,7 +163,11 @@ export async function loadStudioModels(signal?: AbortSignal) {
         name: string;
         type: string;
         selected: boolean;
-        capabilities?: { modalities?: string[] };
+        capabilities?: {
+          modalities?: string[];
+          maxDurationSeconds?: number;
+          maxReferenceImages?: number;
+        };
       }>;
     }>;
   }>("/api/channels", { signal });
@@ -180,6 +184,8 @@ export async function loadStudioModels(signal?: AbortSignal) {
               name: model.name,
               type: model.type,
               modalities: model.capabilities?.modalities ?? [],
+              maxDurationSeconds: model.capabilities?.maxDurationSeconds,
+              maxReferenceImages: model.capabilities?.maxReferenceImages,
             },
           ]
         : [],
@@ -846,6 +852,8 @@ export async function previewStudioPanelPrompt(
     prompt?: string;
     mode?: "reference" | "first-last";
     lastFramePanelId?: string;
+    channelId?: string;
+    model?: string;
   },
   signal?: AbortSignal,
 ) {

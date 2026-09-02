@@ -140,6 +140,7 @@ function createPanel(
     createdAt: "2026-08-26T00:00:00.000Z",
     updatedAt: "2026-08-26T00:00:00.000Z",
     ...input,
+    videoSegments: input.videoSegments ?? [],
     sceneNumber: input.sceneNumber ?? null,
     speakingCharacter: input.speakingCharacter ?? null,
     lipSyncText: input.lipSyncText ?? null,

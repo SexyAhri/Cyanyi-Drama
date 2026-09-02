@@ -24,7 +24,12 @@ const locationInclude = {
   images: { orderBy: { imageIndex: "asc" as const } },
 } as const;
 const storyboardInclude = {
-  panels: { orderBy: { panelIndex: "asc" as const } },
+  panels: {
+    include: {
+      videoSegments: { orderBy: { segmentIndex: "asc" as const } },
+    },
+    orderBy: { panelIndex: "asc" as const },
+  },
 } as const;
 
 export async function listNovelCharacters(userId: string, projectId: string) {
@@ -238,6 +243,7 @@ export async function saveStoryboard(
         imagePrompt: true,
         videoPrompt: true,
         firstLastFramePrompt: true,
+        durationSeconds: true,
         imageAssetId: true,
         imagePromptDesignJson: true,
         videoPromptDesignJson: true,
@@ -271,6 +277,12 @@ export async function saveStoryboard(
         (panel.id ? existingById.get(panel.id) : undefined) ??
         (!panel.id ? existingByIdentity.get(identity) : undefined);
       const id = existingPanel?.id ?? randomUUID();
+      const videoInputsChanged = Boolean(
+        existingPanel &&
+          (!sameText(panel.videoPrompt, existingPanel.videoPrompt) ||
+            finiteNumber(panel.durationSeconds) !==
+              existingPanel.durationSeconds),
+      );
       retainedIds.push(id);
       const data = {
         clipId: panel.clipId ?? null,
@@ -340,12 +352,15 @@ export async function saveStoryboard(
             : panel.firstLastFramePrompt?.trim() || null,
         linkedToNextPanel: panel.linkedToNextPanel ?? false,
         sourceEvidenceJson: stringifyArray(panel.sourceEvidence),
+        ...(videoInputsChanged ? { videoAssetId: null } : {}),
       };
       await tx.storyboardPanel.upsert({
         where: { id },
         create: { id, storyboardId: storyboard.id, ...data },
         update: data,
       });
+      if (videoInputsChanged)
+        await tx.storyboardVideoSegment.deleteMany({ where: { panelId: id } });
     }
     await tx.storyboardPanel.deleteMany({
       where: {
@@ -498,7 +513,9 @@ function toStoryboard(
   };
 }
 function toPanel(
-  row: Prisma.StoryboardPanelGetPayload<Record<string, never>>,
+  row: Prisma.StoryboardGetPayload<{
+    include: typeof storyboardInclude;
+  }>["panels"][number],
 ): StoryboardPanelRecord {
   return {
     id: row.id,
@@ -543,6 +560,22 @@ function toPanel(
     sourceEvidence: parseArray(row.sourceEvidenceJson),
     imageAssetId: row.imageAssetId,
     videoAssetId: row.videoAssetId,
+    videoSegments: row.videoSegments.map((segment) => ({
+      id: segment.id,
+      panelId: segment.panelId,
+      taskId: segment.taskId,
+      segmentIndex: segment.segmentIndex,
+      startSeconds: segment.startSeconds,
+      endSeconds: segment.endSeconds,
+      durationSeconds: segment.durationSeconds,
+      prompt: segment.prompt,
+      action: segment.action,
+      model: segment.model,
+      mode: segment.mode,
+      videoAssetId: segment.videoAssetId,
+      createdAt: segment.createdAt.toISOString(),
+      updatedAt: segment.updatedAt.toISOString(),
+    })),
     lipSyncAssetId: row.lipSyncAssetId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

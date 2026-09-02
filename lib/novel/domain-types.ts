@@ -65,6 +65,23 @@ export type StoryboardPromptDesignDetails = {
   continuitySafeguards: string[];
 };
 
+export type StoryboardVideoSegmentRecord = {
+  id: string;
+  panelId: string;
+  taskId: string | null;
+  segmentIndex: number;
+  startSeconds: number;
+  endSeconds: number;
+  durationSeconds: number;
+  prompt: string;
+  action: string | null;
+  model: string;
+  mode: string;
+  videoAssetId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type StoryboardPanelRecord = {
   id: string;
   storyboardId: string;
@@ -106,6 +123,7 @@ export type StoryboardPanelRecord = {
   sourceEvidence: string[];
   imageAssetId: string | null;
   videoAssetId: string | null;
+  videoSegments: StoryboardVideoSegmentRecord[];
   lipSyncAssetId: string | null;
   createdAt: string;
   updatedAt: string;

@@ -47,7 +47,7 @@ type VideoMode = "reference" | "first-last";
 const promptCopy = {
   "zh-CN": {
     finalPrompt: "最终提交提示词",
-    verbatimVideoPrompt: "完整视频提示词 · 原样提交",
+    verbatimVideoPrompt: "实际提交的视频提示词",
     compiling: "正在编译项目画风和资产参考",
     checkingVideo: "正在核对视频提示词、参考图与提交参数",
     previewFailed: "提示词预览载入失败",
@@ -59,10 +59,14 @@ const promptCopy = {
     skipped: "跳过",
     active: "进行中",
     incomplete: "缺少条件",
+    generationPlan: "生成拆分",
+    modelLimit: "模型单次上限",
+    segment: "片段",
+    generationRequests: "实际生成请求",
   },
   en: {
     finalPrompt: "Final provider prompt",
-    verbatimVideoPrompt: "Complete video prompt · submitted verbatim",
+    verbatimVideoPrompt: "Video prompts sent to the model",
     compiling: "Compiling project style and asset references",
     checkingVideo: "Checking video prompt, references, and request parameters",
     previewFailed: "Unable to load prompt preview",
@@ -74,6 +78,10 @@ const promptCopy = {
     skipped: "Skipped",
     active: "Active",
     incomplete: "Incomplete",
+    generationPlan: "Generation split",
+    modelLimit: "Model limit per request",
+    segment: "Segment",
+    generationRequests: "Generation requests",
   },
 } as const;
 
@@ -112,6 +120,7 @@ export function PanelGenerationDialog({
   const canUseFirstLast = Boolean(
     panel.imageAssetId && nextPanel?.imageAssetId,
   );
+  const selectedModel = models.find((model) => model.id === modelId);
 
   useEffect(() => {
     if (!models.some((model) => model.id === modelId)) {
@@ -151,6 +160,8 @@ export function PanelGenerationDialog({
             kind,
             mode,
             prompt,
+            channelId: selectedModel?.channelId,
+            model: selectedModel?.modelId,
             lastFramePanelId: mode === "first-last" ? nextPanel?.id : undefined,
           },
           controller.signal,
@@ -181,6 +192,8 @@ export function PanelGenerationDialog({
     projectId,
     prompt,
     promptText.previewFailed,
+    selectedModel?.channelId,
+    selectedModel?.modelId,
   ]);
 
   async function submit() {
@@ -243,12 +256,19 @@ export function PanelGenerationDialog({
             </p>
           ) : null}
           {kind === "video" ? (
-            <ModeControl
-              canUseFirstLast={canUseFirstLast}
-              locale={locale}
-              mode={mode}
-              onChange={setMode}
-            />
+            <>
+              <ModeControl
+                canUseFirstLast={canUseFirstLast}
+                locale={locale}
+                mode={mode}
+                onChange={setMode}
+              />
+              <VideoSegmentSummary
+                locale={locale}
+                maxDurationSeconds={preview?.maxDurationSeconds}
+                segments={preview?.segments}
+              />
+            </>
           ) : null}
           <PromptPreview
             error={previewError}
@@ -326,6 +346,7 @@ export function BatchGenerationDialog({
     Record<string, StoryboardPromptPreview | null>
   >({});
   const [preflightLoading, setPreflightLoading] = useState(false);
+  const selectedModel = models.find((model) => model.id === modelId);
   const firstLastPanels = useMemo(
     () =>
       panels.filter(
@@ -335,8 +356,11 @@ export function BatchGenerationDialog({
       ),
     [allPanels, panels],
   );
-  const modeTargets =
-    kind === "video" && mode === "first-last" ? firstLastPanels : panels;
+  const modeTargets = useMemo(
+    () =>
+      kind === "video" && mode === "first-last" ? firstLastPanels : panels,
+    [firstLastPanels, kind, mode, panels],
+  );
   const activePanelIds = new Set(
     tasks
       .filter(
@@ -351,7 +375,11 @@ export function BatchGenerationDialog({
     panels.flatMap((panel) => {
       const assetId =
         kind === "image" ? panel.imageAssetId : panel.videoAssetId;
-      return assetId ? [panel.id] : [];
+      const videoComplete =
+        kind === "video" && panel.videoSegments.length
+          ? panel.videoSegments.every((segment) => segment.videoAssetId)
+          : Boolean(assetId);
+      return kind === "video" ? (videoComplete ? [panel.id] : []) : assetId ? [panel.id] : [];
     }),
   );
   const readyTargets = modeTargets.filter(
@@ -373,6 +401,19 @@ export function BatchGenerationDialog({
       !(skipCompleted && completedPanelIds.has(panel.id)) &&
       preflight[panel.id]?.issues.some((issue) => issue.blocking),
   ).length;
+  const plannedSegmentCount = modeTargets.reduce(
+    (total, panel) => total + (preflight[panel.id]?.segments?.length ?? 0),
+    0,
+  );
+  const plannedDuration = modeTargets.reduce(
+    (total, panel) =>
+      total +
+      (preflight[panel.id]?.segments?.reduce(
+        (subtotal, segment) => subtotal + segment.durationSeconds,
+        0,
+      ) ?? 0),
+    0,
+  );
 
   useEffect(() => {
     if (!models.some((model) => model.id === modelId)) {
@@ -400,6 +441,8 @@ export function BatchGenerationDialog({
             {
               kind,
               mode,
+              channelId: selectedModel?.channelId,
+              model: selectedModel?.modelId,
               lastFramePanelId:
                 mode === "first-last"
                   ? nextStoryboardPanel(panel, allPanels)?.id
@@ -419,7 +462,17 @@ export function BatchGenerationDialog({
       }
     });
     return () => controller.abort();
-  }, [allPanels, episodeId, kind, mode, modeTargets, open, projectId]);
+  }, [
+    allPanels,
+    episodeId,
+    kind,
+    mode,
+    modeTargets,
+    open,
+    projectId,
+    selectedModel?.channelId,
+    selectedModel?.modelId,
+  ]);
 
   async function submit() {
     const model = models.find((item) => item.id === modelId);
@@ -483,12 +536,22 @@ export function BatchGenerationDialog({
             </p>
           ) : null}
           {kind === "video" ? (
-            <ModeControl
-              canUseFirstLast={firstLastPanels.length > 0}
-              locale={locale}
-              mode={mode}
-              onChange={setMode}
-            />
+            <>
+              <ModeControl
+                canUseFirstLast={firstLastPanels.length > 0}
+                locale={locale}
+                mode={mode}
+                onChange={setMode}
+              />
+              <p className="flex items-center justify-between border-y py-2 text-xs">
+                <span className="text-muted-foreground">
+                  {promptText.generationRequests}
+                </span>
+                <span className="font-mono font-medium">
+                  {plannedSegmentCount} · {plannedDuration}s
+                </span>
+              </p>
+            </>
           ) : null}
           <label className="flex items-center gap-2 text-sm font-medium">
             <Checkbox
@@ -626,7 +689,14 @@ function PromptPreview({
             </p>
           )}
           <pre className="max-h-64 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap wrap-break-word bg-muted/35 p-3 text-xs leading-5">
-            {preview.finalPrompt}
+            {preview.segments && preview.segments.length > 1
+              ? preview.segments
+                  .map(
+                    (segment) =>
+                      `${text.segment} ${segment.index + 1} · ${segment.durationSeconds}s\n${segment.prompt}`,
+                  )
+                  .join("\n\n")
+              : preview.finalPrompt}
           </pre>
           {preview.safetyRewrites.length ? (
             <div className="text-xs">
@@ -652,6 +722,37 @@ function BatchCount({ label, value }: { label: string; value: number }) {
     <div>
       <span className="block font-mono text-base font-semibold">{value}</span>
       <span className="text-muted-foreground">{label}</span>
+    </div>
+  );
+}
+
+function VideoSegmentSummary({
+  locale,
+  maxDurationSeconds,
+  segments,
+}: {
+  locale: StudioLocale;
+  maxDurationSeconds?: number;
+  segments?: StoryboardPromptPreview["segments"];
+}) {
+  const text = promptCopy[locale];
+  if (!segments?.length) return null;
+  return (
+    <div className="border-y py-2.5 text-xs">
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-medium">{text.generationPlan}</span>
+        <span className="text-muted-foreground">
+          {text.modelLimit} {maxDurationSeconds ?? "-"}s
+        </span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 font-mono text-muted-foreground">
+        {segments.map((segment) => (
+          <span key={segment.index}>
+            {text.segment} {segment.index + 1} · {segment.startSeconds}-
+            {segment.endSeconds}s
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

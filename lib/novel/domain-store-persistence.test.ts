@@ -7,6 +7,7 @@ const storyboardPanelFindMany = vi.hoisted(() => vi.fn());
 const storyboardPanelUpdateMany = vi.hoisted(() => vi.fn());
 const storyboardPanelUpsert = vi.hoisted(() => vi.fn());
 const storyboardPanelDeleteMany = vi.hoisted(() => vi.fn());
+const storyboardVideoSegmentDeleteMany = vi.hoisted(() => vi.fn());
 const storyboardFindUniqueOrThrow = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/server/prisma", () => ({
@@ -24,6 +25,9 @@ vi.mock("@/lib/server/prisma", () => ({
           updateMany: storyboardPanelUpdateMany,
           upsert: storyboardPanelUpsert,
           deleteMany: storyboardPanelDeleteMany,
+        },
+        storyboardVideoSegment: {
+          deleteMany: storyboardVideoSegmentDeleteMany,
         },
       }),
   },
@@ -63,6 +67,7 @@ beforeEach(() => {
   storyboardPanelUpdateMany.mockResolvedValue({ count: 1 });
   storyboardPanelUpsert.mockResolvedValue({ id: "panel-stable" });
   storyboardPanelDeleteMany.mockResolvedValue({ count: 0 });
+  storyboardVideoSegmentDeleteMany.mockResolvedValue({ count: 0 });
   storyboardFindUniqueOrThrow.mockResolvedValue(storyboardRow());
 });
 
@@ -288,6 +293,7 @@ function storyboardRow() {
         imageAssetId: null,
         videoAssetId: null,
         lipSyncAssetId: null,
+        videoSegments: [],
         createdAt: now,
         updatedAt: now,
       },

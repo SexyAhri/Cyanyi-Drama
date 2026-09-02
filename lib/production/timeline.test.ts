@@ -46,6 +46,7 @@ describe("production timeline", () => {
           { duration: 6 },
           null,
           { id: "panel-2", duration: 40 },
+          { id: "segment-1", panelId: " panel-3 ", duration: 6 },
         ],
       }),
     ).toEqual([
@@ -60,6 +61,15 @@ describe("production timeline", () => {
       {
         id: "panel-2",
         duration: 30,
+        sourceStart: 0,
+        transition: "cut",
+        transitionDuration: 0.35,
+        volume: 1,
+      },
+      {
+        id: "segment-1",
+        panelId: "panel-3",
+        duration: 6,
         sourceStart: 0,
         transition: "cut",
         transitionDuration: 0.35,
@@ -150,5 +160,45 @@ describe("production timeline", () => {
     expect(cues[1].start).toBe(2);
     expect(cues[1].end).toBeLessThan(cues[2].end);
     expect(cues[2].end).toBe(5);
+  });
+
+  it("spreads one scene's dialogue across all generated video segments", () => {
+    const cues = buildTimelineSubtitles(
+      [
+        {
+          id: "line-1",
+          lineIndex: 0,
+          speaker: "A",
+          content: "First",
+          matchedPanelId: "panel-1",
+          durationSeconds: 6,
+        },
+        {
+          id: "line-2",
+          lineIndex: 1,
+          speaker: "B",
+          content: "Second",
+          matchedPanelId: "panel-1",
+          durationSeconds: 6,
+        },
+        {
+          id: "line-3",
+          lineIndex: 2,
+          speaker: "A",
+          content: "Third",
+          matchedPanelId: "panel-1",
+          durationSeconds: 6,
+        },
+      ],
+      [
+        { id: "segment-1", panelId: "panel-1", duration: 9 },
+        { id: "segment-2", panelId: "panel-1", duration: 9 },
+      ],
+    );
+
+    expect(cues).toHaveLength(3);
+    expect(cues[0]).toMatchObject({ id: "line-1", start: 0, end: 6 });
+    expect(cues[1]).toMatchObject({ id: "line-2", start: 6, end: 12 });
+    expect(cues[2]).toMatchObject({ id: "line-3", start: 12, end: 18 });
   });
 });

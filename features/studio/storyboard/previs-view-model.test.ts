@@ -146,6 +146,7 @@ function storyboardPanel(
     createdAt: "2026-08-27T00:00:00.000Z",
     updatedAt: "2026-08-27T00:00:00.000Z",
     ...overrides,
+    videoSegments: overrides.videoSegments ?? [],
     sceneNumber: overrides.sceneNumber ?? null,
     speakingCharacter: overrides.speakingCharacter ?? null,
     lipSyncText: overrides.lipSyncText ?? null,

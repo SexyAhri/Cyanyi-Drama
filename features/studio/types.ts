@@ -81,6 +81,8 @@ export type StudioModelOption = {
   name: string;
   type: string;
   modalities: string[];
+  maxDurationSeconds?: number;
+  maxReferenceImages?: number;
 };
 
 export type ProductionClipRecord = {
@@ -170,6 +172,7 @@ export type EpisodeAudioTrackRecord = {
 
 export type EditorTimelineTrack = {
   id: string;
+  panelId?: string;
   clipId: string | null;
   shotIndex: number;
   start: number;

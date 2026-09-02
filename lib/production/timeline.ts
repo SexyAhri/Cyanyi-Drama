@@ -5,6 +5,7 @@ export type EditorTimelineTrack = {
   duration: number;
   end: number;
   id: string;
+  panelId?: string;
   imageAssetId: string | null;
   lipSyncAssetId: string | null;
   sourceStart: number;
@@ -31,6 +32,7 @@ export function buildSequentialTimeline(
     clipId?: string | null;
     duration?: number | null;
     id: string;
+    panelId?: string;
     imageAssetId?: string | null;
     lipSyncAssetId?: string | null;
     shotIndex: number;
@@ -45,6 +47,7 @@ export function buildSequentialTimeline(
       duration,
       end: cursor + duration,
       id: item.id,
+      ...(item.panelId ? { panelId: item.panelId } : {}),
       imageAssetId: item.imageAssetId ?? null,
       lipSyncAssetId: item.lipSyncAssetId ?? null,
       sourceStart: 0,
@@ -70,8 +73,13 @@ export function parseTimelineSequence(value: unknown) {
     const id = entry.id.trim();
     if (!id || seen.has(id)) return [];
     seen.add(id);
+    const panelId =
+      typeof entry.panelId === "string" && entry.panelId.trim()
+        ? entry.panelId.trim()
+        : undefined;
     return [{
       id,
+      ...(panelId ? { panelId } : {}),
       duration: normalizeDuration(entry.duration),
       sourceStart: normalizeSourceStart(entry.sourceStart),
       transition: entry.transition === "fade" ? ("fade" as const) : ("cut" as const),
@@ -109,25 +117,37 @@ export function buildTimelineSubtitles(
     matchedPanelId?: string | null;
     durationSeconds?: number | null;
   }[],
-  tracks: readonly { id: string; duration: number }[],
+  tracks: readonly { id: string; panelId?: string; duration: number }[],
 ): TimelineSubtitleCue[] {
   const orderedLines = [...lines].sort(
     (left, right) => left.lineIndex - right.lineIndex,
   );
   let trackStart = 0;
   const cues: TimelineSubtitleCue[] = [];
+  const processedPanels = new Set<string>();
   for (const track of tracks) {
     const trackDuration = normalizeDuration(track.duration);
+    const panelId = track.panelId ?? track.id;
+    if (processedPanels.has(panelId)) {
+      trackStart += trackDuration;
+      continue;
+    }
     const matchedLines = orderedLines.filter(
-      (line) => line.matchedPanelId === track.id && line.content.trim(),
+      (line) => line.matchedPanelId === panelId && line.content.trim(),
     );
     if (matchedLines.length) {
-      const fallbackDuration = trackDuration / matchedLines.length;
+      const panelDuration = tracks
+        .filter((item) => {
+          const itemPanelId = item.panelId ?? item.id;
+          return itemPanelId === panelId;
+        })
+        .reduce((total, item) => total + normalizeDuration(item.duration), 0);
+      const fallbackDuration = panelDuration / matchedLines.length;
       const timings = buildPanelSubtitleTimings({
         lineDurations: matchedLines.map(
           (line) => line.durationSeconds ?? fallbackDuration,
         ),
-        trackDuration,
+        trackDuration: panelDuration,
         trackStart,
       });
       matchedLines.forEach((line, index) =>
@@ -140,6 +160,7 @@ export function buildTimelineSubtitles(
         }),
       );
     }
+    processedPanels.add(panelId);
     trackStart += trackDuration;
   }
   return cues.sort(

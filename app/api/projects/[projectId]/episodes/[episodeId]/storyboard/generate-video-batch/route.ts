@@ -31,7 +31,12 @@ export async function POST(request: Request, context: Context) {
     );
   }
   const batchId = `storyboard_video_batch_${randomUUID()}`;
-  const results: Array<{ item: PanelItem; task: unknown; panel: unknown }> = [];
+  const results: Array<{
+    item: PanelItem;
+    task: unknown;
+    tasks: unknown[];
+    panel: unknown;
+  }> = [];
   const mediaDefaults = await loadUserRuntimeSettings(user.id);
   for (const item of items.slice(0, 50)) {
     try {
@@ -68,7 +73,15 @@ export async function POST(request: Request, context: Context) {
     }
   }
   return attachSessionCookie(
-    Response.json({ batchId, count: results.length, results }, { status: 202 }),
+    Response.json(
+      {
+        batchId,
+        sceneCount: results.length,
+        count: results.reduce((total, result) => total + result.tasks.length, 0),
+        results,
+      },
+      { status: 202 },
+    ),
     sessionId,
   );
 }

@@ -222,10 +222,14 @@ function CandidateCard({
             </div>
           )}
         </AspectRatio>
-        {candidate.selected ? (
+        {candidate.selected || candidate.segmentIndex !== undefined ? (
           <Badge className="absolute top-2 left-2" variant="secondary">
-            <Check className="size-3" />
-            {copy.selectedAsset}
+            {candidate.selected ? <Check className="size-3" /> : null}
+            {candidate.segmentIndex === undefined
+              ? copy.selectedAsset
+              : locale === "en"
+                ? `Segment ${candidate.segmentIndex + 1}/${candidate.segmentCount}`
+                : `片段 ${candidate.segmentIndex + 1}/${candidate.segmentCount}`}
           </Badge>
         ) : null}
       </div>
