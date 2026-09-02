@@ -88,6 +88,23 @@ describe("approved screenplay parser", () => {
     expect(JSON.stringify(organized)).not.toMatch(
       /coverage|anchor|beatId|sceneNumber/iu,
     );
+    expect(organized.beats.scenes[0].characters).toEqual(["韩宇"]);
+    expect(organized.beats.scenes[1].characters).toEqual(["韩宇", "韩子枫"]);
+  });
+
+  it("does not treat characters mentioned only in the synopsis as present in scene one", () => {
+    const organized = organizeApprovedScreenplayClip(
+      "clip-preamble",
+      [
+        "梗概：韩宇回家探望父亲韩子枫。",
+        "场次 01｜预计时长：10 秒｜外景·练武场·夜",
+        "画面与动作：韩宇独自在雪地举起铁石。",
+        "对白/旁白：无",
+      ].join("\n"),
+      { characters: ["韩宇", "韩子枫"], locations: ["练武场"] },
+    );
+
+    expect(organized.beats.scenes[0].characters).toEqual(["韩宇"]);
   });
 
   it("recognizes markdown-bold scene headers and field labels", () => {

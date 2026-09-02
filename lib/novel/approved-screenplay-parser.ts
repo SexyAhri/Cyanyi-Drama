@@ -89,8 +89,14 @@ export function organizeApprovedScreenplayClip(
           canonical.locations[0] ??
           scene.location
         : scene.location;
+    const visibleText = [
+      scene.action,
+      scene.camera,
+      scene.visualEffects,
+      ...scene.lines.flatMap((line) => line.character ? [line.character] : []),
+    ].join("\n");
     const characters = canonical.characters.filter((name) =>
-      scene.sourceText.includes(name),
+      visibleText.includes(name),
     );
     return {
       heading: {
