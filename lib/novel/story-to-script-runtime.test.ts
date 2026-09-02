@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const requestOpenAiStructured = vi.hoisted(() => vi.fn());
 const listProductionClips = vi.hoisted(() => vi.fn());
 const listProductionProps = vi.hoisted(() => vi.fn());
 const saveProductionClips = vi.hoisted(() => vi.fn());
@@ -12,12 +11,6 @@ const providerModelFindFirst = vi.hoisted(() => vi.fn());
 const storyClipUpdate = vi.hoisted(() => vi.fn());
 const storyClipFindMany = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/llm/openai-structured", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/lib/llm/openai-structured")
-  >()),
-  requestOpenAiStructured,
-}));
 vi.mock("@/lib/production/domain-store", () => ({
   listProductionClips,
   listProductionProps,
@@ -174,35 +167,26 @@ describe("story-to-script runtime", () => {
   });
 
   it("persists exact clip text and an incremental split artifact", async () => {
-    const sourceText = " 甲\n乙 ";
+    const sourceText = `标题：测试集
+正文：
+场次 01｜预计时长：8 秒｜外景·院落·夜
+画面与动作：甲推门进入院落。
+对白/旁白：无
+声音与氛围：风声。
+场次 02｜预计时长：7 秒｜内景·书房·夜
+画面与动作：乙在书桌前抬头。
+对白/旁白：乙：你来了。
+声音与氛围：无`;
     episodeFindFirst.mockResolvedValue({ novelText: sourceText });
     listProductionClips.mockResolvedValue([]);
-    requestOpenAiStructured.mockResolvedValue({
-      data: {
-        clips: [
-          {
-            endUnitId: "U0001",
-            summary: "第一段",
-            location: null,
-            characters: ["甲"],
-            props: [],
-          },
-          {
-            endUnitId: "U0002",
-            summary: "第二段",
-            location: null,
-            characters: ["乙"],
-            props: [],
-          },
-        ],
-      },
-      trace: trace("story_clip_segmentation"),
-    });
-    const saved = [
-      { id: "clip-1", clipIndex: 0, content: " 甲\n" },
-      { id: "clip-2", clipIndex: 1, content: "乙 " },
-    ];
-    saveProductionClips.mockResolvedValue(saved);
+    saveProductionClips.mockImplementation(
+      async (_userId, _projectId, _episodeId, clips) =>
+        clips.map((item: { content: string }, index: number) => ({
+          id: `clip-${index}`,
+          clipIndex: index,
+          content: item.content,
+        })),
+    );
     const hooks = runtimeHooks();
 
     const result = await splitEpisodeIntoClips(
@@ -212,16 +196,13 @@ describe("story-to-script runtime", () => {
     );
 
     expect(result.clipCount).toBe(2);
-    expect(requestOpenAiStructured).toHaveBeenCalledWith(
-      expect.objectContaining({ timeoutMs: 600_000 }),
-    );
     const persisted = saveProductionClips.mock.calls[0][3];
     expect(persisted.map((clip: { content: string }) => clip.content).join(""))
       .toBe(sourceText);
     expect(hooks.persistArtifact).toHaveBeenCalledWith(
       "clips.split",
       "episode-1",
-      expect.objectContaining({ clips: saved }),
+      expect.objectContaining({ degraded: false, promptTraces: [] }),
     );
   });
 
@@ -253,15 +234,10 @@ describe("story-to-script runtime", () => {
     expect(clips[0].text).toContain("\r\n\r\n");
   });
 
-  it("falls back to deterministic slicing after semantic rejection", async () => {
+  it("splits oversized plain text locally without semantic validation", async () => {
     const sourceText = `${"甲在练武场挥剑。".repeat(120)}\n\n乙回到书房。`;
     episodeFindFirst.mockResolvedValue({ novelText: sourceText });
     listProductionClips.mockResolvedValue([]);
-    requestOpenAiStructured.mockRejectedValue(
-      new Error(
-        "STRUCTURED_SEMANTIC_INVALID:clips.last.endUnitId: [SOURCE_COVERAGE_MISMATCH]",
-      ),
-    );
     saveProductionClips.mockImplementation(
       async (_userId, _projectId, _episodeId, clips) =>
         clips.map((item: { content: string }, index: number) => ({
@@ -278,23 +254,20 @@ describe("story-to-script runtime", () => {
       hooks,
     );
 
-    expect(result.degraded).toBe(true);
-    expect(result.fallbackReason).toContain("STRUCTURED_SEMANTIC_INVALID");
+    expect(result.degraded).toBe(false);
+    expect(result.fallbackReason).toBeUndefined();
     expect(result.clips.map((clip) => clip.content).join("")).toBe(sourceText);
     expect(hooks.persistArtifact).toHaveBeenCalledWith(
       "clips.split",
       "episode-1",
-      expect.objectContaining({ degraded: true }),
+      expect.objectContaining({ degraded: false }),
     );
   });
 
-  it("does not degrade segmentation after a provider timeout", async () => {
+  it("does not depend on a provider while organizing clips", async () => {
     const sourceText = `${"甲在练武场挥剑。".repeat(120)}\n\n${"乙回到书房。".repeat(120)}`;
     episodeFindFirst.mockResolvedValue({ novelText: sourceText });
     listProductionClips.mockResolvedValue([]);
-    requestOpenAiStructured.mockRejectedValue(
-      new Error("STRUCTURED_PROVIDER_FAILED:524:Provider gateway timeout"),
-    );
     saveProductionClips.mockImplementation(
       async (_userId, _projectId, _episodeId, clips) =>
         clips.map((item: { content: string }, index: number) => ({
@@ -304,13 +277,17 @@ describe("story-to-script runtime", () => {
         })),
     );
 
-    await expect(
-      splitEpisodeIntoClips("user-1", runtimeInput, runtimeHooks()),
-    ).rejects.toThrow("STRUCTURED_PROVIDER_FAILED:524");
-    expect(saveProductionClips).not.toHaveBeenCalled();
+    const result = await splitEpisodeIntoClips(
+      "user-1",
+      runtimeInput,
+      runtimeHooks(),
+    );
+
+    expect(result.clips.map((clip) => clip.content).join("")).toBe(sourceText);
+    expect(result.promptTraces).toEqual([]);
   });
 
-  it("calls the provider when a failed segmentation step is retried", async () => {
+  it("rebuilds clips locally when a failed step is retried", async () => {
     const sourceText = `${"甲在练武场挥剑。".repeat(120)}\n\n乙回到书房。`;
     episodeFindFirst.mockResolvedValue({ novelText: sourceText });
     listProductionClips.mockResolvedValue([]);
@@ -322,29 +299,14 @@ describe("story-to-script runtime", () => {
           content: item.content,
         })),
     );
-    requestOpenAiStructured.mockResolvedValue({
-      data: {
-        clips: [
-          {
-            endUnitId: buildSourceUnits(sourceText).at(-1)!.id,
-            summary: "重试后拆分",
-            location: null,
-            characters: [],
-            props: [],
-          },
-        ],
-      },
-      trace: trace("story_clip_segmentation"),
-    });
-
     const result = await splitEpisodeIntoClips(
       "user-1",
       { ...runtimeInput, resumeExisting: true },
       runtimeHooks(),
     );
 
-    expect(requestOpenAiStructured).toHaveBeenCalledTimes(1);
     expect(result.degraded).toBe(false);
+    expect(result.promptTraces).toEqual([]);
     expect(result.clips.map((clip) => clip.content).join("")).toBe(sourceText);
   });
 
@@ -418,7 +380,7 @@ describe("story-to-script runtime", () => {
     expect(clips.map((clip) => clip.location)).toEqual(["练武场", "书房"]);
   });
 
-  it("uses the active Production Plan without requesting AI segmentation", async () => {
+  it("ignores legacy Production Plan contracts while organizing readable text", async () => {
     const first = "甲先咬牙，双手握拳，挥拳击出，衣袖震动，随后收拳站稳。";
     const second = "乙推开房门，跨过门槛，走到书桌前坐下，随后靠在椅背。";
     const sourceText = `${first}\n${second}`;
@@ -476,12 +438,12 @@ describe("story-to-script runtime", () => {
       runtimeHooks(),
     );
 
-    expect(requestOpenAiStructured).not.toHaveBeenCalled();
     expect(result.clips.map((item) => item.content).join("")).toBe(sourceText);
     expect(saveProductionClips.mock.calls[0][3]).toEqual([
       expect.objectContaining({
         content: sourceText,
-        summary: "练武场动作 / 书房动作",
+        summary:
+          "甲先咬牙，双手握拳，挥拳击出，衣袖震动，随后收拳站稳。 乙推开房门，跨过门槛，走到书桌前坐下，随后靠在椅背。",
       }),
     ]);
   });
@@ -570,21 +532,5 @@ function productionBeat(beatId: string, text: string, location: string) {
     performanceIntent: "动作连续",
     interactions: [],
     effects: [],
-  };
-}
-
-function trace(promptId: string) {
-  return {
-    promptId,
-    agentId: "agent",
-    promptVersion: 3,
-    promptVersionHash: "version-hash",
-    systemHash: "system-hash",
-    model: "model-1",
-    structuredOutputMode: "json_object" as const,
-    repaired: false,
-    correctionAttempts: 0,
-    tokenUsage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-    outputHash: "output-hash",
   };
 }

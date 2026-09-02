@@ -17,7 +17,7 @@ describe("workflow registry", () => {
     ]);
     expect(template?.steps[1]).toMatchObject({
       dependsOn: ["parse"],
-      artifactTypes: ["clips.split", "prompt.trace"],
+      artifactTypes: ["clips.split"],
       retryable: true,
       maxAttempts: 3,
     });
@@ -26,7 +26,6 @@ describe("workflow registry", () => {
       artifactTypes: [
         "screenplay.beats",
         "screenplay.beats.raw",
-        "prompt.trace",
       ],
       retryable: true,
       maxAttempts: 3,

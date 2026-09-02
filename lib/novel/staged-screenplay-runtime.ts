@@ -1,12 +1,5 @@
 import { z } from "zod";
 
-import type { EpisodeProductionContractSubset } from "@/lib/episodes/production-plan";
-import {
-  requestOpenAiStructured,
-  type PromptExecutionTrace,
-} from "@/lib/llm/openai-structured";
-import { StructuredOutputError } from "@/lib/llm/structured-output";
-import { PROMPT_IDS, renderPrompt, type PromptId } from "@/lib/prompts";
 import {
   screenplayAssemblySceneSchema,
   screenplayBeatPlanSchema,
@@ -19,10 +12,6 @@ import { listProductionClips } from "@/lib/production/domain-store";
 import { prisma } from "@/lib/server/prisma";
 
 import {
-  normalizeBeatPlanPayload,
-  normalizeDialoguePlanPayload,
-  normalizeEffectsPlanPayload,
-  normalizeNarrationPlanPayload,
   type ScreenplayAssemblyScene,
   type ScreenplayBeatPlan,
   type ScreenplayContent,
@@ -30,9 +19,9 @@ import {
   type ScreenplayEffectsPlan,
   type ScreenplayNarrationPlan,
 } from "./screenplay-stage-normalization";
+import { organizeApprovedScreenplayClip } from "./approved-screenplay-parser";
 import {
-  buildClipProductionContracts,
-  loadStoryContext,
+  loadLocalScreenplayContext,
   mapWithConcurrency,
   type StoryToScriptRuntimeHooks,
   type StoryToScriptStepInput,
@@ -48,7 +37,6 @@ type StageResult = {
   success: boolean;
   reused: boolean;
   locallyConverted: boolean;
-  trace?: PromptExecutionTrace;
   error?: string;
 };
 
@@ -89,34 +77,14 @@ export async function generateEpisodeScreenplayBeats(
   input: StoryToScriptStepInput,
   hooks: StoryToScriptRuntimeHooks,
 ) {
-  return runClipModelStage({
+  return runLocalClipStage({
     userId,
     input,
     hooks,
     artifactType: "screenplay.beats",
     rawArtifactType: "screenplay.beats.raw",
-    promptId: PROMPT_IDS.STORY_SCREENPLAY_BEATS,
     schema: screenplayBeatPlanSchema,
-    normalize: ({ value, clip, context }) =>
-      normalizeBeatPlanPayload(value, {
-        clipId: clip.id,
-        clipText: clip.content,
-        canonical: context.canonical,
-      }),
-    variables: ({ clip, context, productionPlan }) => ({
-      clip_id: clip.id,
-      clip_text: clip.content,
-      production_plan_json: JSON.stringify(productionPlan ?? {}),
-      character_library: JSON.stringify(context.characters),
-      location_library: JSON.stringify(context.locations),
-      prop_library: JSON.stringify(context.props),
-      world_bible_json: context.worldBibleText,
-      project_style: context.projectStyleDirective,
-      story_world_directive: context.storyWorldDirective,
-      previous_episode_context_json: JSON.stringify(
-        clip.clipIndex === 0 ? (context.previousEpisodeHandoff ?? {}) : {},
-      ),
-    }),
+    select: (organized) => organized.beats,
   });
 }
 
@@ -125,33 +93,14 @@ export async function generateEpisodeScreenplayDialogue(
   input: StoryToScriptStepInput,
   hooks: StoryToScriptRuntimeHooks,
 ) {
-  return runClipModelStage({
+  return runLocalClipStage({
     userId,
     input,
     hooks,
     artifactType: "screenplay.dialogue",
     rawArtifactType: "screenplay.dialogue.raw",
-    promptId: PROMPT_IDS.STORY_SCREENPLAY_DIALOGUE,
     schema: screenplayDialoguePlanSchema,
-    normalize: ({ value, clip, context }) =>
-      normalizeDialoguePlanPayload(value, {
-        clipId: clip.id,
-        defaultCharacter: context.canonical.characters[0],
-      }),
-    variables: async ({ clip, context, productionPlan }) => ({
-      clip_id: clip.id,
-      clip_text: clip.content,
-      beat_plan_json: JSON.stringify(
-        await requireRunArtifact(
-          hooks,
-          "screenplay.beats",
-          clip.id,
-          screenplayBeatPlanSchema,
-        ),
-      ),
-      production_plan_json: JSON.stringify(productionPlan ?? {}),
-      character_library: JSON.stringify(context.characters),
-    }),
+    select: (organized) => organized.dialogue,
   });
 }
 
@@ -160,30 +109,14 @@ export async function generateEpisodeScreenplayNarration(
   input: StoryToScriptStepInput,
   hooks: StoryToScriptRuntimeHooks,
 ) {
-  return runClipModelStage({
+  return runLocalClipStage({
     userId,
     input,
     hooks,
     artifactType: "screenplay.narration",
     rawArtifactType: "screenplay.narration.raw",
-    promptId: PROMPT_IDS.STORY_SCREENPLAY_NARRATION,
     schema: screenplayNarrationPlanSchema,
-    normalize: ({ value, clip }) =>
-      normalizeNarrationPlanPayload(value, { clipId: clip.id }),
-    variables: async ({ clip, context, productionPlan }) => ({
-      clip_id: clip.id,
-      clip_text: clip.content,
-      beat_plan_json: JSON.stringify(
-        await requireRunArtifact(
-          hooks,
-          "screenplay.beats",
-          clip.id,
-          screenplayBeatPlanSchema,
-        ),
-      ),
-      production_plan_json: JSON.stringify(productionPlan ?? {}),
-      character_library: JSON.stringify(context.characters),
-    }),
+    select: (organized) => organized.narration,
   });
 }
 
@@ -192,39 +125,14 @@ export async function generateEpisodeScreenplayEffects(
   input: StoryToScriptStepInput,
   hooks: StoryToScriptRuntimeHooks,
 ) {
-  return runClipModelStage({
+  return runLocalClipStage({
     userId,
     input,
     hooks,
     artifactType: "screenplay.effects",
     rawArtifactType: "screenplay.effects.raw",
-    promptId: PROMPT_IDS.STORY_SCREENPLAY_EFFECTS,
     schema: screenplayEffectsPlanSchema,
-    normalize: ({ value, clip, context }) =>
-      normalizeEffectsPlanPayload(value, {
-        clipId: clip.id,
-        clipText: clip.content,
-        defaultPerformer: context.canonical.characters[0],
-      }),
-    variables: async ({ clip, context, productionPlan }) => ({
-      clip_id: clip.id,
-      clip_text: clip.content,
-      beat_plan_json: JSON.stringify(
-        await requireRunArtifact(
-          hooks,
-          "screenplay.beats",
-          clip.id,
-          screenplayBeatPlanSchema,
-        ),
-      ),
-      production_plan_json: JSON.stringify(productionPlan ?? {}),
-      character_library: JSON.stringify(context.characters),
-      prop_library: JSON.stringify(context.props),
-      world_bible_json: context.worldBibleText,
-      project_style: context.projectStyleDirective,
-      story_world_directive: context.storyWorldDirective,
-      effect_library_json: JSON.stringify(context.effectLibrary),
-    }),
+    select: (organized) => organized.effects,
   });
 }
 
@@ -234,7 +142,7 @@ export async function assembleEpisodeScreenplays(
   hooks: StoryToScriptRuntimeHooks,
 ) {
   await hooks.assertActive();
-  const context = await loadStoryContext(userId, input);
+  const context = await loadLocalScreenplayContext(userId, input);
   const clips = await requireClips(userId, input);
   const targets: SceneTarget[] = [];
   for (const clip of clips) {
@@ -390,9 +298,7 @@ export async function assembleEpisodeScreenplays(
     locallyConvertedCount: results.filter((result) => result.locallyConverted)
       .length,
     results: completedClips,
-    promptTraces: results.flatMap((result) =>
-      result.trace ? [result.trace] : [],
-    ),
+    promptTraces: [],
   };
 }
 
@@ -440,35 +346,20 @@ export function isProducibleScreenplay(
   );
 }
 
-async function runClipModelStage<T>(config: {
+async function runLocalClipStage<T>(config: {
   userId: string;
   input: StoryToScriptStepInput;
   hooks: StoryToScriptRuntimeHooks;
   artifactType: string;
   rawArtifactType: string;
-  promptId: PromptId;
   schema: z.ZodType<T>;
-  normalize: (stage: {
-    value: unknown;
-    clip: ProductionClip;
-    context: Awaited<ReturnType<typeof loadStoryContext>>;
-  }) => T;
-  variables: (stage: {
-    clip: ProductionClip;
-    context: Awaited<ReturnType<typeof loadStoryContext>>;
-    productionPlan?: EpisodeProductionContractSubset;
-  }) => Record<string, string> | Promise<Record<string, string>>;
+  select: (
+    organized: ReturnType<typeof organizeApprovedScreenplayClip>,
+  ) => unknown;
 }) {
   await config.hooks.assertActive();
-  const context = await loadStoryContext(config.userId, config.input);
+  const context = await loadLocalScreenplayContext(config.userId, config.input);
   const clips = await requireClips(config.userId, config.input);
-  const productionPlans = context.productionPlan
-    ? buildClipProductionContracts(
-        context.sourceText,
-        clips,
-        context.productionPlan,
-      )
-    : new Map<string, EpisodeProductionContractSubset>();
   const results = await mapWithConcurrency(
     clips,
     config.input.concurrency ?? context.workflowConcurrency,
@@ -492,21 +383,12 @@ async function runClipModelStage<T>(config: {
       }
       try {
         await markClipStatus(clip.id, "screenplay_running");
-        const result = await requestOpenAiStructured({
-          ...context.provider,
-          prompt: renderPrompt({
-            id: config.promptId,
-            locale: config.input.locale ?? "zh",
-            variables: await config.variables({
-              clip,
-              context,
-              productionPlan: productionPlans.get(clip.id),
-            }),
-          }),
-          schema: config.schema,
-          normalizeRaw: (value) => config.normalize({ value, clip, context }),
-          maxTransportAttempts: 1,
-        });
+        const organized = organizeApprovedScreenplayClip(
+          clip.id,
+          clip.content,
+          context.canonical,
+        );
+        const data = config.schema.parse(config.select(organized));
         await persistRawArtifact(
           config.hooks,
           config.rawArtifactType,
@@ -514,48 +396,19 @@ async function runClipModelStage<T>(config: {
           {
             clipId: clip.id,
             clipIndex: clip.clipIndex,
-            promptId: config.promptId,
-            outputText: result.outputText,
-            locallyConverted: false,
+            sourceText: clip.content,
+            locallyConverted: true,
           },
         );
-        const data = config.schema.parse(
-          config.normalize({ value: result.data, clip, context }),
-        );
         await config.hooks.persistArtifact(config.artifactType, clip.id, data);
-        await config.hooks.persistArtifact(
-          "prompt.trace",
-          clip.id,
-          result.trace,
-        );
         return {
           clipId: clip.id,
           clipIndex: clip.clipIndex,
           success: true,
           reused: false,
-          locallyConverted: false,
-          trace: result.trace,
+          locallyConverted: true,
         };
       } catch (error) {
-        const converted = await convertStructuredFailure({
-          error,
-          hooks: config.hooks,
-          rawArtifactType: config.rawArtifactType,
-          artifactType: config.artifactType,
-          refId: clip.id,
-          promptId: config.promptId,
-          clip,
-          schema: config.schema,
-          normalize: (value) => config.normalize({ value, clip, context }),
-        });
-        if (converted)
-          return {
-            clipId: clip.id,
-            clipIndex: clip.clipIndex,
-            success: true,
-            reused: false,
-            locallyConverted: true,
-          };
         const message = errorMessage(error);
         await markClipStatus(clip.id, "screenplay_failed");
         await config.hooks.persistArtifact(
@@ -586,44 +439,8 @@ async function runClipModelStage<T>(config: {
     locallyConvertedCount: results.filter((result) => result.locallyConverted)
       .length,
     results,
-    promptTraces: results.flatMap((result) =>
-      result.trace ? [result.trace] : [],
-    ),
+    promptTraces: [],
   };
-}
-
-async function convertStructuredFailure<T>(input: {
-  error: unknown;
-  hooks: StoryToScriptRuntimeHooks;
-  rawArtifactType: string;
-  artifactType: string;
-  refId: string;
-  promptId: PromptId;
-  clip: ProductionClip;
-  sceneIndex?: number;
-  schema: z.ZodType<T>;
-  normalize: (value: unknown) => T;
-}) {
-  if (!(input.error instanceof StructuredOutputError)) return null;
-  const outputText = input.error.rawText.trim();
-  if (!outputText) return null;
-  await persistRawArtifact(input.hooks, input.rawArtifactType, input.refId, {
-    clipId: input.clip.id,
-    clipIndex: input.clip.clipIndex,
-    ...(input.sceneIndex === undefined ? {} : { sceneIndex: input.sceneIndex }),
-    promptId: input.promptId,
-    outputText: input.error.rawText,
-    locallyConverted: true,
-    conversionReason: input.error.message,
-  });
-  const parsed = input.schema.safeParse(input.normalize(input.error.rawText));
-  if (!parsed.success) return null;
-  await input.hooks.persistArtifact(
-    input.artifactType,
-    input.refId,
-    parsed.data,
-  );
-  return parsed.data;
 }
 
 async function requireRunArtifact<T>(

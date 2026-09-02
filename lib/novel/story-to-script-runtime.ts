@@ -9,14 +9,8 @@ import {
   loadProjectAssetStoryWorldContext,
 } from "@/lib/assets/story-world";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
-import {
-  requestOpenAiStructured,
-  type PromptExecutionTrace,
-} from "@/lib/llm/openai-structured";
-import { StructuredOutputError } from "@/lib/llm/structured-output";
-import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
-import { clipSegmentationSchema } from "@/lib/prompts/schemas";
-import { validateClipSegmentation } from "@/lib/prompts/validators";
+import type { PromptExecutionTrace } from "@/lib/llm/openai-structured";
+import type { PromptLocale } from "@/lib/prompts";
 import {
   listProductionClips,
   listProductionProps,
@@ -31,6 +25,7 @@ import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { listNovelCharacters, listNovelLocations } from "./domain-store";
 import { loadPreviousEpisodeHandoff } from "./episode-continuity";
+import { splitApprovedScreenplayScenes } from "./approved-screenplay-parser";
 
 export { extractProjectEffectLibrary } from "@/lib/production/effect-library";
 
@@ -96,7 +91,7 @@ export async function splitEpisodeIntoClips(
   hooks: StoryToScriptRuntimeHooks,
 ) {
   await hooks.assertActive();
-  const context = await loadStoryContext(userId, input);
+  const context = await loadLocalScreenplayContext(userId, input);
   const existing = await listProductionClips(
     userId,
     input.projectId,
@@ -105,13 +100,7 @@ export async function splitEpisodeIntoClips(
   if (
     input.resumeExisting &&
     existing &&
-    hasCompleteClipCoverage(context.sourceText, existing) &&
-    (!context.productionPlan ||
-      hasProductionPlanClipAlignment(
-        context.sourceText,
-        existing,
-        context.productionPlan,
-      ))
+    hasCompleteClipCoverage(context.sourceText, existing)
   ) {
     const payload = {
       clips: existing,
@@ -125,50 +114,13 @@ export async function splitEpisodeIntoClips(
   }
 
   let segmentedClips: SegmentedClip[];
-  let degraded = false;
-  let fallbackReason: string | undefined;
+  const degraded = false;
+  const fallbackReason: string | undefined = undefined;
   const promptTraces: PromptExecutionTrace[] = [];
-  if (context.productionPlan) {
-    segmentedClips = buildBeatAwareClipSegmentation(
-      context.sourceText,
-      context.productionPlan,
-      context.canonical,
-      context.screenplayClipMaxChars,
-    );
-  } else
-    try {
-      const sourceUnits = buildSourceUnits(context.sourceText);
-      const result = await requestOpenAiStructured({
-        ...context.provider,
-        prompt: renderPrompt({
-          id: PROMPT_IDS.STORY_CLIP_SEGMENTATION,
-          locale: input.locale ?? "zh",
-          variables: {
-            source_units_json: JSON.stringify(sourceUnits),
-            character_library: JSON.stringify(context.characters),
-            location_library: JSON.stringify(context.locations),
-            prop_library: JSON.stringify(context.props),
-          },
-        }),
-        schema: clipSegmentationSchema,
-        validate: (data) =>
-          validateClipSegmentation(data, {
-            sourceUnits,
-            canonical: context.canonical,
-          }),
-      });
-      segmentedClips = restoreSourceBackedClips(result.data.clips, sourceUnits);
-      promptTraces.push(result.trace);
-    } catch (error) {
-      if (!isSegmentationContractFailure(error)) throw error;
-      segmentedClips = buildDeterministicClipSegmentation(
-        context.sourceText,
-        context.canonical,
-        context.screenplayClipMaxChars,
-      );
-      degraded = true;
-      fallbackReason = error instanceof Error ? error.message : String(error);
-    }
+  segmentedClips = buildApprovedScreenplayClipSegmentation(
+    context.sourceText,
+    context.canonical,
+  );
   segmentedClips = normalizeScreenplayClipSizes(
     segmentedClips,
     context.canonical,
@@ -227,6 +179,33 @@ export function buildDeterministicClipSegmentation(
       .sort((left, right) => right.index - left.index)[0]?.name;
     const props = canonical.props.filter((name) => text.includes(name));
     const excerpt = text.trim().replace(/\s+/g, " ").slice(0, 80);
+    return {
+      start: text.slice(0, Math.min(40, text.length)),
+      end: text.slice(Math.max(0, text.length - 40)),
+      text,
+      summary: excerpt || "Untitled clip",
+      location: location ?? null,
+      characters,
+      props,
+    };
+  });
+}
+
+export function buildApprovedScreenplayClipSegmentation(
+  sourceText: string,
+  canonical: CanonicalContext,
+): SegmentedClip[] {
+  return splitApprovedScreenplayScenes(sourceText).map((text) => {
+    const characters = canonical.characters.filter((name) => text.includes(name));
+    const location = canonical.locations
+      .map((name) => ({ name, index: text.lastIndexOf(name) }))
+      .filter((item) => item.index >= 0)
+      .sort((left, right) => right.index - left.index)[0]?.name;
+    const props = canonical.props.filter((name) => text.includes(name));
+    const action = text.match(
+      /(?:^|\n)\s*(?:画面与动作|画面动作|动作|visual and action|action)\s*[：:]\s*([^\n]+)/iu,
+    )?.[1];
+    const excerpt = (action ?? text).trim().replace(/\s+/gu, " ").slice(0, 80);
     return {
       start: text.slice(0, Math.min(40, text.length)),
       end: text.slice(Math.max(0, text.length - 40)),
@@ -379,25 +358,6 @@ function resolveProductionBeatSpans(
   return spans;
 }
 
-function hasProductionPlanClipAlignment(
-  sourceText: string,
-  clips: ReadonlyArray<{ content: string }>,
-  plan: EpisodeProductionPlan,
-) {
-  try {
-    const boundaries = new Set(
-      resolveProductionBeatSpans(sourceText, plan).map((span) => span.end),
-    );
-    let cursor = 0;
-    return clips.every((clip) => {
-      cursor += clip.content.length;
-      return boundaries.has(cursor);
-    });
-  } catch {
-    return false;
-  }
-}
-
 export function buildClipProductionContracts(
   sourceText: string,
   clips: ReadonlyArray<{ id: string; content: string }>,
@@ -432,15 +392,6 @@ export function buildClipProductionContracts(
 }
 
 class ClipSegmentationBoundaryError extends Error {}
-
-function isSegmentationContractFailure(error: unknown) {
-  return (
-    error instanceof StructuredOutputError ||
-    error instanceof ClipSegmentationBoundaryError ||
-    (error instanceof Error &&
-      /^STRUCTURED_(?:JSON|SCHEMA|SEMANTIC)_INVALID:/.test(error.message))
-  );
-}
 
 export function normalizeScreenplayClipSizes(
   clips: readonly SegmentedClip[],
@@ -684,6 +635,42 @@ export async function loadStoryContext(
         ? ("json_schema" as const)
         : ("json_object" as const),
     },
+  };
+}
+
+export async function loadLocalScreenplayContext(
+  userId: string,
+  input: Pick<StoryToScriptStepInput, "projectId" | "episodeId" | "sourceText">,
+) {
+  const [episode, characters, locations, props, runtimeSettings] =
+    await Promise.all([
+      prisma.episode.findFirst({
+        where: {
+          id: input.episodeId,
+          projectId: input.projectId,
+          project: { userId },
+        },
+        select: { novelText: true },
+      }),
+      listNovelCharacters(userId, input.projectId),
+      listNovelLocations(userId, input.projectId),
+      listProductionProps(userId, input.projectId),
+      loadUserRuntimeSettings(userId),
+    ]);
+  if (!episode) throw new Error("STORY_EPISODE_NOT_FOUND");
+  if (!characters || !locations || !props)
+    throw new Error("STORY_PROJECT_NOT_FOUND");
+  const sourceText = input.sourceText ?? episode.novelText;
+  if (!sourceText?.trim()) throw new Error("STORY_SOURCE_TEXT_REQUIRED");
+  return {
+    sourceText,
+    canonical: {
+      characters: characters.map((character) => character.name),
+      locations: locations.map((location) => location.name),
+      props: props.map((prop) => prop.name),
+    },
+    workflowConcurrency: runtimeSettings.workflowConcurrency,
+    screenplayClipMaxChars: runtimeSettings.screenplayClipMaxChars,
   };
 }
 

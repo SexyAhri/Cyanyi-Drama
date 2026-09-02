@@ -1,29 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { StructuredOutputError } from "@/lib/llm/structured-output";
 import {
   screenplayAssemblySceneSchema,
   screenplayBeatPlanSchema,
 } from "@/lib/prompts/schemas";
 
-const requestOpenAiStructured = vi.hoisted(() => vi.fn());
 const listProductionClips = vi.hoisted(() => vi.fn());
 const storyClipUpdate = vi.hoisted(() => vi.fn());
-const loadStoryContext = vi.hoisted(() => vi.fn());
+const loadLocalScreenplayContext = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/llm/openai-structured", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/lib/llm/openai-structured")
-  >()),
-  requestOpenAiStructured,
-}));
 vi.mock("@/lib/production/domain-store", () => ({ listProductionClips }));
 vi.mock("@/lib/server/prisma", () => ({
   prisma: { storyClip: { update: storyClipUpdate } },
 }));
 vi.mock("./story-to-script-runtime", () => ({
   buildClipProductionContracts: vi.fn(() => new Map()),
-  loadStoryContext,
+  loadLocalScreenplayContext,
   mapWithConcurrency: async <T, R>(
     values: T[],
     _concurrency: number,
@@ -40,7 +32,6 @@ import {
   assembleSceneLocally,
   generateEpisodeScreenplayBeats,
   isProducibleScreenplay,
-  ScreenplayStageBatchError,
 } from "./staged-screenplay-runtime";
 
 const runtimeInput = {
@@ -63,7 +54,7 @@ beforeEach(() => {
       status: "split_ready",
     },
   ]);
-  loadStoryContext.mockResolvedValue({
+  loadLocalScreenplayContext.mockResolvedValue({
     sourceText: "韩宇举起铁石。",
     productionPlan: null,
     characters: [{ name: "韩宇" }],
@@ -108,20 +99,20 @@ beforeEach(() => {
 });
 
 describe("staged screenplay generation", () => {
-  it("persists the raw model response and a locally normalized beat plan", async () => {
-    requestOpenAiStructured.mockResolvedValue({
-      data: {
-        clipId: "model-changed-this-id",
-        scenes: [
-          {
-            location: "练武场",
-            actions: ["韩宇屈膝发力，举起铁石。"],
-          },
-        ],
+  it("organizes approved scene text locally without another model request", async () => {
+    listProductionClips.mockResolvedValue([
+      {
+        id: "clip-1",
+        clipIndex: 0,
+        content: `场次 01｜预计时长：10 秒｜外景·练武场·夜
+画面与动作：韩宇屈膝发力，举起铁石后平稳落地。
+镜头表达：中景稳定跟随。
+对白/旁白：韩宇（内心独白）：我一定要变强；旁白：寒风掠过练武场。
+声音与氛围：寒风声、铁石落地闷响。`,
+        screenplay: null,
+        status: "split_ready",
       },
-      outputText: '{"scenes":[{"location":"练武场"}]}',
-      trace: trace("story_screenplay_beats"),
-    });
+    ]);
     const hooks = runtimeHooks();
 
     const result = await generateEpisodeScreenplayBeats(
@@ -131,18 +122,12 @@ describe("staged screenplay generation", () => {
     );
 
     expect(result.clipCount).toBe(1);
-    expect(requestOpenAiStructured).toHaveBeenCalledTimes(1);
-    expect(
-      JSON.stringify(requestOpenAiStructured.mock.calls[0][0]),
-    ).toContain("上一集交接包");
-    expect(
-      JSON.stringify(requestOpenAiStructured.mock.calls[0][0]),
-    ).toContain("韩宇捧着典籍");
+    expect(result.locallyConvertedCount).toBe(1);
     expect(hooks.persistArtifact).toHaveBeenCalledWith(
       "screenplay.beats.raw",
       "clip-1",
       expect.objectContaining({
-        outputText: '{"scenes":[{"location":"练武场"}]}',
+        locallyConverted: true,
       }),
     );
     expect(hooks.persistArtifact).toHaveBeenCalledWith(
@@ -152,21 +137,15 @@ describe("staged screenplay generation", () => {
         clipId: "clip-1",
         scenes: [
           expect.objectContaining({
-            beats: [{ text: "韩宇屈膝发力，举起铁石。" }],
+            heading: { intExt: "EXT", location: "练武场", time: "夜" },
+            beats: [{ text: "韩宇屈膝发力，举起铁石后平稳落地。" }],
           }),
         ],
       }),
     );
   });
 
-  it("converts a non-JSON model response locally without another request", async () => {
-    requestOpenAiStructured.mockRejectedValue(
-      new StructuredOutputError(
-        "STRUCTURED_JSON_INVALID",
-        ["not json"],
-        "韩宇屈膝发力，终于举起铁石。",
-      ),
-    );
+  it("keeps plain text as a producible action instead of rejecting it", async () => {
     const hooks = runtimeHooks();
 
     const result = await generateEpisodeScreenplayBeats(
@@ -175,7 +154,6 @@ describe("staged screenplay generation", () => {
       hooks,
     );
 
-    expect(requestOpenAiStructured).toHaveBeenCalledTimes(1);
     expect(result.locallyConvertedCount).toBe(1);
     expect(hooks.persistArtifact).toHaveBeenCalledWith(
       "screenplay.beats.raw",
@@ -186,69 +164,6 @@ describe("staged screenplay generation", () => {
       ([type]) => type === "screenplay.beats",
     )?.[2];
     expect(screenplayBeatPlanSchema.safeParse(derived).success).toBe(true);
-  });
-
-  it("does not retry a provider network failure", async () => {
-    requestOpenAiStructured.mockRejectedValue(
-      new Error("STRUCTURED_PROVIDER_FAILED:524:gateway timeout"),
-    );
-
-    await expect(
-      generateEpisodeScreenplayBeats(
-        "user-1",
-        runtimeInput,
-        runtimeHooks(),
-      ),
-    ).rejects.toBeInstanceOf(ScreenplayStageBatchError);
-    expect(requestOpenAiStructured).toHaveBeenCalledTimes(1);
-    expect(storyClipUpdate).toHaveBeenLastCalledWith({
-      where: { id: "clip-1" },
-      data: { status: "screenplay_failed" },
-    });
-  });
-
-  it("sends the previous-episode handoff only with the first clip", async () => {
-    listProductionClips.mockResolvedValue([
-      {
-        id: "clip-1",
-        clipIndex: 0,
-        content: "韩宇收起典籍。",
-        screenplay: null,
-        status: "split_ready",
-      },
-      {
-        id: "clip-2",
-        clipIndex: 1,
-        content: "韩宇离开卧房。",
-        screenplay: null,
-        status: "split_ready",
-      },
-    ]);
-    requestOpenAiStructured.mockImplementation(async (input) => ({
-      data: {
-        clipId: JSON.stringify(input.prompt).includes("clip-2")
-          ? "clip-2"
-          : "clip-1",
-        scenes: [
-          {
-            heading: { intExt: "INT", location: "卧房", time: "夜" },
-            description: "卧房内",
-            characters: ["韩宇"],
-            beats: [{ text: "韩宇行动。" }],
-          },
-        ],
-      },
-      outputText: "{}",
-      trace: trace("story_screenplay_beats"),
-    }));
-
-    await generateEpisodeScreenplayBeats("user-1", runtimeInput, runtimeHooks());
-
-    const requests = requestOpenAiStructured.mock.calls.map(([request]) =>
-      JSON.stringify(request),
-    );
-    expect(requests[0]).toContain("韩宇捧着典籍");
-    expect(requests[1]).not.toContain("韩宇捧着典籍");
   });
 
   it("assembles approved stage outputs locally without another model request", async () => {
@@ -287,7 +202,6 @@ describe("staged screenplay generation", () => {
 
     await assembleEpisodeScreenplays("user-1", runtimeInput, hooks);
 
-    expect(requestOpenAiStructured).not.toHaveBeenCalled();
     const screenplay = JSON.parse(
       storyClipUpdate.mock.calls.at(-1)?.[0].data.screenplay,
     );
@@ -436,21 +350,5 @@ function effectDesign() {
     vfxPlan: [],
     sfxPlan: [],
     evidence: ["深冬入夜"],
-  };
-}
-
-function trace(promptId: string) {
-  return {
-    promptId,
-    agentId: "agent",
-    promptVersion: 1,
-    promptVersionHash: "version-hash",
-    systemHash: "system-hash",
-    model: "model-1",
-    structuredOutputMode: "json_object" as const,
-    repaired: false,
-    correctionAttempts: 0,
-    tokenUsage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-    outputHash: "output-hash",
   };
 }

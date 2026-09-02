@@ -29,7 +29,7 @@ const templates = new Map<string, WorkflowTemplate>([
           key: "split",
           type: "split_clips",
           dependsOn: ["parse"],
-          artifactTypes: ["clips.split", "prompt.trace"],
+          artifactTypes: ["clips.split"],
           retryable: true,
           maxAttempts: 3,
         },
@@ -40,7 +40,6 @@ const templates = new Map<string, WorkflowTemplate>([
           artifactTypes: [
             "screenplay.beats",
             "screenplay.beats.raw",
-            "prompt.trace",
           ],
           retryable: true,
           maxAttempts: 3,
@@ -52,7 +51,6 @@ const templates = new Map<string, WorkflowTemplate>([
           artifactTypes: [
             "screenplay.dialogue",
             "screenplay.dialogue.raw",
-            "prompt.trace",
           ],
           retryable: true,
           maxAttempts: 3,
@@ -64,7 +62,6 @@ const templates = new Map<string, WorkflowTemplate>([
           artifactTypes: [
             "screenplay.narration",
             "screenplay.narration.raw",
-            "prompt.trace",
           ],
           retryable: true,
           maxAttempts: 3,
@@ -76,7 +73,6 @@ const templates = new Map<string, WorkflowTemplate>([
           artifactTypes: [
             "screenplay.effects",
             "screenplay.effects.raw",
-            "prompt.trace",
           ],
           retryable: true,
           maxAttempts: 3,

@@ -53,7 +53,7 @@ export async function POST(request: Request, context: Context) {
         key: "split_clips",
         type: "split_clips",
         dependsOn: ["analyze_novel"],
-        artifactTypes: ["clips.split", "prompt.trace"],
+        artifactTypes: ["clips.split"],
         input: { channelId, model, locale },
         retryable: true,
         maxAttempts: runtimeSettings.workflowStepMaxAttempts,
@@ -65,7 +65,6 @@ export async function POST(request: Request, context: Context) {
         artifactTypes: [
           "screenplay.beats",
           "screenplay.beats.raw",
-          "prompt.trace",
         ],
         input: { channelId, model, locale, concurrency },
         retryable: true,
@@ -78,7 +77,6 @@ export async function POST(request: Request, context: Context) {
         artifactTypes: [
           "screenplay.dialogue",
           "screenplay.dialogue.raw",
-          "prompt.trace",
         ],
         input: { channelId, model, locale, concurrency },
         retryable: true,
@@ -91,7 +89,6 @@ export async function POST(request: Request, context: Context) {
         artifactTypes: [
           "screenplay.narration",
           "screenplay.narration.raw",
-          "prompt.trace",
         ],
         input: { channelId, model, locale, concurrency },
         retryable: true,
@@ -104,7 +101,6 @@ export async function POST(request: Request, context: Context) {
         artifactTypes: [
           "screenplay.effects",
           "screenplay.effects.raw",
-          "prompt.trace",
         ],
         input: { channelId, model, locale, concurrency },
         retryable: true,
