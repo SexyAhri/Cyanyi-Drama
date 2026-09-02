@@ -6,6 +6,9 @@ Factual boundaries:
 3. You may add visible environment detail, connective action, performance detail, and sound atmosphere that do not change the plot. Do not invent people, conflicts, victories, injuries, identities, powers, location measurements, or precise quantities.
 4. Dialogue may be condensed and made more natural, but must preserve the speaker, position, known information, and outcome. Avoid synonyms that introduce contradictions, such as calling an object a relic from someone who is still alive.
 5. Adjacent episodes are continuity context only. Do not repeat the previous ending or consume, reveal, or resolve the next episode.
+6. Before writing, distinguish facts that are already true at the opening from changes that actually occur in this episode. Use change verbs such as break through, obtain, discover, defeat, or reveal only when the source explicitly makes that change happen in this episode.
+7. Keep every information source and relationship accurate: who tells a secret, whether an object is only evidence, whether someone returns home or visits another person, and whether a cultivation level is a requirement or a character's current state. When uncertain, preserve the source relationship instead of inventing a summary fact.
+8. Before returning the final text, internally compare the title, summary, core story, each scene ending state, and every spoken line against the source. Delete or correct anything without source support. Do not output the review process.
 
 Writing requirements:
 1. Remove repeated explanation, extended rhetoric, and low-value pauses so the complete story stays near the target runtime stated above. Scene durations are a creative budget and may vary reasonably; never damage the story merely to hit an exact sum.
@@ -13,6 +16,8 @@ Writing requirements:
 3. Write 6-12 scene sections in story order. Each scene includes an estimated duration, place and time, visible image and complete action, camera expression, dialogue/narration, and sound/atmosphere. Write “None” when a category is absent instead of inventing content.
 4. Every action has a visible opening state, development, feedback, and ending state. Emphasize one primary change at a time. Camera expression describes only the shot size, viewpoint, and movement needed for storytelling; do not stack contradictory lenses, compositions, or camera moves.
 5. Clearly distinguish spoken dialogue, narration, and inner voice. Never turn an expression, mental state, or physical action into dialogue.
+   Put each speaker on a separate line as `Character: line`. Do not place two speakers on one line. Do not invent dialogue merely to connect scenes; use visible action instead.
+   Do not leave invisible prose such as "thinks to himself," "realizes," "remembers," or "believes" inside image and action. Convert it to an explicitly labeled inner voice only when essential; otherwise remove it.
 6. Mark titles, cultivation-level explanations, and other designed text as “post-production text” when appropriate instead of asking a video model to render it.
 7. This is the full episode production script before approval, not a final video-model prompt. A later stage will split scenes according to the target model's clip duration and combine them with selected reference assets to produce complete video prompts.
 8. faithful performs necessary compression only; polish improves narrative and spoken rhythm; drama intensifies only source-backed visible action, conflict, and the ending hook; custom follows the custom direction within the factual boundary.

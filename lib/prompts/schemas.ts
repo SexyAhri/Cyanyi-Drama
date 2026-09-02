@@ -88,29 +88,29 @@ const characterSchema = z
     aliases: stringList,
     profile: z.record(z.string(), z.unknown()).default({}),
     introduction: optionalText,
-    evidence: evidenceQuotes,
+    evidence: z.array(exactText).max(12).default([]),
   })
-  .strict();
+  .strip();
 
 const locationSchema = z
   .object({
     name: text,
     summary: optionalText,
-    evidence: evidenceQuotes,
+    evidence: z.array(exactText).max(12).default([]),
   })
-  .strict();
+  .strip();
 
 const propSchema = z
   .object({
     name: text,
     summary: optionalText,
-    evidence: evidenceQuotes,
+    evidence: z.array(exactText).max(12).default([]),
   })
-  .strict();
+  .strip();
 
 export const characterAnalysisSchema = z
   .object({ characters: z.array(characterSchema).max(200) })
-  .strict();
+  .strip();
 
 export const locationPropAnalysisSchema = z
   .object({
@@ -194,7 +194,7 @@ export const screenplayBeatPlanSchema = z
       .min(1)
       .max(200),
   })
-  .strict();
+  .strip();
 
 const orderedPlacementFields = {
   sceneIndex: z.number().int().nonnegative(),

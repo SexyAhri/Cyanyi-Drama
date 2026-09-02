@@ -24,7 +24,7 @@ export type ApprovedScreenplayCanonicalContext = {
 };
 
 const SCENE_HEADER =
-  /^\s*(?:#{1,6}\s*)?(?:场次|场景|scene)\s*[\d一二三四五六七八九十百零]*\s*(?:[｜|].*)?$/gimu;
+  /^\s*(?:#{1,6}\s*)?(?:\*{1,2}|_{1,2})?\s*(?:场次|场景|scene)\s*[\d一二三四五六七八九十百零]*\s*(?:[｜|].*?)?\s*(?:\*{1,2}|_{1,2})?\s*$/gimu;
 
 const FIELD_LABELS = new Map<string, keyof SceneFields>([
   ["画面与动作", "action"],
@@ -225,10 +225,11 @@ function readFields(sourceText: string): SceneFields {
     const key = labeled ? FIELD_LABELS.get(normalizeLabel(labeled[1])) : null;
     if (key) {
       active = key;
-      if (labeled?.[2].trim()) fields[key].push(labeled[2].trim());
+      const inlineValue = cleanMarkdownWrap(labeled?.[2] ?? "");
+      if (inlineValue) fields[key].push(inlineValue);
       continue;
     }
-    if (active && line) fields[active].push(line);
+    if (active && line) fields[active].push(cleanMarkdownWrap(line));
   }
   return fields;
 }
@@ -237,6 +238,10 @@ function parseSpokenLines(value: string): ApprovedScreenplayLine[] {
   if (!value.trim() || isNone(value)) return [];
   const candidates = value
     .replace(/；(?=\s*[^；：:]{1,40}[：:])/gu, "\n")
+    .replace(
+      /\s+(?=[^，。！？!?；;：:\n]{1,24}(?:[（(][^）)\n]{1,20}[）)])?\s*[：:])/gu,
+      "\n",
+    )
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .filter(Boolean);
@@ -277,7 +282,9 @@ function parseSpokenLines(value: string): ApprovedScreenplayLine[] {
 }
 
 function parseHeading(header: string) {
-  const finalPart = header.split(/[｜|]/u).at(-1)?.trim() ?? "";
+  const finalPart = cleanMarkdownWrap(
+    header.split(/[｜|]/u).at(-1)?.trim() ?? "",
+  );
   const tokens = finalPart.split(/[·•]/u).map((item) => item.trim()).filter(Boolean);
   const intExtToken = tokens[0] ?? "";
   const hasIntExt = /^(?:内景|外景|内|外|INT|EXT)$/iu.test(intExtToken);
@@ -307,7 +314,7 @@ function fallbackAction(sourceText: string, header: string) {
     .filter(
       (line) =>
         line &&
-        !/^(?:标题|梗概|正文|成片规格|核心剧情|全局视听规则)\s*[:：]/u.test(line),
+        !/^(?:\*{1,2}|_{1,2})?\s*(?:标题|梗概|正文|成片规格|核心剧情|全局视听规则)\s*[:：]/u.test(line),
     )
     .join("\n")
     .trim();
@@ -323,7 +330,14 @@ function isNone(value: string) {
 }
 
 function normalizeLabel(value: string) {
-  return value.trim().toLowerCase().replace(/\s+/gu, " ");
+  return cleanMarkdownWrap(value).toLowerCase().replace(/\s+/gu, " ");
+}
+
+function cleanMarkdownWrap(value: string) {
+  return value
+    .trim()
+    .replace(/^(?:\*{1,2}|_{1,2})\s*|\s*(?:\*{1,2}|_{1,2})$/gu, "")
+    .trim();
 }
 
 function inferInterior(location: string): "INT" | "EXT" {

@@ -214,24 +214,48 @@ export async function assertEpisodeHasNoDownstream(input: {
 export function parseAdaptationText(value: string) {
   const normalized = value.trim();
   const titleMatch = normalized.match(
-    /(?:^|\n)\s*(?:#{1,6}\s*)?(?:标题|title)\s*[：:]\s*(.+?)\s*(?:\n|$)/iu,
+    /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\*{1,2}|_{1,2})?\s*(?:标题|title)\s*[：:]\s*(.+?)\s*(?:\n|$)/iu,
   );
   const summaryMatch = normalized.match(
-    /(?:^|\n)\s*(?:#{1,6}\s*)?(?:梗概|简介|summary|synopsis)\s*[：:]\s*([\s\S]*?)(?=\n\s*(?:#{1,6}\s*)?(?:正文|改编正文|script|adapted\s*text)\s*[：:]|$)/iu,
+    /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\*{1,2}|_{1,2})?\s*(?:梗概|简介|summary|synopsis)\s*[：:]\s*([\s\S]*?)(?=\n\s*(?:#{1,6}\s*)?(?:\*{1,2}|_{1,2})?\s*(?:正文|改编正文|script|adapted\s*text)\s*[：:]|$)/iu,
   );
   const contentMatch = normalized.match(
-    /(?:^|\n)\s*(?:#{1,6}\s*)?(?:正文|改编正文|script|adapted\s*text)\s*[：:]\s*([\s\S]+)$/iu,
+    /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\*{1,2}|_{1,2})?\s*(?:正文|改编正文|script|adapted\s*text)\s*[：:]\s*([\s\S]+)$/iu,
   );
-  const content = contentMatch?.[1].trim() || normalized;
+  const content = cleanBodyLabelValue(contentMatch?.[1]) || normalized;
   return {
     title: cleanSingleLine(titleMatch?.[1]) || null,
-    summary: summaryMatch?.[1].trim() || null,
+    summary: cleanMultilineLabelValue(summaryMatch?.[1]) || null,
     content,
   };
 }
 
 function cleanSingleLine(value: string | undefined) {
-  return value?.replace(/^\*+|\*+$/gu, "").trim().slice(0, 160) || "";
+  return (
+    value
+      ?.replace(/^(?:\*{1,2}|_{1,2})\s*|\s*(?:\*{1,2}|_{1,2})$/gu, "")
+      .trim()
+      .slice(0, 160) || ""
+  );
+}
+
+function cleanMultilineLabelValue(value: string | undefined) {
+  return (
+    value
+      ?.trim()
+      .replace(/^(?:\*{1,2}|_{1,2})\s*/u, "")
+      .replace(/\s*(?:\*{1,2}|_{1,2})$/u, "")
+      .trim() || ""
+  );
+}
+
+function cleanBodyLabelValue(value: string | undefined) {
+  return (
+    value
+      ?.trim()
+      .replace(/^(?:\*{1,2}|_{1,2})\s*/u, "")
+      .trim() || ""
+  );
 }
 
 export type EpisodeContinuityContext = {

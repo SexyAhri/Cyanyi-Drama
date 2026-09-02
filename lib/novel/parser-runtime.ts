@@ -18,8 +18,6 @@ import {
 import {
   normalizeCharacterAnalysisEvidence,
   normalizeLocationPropAnalysisEvidence,
-  validateCharacterAnalysis,
-  validateLocationPropAnalysis,
 } from "@/lib/prompts/validators";
 import {
   listNovelCharacters,
@@ -244,11 +242,6 @@ async function requestNovelParse(
         },
       }),
       schema: characterAnalysisSchema,
-      validate: (data) =>
-        validateCharacterAnalysis(
-          normalizeCharacterAnalysisEvidence(data, sourceText),
-          sourceText,
-        ),
     }).then(async (result) => {
       const data = normalizeCharacterAnalysisEvidence(result.data, sourceText);
       await callbacks?.onCharacters(data.characters, result.trace);
@@ -266,11 +259,6 @@ async function requestNovelParse(
         },
       }),
       schema: locationPropAnalysisSchema,
-      validate: (data) =>
-        validateLocationPropAnalysis(
-          normalizeLocationPropAnalysisEvidence(data, sourceText),
-          sourceText,
-        ),
     }).then(async (result) => {
       const data = normalizeLocationPropAnalysisEvidence(
         result.data,

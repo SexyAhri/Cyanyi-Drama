@@ -90,6 +90,55 @@ describe("approved screenplay parser", () => {
     );
   });
 
+  it("recognizes markdown-bold scene headers and field labels", () => {
+    const source = [
+      "**成片规格：约120秒｜水墨动画｜16:9**",
+      "**场次 01｜预计时长：15 秒｜外景·练武场·深冬夜**",
+      "**画面与动作：** 韩宇握紧铁石，屈膝发力，铁石缓缓离地。",
+      "**镜头表达：** 低角度中景，缓慢推镜。",
+      "**对白/旁白：** 韩宇：今日我必举起它。",
+      "**声音与氛围：** 寒风与铁石摩擦声。",
+      "**场次 02｜预计时长：12 秒｜内景·偏院·深冬夜**",
+      "**画面与动作：** 韩宇推门回家，韩子枫缓缓转身。",
+      "**镜头表达：** 双人中景。",
+      "**对白/旁白：** 韩子枫：宇儿，你回来了。",
+      "**声音与氛围：** 木门轻响。",
+    ].join("\n");
+
+    const organized = organizeApprovedScreenplayClip("clip-bold", source, {
+      characters: ["韩宇", "韩子枫"],
+      locations: ["练武场", "偏院"],
+    });
+
+    expect(organized.beats.scenes).toHaveLength(2);
+    expect(organized.beats.scenes[0]).toMatchObject({
+      heading: { intExt: "EXT", location: "练武场", time: "深冬夜" },
+      beats: [{ text: "韩宇握紧铁石，屈膝发力，铁石缓缓离地。" }],
+    });
+    expect(organized.dialogue.lines.map((line) => line.lines)).toEqual([
+      "今日我必举起它。",
+      "宇儿，你回来了。",
+    ]);
+  });
+
+  it("separates multiple speakers written on the same dialogue line", () => {
+    const organized = organizeApprovedScreenplayClip(
+      "clip-dialogue",
+      [
+        "**场次 01｜预计时长：15 秒｜内景·偏院·深冬夜**",
+        "**画面与动作：** 韩宇推门回家，韩子枫缓缓转身。",
+        "**对白/旁白：** 韩宇：父亲，你怎么起来了？ 韩子枫：宇儿，你回来了。",
+        "**声音与氛围：** 木门轻响。",
+      ].join("\n"),
+      { characters: ["韩宇", "韩子枫"], locations: ["偏院"] },
+    );
+
+    expect(organized.dialogue.lines).toMatchObject([
+      { character: "韩宇", lines: "父亲，你怎么起来了？" },
+      { character: "韩子枫", lines: "宇儿，你回来了。" },
+    ]);
+  });
+
   it("keeps unstructured text as action instead of rejecting it", () => {
     const organized = organizeApprovedScreenplayClip(
       "clip-plain",

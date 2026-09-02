@@ -70,6 +70,32 @@ describe("episode adaptation local metadata", () => {
       content: productionScript,
     });
   });
+
+  it("accepts markdown-bold labels without keeping metadata in the body", () => {
+    expect(
+      parseAdaptationText(
+        [
+          "**标题：寒门少年**",
+          "",
+          "**梗概：** 韩宇苦练后得知母亲仍在世。",
+          "",
+          "**正文：**",
+          "",
+          "**成片规格：约120秒｜水墨动画｜16:9**",
+          "",
+          "**场次 01｜预计时长：15 秒｜外景·练武场·深冬夜**",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      title: "寒门少年",
+      summary: "韩宇苦练后得知母亲仍在世。",
+      content: [
+        "**成片规格：约120秒｜水墨动画｜16:9**",
+        "",
+        "**场次 01｜预计时长：15 秒｜外景·练武场·深冬夜**",
+      ].join("\n"),
+    });
+  });
 });
 
 describe("episode adaptation continuity", () => {

@@ -203,7 +203,7 @@ export function buildApprovedScreenplayClipSegmentation(
       .sort((left, right) => right.index - left.index)[0]?.name;
     const props = canonical.props.filter((name) => text.includes(name));
     const action = text.match(
-      /(?:^|\n)\s*(?:画面与动作|画面动作|动作|visual and action|action)\s*[：:]\s*([^\n]+)/iu,
+      /(?:^|\n)\s*(?:\*{1,2}|_{1,2})?\s*(?:画面与动作|画面动作|动作|visual and action|action)\s*[：:]\s*(?:\*{1,2}|_{1,2})?\s*([^\n]+)/iu,
     )?.[1];
     const excerpt = (action ?? text).trim().replace(/\s+/gu, " ").slice(0, 80);
     return {
