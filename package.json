@@ -11,7 +11,7 @@
     "db:reset-business": "tsx scripts/reset-business-data.ts",
     "novel:import": "tsx scripts/import-novel-volumes.ts",
     "worker": "tsx lib/worker/index.ts",
-    "dev": "next dev --turbopack",
+    "dev": "next dev --webpack",
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "eslint",
