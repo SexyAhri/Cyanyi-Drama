@@ -6,8 +6,12 @@ import type { MediaAsset, MediaTaskKind } from "@/lib/media/task-contract";
 import { storeGeneratedMediaAsset } from "@/lib/media/generated-media-storage";
 import {
   resolveStoredMediaInput,
-  resolveStoredMediaUrl,
 } from "@/lib/storage";
+import {
+  compactMediaTaskOutput,
+  compactMediaTaskRequest,
+  mediaAssetContentUrl,
+} from "@/lib/media/public-media";
 import {
   composeAudioTimeline,
   probeAudioUrlDuration,
@@ -156,48 +160,48 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
   });
   if (!latestTask || latestTask.cancelRequestedAt) return false;
 
+  const storedAssets = await Promise.all(
+    output.map(async (asset) => {
+      const storageKey = `projects/${task.projectId ?? "global"}/media/${asset.kind}/${asset.id}.${mediaAssetExtension(asset)}`;
+      let storedKey: string | null = null;
+      try {
+        storedKey = await storeGeneratedMediaAsset({
+          asset,
+          storageKey,
+          stripVideoAudio: stripProviderAudio,
+        });
+      } catch (error) {
+        if (stripProviderAudio || isSourceMediaDownloadFailure(error))
+          throw error;
+      }
+      return {
+        id: asset.id,
+        kind: asset.kind,
+        storageKey: storedKey,
+        url: storedKey ? mediaAssetContentUrl(asset.id) : asset.url,
+        mimeType: asset.mimeType,
+        metadataJson: JSON.stringify(mediaAssetMetadata(asset)),
+      };
+    }),
+  );
   await prisma.mediaTask.update({
     where: { id: task.id },
     data: {
       status: "succeeded",
       progress: 100,
       progressMessage: null,
-      payload: JSON.parse(JSON.stringify({ request, output })),
+      payload: JSON.parse(
+        JSON.stringify({
+          request: compactMediaTaskRequest(request),
+          output: compactMediaTaskOutput(output),
+        }),
+      ),
       error: Prisma.DbNull,
       completedAt: new Date(),
       updatedAt: new Date(),
       assets: {
         createMany: {
-          data: await Promise.all(
-            output.map(async (asset) => {
-              const storageKey = `projects/${task.projectId ?? "global"}/media/${asset.kind}/${asset.id}.${mediaAssetExtension(asset)}`;
-              let storedKey: string | null = null;
-              try {
-                storedKey = await storeGeneratedMediaAsset({
-                  asset,
-                  storageKey,
-                  stripVideoAudio: stripProviderAudio,
-                });
-              } catch (error) {
-                if (
-                  stripProviderAudio ||
-                  isSourceMediaDownloadFailure(error)
-                )
-                  throw error;
-                storedKey = null;
-              }
-              return {
-                id: asset.id,
-                kind: asset.kind,
-                storageKey: storedKey,
-                url: storedKey
-                  ? await resolveStoredMediaUrl(storedKey)
-                  : asset.url,
-                mimeType: asset.mimeType,
-                metadataJson: JSON.stringify(mediaAssetMetadata(asset)),
-              };
-            }),
-          ),
+          data: storedAssets,
         },
       },
     },

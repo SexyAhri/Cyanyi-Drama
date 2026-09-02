@@ -3,8 +3,8 @@ import {
   deleteMediaAsset,
   MediaAssetActionError,
 } from "@/lib/media/asset-actions";
+import { mediaAssetContentUrl } from "@/lib/media/public-media";
 import { prisma } from "@/lib/server/prisma";
-import { resolveStoredMediaUrl } from "@/lib/storage";
 
 type Context = { params: Promise<{ assetId: string }> };
 
@@ -19,11 +19,10 @@ export async function GET(_request: Request, context: Context) {
       Response.json({ message: "媒体资产不存在" }, { status: 404 }),
       sessionId,
     );
-  const url = asset.storageKey
-    ? await resolveStoredMediaUrl(asset.storageKey).catch(() => asset.url)
-    : asset.url;
   return attachSessionCookie(
-    Response.json({ asset: { ...asset, url } }),
+    Response.json({
+      asset: { ...asset, url: mediaAssetContentUrl(asset.id) },
+    }),
     sessionId,
   );
 }

@@ -1,6 +1,6 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
+import { mediaAssetContentUrl } from "@/lib/media/public-media";
 import { prisma } from "@/lib/server/prisma";
-import { resolveStoredMediaUrl } from "@/lib/storage";
 
 type Context = { params: Promise<{ projectId: string }> };
 
@@ -19,7 +19,12 @@ export async function GET(_request: Request, context: Context) {
 
   const rows = await prisma.mediaAsset.findMany({
     where: { task: { userId: user.id, projectId } },
-    include: {
+    select: {
+      id: true,
+      kind: true,
+      mimeType: true,
+      metadataJson: true,
+      createdAt: true,
       references: {
         where: { projectId },
         select: { entityId: true, entityType: true, role: true },
@@ -31,8 +36,7 @@ export async function GET(_request: Request, context: Context) {
     orderBy: { createdAt: "desc" },
     take: 500,
   });
-  const assets = await Promise.all(
-    rows.map(async (row) => ({
+  const assets = rows.map((row) => ({
       id: row.id,
       kind: row.kind,
       mimeType: row.mimeType,
@@ -41,12 +45,9 @@ export async function GET(_request: Request, context: Context) {
       sourceTargetId: row.task.targetId,
       sourceTargetType: row.task.targetType,
       taskStatus: row.task.status,
-      url: row.storageKey
-        ? await resolveStoredMediaUrl(row.storageKey).catch(() => row.url)
-        : row.url,
+      url: mediaAssetContentUrl(row.id),
       createdAt: row.createdAt.toISOString(),
-    })),
-  );
+    }));
 
   return attachSessionCookie(Response.json({ assets }), sessionId);
 }

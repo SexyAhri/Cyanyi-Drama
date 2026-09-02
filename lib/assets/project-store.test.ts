@@ -79,7 +79,9 @@ describe("project asset store", () => {
         role: "uploaded_source",
       }),
     });
-    expect(result.url).toBe("https://media.test/signed.png");
+    expect(result.url).toMatch(
+      /^\/api\/media\/assets\/media_asset_.+\/content$/,
+    );
     expect(result.source.fileName).toBe("reference.png");
   });
 

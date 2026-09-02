@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 
 import { createMediaTaskTraceContext } from "@/lib/observability/trace-context";
+import { mediaAssetContentUrl } from "@/lib/media/public-media";
 import { prisma } from "@/lib/server/prisma";
 import { resolveStoredMediaUrl, storeMediaBytes } from "@/lib/storage";
 
@@ -55,7 +56,7 @@ export async function createUploadedProjectAsset(input: {
     `projects/${input.projectId}/uploads/${assetId}.${extension}`,
     input.mimeType,
   );
-  const url = await resolveStoredMediaUrl(storageKey);
+  const url = mediaAssetContentUrl(assetId);
   const result = await prisma.$transaction(async (tx) => {
     const target = await materializeAssetTarget(
       tx,

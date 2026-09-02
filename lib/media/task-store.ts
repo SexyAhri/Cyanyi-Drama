@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/server/prisma";
+import { compactMediaTaskOutput, compactMediaTaskRequest } from "./public-media";
 import type { MediaTask } from "./task-contract";
 import type { MediaTaskEventRecord, MediaTaskStatus } from "./task-contract";
 
@@ -185,8 +186,8 @@ function toCreateData(userId: string, task: MediaTask) {
     model: task.model,
     providerTaskId: task.providerTaskId ?? null,
     payload: toJsonValue({
-      request: task.request,
-      output: task.output ?? null,
+      request: compactMediaTaskRequest(task.request),
+      output: task.output ? compactMediaTaskOutput(task.output) : null,
     }),
     error: toNullableJson(task.error),
     retryCount: task.retryCount,
@@ -217,8 +218,8 @@ function toUpdateData(task: MediaTask) {
     status: task.status,
     providerTaskId: task.providerTaskId ?? null,
     payload: toJsonValue({
-      request: task.request,
-      output: task.output ?? null,
+      request: compactMediaTaskRequest(task.request),
+      output: task.output ? compactMediaTaskOutput(task.output) : null,
     }),
     error: toNullableJson(task.error),
     retryCount: task.retryCount,
