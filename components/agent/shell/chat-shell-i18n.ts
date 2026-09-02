@@ -347,7 +347,8 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
       "Project defaults shared by image, video, and TTS generation.",
     settingsVideoRatio: "Video ratio",
     settingsEpisodeTargetDuration: "Episode target duration",
-    settingsEpisodeTargetDurationHint: "60–90 seconds; the hard maximum is 90 seconds.",
+    settingsEpisodeTargetDurationHint:
+      "Defaults to about 2 minutes; adjustable from 60–180 seconds.",
     settingsArtStyle: "Art style",
     settingsArtStyleAmericanComic: "American comic",
     settingsArtStyleChineseComic: "Chinese animation",
@@ -538,7 +539,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
       "图片、视频和 TTS 生成共用的项目默认配置。",
     settingsVideoRatio: "视频比例",
     settingsEpisodeTargetDuration: "单集目标时长",
-    settingsEpisodeTargetDurationHint: "可设置 60–90 秒，成片硬上限为 90 秒。",
+    settingsEpisodeTargetDurationHint: "默认约 2 分钟，可在 60–180 秒内调整。",
     settingsArtStyle: "艺术风格",
     settingsArtStyleAmericanComic: "美式漫画",
     settingsArtStyleChineseComic: "国漫影视动画",

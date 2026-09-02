@@ -200,8 +200,9 @@ describe("episode production plan", () => {
     [59, false],
     [60, true],
     [85, true],
-    [90, true],
-    [91, false],
+    [120, true],
+    [180, true],
+    [181, false],
     [85.5, false],
   ])("validates project target duration %s", (value, valid) => {
     expect(isEpisodeTargetDurationSeconds(value)).toBe(valid);
@@ -216,17 +217,17 @@ describe("episode production plan", () => {
     expect(units.every((entry, index) => entry.startIndex === (index ? units[index - 1].endIndex : 0))).toBe(true);
   });
 
-  it.each([89, 90])("accepts a valid %i-second plan", (seconds) => {
+  it.each([89, 120])("accepts a valid %i-second plan", (seconds) => {
     const plan = fixture();
     plan.beats[3].durationSeconds += seconds - 85;
     plan.runtime.plannedDurationSeconds = seconds;
     expect(issueCodes(plan)).toEqual([]);
   });
 
-  it("rejects a 91-second plan", () => {
+  it("rejects a plan above the configurable duration range", () => {
     const plan = fixture();
-    plan.beats[3].durationSeconds = 34;
-    plan.runtime.plannedDurationSeconds = 91;
+    plan.beats[3].durationSeconds = 124;
+    plan.runtime.plannedDurationSeconds = 181;
     expect(issueCodes(plan)).toContain("EPISODE_RUNTIME_OVERFLOW");
   });
 

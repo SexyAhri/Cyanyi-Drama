@@ -32,6 +32,6 @@ export function createDefaultShellSettings(modelId: string): ShellSettings {
     visualEra: "source",
     visualEraCustom: "",
     ttsRate: "+0%",
-    episodeTargetDurationSeconds: 85,
+    episodeTargetDurationSeconds: 120,
   };
 }

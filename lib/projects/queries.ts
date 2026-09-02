@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 
 import { assertEpisodeHasNoDownstream } from "@/lib/episodes/adaptation";
+import { DEFAULT_EPISODE_TARGET_SECONDS } from "@/lib/episodes/production-plan";
 import { prisma } from "@/lib/server/prisma";
 import type { EpisodeRecord, ProjectRecord } from "./types";
 
@@ -295,7 +296,7 @@ function toProject(row: ProjectWithRelations): ProjectRecord {
       visualEraCustom: config?.visualEraCustom ?? null,
       ttsRate: config?.ttsRate ?? "+50%",
       episodeTargetDurationSeconds:
-        config?.episodeTargetDurationSeconds ?? 85,
+        config?.episodeTargetDurationSeconds ?? DEFAULT_EPISODE_TARGET_SECONDS,
       workflowMode: config?.workflowMode ?? "novel-promotion",
       globalAssetText: config?.globalAssetText ?? null,
       capabilityOverrides: parseJsonObject(config?.capabilityOverridesJson),

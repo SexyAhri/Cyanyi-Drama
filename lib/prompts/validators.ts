@@ -1,7 +1,10 @@
 import { z } from "zod";
 
 import { canonicalSummaryPlaceholderFragments } from "@/lib/assets/canonical-summary";
-import type { EpisodeProductionContractSubset } from "@/lib/episodes/production-plan";
+import {
+  MAX_EPISODE_DURATION_SECONDS,
+  type EpisodeProductionContractSubset,
+} from "@/lib/episodes/production-plan";
 import type { StructuredValidationIssue } from "@/lib/llm/structured-output";
 import {
   actingDirectionSchema,
@@ -1797,12 +1800,12 @@ function validateStoryboardProductionPlan(
         `Storyboard clip requires ${expectedDuration}s but totals ${actualDuration}s`,
       ),
     );
-  if (actualDuration > 90)
+  if (actualDuration > MAX_EPISODE_DURATION_SECONDS)
     issues.push(
       issue(
         "panels",
         "STORYBOARD_EPISODE_DURATION_OVERFLOW",
-        "Storyboard duration must not exceed 90 seconds",
+        `Storyboard duration must not exceed ${MAX_EPISODE_DURATION_SECONDS} seconds`,
       ),
     );
 }

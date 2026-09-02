@@ -4,9 +4,9 @@ import { z } from "zod";
 
 import type { StructuredValidationIssue } from "@/lib/llm/structured-output";
 
-export const DEFAULT_EPISODE_TARGET_SECONDS = 85;
+export const DEFAULT_EPISODE_TARGET_SECONDS = 120;
 export const MIN_EPISODE_TARGET_SECONDS = 60;
-export const MAX_EPISODE_DURATION_SECONDS = 90;
+export const MAX_EPISODE_DURATION_SECONDS = 180;
 export const EPISODE_PRODUCTION_PLAN_VERSION = 1;
 export const MAX_ADAPTATION_SOURCE_UNITS = 500;
 
@@ -149,9 +149,21 @@ export const episodeProductionPlanDraftSchema = z
     version: z.literal(EPISODE_PRODUCTION_PLAN_VERSION),
     runtime: z
       .object({
-        targetDurationSeconds: z.number().int().min(60).max(90),
-        plannedDurationSeconds: z.number().int().min(1).max(90),
-        hardMaxDurationSeconds: z.literal(MAX_EPISODE_DURATION_SECONDS),
+        targetDurationSeconds: z
+          .number()
+          .int()
+          .min(MIN_EPISODE_TARGET_SECONDS)
+          .max(MAX_EPISODE_DURATION_SECONDS),
+        plannedDurationSeconds: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_EPISODE_DURATION_SECONDS),
+        hardMaxDurationSeconds: z
+          .number()
+          .int()
+          .min(MIN_EPISODE_TARGET_SECONDS)
+          .max(MAX_EPISODE_DURATION_SECONDS),
         estimatedShotCount: z.number().int().min(1).max(60),
         fit: z.enum(["target", "compressed", "short_source"]),
       })
@@ -174,7 +186,13 @@ export const episodeProductionPlanSchema = episodeProductionPlanDraftSchema
   .extend({
     sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
     runtime: episodeProductionPlanDraftSchema.shape.runtime
-      .extend({ estimatedSpokenSeconds: z.number().int().min(0).max(90) })
+      .extend({
+        estimatedSpokenSeconds: z
+          .number()
+          .int()
+          .min(0)
+          .max(MAX_EPISODE_DURATION_SECONDS),
+      })
       .strict(),
   })
   .strict();
@@ -301,7 +319,7 @@ export function validateEpisodeProductionPlan(input: {
       issue(
         "productionPlan.runtime.plannedDurationSeconds",
         "EPISODE_RUNTIME_OVERFLOW",
-        "Episode production plan cannot exceed 90 seconds",
+        `Episode production plan cannot exceed ${MAX_EPISODE_DURATION_SECONDS} seconds`,
       ),
     );
 

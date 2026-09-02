@@ -190,11 +190,11 @@ export function PreferencesSettingsPanel({
                 aria-describedby="episode-target-duration-hint"
                 className="h-9"
                 id="episode-target-duration"
-                max={90}
+                max={180}
                 min={60}
                 onChange={(event) => {
                   const value = Number(event.target.value);
-                  if (Number.isInteger(value) && value >= 60 && value <= 90)
+                  if (Number.isInteger(value) && value >= 60 && value <= 180)
                     update({ episodeTargetDurationSeconds: value });
                 }}
                 step={5}

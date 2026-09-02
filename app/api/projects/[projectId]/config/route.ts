@@ -27,7 +27,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       if (!isEpisodeTargetDurationSeconds(body[field]))
         return attachSessionCookie(
           Response.json(
-            { message: "单集目标时长必须是 60 到 90 秒之间的整数" },
+            { message: "单集目标时长必须是 60 到 180 秒之间的整数" },
             { status: 400 },
           ),
           sessionId,

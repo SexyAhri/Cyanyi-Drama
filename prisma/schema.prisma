@@ -246,7 +246,7 @@ model ProjectConfig {
   visualEra               String   @default("source") @map("visual_era") @db.VarChar(32)
   visualEraCustom         String?  @map("visual_era_custom") @db.Text
   ttsRate                 String   @default("+50%") @map("tts_rate")
-  episodeTargetDurationSeconds Int @default(85) @map("episode_target_duration_seconds")
+  episodeTargetDurationSeconds Int @default(120) @map("episode_target_duration_seconds")
   workflowMode            String   @default("novel-promotion") @map("workflow_mode")
   globalAssetText         String?  @map("global_asset_text") @db.Text
   capabilityOverridesJson String?  @map("capability_overrides_json") @db.Text
