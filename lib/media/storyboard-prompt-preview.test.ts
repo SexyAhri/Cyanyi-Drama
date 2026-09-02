@@ -121,6 +121,39 @@ describe("storyboard prompt preview", () => {
     expect(preview.compiledPrompt).toContain("精准口型留待后期");
     expect(preview.compiledPrompt).not.toContain("角色配音已由独立声音模型生成");
   });
+
+  it("uses the approved episode time anchor instead of copied daylight placeholders", async () => {
+    mocks.storyboardPanelFindFirst.mockResolvedValue({
+      ...panel(),
+      description: "窗外左侧自然光照亮木桌",
+      videoPrompt: "weather=晴；keyLightSource=窗外日光；人物转身",
+      startStateJson: JSON.stringify({
+        body: "人物站在桌边",
+        environmentState: {
+          weather: "晴",
+          keyLightSource: "窗外日光",
+          lightDirection: "画左至画右",
+        },
+      }),
+      imageAsset: { url: "data:image/png;base64,AQID", storageKey: null },
+    });
+
+    const preview = await previewStoryboardPanelPrompt({
+      userId: "user-1",
+      projectId: "project-1",
+      episodeId: "episode-1",
+      panelId: "panel-1",
+      kind: "video",
+      mode: "reference",
+    });
+
+    expect(preview.compiledPrompt).toContain(
+      "本集剧情时间锚点（最高优先级）：夜间",
+    );
+    expect(preview.compiledPrompt).not.toContain("weather=晴");
+    expect(preview.compiledPrompt).not.toContain("keyLightSource=窗外日光");
+    expect(preview.compiledPrompt).not.toContain("窗外左侧自然光");
+  });
 });
 
 function panel() {
@@ -173,5 +206,11 @@ function panel() {
     propsJson: "[]",
     locationName: null,
     imageAsset: null,
+    storyboard: {
+      episode: {
+        description: "雨夜中的短暂交锋",
+        novelText: "入夜后，林玄在雨中迎敌。",
+      },
+    },
   };
 }

@@ -144,7 +144,7 @@ describe("timeline render coverage", () => {
     ).toThrow("TIMELINE_RENDER_SUBTITLE_PANEL_MISSING:3");
   });
 
-  it("preserves storyboard ambient audio and strips only explicit or legacy silent tasks", () => {
+  it("strips provider audio from every storyboard video", () => {
     expect(
       shouldStripProviderVideoAudio({
         kind: "video",
@@ -158,7 +158,7 @@ describe("timeline render coverage", () => {
         targetType: "storyboard_panel",
         request: { audioMode: "ambient_only" },
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       shouldStripProviderVideoAudio({
         kind: "video",

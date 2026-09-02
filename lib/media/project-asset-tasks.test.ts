@@ -6,6 +6,7 @@ import {
   dialogueVideoPrompt,
   parseGenerationIterationDiagnostics,
   ProjectAssetTaskError,
+  redactStoryboardSpeechForVideo,
 } from "./project-asset-tasks";
 
 describe("storyboard video audio contract", () => {
@@ -27,7 +28,7 @@ describe("storyboard video audio contract", () => {
     expect(error).toMatchObject({ status: 409 });
   });
 
-  it("keeps native video audio ambient-only and withholds character lines", () => {
+  it("withholds character lines from the silent video performance prompt", () => {
     const prompt = dialogueVideoPrompt({
       description: "韩宇扶住床沿，抬眼看向父亲。",
       motionPrompt: "韩宇先压住慌乱，再缓慢抬眼看向父亲。",
@@ -57,6 +58,22 @@ describe("storyboard video audio contract", () => {
     expect(prompt).toContain("眉心短暂收紧，抬眼时嘴角克制");
     expect(prompt).toContain("禁止全程中性脸、僵硬凝视、机械站立");
     expect(prompt).not.toContain("父亲，我会想办法。");
+  });
+
+  it("removes known dialogue and speech sound cues from video prompts", () => {
+    const prompt = redactStoryboardSpeechForVideo(
+      [
+        "韩宇开口说话，仅做无声口部表演。",
+        "0-3s | foley | 说话声",
+        "原文：父亲，你怎么起来了？",
+      ].join("\n"),
+      ["父亲，你怎么起来了？"],
+    );
+
+    expect(prompt).toContain("韩宇开口说话");
+    expect(prompt).toContain("[台词正文由配音阶段处理]");
+    expect(prompt).not.toContain("父亲，你怎么起来了？");
+    expect(prompt).not.toContain("说话声");
   });
 
   it("uses estimated dialogue timing before dubbing without claiming final lip sync", () => {
@@ -199,6 +216,37 @@ describe("storyboard video audio contract", () => {
     expect(prompt).toContain("唯一主运镜路径：primaryMovement=track");
     expect(prompt).toContain("不得出现：第三人");
     expect(prompt).not.toContain('{"');
+  });
+
+  it("does not leak dialogue evidence or speech cues into a video blueprint", () => {
+    const dialogue = "父亲，你怎么起来了？";
+    const prompt = compileStoryboardEventBlueprint(
+      `韩宇无声说话。\n0-3s | foley | 说话声\n${dialogue}`,
+      {
+        description: "韩宇看向父亲",
+        lipSyncText: dialogue,
+        sourceEvidenceJson: JSON.stringify([dialogue]),
+        actingNotesJson: JSON.stringify({
+          characters: [
+            {
+              name: "韩宇",
+              action: "无声口部表演",
+              beats: [{ action: "嘴部动作", evidence: dialogue }],
+            },
+          ],
+        }),
+        sfxCuesJson: JSON.stringify([
+          { startSecond: 0, endSecond: 3, type: "foley", description: "说话声" },
+          { startSecond: 0, endSecond: 3, type: "ambience", description: "室内底噪" },
+        ]),
+      },
+      "video",
+    );
+
+    expect(prompt).not.toContain(dialogue);
+    expect(prompt).not.toContain("说话声");
+    expect(prompt).toContain("室内底噪");
+    expect(prompt).toContain("原文台词正文：由独立配音与口型阶段处理");
   });
 
   it("persists complete iteration diagnostics and escalates after two flat rounds", () => {

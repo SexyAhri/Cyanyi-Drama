@@ -638,8 +638,7 @@ export function shouldStripProviderVideoAudio(input: {
 }) {
   return (
     input.kind === "video" &&
-    input.targetType === "storyboard_panel" &&
-    input.request.audioMode !== "ambient_only"
+    input.targetType === "storyboard_panel"
   );
 }
 
