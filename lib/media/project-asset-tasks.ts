@@ -12,8 +12,6 @@ import {
   listOwnedProjectMediaAssets,
 } from "@/lib/assets/project-store";
 import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
-import { probeAudioUrlDuration } from "@/lib/providers/local/ffmpeg-audio";
-import { planPanelDialogue } from "@/lib/media/dialogue-timeline";
 import { sanitizeMediaPrompt } from "@/lib/media/provider-prompt-safety";
 import {
   applyProjectArtStyle,
@@ -254,7 +252,7 @@ export async function createStoryboardPanelImageTask(input: {
   });
   const generationPrompt = withStoryboardImageContinuityRequirements({
     prompt: reconcileStoryboardPromptTime(
-      compileStoryboardEventBlueprint(prompt, panel, "image"),
+      compileStoryboardEventBlueprint(prompt, panel),
       panel.storyboard.episode,
     ),
     characters: parseStringArray(panel.charactersJson),
@@ -268,7 +266,6 @@ export async function createStoryboardPanelImageTask(input: {
   const compiledPrompt = compileStoryboardProductionPrompt(
     generationPrompt,
     productionDesign,
-    "image",
   );
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
@@ -368,28 +365,11 @@ export async function createStoryboardPanelVideoTask(input: {
       durationSeconds: true,
       videoPrompt: true,
       firstLastFramePrompt: true,
-      lipSyncText: true,
-      voiceoverText: true,
-      actingNotesJson: true,
-      photographyRules: true,
-      startStateJson: true,
-      endStateJson: true,
-      motionBeatsJson: true,
-      worldContextJson: true,
-      vfxCuesJson: true,
-      sfxCuesJson: true,
-      sourceEvidenceJson: true,
       imageAsset: {
         select: { url: true, storageKey: true, mimeType: true },
       },
-      charactersJson: true,
-      propsJson: true,
-      locationName: true,
       storyboard: {
-        select: {
-          status: true,
-          episode: { select: { description: true, novelText: true } },
-        },
+        select: { status: true },
       },
     },
   });
@@ -403,10 +383,6 @@ export async function createStoryboardPanelVideoTask(input: {
     panel.description?.trim();
   if (!rawBasePrompt)
     throw new ProjectAssetTaskError("分镜格缺少视频提示词", 400);
-  const basePrompt = redactStoryboardSpeechForVideo(rawBasePrompt, [
-    panel.lipSyncText,
-    panel.voiceoverText,
-  ]);
   const referenceImages: Array<{
     url: string;
     storageKey?: string;
@@ -451,54 +427,11 @@ export async function createStoryboardPanelVideoTask(input: {
         role: "reference_image",
       });
   }
-  const dialogue = await prepareStoryboardDialogue({
-    projectId: input.projectId,
-    episodeId: input.episodeId,
-    panelId: panel.id,
-    requestedDurationSeconds:
-      parseDurationSeconds(input.duration) ??
-      panel.durationSeconds ??
-      parseDurationSeconds(input.mediaDefaults?.videoGenerationDuration) ??
-      5,
-  });
-  const dialoguePrompt = dialogueVideoPrompt({
-    description: redactStoryboardSpeechForVideo(
-      panel.description ?? basePrompt,
-      [panel.lipSyncText, panel.voiceoverText],
-    ),
-    motionPrompt: compileStoryboardEventBlueprint(basePrompt, panel, "video"),
-    actingDirections: parseStoryboardActingDirections(panel.actingNotesJson),
-    durationSeconds: dialogue.durationSeconds,
-    lines: dialogue.lines,
-    playbackRate: dialogue.playbackRate,
-    timings: dialogue.timings,
-    usesEstimatedTiming: dialogue.usesEstimatedTiming,
-  });
-  const prompt = withStoryboardVideoContinuityRequirements({
-    prompt: reconcileStoryboardPromptTime(
-      dialoguePrompt,
-      panel.storyboard.episode,
-    ),
-    characters: parseStringArray(panel.charactersJson),
-    props: parseStringArray(panel.propsJson),
-    locationName: panel.locationName,
-    environmentDirective: storyboardEnvironmentDirective(
-      panel,
-      panel.storyboard.episode,
-    ),
-  });
-  const productionDesign = await loadStoryboardProductionDesign({
-    userId: input.userId,
-    projectId: input.projectId,
-    characters: parseStringArray(panel.charactersJson),
-    props: parseStringArray(panel.propsJson),
-    locationName: panel.locationName,
-  });
-  const compiledPrompt = compileStoryboardProductionPrompt(
-    prompt,
-    productionDesign,
-    "video",
-  );
+  const durationSeconds =
+    parseDurationSeconds(input.duration) ??
+    panel.durationSeconds ??
+    parseDurationSeconds(input.mediaDefaults?.videoGenerationDuration) ??
+    5;
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
@@ -512,14 +445,14 @@ export async function createStoryboardPanelVideoTask(input: {
     protocol: channel.protocol,
     model: input.model,
     request: {
-      prompt: compiledPrompt,
+      prompt: rawBasePrompt,
       ...(input.iteration ? { generationIteration: input.iteration } : {}),
       ratio: input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9",
       resolution:
         input.resolution ??
         input.mediaDefaults?.videoGenerationResolution ??
         "1080p",
-      duration: `${dialogue.durationSeconds}s`,
+      duration: `${durationSeconds}s`,
       format: "mp4",
       audioMode: "none",
       videoMode: input.mode ?? "reference",
@@ -549,6 +482,7 @@ export type StoryboardPromptPreview = {
     message: string;
   }>;
   kind: "image" | "video";
+  submissionMode: "compiled" | "verbatim";
   referenceCount: number;
   safetyRewrites: ReturnType<typeof sanitizeMediaPrompt>["changes"];
   sources: Array<{
@@ -567,6 +501,10 @@ export async function previewStoryboardPanelPrompt(input: {
   prompt?: string;
   mode?: "reference" | "first-last";
   lastFramePanelId?: string;
+  ratio?: string;
+  resolution?: string;
+  duration?: string;
+  mediaDefaults?: MediaGenerationDefaults;
 }): Promise<StoryboardPromptPreview> {
   const panel = await prisma.storyboardPanel.findFirst({
     where: {
@@ -624,13 +562,7 @@ export async function previewStoryboardPanelPrompt(input: {
         : panel.videoPrompt?.trim()) ||
     panel.description?.trim() ||
     "";
-  const basePrompt =
-    input.kind === "video"
-      ? redactStoryboardSpeechForVideo(rawBasePrompt, [
-          panel.lipSyncText,
-          panel.voiceoverText,
-        ])
-      : rawBasePrompt;
+  const basePrompt = rawBasePrompt;
   const issues: StoryboardPromptPreview["issues"] = [];
   if (!basePrompt)
     issues.push({
@@ -639,15 +571,103 @@ export async function previewStoryboardPanelPrompt(input: {
       message: input.kind === "image" ? "缺少图片提示词" : "缺少视频提示词",
     });
 
-  const supportingReferences =
-    input.kind === "image"
-      ? await findStoryboardReferenceImages({
-          projectId: input.projectId,
-          characters,
-          props,
-          locationName: panel.locationName,
-        })
-      : [];
+  if (input.kind === "video") {
+    let referenceCount = 0;
+    const sources: StoryboardPromptPreview["sources"] = [
+      {
+        key: "submission_mode",
+        label: "提交方式",
+        value: "完整视频提示词原样提交",
+      },
+      {
+        key: "shot_prompt",
+        label: "视频提示词",
+        value: basePrompt ? `${basePrompt.length} 个字符` : "未填写",
+      },
+    ];
+    if (input.mode === "first-last") {
+      const firstFrameUrl = await mediaAssetUrl(panel.imageAsset);
+      const lastFrame = await findLastFramePanel({
+        userId: input.userId,
+        projectId: input.projectId,
+        episodeId: input.episodeId,
+        storyboardId: panel.storyboardId,
+        panelIndex: panel.panelIndex,
+        linkedToNextPanel: panel.linkedToNextPanel,
+        lastFramePanelId: input.lastFramePanelId,
+      });
+      const lastFrameUrl = await mediaAssetUrl(lastFrame?.imageAsset);
+      if (!firstFrameUrl || !lastFrameUrl)
+        issues.push({
+          blocking: true,
+          code: "missing_first_last_frame",
+          message: "首尾帧模式需要当前镜头首帧和已关联的下一镜头图片",
+        });
+      referenceCount =
+        Number(Boolean(firstFrameUrl)) + Number(Boolean(lastFrameUrl));
+      sources.push({
+        key: "frame_mode",
+        label: "画面参考",
+        value: `${referenceCount}/2 张首尾帧（按首帧、尾帧顺序）`,
+      });
+    } else {
+      const firstFrameUrl = await mediaAssetUrl(panel.imageAsset);
+      if (!firstFrameUrl)
+        issues.push({
+          blocking: true,
+          code: "missing_reference_frame",
+          message: "参考图模式需要先选择当前镜头图片",
+        });
+      referenceCount = Number(Boolean(firstFrameUrl));
+      sources.push({
+        key: "frame_mode",
+        label: "画面参考",
+        value: firstFrameUrl
+          ? "1 张当前镜头参考图（顺序 1）"
+          : "缺少当前镜头参考图",
+      });
+    }
+    const durationSeconds =
+      parseDurationSeconds(input.duration) ??
+      panel.durationSeconds ??
+      parseDurationSeconds(input.mediaDefaults?.videoGenerationDuration) ??
+      5;
+    sources.push(
+      {
+        key: "duration",
+        label: "片段时长",
+        value: `${durationSeconds} 秒`,
+      },
+      {
+        key: "output",
+        label: "输出规格",
+        value: `${input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9"} · ${input.resolution ?? input.mediaDefaults?.videoGenerationResolution ?? "1080p"}`,
+      },
+      {
+        key: "audio_mode",
+        label: "模型音频",
+        value: "关闭（audioMode=none）",
+      },
+    );
+    return {
+      basePrompt,
+      compiledPrompt: basePrompt,
+      finalPrompt: basePrompt,
+      issues,
+      kind: "video",
+      submissionMode: "verbatim",
+      referenceCount,
+      safetyRewrites: [],
+      sources,
+    };
+  }
+
+  const supportingReferences = await findStoryboardReferenceImages({
+    projectId: input.projectId,
+    characters,
+    props,
+    locationName: panel.locationName,
+  });
   const productionDesign = await loadStoryboardProductionDesign({
     userId: input.userId,
     projectId: input.projectId,
@@ -655,7 +675,7 @@ export async function previewStoryboardPanelPrompt(input: {
     props,
     locationName: panel.locationName,
   });
-  let referenceCount = supportingReferences.length;
+  const referenceCount = supportingReferences.length;
   let compiledPrompt = "";
   let generationPrompt = "";
   const sources: StoryboardPromptPreview["sources"] = [
@@ -686,149 +706,23 @@ export async function previewStoryboardPanelPrompt(input: {
     },
   ];
 
-  if (input.kind === "image") {
-    generationPrompt = withStoryboardImageContinuityRequirements({
-      prompt: reconcileStoryboardPromptTime(
-        compileStoryboardEventBlueprint(basePrompt, panel, "image"),
-        panel.storyboard.episode,
-      ),
-      characters,
-      props,
-      locationName: panel.locationName,
-      environmentDirective: storyboardEnvironmentDirective(
-        panel,
-        panel.storyboard.episode,
-      ),
-    });
-    compiledPrompt = compileStoryboardProductionPrompt(
-      generationPrompt,
-      productionDesign,
-      "image",
-    );
-  } else {
-    if (input.mode === "first-last") {
-      const firstFrameUrl = await mediaAssetUrl(panel.imageAsset);
-      const lastFrame = await findLastFramePanel({
-        userId: input.userId,
-        projectId: input.projectId,
-        episodeId: input.episodeId,
-        storyboardId: panel.storyboardId,
-        panelIndex: panel.panelIndex,
-        linkedToNextPanel: panel.linkedToNextPanel,
-        lastFramePanelId: input.lastFramePanelId,
-      });
-      const lastFrameUrl = await mediaAssetUrl(lastFrame?.imageAsset);
-      if (!firstFrameUrl || !lastFrameUrl)
-        issues.push({
-          blocking: true,
-          code: "missing_first_last_frame",
-          message: "首尾帧模式需要当前镜头首帧和已关联的下一镜头图片",
-        });
-      referenceCount += Number(Boolean(firstFrameUrl)) + Number(Boolean(lastFrameUrl));
-      sources.push({
-        key: "frame_mode",
-        label: "画面参考",
-        value: `${Number(Boolean(firstFrameUrl)) + Number(Boolean(lastFrameUrl))}/2 张首尾帧`,
-      });
-    } else {
-      const firstFrameUrl = await mediaAssetUrl(panel.imageAsset);
-      if (!firstFrameUrl)
-        issues.push({
-          blocking: true,
-          code: "missing_reference_frame",
-          message: "参考图模式需要先选择当前镜头图片",
-        });
-      referenceCount += Number(Boolean(firstFrameUrl));
-      sources.push({
-        key: "frame_mode",
-        label: "画面参考",
-        value: firstFrameUrl ? "已选择当前镜头参考图" : "缺少当前镜头参考图",
-      });
-    }
-
-    const lines = await prisma.voiceLine.findMany({
-      where: {
-        episodeId: input.episodeId,
-        matchedPanelId: panel.id,
-        episode: { projectId: input.projectId },
-      },
-      orderBy: { lineIndex: "asc" },
-      select: {
-        speaker: true,
-        content: true,
-        delivery: true,
-        durationSeconds: true,
-        audioAssetId: true,
-      },
-    });
-    const missingAudio = lines.filter((line) => !line.audioAssetId);
-    if (missingAudio.length)
-      issues.push({
-        blocking: false,
-        code: "dialogue_audio_pending",
-        message: `${missingAudio.length} 句关联对白将在后续配音与口型阶段处理，本次按文本预估节奏`,
-      });
-    let dialoguePrompt = compileStoryboardEventBlueprint(
-      basePrompt,
+  generationPrompt = withStoryboardImageContinuityRequirements({
+    prompt: reconcileStoryboardPromptTime(
+      compileStoryboardEventBlueprint(basePrompt, panel),
+      panel.storyboard.episode,
+    ),
+    characters,
+    props,
+    locationName: panel.locationName,
+    environmentDirective: storyboardEnvironmentDirective(
       panel,
-      "video",
-    );
-    if (lines.length) {
-      try {
-        const plan = planPanelDialogue({
-          lineDurations: lines.map(
-            (line) => line.durationSeconds ?? estimateSpokenDuration(line.content),
-          ),
-          requestedDurationSeconds: panel.durationSeconds ?? 5,
-        });
-        dialoguePrompt = dialogueVideoPrompt({
-          description: redactStoryboardSpeechForVideo(
-            panel.description ?? basePrompt,
-            [panel.lipSyncText, panel.voiceoverText],
-          ),
-          motionPrompt: compileStoryboardEventBlueprint(basePrompt, panel, "video"),
-          actingDirections: parseStoryboardActingDirections(panel.actingNotesJson),
-          durationSeconds: plan.durationSeconds,
-          lines,
-          playbackRate: plan.playbackRate,
-          timings: plan.timings,
-          usesEstimatedTiming: missingAudio.length > 0,
-        });
-        sources.push({
-          key: "dialogue_timing",
-          label: "对白节奏",
-          value: `${lines.length} 句 · ${plan.durationSeconds} 秒 · ${plan.playbackRate.toFixed(2)}x${missingAudio.length ? " · 文本预估" : " · 正式配音"}`,
-        });
-      } catch (error) {
-        issues.push({
-          blocking: true,
-          code: "dialogue_timing_invalid",
-          message:
-            error instanceof Error && error.message.startsWith("DIALOGUE_REQUIRES_SHOT_SPLIT")
-              ? "对白总时长超过单镜头容量，需要拆分镜头"
-              : "对白时长无法编排",
-        });
-      }
-    }
-    generationPrompt = withStoryboardVideoContinuityRequirements({
-      prompt: reconcileStoryboardPromptTime(
-        dialoguePrompt,
-        panel.storyboard.episode,
-      ),
-      characters,
-      props,
-      locationName: panel.locationName,
-      environmentDirective: storyboardEnvironmentDirective(
-        panel,
-        panel.storyboard.episode,
-      ),
-    });
-    compiledPrompt = compileStoryboardProductionPrompt(
-      generationPrompt,
-      productionDesign,
-      "video",
-    );
-  }
+      panel.storyboard.episode,
+    ),
+  });
+  compiledPrompt = compileStoryboardProductionPrompt(
+    generationPrompt,
+    productionDesign,
+  );
 
   const sanitized = sanitizeMediaPrompt(compiledPrompt);
   if (sanitized.changes.length)
@@ -842,255 +736,18 @@ export async function previewStoryboardPanelPrompt(input: {
     compiledPrompt,
     finalPrompt: sanitized.prompt,
     issues,
-    kind: input.kind,
+    kind: "image",
+    submissionMode: "compiled",
     referenceCount,
     safetyRewrites: sanitized.changes,
     sources,
   };
 }
 
-async function prepareStoryboardDialogue(input: {
-  projectId: string;
-  episodeId: string;
-  panelId: string;
-  requestedDurationSeconds: number;
-}) {
-  const lines = await prisma.voiceLine.findMany({
-    where: {
-      episodeId: input.episodeId,
-      matchedPanelId: input.panelId,
-      episode: { projectId: input.projectId },
-    },
-    orderBy: { lineIndex: "asc" },
-    select: {
-      id: true,
-      speaker: true,
-      content: true,
-      delivery: true,
-      durationSeconds: true,
-      audioAsset: {
-        select: { url: true, storageKey: true, mimeType: true },
-      },
-    },
-  });
-  const resolved: Array<{
-    id: string;
-    speaker: string;
-    content: string;
-    delivery: string;
-    durationSeconds: number;
-    url: string;
-  }> = [];
-  let usesEstimatedTiming = false;
-  for (const line of lines) {
-    const url = await mediaAssetUrl(line.audioAsset);
-    if (!url) usesEstimatedTiming = true;
-    const durationSeconds =
-      line.durationSeconds ??
-      (url ? await probeAudioUrlDuration(url) : estimateSpokenDuration(line.content));
-    resolved.push({
-      id: line.id,
-      speaker: line.speaker,
-      content: line.content,
-      delivery: line.delivery,
-      durationSeconds,
-      url: url ?? "",
-    });
-    if (line.durationSeconds === null && url)
-      await prisma.voiceLine.update({
-        where: { id: line.id },
-        data: { durationSeconds },
-      });
-  }
-  if (!resolved.length)
-    return {
-      durationSeconds: Math.max(1, Math.min(15, input.requestedDurationSeconds)),
-      lines: [],
-      playbackRate: 1,
-      references: [] as Array<{ url: string; mimeType?: string }>,
-      timings: [],
-      usesEstimatedTiming: false,
-    };
-
-  const plan = planPanelDialogue({
-    lineDurations: resolved.map((line) => line.durationSeconds),
-    requestedDurationSeconds: input.requestedDurationSeconds,
-  });
-  await prisma.storyboardPanel.update({
-    where: { id: input.panelId },
-    data: { durationSeconds: plan.durationSeconds },
-  });
-  return {
-    durationSeconds: plan.durationSeconds,
-    lines: resolved,
-    playbackRate: plan.playbackRate,
-    references: [] as Array<{ url: string; mimeType?: string }>,
-    timings: plan.timings,
-    usesEstimatedTiming,
-  };
-}
-
-export function dialogueVideoPrompt(input: {
-  description: string;
-  motionPrompt: string;
-  actingDirections: StoryboardActingDirection[];
-  durationSeconds: number;
-  lines: Array<{ speaker: string; content: string; delivery: string }>;
-  playbackRate: number;
-  timings: Array<{ lineIndex: number; startSeconds: number; endSeconds: number }>;
-  usesEstimatedTiming?: boolean;
-}) {
-  const actingByCharacter = new Map(
-    input.actingDirections.map((direction) => [direction.name, direction]),
-  );
-  const performanceDirection = (character: string) => {
-    const direction = actingByCharacter.get(character);
-    const beats = direction?.beats ?? [];
-    return direction
-      ? `心理与情绪“${direction.emotion}”，动作与反应“${direction.action}”，表情变化“${direction.expression}”${beats.length ? `；分拍执行：${beats.map((beat) => `${beat.startSecond}-${beat.endSecond}s 目标=${beat.objective} 潜台词=${beat.subtext ?? "未指定"} 动作=${beat.action} 表情=${beat.expression} 视线=${beat.gazeTarget ?? "未指定"} 反应于=${beat.reactionTo ?? "无"}`).join("；")}` : ""}`
-      : "保持符合当前剧情的呼吸、视线、表情和重心变化";
-  };
-  const timingLines = input.timings.map((timing) => {
-    const line = input.lines[timing.lineIndex];
-    return line.delivery === "dialogue"
-      ? input.usesEstimatedTiming
-        ? `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}s | ${line.speaker}按对白文本预估节奏完成无声说话表演与自然口部占位，精准口型留待后期，同时执行：${performanceDirection(line.speaker)} | 其他角色闭口，并按各自表演指导给出持续倾听、判断或情绪变化的无声反应`
-        : `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}s | ${line.speaker}按正式配音时长完成无声说话表演，同时执行：${performanceDirection(line.speaker)} | 其他角色闭口，并按各自表演指导给出持续倾听、判断或情绪变化的无声反应`
-      : `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}s | ${line.speaker}的内心独白/画外音时段 | 画面中所有人物保持闭口、不做口型；${line.speaker}通过${performanceDirection(line.speaker)}外化心理变化，其他角色不得感知未说出口的内容`;
-  });
-  const secondBeats = Array.from(
-    { length: input.durationSeconds },
-    (_value, second) => {
-      const active = input.timings.find(
-        (timing) => timing.startSeconds < second + 1 && timing.endSeconds > second,
-      );
-      const action = active
-        ? input.lines[active.lineIndex].delivery === "dialogue"
-          ? `${input.lines[active.lineIndex].speaker}持续当前无声说话表演，并以${performanceDirection(input.lines[active.lineIndex].speaker)}推进表演；其他角色保持视线和无声反应连续`
-          : `${input.lines[active.lineIndex].speaker}在内心独白中保持闭口，以${performanceDirection(input.lines[active.lineIndex].speaker)}呈现思绪变化；所有人物均不得做口型`
-        : "对白间隙，人物不能冻结或回到默认中性状态；延续上一拍的呼吸、视线、表情余韵和重心，并对刚发生的动作保持无声反应";
-      return `${second}-${second + 1}s | ${action} | 镜头保持同侧轴线并做轻微稳定推进`;
-    },
-  );
-  return [
-    `总时长：${input.durationSeconds}s`,
-    `场景与动作：${input.description}`,
-    `完整分镜运动蓝图：\n${input.motionPrompt}`,
-    ...(input.actingDirections.length
-      ? [
-          "逐角色表演指导：",
-          ...input.actingDirections.map(
-            (direction) => {
-              const beats = direction.beats ?? [];
-              return `${direction.name} | 心理与情绪：${direction.emotion} | 动作与反应：${direction.action} | 表情变化：${direction.expression}${beats.length ? ` | 分拍：${beats.map((beat) => `${beat.startSecond}-${beat.endSecond}s 目标=${beat.objective} 潜台词=${beat.subtext ?? "未指定"} 动作=${beat.action} 表情=${beat.expression} 视线=${beat.gazeTarget ?? "未指定"} 反应于=${beat.reactionTo ?? "无"}`).join("；")}` : ""}`;
-            },
-          ),
-        ]
-      : []),
-    "表演硬约束：除非逐角色指导明确要求面无表情，否则禁止全程中性脸、僵硬凝视、机械站立或只动嘴不表演。角色要以视线焦点和转移、自然眨眼、呼吸深浅、眉眼嘴角、下颌张力、吞咽、手指与肩颈微动作、身体重心及与他人的无声反应，连续外化已有心理活动和潜台词。每个动作必须有动作前意图、动作中情绪阻力和动作后余韵；保持克制自然，不新增剧情动作、关系、对白或结果。",
-    `声音硬约束：只生成与画面动作严格同步的空间环境声、自然氛围声和动作音效；优先按动作与环境音效时间点完成龙炎轰鸣、破空锐响、能量冲击等已设计声音，不得用无关音效填充。禁止角色声音、对白、旁白、内心独白、喊叫、吟唱或其他可辨识人声。角色配音${input.usesEstimatedTiming ? "将在" : "已由"}独立声音模型生成，并在口型与成片阶段另行合成；本视频不得代替、复述或混入角色配音。不要生成画面内字幕、文字或水印。`,
-    input.usesEstimatedTiming
-      ? `当前对白节奏根据文本预估${input.playbackRate > 1 ? `，按 ${input.playbackRate.toFixed(2)} 倍语速压缩` : ""}；本次只生成表演和口部占位，正式配音与精准口型在后续阶段完成。`
-      : input.playbackRate > 1
-        ? `表演时序已按正式配音调整为 ${input.playbackRate.toFixed(2)} 倍语速，精准口型仍在后期完成。`
-        : "表演时序来自正式配音，精准口型仍在后期完成。",
-    "对白表演与画外音时序：",
-    ...timingLines,
-    "逐秒表演与运镜：",
-    ...secondBeats,
-    `连续性：角色身份、服装、站位、视线、光向和空间轴线前后一致；${input.usesEstimatedTiming ? "说话表演只由当前说话者承担，口部仅作自然占位，精准口型留待后期" : "说话表演只跟随当前说话者，精准口型留待后期"}，避免多人同时开口、跳帧、瞬移或动作重置；音轨只保留环境声与动作音效，不得混入可辨识人声。`,
-  ].join("\n");
-}
-
-type StoryboardActingDirection = {
-  name: string;
-  emotion: string;
-  action: string;
-  expression: string;
-  beats?: Array<{
-    startSecond: number;
-    endSecond: number;
-    objective: string;
-    subtext: string | null;
-    action: string;
-    expression: string;
-    gazeTarget: string | null;
-    reactionTo: string | null;
-  }>;
-};
-
-function parseStoryboardActingDirections(
-  value: string | null,
-): StoryboardActingDirection[] {
-  if (!value) return [];
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
-    const characters = (parsed as Record<string, unknown>).characters;
-    if (!Array.isArray(characters)) return [];
-    return characters.flatMap((character) => {
-      if (!character || typeof character !== "object" || Array.isArray(character))
-        return [];
-      const item = character as Record<string, unknown>;
-      const name = textValue(item.name);
-      const emotion = textValue(item.emotion);
-      const action = textValue(item.action);
-      const expression = textValue(item.expression);
-      const beats = Array.isArray(item.beats)
-        ? item.beats.flatMap((value) => {
-            if (!value || typeof value !== "object" || Array.isArray(value))
-              return [];
-            const beat = value as Record<string, unknown>;
-            const startSecond = Number(beat.startSecond);
-            const endSecond = Number(beat.endSecond);
-            const objective = textValue(beat.objective);
-            const subtext = textValue(beat.subtext);
-            const beatAction = textValue(beat.action);
-            const beatExpression = textValue(beat.expression);
-            if (
-              !Number.isFinite(startSecond) ||
-              !Number.isFinite(endSecond) ||
-              !objective ||
-              !beatAction ||
-              !beatExpression
-            )
-              return [];
-            return [
-              {
-                startSecond,
-                endSecond,
-                objective,
-                subtext: subtext || null,
-                action: beatAction,
-                expression: beatExpression,
-                gazeTarget: textValue(beat.gazeTarget) || null,
-                reactionTo: textValue(beat.reactionTo) || null,
-              },
-            ];
-          })
-        : [];
-      return name && emotion && action && expression
-        ? [{ name, emotion, action, expression, beats }]
-        : [];
-    });
-  } catch {
-    return [];
-  }
-}
-
-function textValue(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
-
 function parseDurationSeconds(value?: string) {
   if (!value) return undefined;
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-function estimateSpokenDuration(content: string) {
-  const characters = content.replace(/\s/g, "").length;
-  return Math.max(1, Math.ceil(characters / 4.5));
 }
 
 async function findLastFramePanel(input: {
@@ -1224,20 +881,15 @@ async function loadStoryboardVisualProfiles(input: {
 function compileStoryboardProductionPrompt(
   prompt: string,
   productionDesign: StoryboardProductionDesign,
-  kind: "image" | "video",
 ) {
-  const visualProfiles = productionDesign.visualProfiles.map((item) =>
-    kind === "image"
-      ? compileStoryboardImageVisualProfile(item)
-      : compileStoryboardVideoVisualProfile(item),
+  const visualProfiles = productionDesign.visualProfiles.map(
+    compileStoryboardImageVisualProfile,
   );
   const productionPrompt = [
     productionDesign.storyWorldDirective,
     ...(visualProfiles.length
       ? [
-          kind === "image"
-            ? "已确认资产视觉档案（永久身份硬约束；本镜临时状态不得改写这些设定）："
-            : "视频身份锚点（仅保留永久识别信息；本镜光线、时间与动作以分镜状态为准）：",
+          "已确认资产视觉档案（永久身份硬约束；本镜临时状态不得改写这些设定）：",
           ...visualProfiles,
         ]
       : []),
@@ -1271,13 +923,7 @@ type StoryboardEventBlueprintPanel = {
 export function compileStoryboardEventBlueprint(
   userPrompt: string,
   panel: StoryboardEventBlueprintPanel,
-  kind: "image" | "video",
 ) {
-  const spokenTexts = [panel.lipSyncText, panel.voiceoverText];
-  const safeUserPrompt =
-    kind === "video"
-      ? redactStoryboardSpeechForVideo(userPrompt, spokenTexts)
-      : userPrompt;
   const characters = parseStringArray(panel.charactersJson ?? null);
   const props = parseStringArray(panel.propsJson ?? null);
   const sourceEvidence = parseStoredJsonValue<unknown[]>(
@@ -1305,7 +951,7 @@ export function compileStoryboardEventBlueprint(
   const environment = asBlueprintRecord(startState.environmentState);
   const sections: string[] = [
     "用户补充提示（只能补充表现方式，不得替换下方剧情事实与状态）：",
-    safeUserPrompt,
+    userPrompt,
     "不可省略的结构化镜头制作蓝图：",
     "1. 镜头意图",
     `观众应读到：${blueprintText(shotIntent.audienceTakeaway, panel.description?.trim() || "按已批准剧情事件理解")}`,
@@ -1322,11 +968,7 @@ export function compileStoryboardEventBlueprint(
     `环境连续性：${formatBlueprintRecord(environment)}`,
     `开场人物、道具与空间状态：${formatBlueprintRecord(startState, ["environmentState"])}`,
     "4. 逐角色分拍表演",
-    ...formatActingBlueprint(
-      kind === "video"
-        ? asBlueprintRecord(stripDialogueEvidence(actingNotes))
-        : actingNotes,
-    ),
+    ...formatActingBlueprint(actingNotes),
     "5. 摄影机位与构图规则（完整契约）",
     ...formatCameraBlueprint(photographyRules),
     "6. 约束与风险",
@@ -1334,44 +976,11 @@ export function compileStoryboardEventBlueprint(
     `只在本镜变化：${formatBlueprintList(constraints.changesHere)}`,
     `不得出现：${formatBlueprintList(constraints.mustNotAppear)}`,
     `最高风险项（最多三项）：${formatBlueprintList(worldContext.riskFocus)}`,
-    kind === "video"
-      ? "原文台词正文：由独立配音与口型阶段处理，不传递给视频模型"
-      : `原文事件依据（仅追溯，不代替画面实现）：${formatBlueprintList(sourceEvidence)}`,
+    `原文事件依据（仅追溯，不代替画面实现）：${formatBlueprintList(sourceEvidence)}`,
+    "7. 静态首帧边界",
+    `作为后续视频首帧必须成立的静态起始状态：${formatBlueprintRecord(startState)}`,
+    "只表现这条已批准事件链的起始瞬间，不得提前画出结束结果，也不得省略、改写或新增剧情结果。",
   ];
-  if (kind === "image") {
-    sections.push(
-      "7. 静态首帧边界",
-      `作为后续视频首帧必须成立的静态起始状态：${formatBlueprintRecord(startState)}`,
-      "只表现这条已批准事件链的起始瞬间，不得提前画出结束结果，也不得省略、改写或新增剧情结果。",
-    );
-  } else {
-    const motionBeats = asBlueprintArray(
-      parseStoredJsonValue(panel.motionBeatsJson, []),
-    );
-    const vfxCues = asBlueprintArray(
-      parseStoredJsonValue(panel.vfxCuesJson, []),
-    );
-    const sfxCues = asBlueprintArray(
-      parseStoredJsonValue(panel.sfxCuesJson, []),
-    );
-    sections.push(
-      "7. 动作、互动与表演时间线",
-      ...formatTimelineBlueprint(
-        asBlueprintArray(stripDialogueEvidence(motionBeats)),
-      ),
-      "8. 光线、特效与声音",
-      `开场光线/天气/粒子/底噪：${formatBlueprintRecord(environment)}`,
-      ...formatCueBlueprint("特效", vfxCues),
-      ...formatCueBlueprint(
-        "动作与环境音效",
-        sfxCues.filter((cue) => !isSpokenAudioCue(cue)),
-      ),
-      "9. 闭合状态",
-      `结束人物、道具、环境与空间状态：${formatBlueprintRecord(endState)}`,
-      "必须按时间线完成起始状态到结束状态的因果动作，不得跳过关键动作、命中反馈、道具状态变化或特效阶段。",
-      "视频只允许环境声、动作声和已列音效，不得自行生成对白、旁白、喊叫、吟唱或其他可辨识人声。",
-    );
-  }
   return sections.join("\n");
 }
 
@@ -1529,21 +1138,6 @@ function formatCameraBlueprint(value: BlueprintRecord) {
   ];
 }
 
-function formatTimelineBlueprint(beats: unknown[]) {
-  if (!beats.length) return ["动作时间线：按已批准的连续动作从开场状态推进到闭合状态"];
-  return beats.map((item, index) => {
-    const beat = asBlueprintRecord(item);
-    return `动作时间线 ${index + 1}：${blueprintText(beat.startSecond, "0")}-${blueprintText(beat.endSecond, "未指定")}秒；${formatBlueprintRecord(beat, ["startSecond", "endSecond"])}`;
-  });
-}
-
-function formatCueBlueprint(label: string, cues: unknown[]) {
-  if (!cues.length) return [`${label}：无`];
-  return cues.map(
-    (cue, index) => `${label}${index + 1}：${formatBlueprintRecord(cue)}`,
-  );
-}
-
 export function assertStoryboardApprovedForMedia(status: string) {
   if (["ready", "review_required", "continuity_warning"].includes(status))
     return;
@@ -1551,75 +1145,6 @@ export function assertStoryboardApprovedForMedia(status: string) {
     `分镜尚未完成，不能生成媒体（当前状态：${status}）`,
     409,
   );
-}
-
-export function redactStoryboardSpeechForVideo(
-  value: string,
-  spokenTexts: Array<string | null | undefined>,
-) {
-  let result = value;
-  const normalizedTexts = spokenTexts
-    .map((text) => text?.trim())
-    .filter((text): text is string => Boolean(text))
-    .sort((left, right) => right.length - left.length);
-  for (const text of normalizedTexts)
-    result = result.split(text).join("[台词正文由配音阶段处理]");
-  return result
-    .split(/\r?\n/)
-    .filter((line) => !isSpokenAudioCueLine(line))
-    .join("\n")
-    .trim();
-}
-
-function stripDialogueEvidence(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripDialogueEvidence);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .filter(
-        ([key]) =>
-          !/^(evidence|sourceEvidence|dialogueText|voiceoverText|subtitleText|content)$/i.test(
-            key,
-          ),
-      )
-      .map(([key, item]) => [key, stripDialogueEvidence(item)]),
-  );
-}
-
-function isSpokenAudioCue(value: unknown) {
-  const cue = asBlueprintRecord(value);
-  return /人声|说话声|对白|旁白|台词|喊叫|吟唱|speech|dialogue|voiceover|narration|vocal/i.test(
-    [cue.type, cue.description, cue.sound, cue.content]
-      .map((item) => blueprintText(item, ""))
-      .join(" "),
-  );
-}
-
-function isSpokenAudioCueLine(line: string) {
-  return (
-    line.includes("|") &&
-    /人声|说话声|对白声|旁白声|台词声|speech|dialogue|voiceover|narration|vocal/i.test(
-      line,
-    )
-  );
-}
-
-function compileStoryboardVideoVisualProfile(item: {
-  kind: "角色" | "场景" | "道具";
-  name: string;
-  profile: AssetVisualProfile;
-}) {
-  const { spec } = item.profile;
-  return [
-    `${item.kind}「${item.name}」`,
-    `永久身份：${spec.visualIdentity}`,
-    ...(spec.signatureDetails.length
-      ? [`识别点：${spec.signatureDetails.slice(0, 3).join("；")}`]
-      : []),
-    ...(spec.consistencyRules.length
-      ? [`一致性：${spec.consistencyRules.slice(0, 3).join("；")}`]
-      : []),
-  ].join("\n");
 }
 
 function compileStoryboardImageVisualProfile(item: {
@@ -1984,32 +1509,6 @@ function withStoryboardImageContinuityRequirements(input: {
     input.prompt,
     "连续性约束：严格匹配提供的角色、场景和道具参考图；同一角色保持脸部、发型、服装、体型和配色不变，同一场景保持空间布局、主光方向和固定地标不变，同一关键道具保持单一实例和一致外观。",
     ...anchors,
-    ...(input.environmentDirective ? [input.environmentDirective] : []),
-  ].join("\n");
-}
-
-function withStoryboardVideoContinuityRequirements(input: {
-  prompt: string;
-  characters: string[];
-  props: string[];
-  locationName: string | null;
-  environmentDirective?: string;
-}) {
-  const anchorLines = [
-    input.characters.length
-      ? `角色锁定：${input.characters.join("、")}。角色脸部、发型、服装、体型、配色和初始朝向必须与参考图和前一镜头保持一致；只有动作时间线明确转身时才改变朝向。`
-      : null,
-    input.locationName
-      ? `场景锁定：${input.locationName}。保持同一空间布局、出入口、固定地标、主光方向和运动轴线。`
-      : null,
-    input.props.length
-      ? `道具锁定：${input.props.join("、")}。同一连续动作中每件关键道具只能有一个实例；不得复制、替换、凭空新增、消失或随换镜头改变位置。摄影机可以换机位，但对象仍是同一实例。`
-      : null,
-  ].filter(Boolean);
-  return [
-    input.prompt,
-    "跨镜头连续性硬约束：镜头只改变摄影机位置、景别或已写明的角色动作，不得重置人物姿态、生成额外人物或重复关键道具；首帧承接前一镜头的末帧状态，动作沿同一方向连续完成。",
-    ...anchorLines,
     ...(input.environmentDirective ? [input.environmentDirective] : []),
   ].join("\n");
 }

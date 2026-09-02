@@ -47,7 +47,9 @@ type VideoMode = "reference" | "first-last";
 const promptCopy = {
   "zh-CN": {
     finalPrompt: "最终提交提示词",
-    compiling: "正在按项目画风和资产参考编译",
+    verbatimVideoPrompt: "完整视频提示词 · 原样提交",
+    compiling: "正在编译项目画风和资产参考",
+    checkingVideo: "正在核对视频提示词、参考图与提交参数",
     previewFailed: "提示词预览载入失败",
     source: "来源",
     safety: "敏感描述替换",
@@ -60,7 +62,9 @@ const promptCopy = {
   },
   en: {
     finalPrompt: "Final provider prompt",
+    verbatimVideoPrompt: "Complete video prompt · submitted verbatim",
     compiling: "Compiling project style and asset references",
+    checkingVideo: "Checking video prompt, references, and request parameters",
     previewFailed: "Unable to load prompt preview",
     source: "Sources",
     safety: "Safety rewrites",
@@ -248,6 +252,7 @@ export function PanelGenerationDialog({
           ) : null}
           <PromptPreview
             error={previewError}
+            kind={kind}
             loading={previewLoading}
             locale={locale}
             preview={preview}
@@ -555,11 +560,13 @@ export function BatchGenerationDialog({
 
 function PromptPreview({
   error,
+  kind,
   loading,
   locale,
   preview,
 }: {
   error: string;
+  kind: ShotMediaKind;
   loading: boolean;
   locale: StudioLocale;
   preview: StoryboardPromptPreview | null;
@@ -569,13 +576,15 @@ function PromptPreview({
     <details className="min-w-0 border-y py-3">
       <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium">
         <Eye className="size-4" />
-        {text.finalPrompt}
+        {kind === "video" ? text.verbatimVideoPrompt : text.finalPrompt}
         {loading ? (
           <LoaderCircle className="ml-auto size-4 animate-spin" />
         ) : null}
       </summary>
       {loading ? (
-        <p className="mt-3 text-xs text-muted-foreground">{text.compiling}</p>
+        <p className="mt-3 text-xs text-muted-foreground">
+          {kind === "video" ? text.checkingVideo : text.compiling}
+        </p>
       ) : error ? (
         <p className="mt-3 text-xs text-destructive">{error}</p>
       ) : preview ? (

@@ -425,7 +425,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORYBOARD_MEDIA_PROMPT_DESIGN]: {
     pathStem: "domain/storyboard_media_prompt_design",
-    version: 2,
+    version: 3,
     variables: [
       "media_kind",
       "generation_mode",
@@ -444,12 +444,12 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
         "changing approved character, location, prop, performance, camera, timing, VFX, or SFX facts",
         "replacing the project art style",
         "describing invisible motion in an image prompt",
-        "omitting interaction beats, performance changes, timed effects, or boundary states from a video prompt",
+        "copying dialogue, narration, subtitle text, or full asset and world dossiers into a video prompt",
       ],
       successCriteria: [
         "The prompt can be submitted directly to the selected image or video generator",
-        "Visible composition, performance, interaction, spatial, and continuity constraints are concrete",
-        "Video prompts express a chronological action timeline with start and end states",
+        "Visible composition, action, interaction, camera, and continuity constraints are concrete",
+        "Video prompts stay concise while expressing a chronological action from reference state to end state",
       ],
       qualityGates: [
         "schema_valid",

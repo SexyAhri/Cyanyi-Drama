@@ -1,17 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  channelFindFirst: vi.fn(),
+  enqueueTask: vi.fn(),
   projectConfigFindUnique: vi.fn(),
+  providerModelCount: vi.fn(),
   storyboardPanelFindFirst: vi.fn(),
-  voiceLineFindMany: vi.fn(),
+  taskCreate: vi.fn(),
 }));
 
 vi.mock("@/lib/server/prisma", () => ({
   prisma: {
+    channel: { findFirst: mocks.channelFindFirst },
     projectConfig: { findUnique: mocks.projectConfigFindUnique },
+    providerModel: { count: mocks.providerModelCount },
     storyboardPanel: { findFirst: mocks.storyboardPanelFindFirst },
-    voiceLine: { findMany: mocks.voiceLineFindMany },
   },
+}));
+
+vi.mock("@/lib/media/task-store", () => ({
+  createDatabaseMediaTaskStore: () => ({ create: mocks.taskCreate }),
+}));
+
+vi.mock("@/lib/media/task-submit", () => ({
+  enqueuePersistedMediaTask: mocks.enqueueTask,
 }));
 
 vi.mock("@/lib/assets/story-world", () => ({
@@ -22,13 +34,25 @@ vi.mock("@/lib/assets/story-world", () => ({
   getStoryWorldDirective: vi.fn(() => "故事时代硬约束：前现代世界"),
 }));
 
-import { previewStoryboardPanelPrompt } from "./project-asset-tasks";
+import {
+  createStoryboardPanelVideoTask,
+  previewStoryboardPanelPrompt,
+} from "./project-asset-tasks";
 
 describe("storyboard prompt preview", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.channelFindFirst.mockResolvedValue({
+      id: "channel-1",
+      protocol: "openai-compatible",
+      providerKey: "openai",
+    });
+    mocks.providerModelCount.mockResolvedValue(1);
+    mocks.enqueueTask.mockImplementation(async (_userId, task) => ({
+      ...task,
+      status: "queued",
+    }));
     mocks.projectConfigFindUnique.mockResolvedValue({ artStyle: "chinese-ink" });
-    mocks.voiceLineFindMany.mockResolvedValue([]);
     mocks.storyboardPanelFindFirst.mockResolvedValue(panel());
   });
 
@@ -74,17 +98,7 @@ describe("storyboard prompt preview", () => {
     );
   });
 
-  it("blocks missing video references but defers dialogue audio to post-production", async () => {
-    mocks.voiceLineFindMany.mockResolvedValue([
-      {
-        speaker: "林玄",
-        content: "退后。",
-        delivery: "dialogue",
-        durationSeconds: 1.2,
-        audioAssetId: null,
-      },
-    ]);
-
+  it("previews the exact video prompt and only blocks a missing reference frame", async () => {
     const preview = await previewStoryboardPanelPrompt({
       userId: "user-1",
       projectId: "project-1",
@@ -92,37 +106,40 @@ describe("storyboard prompt preview", () => {
       panelId: "panel-1",
       kind: "video",
       mode: "reference",
+      duration: "10s",
+      ratio: "16:9",
+      resolution: "1080p",
     });
 
     expect(preview.issues.map((issue) => issue.code)).toEqual([
       "missing_reference_frame",
-      "dialogue_audio_pending",
     ]);
-    expect(preview.issues).toContainEqual(
-      expect.objectContaining({
-        blocking: false,
-        code: "dialogue_audio_pending",
-      }),
-    );
+    expect(preview.submissionMode).toBe("verbatim");
+    expect(preview.basePrompt).toBe("林玄后退一步");
+    expect(preview.compiledPrompt).toBe(preview.basePrompt);
+    expect(preview.finalPrompt).toBe(preview.basePrompt);
+    expect(preview.safetyRewrites).toEqual([]);
     expect(preview.sources).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          key: "dialogue_timing",
-          value: expect.stringContaining("文本预估"),
+          key: "submission_mode",
+          value: "完整视频提示词原样提交",
+        }),
+        expect.objectContaining({
+          key: "audio_mode",
+          value: "关闭（audioMode=none）",
         }),
       ]),
     );
-    expect(preview.compiledPrompt).toContain("动作时间线");
-    expect(preview.compiledPrompt).toContain("林玄后退一步");
-    expect(preview.compiledPrompt).toContain("逐角色分拍表演");
-    expect(preview.compiledPrompt).toContain("稳住呼吸再判断来袭方向");
-    expect(preview.compiledPrompt).toContain("摄影机位与构图规则");
-    expect(preview.compiledPrompt).toContain("保持林玄与来袭方向同框");
-    expect(preview.compiledPrompt).toContain("精准口型留待后期");
-    expect(preview.compiledPrompt).not.toContain("角色配音已由独立声音模型生成");
+    expect(preview.sources).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "dialogue_timing" }),
+        expect.objectContaining({ key: "visual_profiles" }),
+      ]),
+    );
   });
 
-  it("uses the approved episode time anchor instead of copied daylight placeholders", async () => {
+  it("does not rewrite the designed video prompt during preview", async () => {
     mocks.storyboardPanelFindFirst.mockResolvedValue({
       ...panel(),
       description: "窗外左侧自然光照亮木桌",
@@ -147,12 +164,55 @@ describe("storyboard prompt preview", () => {
       mode: "reference",
     });
 
-    expect(preview.compiledPrompt).toContain(
-      "本集剧情时间锚点（最高优先级）：夜间",
+    expect(preview.basePrompt).toBe(
+      "weather=晴；keyLightSource=窗外日光；人物转身",
     );
-    expect(preview.compiledPrompt).not.toContain("weather=晴");
-    expect(preview.compiledPrompt).not.toContain("keyLightSource=窗外日光");
-    expect(preview.compiledPrompt).not.toContain("窗外左侧自然光");
+    expect(preview.compiledPrompt).toBe(preview.basePrompt);
+    expect(preview.finalPrompt).toBe(preview.basePrompt);
+  });
+
+  it("submits the designed video prompt unchanged with silent model audio", async () => {
+    const exactPrompt =
+      "深冬夜晚，韩宇从参考图姿态起身，镜头缓慢横移；不生成可辨识人声。";
+    mocks.storyboardPanelFindFirst.mockResolvedValue({
+      ...panel(),
+      videoPrompt: exactPrompt,
+      imageAsset: {
+        url: "data:image/png;base64,AQID",
+        storageKey: null,
+        mimeType: "image/png",
+      },
+      storyboard: {
+        status: "ready",
+        episode: panel().storyboard.episode,
+      },
+    });
+
+    await createStoryboardPanelVideoTask({
+      userId: "user-1",
+      projectId: "project-1",
+      episodeId: "episode-1",
+      panelId: "panel-1",
+      channelId: "channel-1",
+      model: "video-model",
+      mode: "reference",
+      ratio: "9:16",
+      resolution: "1080p",
+      duration: "10s",
+    });
+
+    const task = mocks.taskCreate.mock.calls[0][0];
+    expect(task.request).toMatchObject({
+      prompt: exactPrompt,
+      audioMode: "none",
+      duration: "10s",
+      ratio: "9:16",
+      resolution: "1080p",
+      videoMode: "reference",
+    });
+    expect(task.request.referenceImages).toEqual([
+      expect.objectContaining({ role: "reference_image" }),
+    ]);
   });
 });
 
@@ -207,6 +267,7 @@ function panel() {
     locationName: null,
     imageAsset: null,
     storyboard: {
+      status: "ready",
       episode: {
         description: "雨夜中的短暂交锋",
         novelText: "入夜后，林玄在雨中迎敌。",
