@@ -1458,9 +1458,10 @@ function formatCueBlueprint(label: string, cues: unknown[]) {
 }
 
 export function assertStoryboardApprovedForMedia(status: string) {
-  if (status === "ready") return;
+  if (["ready", "review_required", "continuity_warning"].includes(status))
+    return;
   throw new ProjectAssetTaskError(
-    `分镜尚未通过审核，不能生成媒体（当前状态：${status}）`,
+    `分镜尚未完成，不能生成媒体（当前状态：${status}）`,
     409,
   );
 }

@@ -33,7 +33,6 @@ export type StoryboardInferenceReview = {
 
 export type StoryboardContentReview = {
   status: "clear" | "needs_review";
-  blockingIssueCount: number;
   issues: StoryboardReviewIssue[];
   inferences: StoryboardInferenceReview[];
   coverage: { total: number; covered: number; missingEventIds: string[] };
@@ -76,7 +75,7 @@ export function buildStoryboardContentReview(
         missingSourceEvidence.push(event.evidence);
         issues.push({
           code: "SOURCE_EVENT_MISSING",
-          severity: "error",
+          severity: "warning",
           clipId: clip.id,
           panelIndex: null,
           message: `原文事件 ${event.eventId} 没有对应分镜证据：${event.evidence}`,
@@ -101,7 +100,7 @@ export function buildStoryboardContentReview(
           )
             issues.push({
               code: "SCREENPLAY_ACTION_MISSING",
-              severity: "error",
+              severity: "warning",
               clipId: clip.id,
               panelIndex: null,
               message: `剧本动作没有对应镜头：${content.text}`,
@@ -147,7 +146,7 @@ export function buildStoryboardContentReview(
               content.type === "dialogue"
                 ? "DIALOGUE_MISSING"
                 : "VOICEOVER_MISSING",
-            severity: "error",
+            severity: "warning",
             clipId: clip.id,
             panelIndex: matchingPanels[0]?.panelIndex ?? null,
             message: `${content.type === "dialogue" ? "对白" : "画外音"}未按原文完整覆盖：${expected}`,
@@ -169,7 +168,7 @@ export function buildStoryboardContentReview(
       if (new Set(activeSpeakers).size > 1)
         issues.push({
           code: "MULTI_SPEAKER_SHOT",
-          severity: "error",
+          severity: "warning",
           clipId: clip.id,
           panelIndex: panel.panelIndex,
           message: "同一镜头包含多名角色的开口台词，需要在说话人变化处拆镜。",
@@ -181,7 +180,7 @@ export function buildStoryboardContentReview(
       )
         issues.push({
           code: "DIALOGUE_DURATION_OVERFLOW",
-          severity: "error",
+          severity: "warning",
           clipId: clip.id,
           panelIndex: panel.panelIndex,
           message: `台词至少需要 ${estimateSpeechDurationSeconds(spoken)} 秒，当前镜头时长不足。`,
@@ -189,12 +188,8 @@ export function buildStoryboardContentReview(
     }
   }
 
-  const blockingIssueCount = issues.filter(
-    (item) => item.severity === "error",
-  ).length;
   return {
-    status: blockingIssueCount || inferences.length ? "needs_review" : "clear",
-    blockingIssueCount,
+    status: issues.length || inferences.length ? "needs_review" : "clear",
     issues,
     inferences,
     coverage: {

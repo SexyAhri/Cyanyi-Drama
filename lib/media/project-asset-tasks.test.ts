@@ -9,11 +9,17 @@ import {
 } from "./project-asset-tasks";
 
 describe("storyboard video audio contract", () => {
-  it("blocks media generation until the storyboard is approved", () => {
+  it("allows advisory review states and blocks only unfinished storyboards", () => {
     expect(() => assertStoryboardApprovedForMedia("ready")).not.toThrow();
+    expect(() =>
+      assertStoryboardApprovedForMedia("review_required"),
+    ).not.toThrow();
+    expect(() =>
+      assertStoryboardApprovedForMedia("continuity_warning"),
+    ).not.toThrow();
     let error: unknown;
     try {
-      assertStoryboardApprovedForMedia("review_required");
+      assertStoryboardApprovedForMedia("draft");
     } catch (caught) {
       error = caught;
     }

@@ -272,7 +272,7 @@ export function StoryboardWorkspace({
   }
 
   async function approveReview() {
-    if (!data?.storyboard || data.contentReview.blockingIssueCount) return;
+    if (!data?.storyboard) return;
     await savePanels(data.storyboard.panels, "ready");
   }
 
@@ -915,12 +915,12 @@ function ContentReviewOverview({
       ? {
           title: "内容审核",
           clear: "原文事件、台词、时长与连续状态检查通过",
+          advisory: "发现可人工确认的检查建议",
           approved: "推演内容已人工确认",
           coverage: "原文事件覆盖",
-          issues: "待修复",
+          issues: "检查建议",
           inferences: "有依据的合理推演",
-          approve: "确认推演并通过",
-          blocked: "修复阻断项后才能通过",
+          approve: "确认审核并继续",
           evidence: "依据",
           rationale: "理由",
           performance: "表演细节",
@@ -931,12 +931,12 @@ function ContentReviewOverview({
           title: "Content review",
           clear:
             "Source events, dialogue, timing, and continuity checks passed",
+          advisory: "Review suggestions are available",
           approved: "Inferred details approved",
           coverage: "Source event coverage",
-          issues: "Needs correction",
+          issues: "Review suggestions",
           inferences: "Grounded inferences",
-          approve: "Approve inferences",
-          blocked: "Resolve blocking items before approval",
+          approve: "Confirm review and continue",
           evidence: "Evidence",
           rationale: "Rationale",
           performance: "Performance detail",
@@ -949,14 +949,18 @@ function ContentReviewOverview({
     <section className="min-w-0">
       <div className="flex min-h-12 items-center justify-between gap-3 border-b">
         <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
-          {review.blockingIssueCount ? (
+          {review.issues.length ? (
             <TriangleAlert className="size-4 shrink-0 text-status-warning" />
           ) : (
             <FileCheck2 className="size-4 shrink-0 text-status-success" />
           )}
           <span className="truncate">
             {text.title} ·{" "}
-            {approved && review.inferences.length ? text.approved : text.clear}
+            {approved
+              ? text.approved
+              : review.issues.length
+                ? text.advisory
+                : text.clear}
           </span>
         </span>
         <span className="shrink-0 font-mono text-xs text-muted-foreground">
@@ -1021,7 +1025,7 @@ function ContentReviewOverview({
           {data.storyboard?.status === "review_required" ? (
             <div className="flex flex-wrap items-center gap-3">
               <Button
-                disabled={isActing || review.blockingIssueCount > 0}
+                disabled={isActing}
                 onClick={() => void onApprove()}
                 size="sm"
                 type="button"
@@ -1029,9 +1033,6 @@ function ContentReviewOverview({
                 <FileCheck2 className="size-4" />
                 {text.approve}
               </Button>
-              {review.blockingIssueCount ? (
-                <p className="text-xs text-status-warning">{text.blocked}</p>
-              ) : null}
             </div>
           ) : null}
         </div>
@@ -1101,7 +1102,7 @@ function ReviewDialog({
           description: "Source coverage, grounded inference, and shot continuity",
           continuity: "Continuity",
         };
-  const issueCount = review.blockingIssueCount;
+  const issueCount = review.issues.length;
   const continuityCount = data.continuityIssues.length;
   const clear = issueCount === 0 && continuityCount === 0;
 

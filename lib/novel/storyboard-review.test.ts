@@ -40,7 +40,6 @@ describe("storyboard content review", () => {
 
     expect(review).toMatchObject({
       status: "needs_review",
-      blockingIssueCount: 0,
       coverage: { total: 1, covered: 1, missingEventIds: [] },
     });
     expect(review.inferences).toEqual([
@@ -67,7 +66,6 @@ describe("storyboard content review", () => {
 
     expect(review).toMatchObject({
       status: "clear",
-      blockingIssueCount: 0,
       coverage: { total: 1, covered: 1, missingEventIds: [] },
     });
   });
@@ -163,6 +161,7 @@ describe("storyboard content review", () => {
     expect(review.issues.map((issue) => issue.code)).toEqual([
       "SOURCE_EVENT_MISSING",
     ]);
+    expect(review.issues[0]).toMatchObject({ severity: "warning" });
   });
 });
 
