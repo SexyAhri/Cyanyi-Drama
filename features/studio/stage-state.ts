@@ -26,6 +26,11 @@ const ASSET_CATALOG_WORKFLOW_TYPES = new Set([
   "visual-asset-extraction",
 ]);
 
+const WRITING_WORKFLOW_TYPES = new Set([
+  "episode-adaptation",
+  "story-to-script",
+]);
+
 export function getWorkflowContentRevision(workflow?: WorkflowRunSummary) {
   if (!workflow) return "none";
   return [
@@ -36,6 +41,23 @@ export function getWorkflowContentRevision(workflow?: WorkflowRunSummary) {
         `${step.id}:${step.status}:${step.attempt}:${step.completedAt ?? ""}`,
     ),
   ].join("|");
+}
+
+export function getWritingWorkflowRuns(workflows: WorkflowRunSummary[]) {
+  return {
+    adaptation: latestWorkflow(workflows, "episode-adaptation"),
+    production: latestWorkflow(workflows, "story-to-script"),
+  };
+}
+
+export function getWritingWorkflowContentRevision(
+  workflows: WorkflowRunSummary[],
+) {
+  return workflows
+    .filter((workflow) => WRITING_WORKFLOW_TYPES.has(workflow.workflowType))
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map(getWorkflowContentRevision)
+    .join("||");
 }
 
 export function getTaskOutputRevision(tasks: MediaTask[]) {
@@ -72,16 +94,18 @@ export function getStudioStageStates(
   const tasks = snapshot.tasks.filter(
     (task) => !episodeId || task.episodeId === episodeId,
   );
-  const writingWorkflow = latestWorkflow(workflows, "story-to-script");
+  const writingWorkflow = currentWritingWorkflow(workflows);
+  const productionWorkflow = latestWorkflow(workflows, "story-to-script");
   const storyboardWorkflow = latestWorkflow(workflows, "script-to-storyboard");
   const assetTasks = tasks.filter((task) =>
     ["character", "location", "prop"].includes(task.targetType ?? ""),
   );
-  const writingStatus = workflowStatus(
-    writingWorkflow,
-    episode?.novelText ? "ready" : "not_started",
-    Boolean(episode),
-  );
+  const writingStatus = writingStageStatus({
+    current: writingWorkflow,
+    production: productionWorkflow,
+    fallback: episode?.novelText ? "ready" : "not_started",
+    hasEpisode: Boolean(episode),
+  });
   const storyboardStatus = workflowStatus(
     storyboardWorkflow,
     writingStatus === "completed" ? "ready" : "blocked",
@@ -163,7 +187,7 @@ export function getWorkflowForStage(
   stageId: StudioStageId,
 ) {
   if (stageId === "writing") {
-    return latestWorkflow(workflows, "story-to-script");
+    return currentWritingWorkflow(workflows);
   }
   if (stageId === "storyboard") {
     return latestWorkflow(workflows, "script-to-storyboard");
@@ -194,6 +218,36 @@ function latestWorkflow(workflows: WorkflowRunSummary[], workflowType: string) {
   return workflows
     .filter((workflow) => workflow.workflowType === workflowType)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+}
+
+function currentWritingWorkflow(workflows: WorkflowRunSummary[]) {
+  const writingRuns = workflows
+    .filter((workflow) => WRITING_WORKFLOW_TYPES.has(workflow.workflowType))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  return (
+    writingRuns.find((workflow) =>
+      ["queued", "running", "canceling", "paused"].includes(workflow.status),
+    ) ?? writingRuns[0]
+  );
+}
+
+function writingStageStatus(input: {
+  current?: WorkflowRunSummary;
+  production?: WorkflowRunSummary;
+  fallback: StudioStageStatus;
+  hasEpisode: boolean;
+}) {
+  if (!input.hasEpisode) return "blocked";
+  if (
+    input.current &&
+    ["queued", "running", "canceling", "paused", "failed", "blocked"].includes(
+      input.current.status,
+    )
+  ) {
+    return workflowStatus(input.current, input.fallback, true);
+  }
+  if (input.production?.status === "succeeded") return "completed";
+  return input.fallback;
 }
 
 function workflowStatus(

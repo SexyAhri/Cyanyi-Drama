@@ -8,6 +8,8 @@ import {
   getTaskOutputRevision,
   getTasksForStage,
   getWorkflowContentRevision,
+  getWritingWorkflowContentRevision,
+  getWritingWorkflowRuns,
 } from "./stage-state";
 import type { WorkspaceSnapshot } from "./types";
 
@@ -49,6 +51,22 @@ describe("studio stage state", () => {
     expect(stages[0].status).toBe("completed");
     expect(stages[1].status).toBe("ready");
     expect(stages[2].status).toBe("running");
+  });
+
+  it("surfaces an active adaptation as writing work before local placement", () => {
+    const workflows = [
+      workflow("episode-adaptation", "running", "2026-08-26T02:00:00Z"),
+    ];
+    const stages = getStudioStageStates(
+      snapshot({ novelText: "第一章", workflows }),
+      "episode-1",
+    );
+
+    expect(stages[0]).toMatchObject({
+      status: "running",
+      workflow: { workflowType: "episode-adaptation" },
+    });
+    expect(getWritingWorkflowRuns(workflows).adaptation).toBe(workflows[0]);
   });
 
   it("surfaces failed media tasks instead of inferring progress", () => {
@@ -193,6 +211,27 @@ describe("studio runtime revisions", () => {
 
     expect(getAssetCatalogWorkflowRevision([assetWorkflow, unrelated])).toBe(
       getAssetCatalogWorkflowRevision([assetWorkflow]),
+    );
+  });
+
+  it("refreshes writing content for adaptation and placement transitions", () => {
+    const adaptation = workflow(
+      "episode-adaptation",
+      "running",
+      "2026-08-26T01:00:00Z",
+    );
+    const completed = { ...adaptation, status: "succeeded" };
+    const unrelated = workflow(
+      "script-to-storyboard",
+      "running",
+      "2026-08-26T02:00:00Z",
+    );
+
+    expect(getWritingWorkflowContentRevision([completed])).not.toBe(
+      getWritingWorkflowContentRevision([adaptation]),
+    );
+    expect(getWritingWorkflowContentRevision([adaptation, unrelated])).toBe(
+      getWritingWorkflowContentRevision([adaptation]),
     );
   });
 });

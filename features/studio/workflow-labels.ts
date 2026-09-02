@@ -27,7 +27,7 @@ const labels = {
       design_storyboard_media_prompt: "设计镜头提示词",
       design_voice_performance: "设计角色声线与表演",
       extract_visual_assets: "识别角色、场景与道具",
-      analyze_novel: "小说解析",
+      analyze_novel: "角色、场景与道具识别",
       build_storyboard: "镜头规划",
       screenplay_beats: "场次与动作归位",
       generate_screenplay_beats: "场次与动作归位",
@@ -38,8 +38,8 @@ const labels = {
       screenplay_effects: "动作与特效归位",
       generate_screenplay_effects: "动作与特效归位",
       assemble_screenplay: "结构化剧本合成",
-      parse: "小说解析",
-      parse_novel: "小说解析",
+      parse: "角色、场景与道具识别",
+      parse_novel: "角色、场景与道具识别",
       screenplay: "剧本转换",
       split: "按场次拆分",
       split_clips: "按场次拆分",
@@ -84,7 +84,7 @@ const labels = {
       design_storyboard_media_prompt: "Design shot prompt",
       design_voice_performance: "Design voices and delivery",
       extract_visual_assets: "Identify characters, locations, and props",
-      analyze_novel: "Analyze source",
+      analyze_novel: "Identify characters, locations, and props",
       build_storyboard: "Build storyboard",
       screenplay_beats: "Place scenes and action",
       generate_screenplay_beats: "Place scenes and action",
@@ -95,8 +95,8 @@ const labels = {
       screenplay_effects: "Place action and effects",
       generate_screenplay_effects: "Place action and effects",
       assemble_screenplay: "Assemble structured screenplay",
-      parse: "Analyze source",
-      parse_novel: "Analyze source",
+      parse: "Identify characters, locations, and props",
+      parse_novel: "Identify characters, locations, and props",
       screenplay: "Convert screenplay",
       split: "Split approved scenes",
       split_clips: "Split approved scenes",
@@ -158,9 +158,11 @@ export function workflowStepOperationLabel(
         ? "声音"
         : "Audio"
       : workflowType === "story-to-script"
-        ? locale === "zh-CN"
-          ? "编剧"
-          : "Writing"
+        ? step.type === "parse_novel" || step.key === "analyze_novel"
+          ? "AI"
+          : locale === "zh-CN"
+            ? "本地"
+            : "Local"
         : workflowType === "script-to-storyboard"
           ? locale === "zh-CN"
             ? "分镜"

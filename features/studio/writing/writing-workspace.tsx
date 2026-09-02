@@ -2,15 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Ban,
   BookOpenText,
   Braces,
   CircleAlert,
   FilePenLine,
   LoaderCircle,
-  Pause,
-  Play,
-  RotateCcw,
   Save,
   X,
 } from "lucide-react";
@@ -39,12 +35,11 @@ import {
   startStoryToScriptWorkflow,
   updateStudioEpisode,
 } from "../api";
-import { ModelSelect } from "../components/model-select";
 import { formatStudioDate, getStudioCopy } from "../i18n";
 import {
-  getWorkflowForStage,
   getWorkflowContentRevision,
-  runtimeStatusToStageStatus,
+  getWritingWorkflowContentRevision,
+  getWritingWorkflowRuns,
 } from "../stage-state";
 import type {
   ProductionClipRecord,
@@ -53,12 +48,11 @@ import type {
   StudioSelectionContext,
   WorkspaceSnapshot,
 } from "../types";
-import { workflowStepLabel } from "../workflow-labels";
-import { StatusIndicator } from "../components/status-indicator";
 import {
   AdaptationDialog,
   type AdaptationRequest,
 } from "./adaptation-dialog";
+import { WritingFlowPanel } from "./writing-flow-panel";
 
 type AdaptationDraft = {
   episodeId: string;
@@ -117,8 +111,10 @@ export function WritingWorkspace({
   const workflows = snapshot.workflows.filter(
     (workflow) => workflow.episodeId === episode.id,
   );
-  const workflow = getWorkflowForStage(workflows, "writing");
-  const workflowRevision = getWorkflowContentRevision(workflow);
+  const { adaptation: adaptationWorkflow, production: placementWorkflow } =
+    getWritingWorkflowRuns(workflows);
+  const writingWorkflowRevision = getWritingWorkflowContentRevision(workflows);
+  const placementWorkflowRevision = getWorkflowContentRevision(placementWorkflow);
   const isDirty = novelText !== savedText;
 
   useEffect(() => {
@@ -157,7 +153,13 @@ export function WritingWorkspace({
         if (!controller.signal.aborted) setIsLoadingSources(false);
       });
     return () => controller.abort();
-  }, [copy.loadFailed, episode.id, snapshot.project.id, sourceRevision]);
+  }, [
+    copy.loadFailed,
+    episode.id,
+    snapshot.project.id,
+    sourceRevision,
+    writingWorkflowRevision,
+  ]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -177,7 +179,12 @@ export function WritingWorkspace({
         if (!controller.signal.aborted) setIsLoadingClips(false);
       });
     return () => controller.abort();
-  }, [copy.loadFailed, episode.id, snapshot.project.id, workflowRevision]);
+  }, [
+    copy.loadFailed,
+    episode.id,
+    placementWorkflowRevision,
+    snapshot.project.id,
+  ]);
 
   const selectedClip =
     clips.find((clip) => clip.id === selectedClipId) ?? clips[0];
@@ -352,12 +359,12 @@ export function WritingWorkspace({
   }
 
   async function controlWorkflow(
+    runId: string,
     action: "cancel" | "retry" | "pause" | "resume",
   ) {
-    if (!workflow) return;
     setIsActing(true);
     try {
-      await controlStudioWorkflow(workflow.id, action);
+      await controlStudioWorkflow(runId, action);
       await onRefresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : copy.actionFailed);
@@ -366,9 +373,11 @@ export function WritingWorkspace({
     }
   }
 
-  const workflowActive = workflow
-    ? ["queued", "running", "canceling", "paused"].includes(workflow.status)
-    : false;
+  const workflowActive = [adaptationWorkflow, placementWorkflow].some(
+    (current) =>
+      current &&
+      ["queued", "running", "canceling", "paused"].includes(current.status),
+  );
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-7 sm:py-7 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:overflow-hidden">
@@ -531,95 +540,20 @@ export function WritingWorkspace({
           </TabsContent>
         </Tabs>
 
-          <aside className="border-t py-5 xl:min-h-0 xl:overflow-y-auto xl:border-t-0 xl:border-l xl:pl-6">
-            <div className="xl:sticky xl:top-0">
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-semibold">{copy.workflow}</h2>
-                {workflow ? (
-                  <StatusIndicator
-                    className="ml-auto"
-                    locale={locale}
-                    status={runtimeStatusToStageStatus(workflow.status)}
-                  />
-                ) : null}
-              </div>
-              {workflow ? (
-                <div className="mt-4 divide-y border-y">
-                  {workflow.steps.map((step) => (
-                    <div
-                      className="flex items-center gap-2 py-2.5"
-                      key={step.id}
-                    >
-                      <span className="w-5 font-mono text-[10px] text-muted-foreground">
-                        {String(step.index + 1).padStart(2, "0")}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                        {workflowStepLabel(locale, step.key)}
-                      </span>
-                      <StatusIndicator
-                        locale={locale}
-                        status={runtimeStatusToStageStatus(step.status)}
-                      />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                  {copy.noWorkflow}
-                </p>
-              )}
-
-              <div className="mt-5 space-y-2">
-                <ModelSelect
-                  ariaLabel={copy.analysisModel}
-                  className="h-8"
-                  disabled={isActing || workflowActive}
-                  models={models}
-                  onChange={onAnalysisModelChange}
-                  placeholder={copy.analysisModel}
-                  value={analysisModelId}
-                />
-                {!models.length ? (
-                  <p className="text-xs leading-5 text-destructive">
-                    {copy.noAnalysisModels}
-                  </p>
-                ) : null}
-                {!workflowActive ? (
-                  <Button
-                    className="w-full"
-                    disabled={
-                      isActing ||
-                      !savedText.trim() ||
-                      isDirty ||
-                      !analysisModelId
-                    }
-                    onClick={() => void startWorkflow()}
-                    type="button"
-                  >
-                    {isActing ? (
-                      <LoaderCircle className="size-4 animate-spin" />
-                    ) : workflow ? (
-                      <RotateCcw className="size-4" />
-                    ) : (
-                      <Play className="size-4" />
-                    )}
-                    {workflow ? copy.rerunAnalysis : copy.startAnalysis}
-                  </Button>
-                ) : null}
-                <WorkflowActions
-                  disabled={isActing}
-                  locale={locale}
-                  onAction={controlWorkflow}
-                  status={workflow?.status}
-                />
-              </div>
-              {workflow ? (
-                <p className="mt-5 text-[11px] text-muted-foreground">
-                  {formatStudioDate(locale, workflow.updatedAt)}
-                </p>
-              ) : null}
-            </div>
-          </aside>
+        <WritingFlowPanel
+          adaptationWorkflow={adaptationWorkflow}
+          analysisModelId={analysisModelId}
+          canStartPlacement={
+            Boolean(savedText.trim()) && !isDirty && Boolean(analysisModelId)
+          }
+          isActing={isActing}
+          locale={locale}
+          models={models}
+          onAnalysisModelChange={onAnalysisModelChange}
+          onControl={(runId, action) => void controlWorkflow(runId, action)}
+          onStartPlacement={() => void startWorkflow()}
+          placementWorkflow={placementWorkflow}
+        />
       </div>
     </div>
   );
@@ -791,15 +725,30 @@ function StreamingAdaptationPane({
           {draft.error}
         </p>
       ) : null}
-      <Textarea
-        aria-busy={draft.status === "running"}
-        aria-label={copy.adaptedSource}
-        className="mt-4 h-[min(56dvh,42rem)] min-h-80 resize-y overflow-y-auto rounded-md bg-card p-4 leading-7 field-sizing-fixed xl:min-h-0 xl:flex-1 xl:resize-none"
-        placeholder={copy.adapting}
-        readOnly
-        ref={textareaRef}
-        value={draft.content}
-      />
+      {draft.content ? (
+        <Textarea
+          aria-busy={draft.status === "running"}
+          aria-label={copy.adaptedSource}
+          className="mt-4 h-[min(56dvh,42rem)] min-h-80 resize-y overflow-y-auto rounded-md bg-card p-4 leading-7 field-sizing-fixed xl:min-h-0 xl:flex-1 xl:resize-none"
+          readOnly
+          ref={textareaRef}
+          value={draft.content}
+        />
+      ) : (
+        <div
+          aria-busy={draft.status === "running"}
+          className="mt-4 flex min-h-80 flex-1 items-center justify-center border-y px-6 text-center"
+        >
+          <div className="flex max-w-xs flex-col items-center gap-3 text-sm text-muted-foreground">
+            {draft.status === "running" ? (
+              <LoaderCircle className="size-5 animate-spin" />
+            ) : (
+              <CircleAlert className="size-5 text-destructive" />
+            )}
+            <p>{draft.error || copy.adaptationWaiting}</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -810,75 +759,6 @@ function adaptationPhaseLabel(
 ) {
   if (phase === "saving") return copy.adaptationSaving;
   return copy.adaptationGenerating;
-}
-
-function WorkflowActions({
-  disabled,
-  locale,
-  onAction,
-  status,
-}: {
-  disabled: boolean;
-  locale: StudioLocale;
-  onAction: (action: "cancel" | "retry" | "pause" | "resume") => void;
-  status?: string;
-}) {
-  const copy = getStudioCopy(locale);
-  if (!status) return null;
-  if (status === "failed" || status === "blocked") {
-    return (
-      <Button
-        className="w-full"
-        disabled={disabled}
-        onClick={() => onAction("retry")}
-        type="button"
-        variant="outline"
-      >
-        <RotateCcw className="size-4" />
-        {copy.retryWorkflow}
-      </Button>
-    );
-  }
-  if (!["queued", "running", "canceling", "paused"].includes(status)) {
-    return null;
-  }
-  return (
-    <div className="flex gap-2">
-      {status === "running" ? (
-        <Button
-          className="flex-1"
-          disabled={disabled}
-          onClick={() => onAction("pause")}
-          type="button"
-          variant="outline"
-        >
-          <Pause className="size-4" />
-          {copy.pauseWorkflow}
-        </Button>
-      ) : status === "paused" ? (
-        <Button
-          className="flex-1"
-          disabled={disabled}
-          onClick={() => onAction("resume")}
-          type="button"
-          variant="outline"
-        >
-          <Play className="size-4" />
-          {copy.resumeWorkflow}
-        </Button>
-      ) : null}
-      <Button
-        className="flex-1"
-        disabled={disabled || status === "canceling"}
-        onClick={() => onAction("cancel")}
-        type="button"
-        variant="outline"
-      >
-        <Ban className="size-4" />
-        {copy.cancelWorkflow}
-      </Button>
-    </div>
-  );
 }
 
 function ScreenplayList({
