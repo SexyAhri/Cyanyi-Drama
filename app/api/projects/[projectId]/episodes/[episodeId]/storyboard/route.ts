@@ -1,11 +1,7 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { getStoryboard, saveStoryboard } from "@/lib/novel/domain-store";
 import type { StoryboardPromptDesignDetails } from "@/lib/novel/domain-types";
-import { listLatestStoryboardContinuityIssues } from "@/lib/novel/continuity-store";
-import { buildStoryboardContentReview } from "@/lib/novel/storyboard-review";
-import { listProductionClips } from "@/lib/production/domain-store";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
-import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { createOrReuseWorkflowRun } from "@/lib/workflow/store";
 
 type Context = { params: Promise<{ projectId: string; episodeId: string }> };
@@ -13,22 +9,11 @@ type Context = { params: Promise<{ projectId: string; episodeId: string }> };
 export async function GET(_request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { projectId, episodeId } = await context.params;
-  const [storyboard, continuityIssues, clips] = await Promise.all([
-    getStoryboard(user.id, projectId, episodeId),
-    listLatestStoryboardContinuityIssues(user.id, projectId, episodeId),
-    listProductionClips(user.id, projectId, episodeId),
-  ]);
+  const storyboard = await getStoryboard(user.id, projectId, episodeId);
   return attachSessionCookie(
     Response.json({
       storyboard,
-      continuityIssues,
-      contentReview: buildStoryboardContentReview(
-        storyboard,
-        (clips ?? []).map((clip) => ({
-          id: clip.id,
-          screenplay: clip.screenplay,
-        })),
-      ),
+      continuityIssues: [],
     }),
     sessionId,
   );
@@ -38,23 +23,7 @@ export async function POST(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { projectId, episodeId } = await context.params;
   const body = await readObject(request);
-  const runtimeSettings = await loadUserRuntimeSettings(user.id);
-  const channelId =
-    typeof body.channelId === "string" ? body.channelId.trim() : "";
-  const model = typeof body.model === "string" ? body.model.trim() : "";
   const locale = body.locale === "en" ? "en" : "zh";
-  const concurrency =
-    typeof body.concurrency === "number" && Number.isFinite(body.concurrency)
-      ? Math.max(1, Math.min(8, Math.floor(body.concurrency)))
-      : runtimeSettings.workflowConcurrency;
-  if (!channelId || !model)
-    return attachSessionCookie(
-      Response.json(
-        { message: "channelId 和 model 是必填项" },
-        { status: 400 },
-      ),
-      sessionId,
-    );
   const result = await createOrReuseWorkflowRun({
     id: `workflow_${crypto.randomUUID()}`,
     userId: user.id,
@@ -63,34 +32,18 @@ export async function POST(request: Request, context: Context) {
     workflowType: "script-to-storyboard",
     targetType: "episode",
     targetId: episodeId,
-    input: { channelId, model, locale, concurrency },
+    input: { locale },
     steps: [
       {
-        key: "storyboard",
-        type: "build_storyboard",
-        artifactTypes: [
-          "storyboard.clip.phase1",
-          "storyboard.clip.phase2.cine",
-          "storyboard.clip.phase2.acting",
-          "storyboard.clip.phase3",
-          "storyboard.clip.continuity",
-          "prompt.trace",
-        ],
-        input: { channelId, model, locale, concurrency },
-        retryable: true,
-        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
-      },
-      {
-        key: "voice",
-        type: "voice_analyze",
-        dependsOn: ["storyboard"],
-        artifactTypes: ["voice.lines", "prompt.trace"],
-        input: { channelId, model, locale },
-        retryable: true,
-        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
+        key: "build_scene_storyboard",
+        type: "build_scene_storyboard",
+        artifactTypes: ["storyboard.scenes"],
+        input: { locale },
+        retryable: false,
+        maxAttempts: 1,
       },
     ],
-    maxAttempts: runtimeSettings.workflowStepMaxAttempts,
+    maxAttempts: 1,
   });
   if (!result)
     return attachSessionCookie(

@@ -28,7 +28,6 @@ import {
   generateEpisodeScreenplayNarration,
 } from "@/lib/novel/staged-screenplay-runtime";
 import { prisma } from "@/lib/server/prisma";
-import { analyzeEpisodeVoices } from "@/lib/voice/analyze";
 import { designEpisodeVoicePerformance } from "@/lib/voice/design";
 import {
   assertWorkflowRunActive,
@@ -727,60 +726,18 @@ async function runStep(
       return generateEpisodeScreenplayEffects(userId, stageInput, runtime);
     return assembleEpisodeScreenplays(userId, stageInput, runtime);
   }
-  if (step.stepType === "build_storyboard") {
+  if (step.stepType === "build_scene_storyboard") {
     if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
     const input = mergedStepInput(run.input, step.input);
-    const channelId = getString(input.channelId);
-    const model = getString(input.model);
-    if (!channelId || !model)
-      throw new Error("WORKFLOW_STORYBOARD_INPUT_REQUIRED");
     return buildEpisodeStoryboard(
       userId,
       {
         projectId: run.projectId,
         episodeId: run.episodeId,
-        channelId,
-        model,
         locale: getString(input.locale) === "en" ? "en" : "zh",
-        concurrency: getNumber(input.concurrency),
       },
       runtime,
     );
-  }
-  if (step.stepType === "voice_analyze") {
-    if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
-    const runInput = isRecord(run.input) ? run.input : {};
-    const stepInput = isRecord(step.input) ? step.input : {};
-    const channelId = getString(stepInput.channelId ?? runInput.channelId);
-    const model = getString(stepInput.model ?? runInput.model);
-    if (!channelId || !model)
-      throw new Error("WORKFLOW_VOICE_ANALYZE_INPUT_REQUIRED");
-    const result = await analyzeEpisodeVoices({
-      userId,
-      projectId: run.projectId,
-      episodeId: run.episodeId,
-      channelId,
-      model,
-      locale:
-        getString(stepInput.locale ?? runInput.locale) === "en" ? "en" : "zh",
-    });
-    await runtime.persistArtifact("voice.lines", run.episodeId, {
-      voiceLines: result.voiceLines,
-      degraded: result.degraded,
-      fallbackReason: result.fallbackReason,
-    });
-    for (const [index, trace] of result.promptTraces.entries())
-      await runtime.persistArtifact(
-        "prompt.trace",
-        `${run.episodeId}:voice:${index}`,
-        trace,
-      );
-    return {
-      lineCount: result.voiceLines.length,
-      degraded: result.degraded,
-      fallbackReason: result.fallbackReason,
-      promptTraces: result.promptTraces,
-    };
   }
   if (step.stepType === "organize_production_script") {
     if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");

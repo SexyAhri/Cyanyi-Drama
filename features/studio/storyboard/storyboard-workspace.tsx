@@ -4,7 +4,6 @@ import {
   Ban,
   CircleCheck,
   Clapperboard,
-  FileCheck2,
   LoaderCircle,
   Pause,
   Play,
@@ -19,14 +18,6 @@ import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
@@ -36,7 +27,6 @@ import {
   saveStudioStoryboard,
   startStudioStoryboardWorkflow,
 } from "../api";
-import { ModelSelect } from "../components/model-select";
 import { StatusIndicator } from "../components/status-indicator";
 import { getStudioCopy } from "../i18n";
 import {
@@ -46,7 +36,6 @@ import {
 } from "../stage-state";
 import type {
   StudioLocale,
-  StudioModelOption,
   StudioSelectionContext,
   StudioStoryboardData,
   StudioStoryboardPanel,
@@ -69,14 +58,12 @@ import {
 export function StoryboardWorkspace({
   episode,
   locale,
-  models,
   onContextChange,
   onRefresh,
   snapshot,
 }: {
   episode: WorkspaceSnapshot["project"]["episodes"][number];
   locale: StudioLocale;
-  models: StudioModelOption[];
   onContextChange: (selection?: StudioSelectionContext) => void;
   onRefresh: () => Promise<unknown> | void;
   snapshot: WorkspaceSnapshot;
@@ -87,7 +74,6 @@ export function StoryboardWorkspace({
   const [isLoading, setIsLoading] = useState(true);
   const [isActing, setIsActing] = useState(false);
   const [selectedPanelId, setSelectedPanelId] = useState("");
-  const [modelId, setModelId] = useState("");
   const projectId = snapshot.project.id;
   const workflows = snapshot.workflows.filter(
     (workflow) => workflow.episodeId === episode.id,
@@ -129,14 +115,6 @@ export function StoryboardWorkspace({
     return () => controller.abort();
   }, [load, workflowRevision]);
 
-  useEffect(() => {
-    if (models.some((model) => model.id === modelId)) return;
-    const configured = models.find(
-      (model) => model.modelId === snapshot.project.config.storyboardModel,
-    );
-    setModelId(configured?.id ?? models[0]?.id ?? "");
-  }, [modelId, models, snapshot.project.config.storyboardModel]);
-
   const panels = useMemo(
     () => data?.storyboard?.panels ?? [],
     [data?.storyboard?.panels],
@@ -175,16 +153,12 @@ export function StoryboardWorkspace({
   }
 
   async function startWorkflow() {
-    const model = models.find((item) => item.id === modelId);
-    if (!model) return;
     setIsActing(true);
     try {
       const result = await startStudioStoryboardWorkflow(
         projectId,
         episode.id,
         {
-          channelId: model.channelId,
-          model: model.modelId,
           locale: locale === "en" ? "en" : "zh",
         },
       );
@@ -271,15 +245,6 @@ export function StoryboardWorkspace({
     await savePanels(panels, "review_required");
   }
 
-  async function approveReview() {
-    if (!data?.storyboard) return;
-    await savePanels(data.storyboard.panels, "ready");
-  }
-
-  const workflowActive = workflow
-    ? ["queued", "running", "canceling", "paused"].includes(workflow.status)
-    : false;
-
   if (isLoading && !data) {
     return (
       <div className="flex h-full min-h-96 items-center justify-center text-muted-foreground">
@@ -308,28 +273,10 @@ export function StoryboardWorkspace({
           </div>
         </div>
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            {data?.storyboard ? (
-              <ReviewDialog
-                data={data}
-                isActing={isActing}
-                locale={locale}
-                onApprove={approveReview}
-              />
-            ) : null}
-            <ModelSelect
-              ariaLabel={copy.storyboardModel}
-              className="h-8 min-w-52 flex-1 2xl:w-64 2xl:flex-none"
-              disabled={isActing || workflowActive}
-              models={models}
-              onChange={setModelId}
-              placeholder={copy.storyboardModel}
-              value={modelId}
-            />
             <WorkflowButtons
               disabled={isActing}
               hasWorkflow={Boolean(workflow)}
               locale={locale}
-              modelReady={Boolean(modelId)}
               onAction={controlWorkflow}
               onStart={startWorkflow}
               status={workflow?.status}
@@ -338,11 +285,6 @@ export function StoryboardWorkspace({
       </header>
 
       <div className="min-w-0 pt-4 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col xl:overflow-hidden">
-          {!models.length ? (
-            <p className="border-b py-3 text-xs text-destructive">
-              {copy.noAnalysisModels}
-            </p>
-          ) : null}
           {error ? (
             <div className="flex items-center justify-between gap-3 border-b py-3">
               <p className="text-sm text-destructive">{error}</p>
@@ -897,265 +839,10 @@ function previsSpecLabel(
   return copy[key];
 }
 
-function ContentReviewOverview({
-  data,
-  isActing,
-  locale,
-  onApprove,
-}: {
-  data: StudioStoryboardData;
-  isActing: boolean;
-  locale: StudioLocale;
-  onApprove: () => Promise<unknown> | void;
-}) {
-  const review = data.contentReview;
-  const approved = data.storyboard?.status === "ready";
-  const text =
-    locale === "zh-CN"
-      ? {
-          title: "内容审核",
-          clear: "原文事件、台词、时长与连续状态检查通过",
-          advisory: "发现可人工确认的检查建议",
-          approved: "推演内容已人工确认",
-          coverage: "原文事件覆盖",
-          issues: "检查建议",
-          inferences: "有依据的合理推演",
-          approve: "确认审核并继续",
-          evidence: "依据",
-          rationale: "理由",
-          performance: "表演细节",
-          continuity: "连续性姿态",
-          production_detail: "制作细节",
-        }
-      : {
-          title: "Content review",
-          clear:
-            "Source events, dialogue, timing, and continuity checks passed",
-          advisory: "Review suggestions are available",
-          approved: "Inferred details approved",
-          coverage: "Source event coverage",
-          issues: "Review suggestions",
-          inferences: "Grounded inferences",
-          approve: "Confirm review and continue",
-          evidence: "Evidence",
-          rationale: "Rationale",
-          performance: "Performance detail",
-          continuity: "Continuity blocking",
-          production_detail: "Production detail",
-        };
-  const hasDetails = review.issues.length > 0 || review.inferences.length > 0;
-
-  return (
-    <section className="min-w-0">
-      <div className="flex min-h-12 items-center justify-between gap-3 border-b">
-        <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
-          {review.issues.length ? (
-            <TriangleAlert className="size-4 shrink-0 text-status-warning" />
-          ) : (
-            <FileCheck2 className="size-4 shrink-0 text-status-success" />
-          )}
-          <span className="truncate">
-            {text.title} ·{" "}
-            {approved
-              ? text.approved
-              : review.issues.length
-                ? text.advisory
-                : text.clear}
-          </span>
-        </span>
-        <span className="shrink-0 font-mono text-xs text-muted-foreground">
-          {text.coverage} {review.coverage.covered}/{review.coverage.total}
-        </span>
-      </div>
-      {hasDetails ? (
-        <div className="space-y-5 py-4">
-          {review.issues.length ? (
-            <section>
-              <h3 className="text-xs font-semibold">
-                {text.issues} · {review.issues.length}
-              </h3>
-              <div className="mt-2 divide-y border-y">
-                {review.issues.map((issue, index) => (
-                  <p
-                    className="py-2 text-xs leading-5 text-muted-foreground"
-                    key={`${issue.clipId}-${issue.code}-${index}`}
-                  >
-                    <strong className="mr-2 font-medium text-foreground">
-                      {issue.panelIndex === null
-                        ? issue.code
-                        : `${issue.code} · ${String(issue.panelIndex + 1).padStart(2, "0")}`}
-                    </strong>
-                    {issue.message}
-                  </p>
-                ))}
-              </div>
-            </section>
-          ) : null}
-          {review.inferences.length ? (
-            <section>
-              <h3 className="text-xs font-semibold">
-                {text.inferences} · {review.inferences.length}
-              </h3>
-              <div className="mt-2 divide-y border-y">
-                {review.inferences.map((inference, index) => (
-                  <div
-                    className="py-3 text-xs leading-5"
-                    key={`${inference.clipId}-${inference.sceneNumber}-${index}`}
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline">
-                        {text[inference.inferenceType]}
-                      </Badge>
-                      <span className="font-mono text-muted-foreground">
-                        {Math.round(inference.confidence * 100)}%
-                      </span>
-                    </div>
-                    <p className="mt-1.5 text-sm">{inference.text}</p>
-                    <p className="mt-1 text-muted-foreground">
-                      {text.rationale}：{inference.rationale}
-                    </p>
-                    <p className="text-muted-foreground">
-                      {text.evidence}：{inference.evidence.join(" · ")}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </section>
-          ) : null}
-          {data.storyboard?.status === "review_required" ? (
-            <div className="flex flex-wrap items-center gap-3">
-              <Button
-                disabled={isActing}
-                onClick={() => void onApprove()}
-                size="sm"
-                type="button"
-              >
-                <FileCheck2 className="size-4" />
-                {text.approve}
-              </Button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function ContinuityOverview({
-  data,
-  locale,
-}: {
-  data: StudioStoryboardData;
-  locale: StudioLocale;
-}) {
-  const copy = getStudioCopy(locale);
-  return (
-    <section className="min-w-0">
-      <div className="flex min-h-12 items-center gap-2 border-b text-sm font-medium">
-        <TriangleAlert className="size-4 text-status-warning" />
-        {copy.continuityIssues.replace(
-          "{count}",
-          String(data.continuityIssues.length),
-        )}
-      </div>
-      <div className="space-y-2 py-4">
-        {data.continuityIssues.map((issue, index) => (
-          <p
-            className="text-xs leading-5 text-muted-foreground"
-            key={`${issue.clipId}-${issue.code}-${index}`}
-          >
-            <strong className="font-medium text-foreground">
-              {issue.entityName || issue.code}
-            </strong>{" "}
-            {issue.message}
-          </p>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ReviewDialog({
-  data,
-  isActing,
-  locale,
-  onApprove,
-}: {
-  data: StudioStoryboardData;
-  isActing: boolean;
-  locale: StudioLocale;
-  onApprove: () => Promise<unknown> | void;
-}) {
-  const copy = getStudioCopy(locale);
-  const review = data.contentReview;
-  const labels =
-    locale === "zh-CN"
-      ? {
-          button: "审核",
-          title: "分镜内容审核",
-          description: "原文覆盖、合理推演与镜头连续性",
-          continuity: "连续性",
-        }
-      : {
-          button: "Review",
-          title: "Storyboard review",
-          description: "Source coverage, grounded inference, and shot continuity",
-          continuity: "Continuity",
-        };
-  const issueCount = review.issues.length;
-  const continuityCount = data.continuityIssues.length;
-  const clear = issueCount === 0 && continuityCount === 0;
-
-  return (
-    <Dialog>
-      <DialogTrigger render={<Button size="sm" variant="outline" />}>
-        {clear ? (
-          <CircleCheck className="size-4 text-status-success" />
-        ) : (
-          <TriangleAlert className="size-4 text-status-warning" />
-        )}
-        {labels.button}
-        {issueCount ? <Badge variant="secondary">{issueCount}</Badge> : null}
-        {continuityCount ? (
-          <span className="text-xs text-muted-foreground">
-            {labels.continuity} {continuityCount}
-          </span>
-        ) : null}
-      </DialogTrigger>
-      <DialogContent className="grid h-[min(88dvh,52rem)] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden rounded-lg p-0 sm:max-w-5xl">
-        <DialogHeader className="border-b px-5 py-4 pr-12">
-          <DialogTitle>{labels.title}</DialogTitle>
-          <DialogDescription>
-            {labels.description} · {review.coverage.covered}/
-            {review.coverage.total}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="min-h-0 overflow-y-auto px-5 pb-6">
-          <ContentReviewOverview
-            data={data}
-            isActing={isActing}
-            locale={locale}
-            onApprove={onApprove}
-          />
-          {data.continuityIssues.length ? (
-            <ContinuityOverview data={data} locale={locale} />
-          ) : (
-            <div className="flex min-h-12 items-center gap-2 border-b text-xs text-status-success">
-              <CircleCheck className="size-4 shrink-0" />
-              {copy.continuityClear}
-            </div>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function WorkflowButtons({
   disabled,
   hasWorkflow,
   locale,
-  modelReady,
   onAction,
   onStart,
   status,
@@ -1163,7 +850,6 @@ function WorkflowButtons({
   disabled: boolean;
   hasWorkflow: boolean;
   locale: StudioLocale;
-  modelReady: boolean;
   onAction: (action: "cancel" | "retry" | "pause" | "resume") => void;
   onStart: () => void;
   status?: string;
@@ -1241,7 +927,7 @@ function WorkflowButtons({
           <RotateCcw className="size-4" />
           {copy.retryWorkflow}
         </Button>
-        <Button disabled={disabled || !modelReady} onClick={onStart} size="sm">
+        <Button disabled={disabled} onClick={onStart} size="sm">
           <Play className="size-4" />
           {copy.rerunStoryboard}
         </Button>
@@ -1249,7 +935,7 @@ function WorkflowButtons({
     );
   }
   return (
-    <Button disabled={disabled || !modelReady} onClick={onStart} size="sm">
+    <Button disabled={disabled} onClick={onStart} size="sm">
       {disabled ? (
         <LoaderCircle className="size-4 animate-spin" />
       ) : hasWorkflow ? (

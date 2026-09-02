@@ -29,7 +29,7 @@ const labels = {
       extract_visual_assets: "识别角色、场景与道具",
       analyze_novel: "角色、场景与道具识别",
       organize_production_script: "归位场次与本集资产",
-      build_storyboard: "镜头规划",
+      build_scene_storyboard: "按场次建立分镜",
       screenplay_beats: "场次与动作归位",
       generate_screenplay_beats: "场次与动作归位",
       screenplay_dialogue: "对白归位",
@@ -46,7 +46,6 @@ const labels = {
       split_clips: "按场次拆分",
       storyboard: "镜头规划",
       voice: "分析台词",
-      voice_analyze: "分析台词",
     },
     tasks: {
       episode_audio: "整集音轨",
@@ -87,7 +86,7 @@ const labels = {
       extract_visual_assets: "Identify characters, locations, and props",
       analyze_novel: "Identify characters, locations, and props",
       organize_production_script: "Place scenes and episode assets",
-      build_storyboard: "Build storyboard",
+      build_scene_storyboard: "Build cards from scenes",
       screenplay_beats: "Place scenes and action",
       generate_screenplay_beats: "Place scenes and action",
       screenplay_dialogue: "Place dialogue",
@@ -104,7 +103,6 @@ const labels = {
       split_clips: "Split approved scenes",
       storyboard: "Build storyboard",
       voice: "Analyze dialogue",
-      voice_analyze: "Analyze dialogue",
     },
     tasks: {
       episode_audio: "Episode mix",
@@ -155,21 +153,17 @@ export function workflowStepOperationLabel(
     return `${workflowLabel(locale, workflowType)}-${targetName}`;
   const stepLabel = workflowStepLabel(locale, step.type || step.key);
   const department =
-    step.type === "voice_analyze" || step.key === "voice"
-      ? locale === "zh-CN"
-        ? "声音"
-        : "Audio"
-      : workflowType === "story-to-script"
+    workflowType === "story-to-script"
         ? step.type === "parse_novel" || step.key === "analyze_novel"
           ? "AI"
           : locale === "zh-CN"
             ? "本地"
             : "Local"
-        : workflowType === "script-to-storyboard"
+      : workflowType === "script-to-storyboard"
           ? locale === "zh-CN"
             ? "分镜"
             : "Storyboard"
-          : workflowLabel(locale, workflowType);
+        : workflowLabel(locale, workflowType);
   return `${department}-${stepLabel}`;
 }
 

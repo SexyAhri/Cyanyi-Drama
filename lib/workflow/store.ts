@@ -448,7 +448,6 @@ export async function retryWorkflowStep(
   userId: string,
   runId: string,
   stepKey: string,
-  phaseRetry?: StoryboardPhaseRetry,
 ) {
   const current = await prisma.workflowRun.findFirst({
     where: { id: runId, userId },
@@ -457,16 +456,7 @@ export async function retryWorkflowStep(
   if (!current || ["running", "canceled"].includes(current.status)) return null;
   const target = current.steps.find((step) => step.stepKey === stepKey);
   if (!target || !isWorkflowStepManuallyRetryable(target)) return null;
-  if (
-    phaseRetry &&
-    (current.workflowType !== "script-to-storyboard" ||
-      target.stepType !== "build_storyboard")
-  )
-    return null;
-  const resetKeys =
-    phaseRetry?.phase === "continuity"
-      ? [stepKey]
-      : resolveDownstreamStepKeys(current.steps, stepKey);
+  const resetKeys = resolveDownstreamStepKeys(current.steps, stepKey);
   const activeDedupeKey = buildRunDedupeKey(current);
   if (await hasConflictingActiveRun(runId, activeDedupeKey)) return null;
   const downstreamStepIds = current.steps
@@ -478,7 +468,6 @@ export async function retryWorkflowStep(
     runId,
     targetStepId: target.id,
     downstreamStepIds,
-    phaseRetry,
     preserveTargetArtifacts: shouldPreserveRetryArtifacts(
       target.status as WorkflowStepStatus,
     ),
@@ -517,28 +506,12 @@ export async function retryWorkflowStep(
         stepId: target.id,
         type: "step_retry_requested",
         status: "queued",
-        payload: toJson({ stepKey, resetKeys, phaseRetry }),
+        payload: toJson({ stepKey, resetKeys }),
       },
     }),
   ]);
   return getWorkflowRun(userId, runId);
 }
-
-export const STORYBOARD_RETRY_PHASES = [
-  "phase1",
-  "phase2",
-  "phase2.cine",
-  "phase2.acting",
-  "phase3",
-  "continuity",
-] as const;
-
-export type StoryboardRetryPhase = (typeof STORYBOARD_RETRY_PHASES)[number];
-
-export type StoryboardPhaseRetry = {
-  refId: string;
-  phase: StoryboardRetryPhase;
-};
 
 export function isWorkflowStepManuallyRetryable(step: {
   status: string;
@@ -558,68 +531,18 @@ function buildRetryArtifactWhere(input: {
   runId: string;
   targetStepId: string;
   downstreamStepIds: string[];
-  phaseRetry?: StoryboardPhaseRetry;
   preserveTargetArtifacts: boolean;
 }): Prisma.WorkflowArtifactWhereInput {
   const targetFilters: Prisma.WorkflowArtifactWhereInput[] =
-    input.phaseRetry || input.preserveTargetArtifacts
+    input.preserveTargetArtifacts
       ? [{ stepId: input.targetStepId, refId: null }]
       : [{ stepId: input.targetStepId }];
-  if (input.phaseRetry) {
-    const invalidation = getStoryboardPhaseInvalidation(input.phaseRetry.phase);
-    targetFilters.push(
-      {
-        stepId: input.targetStepId,
-        refId: input.phaseRetry.refId,
-        artifactType: { in: invalidation.artifactTypes },
-      },
-      {
-        stepId: input.targetStepId,
-        artifactType: "prompt.trace",
-        refId: {
-          in: invalidation.tracePhases.map(
-            (phase) => `${input.phaseRetry?.refId}:${phase}`,
-          ),
-        },
-      },
-    );
-  }
   return {
     runId: input.runId,
     OR: [
       { stepId: { in: input.downstreamStepIds } },
       ...targetFilters,
     ],
-  };
-}
-
-export function getStoryboardPhaseInvalidation(phase: StoryboardRetryPhase) {
-  const ordered = [
-    { phase: "phase1", artifactType: "storyboard.clip.phase1" },
-    { phase: "phase2.cine", artifactType: "storyboard.clip.phase2.cine" },
-    { phase: "phase2.acting", artifactType: "storyboard.clip.phase2.acting" },
-    { phase: "phase3", artifactType: "storyboard.clip.phase3" },
-    { phase: "continuity", artifactType: "storyboard.clip.continuity" },
-  ] as const;
-  const included =
-    phase === "phase1"
-      ? ordered
-      : phase === "phase2"
-        ? ordered.slice(1)
-        : phase === "phase2.cine"
-          ? ordered.filter((item) =>
-              ["phase2.cine", "phase3", "continuity"].includes(item.phase),
-            )
-          : phase === "phase2.acting"
-            ? ordered.filter((item) =>
-                ["phase2.acting", "phase3", "continuity"].includes(item.phase),
-              )
-            : phase === "phase3"
-              ? ordered.slice(3)
-              : ordered.slice(4);
-  return {
-    artifactTypes: included.map((item) => item.artifactType),
-    tracePhases: included.map((item) => item.phase),
   };
 }
 

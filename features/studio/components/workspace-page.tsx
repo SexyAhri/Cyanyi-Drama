@@ -304,7 +304,6 @@ export function WorkspacePage({
               <StoryboardWorkspace
                 episode={selectedEpisode}
                 locale={locale}
-                models={analysisModels}
                 onContextChange={setSelection}
                 onRefresh={() => refresh()}
                 snapshot={snapshot}
