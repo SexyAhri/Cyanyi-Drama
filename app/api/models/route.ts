@@ -11,17 +11,16 @@ import {
   bailianDashScopeModelCapabilities,
 } from "@/lib/providers/media/bailian-dashscope-models";
 import { AdminRequiredError, requireAdmin } from "@/lib/server/auth";
+import { manageableChannelWhere } from "@/lib/server/channel-access";
+import { decryptSecret } from "@/lib/server/crypto";
+import { prisma } from "@/lib/server/prisma";
+import type { ChannelProtocol } from "@/lib/agent/provider-types";
 
 type ModelsRequestBody = {
   apiKey?: string;
   baseUrl?: string;
-  protocol?:
-    | "openai-compatible"
-    | "anthropic"
-    | "google-gemini"
-    | "volcengine-ark"
-    | "autodl-comfyui"
-    | "bailian-dashscope";
+  channelId?: string;
+  protocol?: ChannelProtocol;
 };
 
 type OpenAIModel = {
@@ -33,9 +32,19 @@ type OpenAIModelsResponse = {
   data?: OpenAIModel[];
 };
 
+type ElevenLabsModel = {
+  model_id?: string;
+  name?: string;
+};
+
+type ElevenLabsModelsResponse =
+  | ElevenLabsModel[]
+  | { models?: ElevenLabsModel[] };
+
 export async function POST(request: Request) {
+  let user;
   try {
-    await requireAdmin();
+    user = await requireAdmin();
   } catch (error) {
     return Response.json(
       { message: "仅管理员可以读取上游模型列表" },
@@ -43,9 +52,24 @@ export async function POST(request: Request) {
     );
   }
   const body = (await request.json()) as ModelsRequestBody;
-  const baseUrl = body.baseUrl?.trim();
-  const apiKey = body.apiKey?.trim();
-  const protocol = body.protocol || "openai-compatible";
+  const storedChannel =
+    body.channelId && !body.apiKey?.trim()
+      ? await prisma.channel.findFirst({
+          where: manageableChannelWhere(user.id, body.channelId.trim()),
+          select: {
+            baseUrl: true,
+            encryptedApiKeys: true,
+            protocol: true,
+          },
+        })
+      : null;
+  const baseUrl = body.baseUrl?.trim() || storedChannel?.baseUrl.trim();
+  const apiKey = body.apiKey?.trim() || firstStoredApiKey(storedChannel?.encryptedApiKeys);
+  const protocol = normalizeProtocol(body.protocol || storedChannel?.protocol);
+
+  if (!protocol) {
+    return Response.json({ message: "Unsupported channel protocol." }, { status: 400 });
+  }
 
   if (!baseUrl || !apiKey) {
     return Response.json(
@@ -97,15 +121,17 @@ export async function POST(request: Request) {
     const payload = (await response.json()) as
       | OpenAIModelsResponse
       | AnthropicModelsResponse
-      | GoogleModelsResponse;
-    const models = getModelIds(protocol, payload)
-      .filter((id): id is string => Boolean(id))
-      .sort((a, b) => a.localeCompare(b))
-      .map((id) => {
-        const capabilities = inferModelCapabilities(id, protocol);
+      | GoogleModelsResponse
+      | ElevenLabsModelsResponse;
+    const models = getModelEntries(protocol, payload)
+      .filter((model): model is { id: string; name: string } => Boolean(model.id))
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((model) => {
+        const capabilities = inferModelCapabilities(model.id, protocol);
         return {
-          id,
-          name: id,
+          id: model.id,
+          modelId: model.id,
+          name: model.name,
           type: getPrimaryModelCapability(capabilities),
           capabilities,
           protocol,
@@ -154,6 +180,12 @@ function getModelRequestHeaders(
       Accept: "application/json",
     };
   }
+  if (protocol === "elevenlabs") {
+    return {
+      "xi-api-key": apiKey,
+      Accept: "application/json",
+    };
+  }
   return { Authorization: `Bearer ${apiKey}` };
 }
 
@@ -171,16 +203,20 @@ function getModelsPath(
   return "models";
 }
 
-function getModelIds(
+function getModelEntries(
   protocol: ModelsRequestBody["protocol"],
   payload:
     | OpenAIModelsResponse
     | AnthropicModelsResponse
-    | GoogleModelsResponse,
+    | GoogleModelsResponse
+    | ElevenLabsModelsResponse,
 ) {
   if (protocol === "anthropic") {
     return ((payload as AnthropicModelsResponse).data ?? []).map(
-      (model) => model.id,
+      (model) => ({
+        id: model.id ?? "",
+        name: model.display_name?.trim() || model.id || "",
+      }),
     );
   }
   if (protocol === "google-gemini") {
@@ -189,13 +225,60 @@ function getModelIds(
         (model) =>
           model.supportedGenerationMethods?.includes("generateContent") ?? true,
       )
-      .map((model) => model.name?.replace(/^models\//, ""));
+      .map((model) => {
+        const id = model.name?.replace(/^models\//, "") ?? "";
+        return { id, name: model.displayName?.trim() || id };
+      });
+  }
+  if (protocol === "elevenlabs") {
+    const source = Array.isArray(payload)
+      ? payload
+      : ((payload as { models?: ElevenLabsModel[] }).models ?? []);
+    const entries = source.map((model) => ({
+      id: model.model_id?.trim() ?? "",
+      name: model.name?.trim() || model.model_id?.trim() || "",
+    }));
+    if (!entries.some((model) => model.id === "eleven_text_to_sound_v2")) {
+      entries.push({
+        id: "eleven_text_to_sound_v2",
+        name: "Eleven Text to Sound v2",
+      });
+    }
+    return entries;
   }
   return ((payload as OpenAIModelsResponse).data ?? []).map(
-    (model) => model.id,
+    (model) => ({ id: model.id ?? "", name: model.id ?? "" }),
   );
 }
 
 function createApiUrl(baseUrl: string, path: string) {
   return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
+function firstStoredApiKey(value?: string) {
+  if (!value) return "";
+  try {
+    const parsed = JSON.parse(decryptSecret(value)) as unknown;
+    if (!Array.isArray(parsed)) return "";
+    return parsed.find(
+      (item): item is string => typeof item === "string" && Boolean(item.trim()),
+    )?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function normalizeProtocol(value?: string): ChannelProtocol | undefined {
+  if (
+    value === "openai-compatible" ||
+    value === "anthropic" ||
+    value === "google-gemini" ||
+    value === "volcengine-ark" ||
+    value === "autodl-comfyui" ||
+    value === "bailian-dashscope" ||
+    value === "elevenlabs"
+  ) {
+    return value;
+  }
+  return undefined;
 }

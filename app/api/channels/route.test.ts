@@ -7,6 +7,10 @@ const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   transaction: vi.fn(),
   txChannelFindFirst: vi.fn(),
+  txChannelCreate: vi.fn(),
+  txChannelUpdate: vi.fn(),
+  txProviderModelDeleteMany: vi.fn(),
+  txProviderModelUpsert: vi.fn(),
 }));
 
 vi.mock("@/lib/server/auth", () => {
@@ -44,8 +48,15 @@ describe("channel administration", () => {
     mocks.requireAdmin.mockResolvedValue({ id: "admin-1", role: "ADMIN" });
     mocks.transaction.mockImplementation((callback) =>
       callback({
-        channel: { findFirst: mocks.txChannelFindFirst },
-        providerModel: {},
+        channel: {
+          create: mocks.txChannelCreate,
+          findFirst: mocks.txChannelFindFirst,
+          update: mocks.txChannelUpdate,
+        },
+        providerModel: {
+          deleteMany: mocks.txProviderModelDeleteMany,
+          upsert: mocks.txProviderModelUpsert,
+        },
       }),
     );
   });
@@ -111,5 +122,94 @@ describe("channel administration", () => {
       message: "新建渠道时至少需要一个 API Key",
     });
     expect(response.status).toBe(400);
+  });
+
+  it("preserves stored API keys when an existing channel is saved blank", async () => {
+    mocks.txChannelFindFirst.mockResolvedValue({
+      id: "channel-1",
+      encryptedApiKeys: "ciphertext",
+    });
+    mocks.txChannelUpdate.mockResolvedValue({ id: "channel-1" });
+
+    const response = await PUT(
+      new Request("http://localhost/api/channels", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: "channel-1",
+          name: "Updated channel",
+          protocol: "openai-compatible",
+          baseUrl: "https://upstream.example.com/v1",
+        }),
+      }),
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(mocks.txChannelUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.not.objectContaining({ encryptedApiKeys: expect.anything() }),
+      }),
+    );
+    expect(payload.channel).toMatchObject({
+      id: "channel-1",
+      apiKeys: [],
+      apiKeyCount: 2,
+    });
+  });
+
+  it("creates an ElevenLabs channel with the correct provider key", async () => {
+    mocks.txChannelFindFirst.mockResolvedValue(null);
+    mocks.txChannelCreate.mockResolvedValue({ id: "channel-elevenlabs" });
+    mocks.txProviderModelDeleteMany.mockResolvedValue({ count: 0 });
+
+    const response = await PUT(
+      new Request("http://localhost/api/channels", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: "channel-elevenlabs",
+          name: "ElevenLabs",
+          protocol: "elevenlabs",
+          baseUrl: "https://api.elevenlabs.io/v1",
+          apiKeys: ["secret"],
+          models: [],
+          modelIds: [],
+        }),
+      }),
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(mocks.txChannelCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        protocol: "elevenlabs",
+        providerKey: "elevenlabs",
+      }),
+    });
+    expect(payload.channel).toMatchObject({
+      id: "channel-elevenlabs",
+      protocol: "elevenlabs",
+      providerKey: "elevenlabs",
+      apiKeyCount: 1,
+    });
+  });
+
+  it("rejects unsupported protocols instead of storing them as OpenAI compatible", async () => {
+    const response = await PUT(
+      new Request("http://localhost/api/channels", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Broken channel",
+          protocol: "not-a-provider",
+          baseUrl: "https://upstream.example.com/v1",
+          apiKeys: ["secret"],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 });

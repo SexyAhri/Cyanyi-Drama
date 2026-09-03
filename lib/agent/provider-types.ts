@@ -8,7 +8,8 @@ export type ChannelProtocol =
   | "google-gemini"
   | "volcengine-ark"
   | "autodl-comfyui"
-  | "bailian-dashscope";
+  | "bailian-dashscope"
+  | "elevenlabs";
 
 export type ModelCapability =
   | "text"
@@ -62,6 +63,22 @@ export function inferModelCapabilities(
   if (protocol === "bailian-dashscope") {
     const configured = bailianDashScopeModelCapabilities(normalized);
     if (configured) return configured;
+  }
+
+  if (protocol === "elevenlabs") {
+    return {
+      modalities: ["audio"],
+      supportsToolCalling: false,
+      supportsStructuredOutputs: false,
+      supportsReasoning: false,
+      supportsAsync: false,
+      supportsReferenceImages: false,
+      supportsReferenceVideo: false,
+      supportsReferenceAudio: false,
+      ...(/text[-_. ]?to[-_. ]?sound|sound[-_. ]?effect/i.test(normalized)
+        ? { maxDurationSeconds: 30 }
+        : {}),
+    };
   }
 
   if (protocol === "volcengine-ark") {

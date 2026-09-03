@@ -82,15 +82,21 @@ export async function PUT(request: Request) {
   const body = (await request.json()) as ChannelInput;
   const name = body.name?.trim();
   const baseUrl = body.baseUrl?.trim();
-  const protocol = body.protocol?.trim();
+  const protocolValue = body.protocol?.trim();
+  const protocol = isChannelProtocol(protocolValue) ? protocolValue : undefined;
   const providerKey =
     body.providerKey?.trim() || providerKeyForProtocol(protocol);
   const apiKeys = [
     ...new Set((body.apiKeys ?? []).map((key) => key.trim()).filter(Boolean)),
   ];
-  if (!name || !baseUrl || !protocol)
+  if (!name || !baseUrl)
     return Response.json(
-      { message: "渠道名称、协议、Base URL 和 API Key 不能为空" },
+      { message: "渠道名称和 Base URL 不能为空" },
+      { status: 400 },
+    );
+  if (!protocol)
+    return Response.json(
+      { message: "不支持的渠道协议" },
       { status: 400 },
     );
 
@@ -119,9 +125,9 @@ export async function PUT(request: Request) {
       sessionId,
     );
   }
-  let channel;
+  let result;
   try {
-    channel = await prisma.$transaction(async (tx) => {
+    result = await prisma.$transaction(async (tx) => {
       const existing = await tx.channel.findFirst({
         where: manageableChannelWhere(user.id, id),
       });
@@ -131,7 +137,7 @@ export async function PUT(request: Request) {
       const encryptedApiKeys = apiKeys.length
         ? encryptSecret(JSON.stringify(apiKeys))
         : undefined;
-      const saved = existing
+      const channel = existing
         ? await tx.channel.update({
           where: { id },
           data: {
@@ -159,10 +165,10 @@ export async function PUT(request: Request) {
           });
       if (body.models) {
         await tx.providerModel.deleteMany({
-        where: {
-          channelId: id,
-          id: { notIn: models.map((model) => model.id) },
-        },
+          where: {
+            channelId: id,
+            id: { notIn: models.map((model) => model.id) },
+          },
         });
         for (const model of models) {
           const modelId = model.modelId?.trim() || model.id.trim();
@@ -174,27 +180,29 @@ export async function PUT(request: Request) {
             model.capabilities,
           );
           await tx.providerModel.upsert({
-          where: { channelId_modelId: { channelId: id, modelId } },
-          create: {
-            id: model.id || `${id}::${modelId}`,
-            channelId: id,
-            modelId,
-            name: model.name.trim(),
-            modelType: metadata.type,
-            capabilitiesJson: JSON.stringify(metadata.capabilities),
-            selected: selectedIds.has(model.id) || selectedIds.has(modelId),
-          },
-          update: {
-            id: model.id || `${id}::${modelId}`,
-            name: model.name.trim(),
-            modelType: metadata.type,
-            capabilitiesJson: JSON.stringify(metadata.capabilities),
-            selected: selectedIds.has(model.id) || selectedIds.has(modelId),
-          },
+            where: { channelId_modelId: { channelId: id, modelId } },
+            create: {
+              id: model.id || `${id}::${modelId}`,
+              channelId: id,
+              modelId,
+              name: model.name.trim(),
+              modelType: metadata.type,
+              capabilitiesJson: JSON.stringify(metadata.capabilities),
+              selected: selectedIds.has(model.id) || selectedIds.has(modelId),
+            },
+            update: {
+              name: model.name.trim(),
+              modelType: metadata.type,
+              capabilitiesJson: JSON.stringify(metadata.capabilities),
+              selected: selectedIds.has(model.id) || selectedIds.has(modelId),
+            },
           });
         }
       }
-      return saved;
+      return {
+        apiKeyCount: apiKeys.length || encryptedKeyCount(existing?.encryptedApiKeys ?? ""),
+        channel,
+      };
     });
   } catch (error) {
     if (error instanceof Error && error.message === "CHANNEL_API_KEYS_REQUIRED") {
@@ -208,14 +216,34 @@ export async function PUT(request: Request) {
   return attachSessionCookie(
     Response.json({
       channel: {
-        id: channel.id,
+        id: result.channel.id,
         name,
         providerKey,
         protocol,
         baseUrl,
         apiKeys: [],
-        apiKeyCount: apiKeys.length || undefined,
-        models,
+        apiKeyCount: result.apiKeyCount,
+        models: models.flatMap((model) => {
+          const modelId = model.modelId?.trim() || model.id.trim();
+          if (!modelId || !model.name.trim()) return [];
+          const metadata = normalizeModelMetadata(
+            modelId,
+            protocol,
+            model.type,
+            model.capabilities,
+          );
+          return [{
+            id: model.id || `${id}::${modelId}`,
+            modelId,
+            name: model.name.trim(),
+            type: metadata.type,
+            capabilities: metadata.capabilities,
+            selected: selectedIds.has(model.id) || selectedIds.has(modelId),
+            channelId: id,
+            channelName: name,
+            protocol,
+          }];
+        }),
       },
     }),
     sessionId,
@@ -349,7 +377,8 @@ function normalizeProtocol(value: string): ChannelProtocol {
     value === "google-gemini" ||
     value === "volcengine-ark" ||
     value === "autodl-comfyui" ||
-    value === "bailian-dashscope"
+    value === "bailian-dashscope" ||
+    value === "elevenlabs"
   ) {
     return value;
   }
@@ -360,7 +389,20 @@ function providerKeyForProtocol(protocol?: string) {
   if (protocol === "volcengine-ark") return "volcengine-ark";
   if (protocol === "autodl-comfyui") return "autodl";
   if (protocol === "bailian-dashscope") return "alibaba-bailian";
+  if (protocol === "elevenlabs") return "elevenlabs";
   return "custom";
+}
+
+function isChannelProtocol(value?: string): value is ChannelProtocol {
+  return (
+    value === "openai-compatible" ||
+    value === "anthropic" ||
+    value === "google-gemini" ||
+    value === "volcengine-ark" ||
+    value === "autodl-comfyui" ||
+    value === "bailian-dashscope" ||
+    value === "elevenlabs"
+  );
 }
 
 export async function DELETE(request: Request) {

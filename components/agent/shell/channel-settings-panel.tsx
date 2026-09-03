@@ -1,18 +1,26 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useState,
+} from "react";
 import {
   Copy,
   Eye,
   EyeOff,
   ListFilter,
+  LoaderCircle,
   Pencil,
   Plus,
   RefreshCw,
   Search,
   Trash2,
-  X,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -31,14 +39,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -97,21 +97,36 @@ type ChannelSettingsPanelProps = {
   onModelsChange?: (update: ChannelModelUpdate) => void;
   onRefreshModels?: () => void;
   runtimeConnection: RuntimeConnectionSettings;
+  showToolbar?: boolean;
 };
 
-export function ChannelSettingsPanel({
-  copy,
-  models,
-  onRuntimeConnectionChange,
-  onRuntimeConnectionClear,
-  onModelsChange,
-  runtimeConnection,
-}: ChannelSettingsPanelProps) {
+export type ChannelSettingsPanelHandle = {
+  openCreate: () => void;
+};
+
+export const ChannelSettingsPanel = forwardRef<
+  ChannelSettingsPanelHandle,
+  ChannelSettingsPanelProps
+>(function ChannelSettingsPanel(
+  {
+    copy,
+    models,
+    onRuntimeConnectionChange,
+    onRuntimeConnectionClear,
+    onModelsChange,
+    runtimeConnection,
+    showToolbar = true,
+  },
+  ref,
+) {
   const [channels, setChannels] = useState<ChannelConfig[]>(() =>
     createInitialChannels(copy, runtimeConnection, models),
   );
   const [draft, setDraft] = useState<ChannelDraft | null>(null);
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorMode, setEditorMode] = useState<"create" | "edit">("create");
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const notifyRuntimeChannel = useCallback(
     (channel: ChannelConfig) => {
       onModelsChange?.({
@@ -180,13 +195,17 @@ export function ChannelSettingsPanel({
           notifyRuntimeChannel(channel);
         }
       })
-      .catch(() => {
-        // The initial default channel keeps the panel usable while the API is unavailable.
+      .catch((error) => {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : copy.settingsChannelLoadError,
+        );
       });
     return () => {
       cancelled = true;
     };
-  }, [notifyRuntimeChannel]);
+  }, [copy.settingsChannelLoadError, notifyRuntimeChannel]);
 
   useEffect(() => {
     for (const channel of channels) {
@@ -225,11 +244,12 @@ export function ChannelSettingsPanel({
   );
 
   function openNewChannel() {
+    setEditorMode("create");
     setDraft({
       id: `channel-${Date.now()}`,
       name: `${copy.settingsNewChannel}`,
       protocol: "openai-compatible",
-      baseUrl: "",
+      baseUrl: "https://api.openai.com/v1",
       apiKey: "",
       apiKeys: [""],
       apiKeyMode: "single",
@@ -238,23 +258,27 @@ export function ChannelSettingsPanel({
       modelOptions: [],
       modelCapabilities: {},
     });
-    setSheetOpen(true);
+    setEditorOpen(true);
   }
 
+  useImperativeHandle(ref, () => ({ openCreate: openNewChannel }));
+
   function openEditChannel(channel: ChannelConfig) {
+    setEditorMode("edit");
     setDraft({
       ...channel,
       modelIds: [...channel.modelIds],
       modelOptions: [...channel.modelOptions],
       modelCapabilities: cloneCapabilities(channel.modelCapabilities),
     });
-    setSheetOpen(true);
+    setEditorOpen(true);
   }
 
   function copyChannel(channel: ChannelConfig) {
     const id = `channel-${crypto.randomUUID()}`;
     const name = `${channel.name} ${copy.settingsChannelCopySuffix}`;
 
+    setEditorMode("create");
     setDraft({
       ...channel,
       id,
@@ -266,16 +290,16 @@ export function ChannelSettingsPanel({
       modelOptions: [],
       modelCapabilities: {},
     });
-    setSheetOpen(true);
+    setEditorOpen(true);
   }
 
   function closeEditor() {
-    setSheetOpen(false);
+    setEditorOpen(false);
     setDraft(null);
   }
 
   async function saveDraft() {
-    if (!draft || !draft.name.trim()) {
+    if (!draft) {
       return;
     }
 
@@ -290,18 +314,19 @@ export function ChannelSettingsPanel({
         draft.configuredApiKeyCount,
     };
 
-    setChannels((current) => {
-      const exists = current.some(
-        (channel) => channel.id === normalizedDraft.id,
-      );
+    if (!normalizedDraft.name || !normalizedDraft.baseUrl) {
+      toast.error(copy.settingsChannelRequiredFields);
+      return;
+    }
+    if (
+      editorMode === "create" &&
+      normalizedDraft.apiKeys.length === 0
+    ) {
+      toast.error(copy.settingsChannelApiKeyRequired);
+      return;
+    }
 
-      return exists
-        ? current.map((channel) =>
-            channel.id === normalizedDraft.id ? normalizedDraft : channel,
-          )
-        : [...current, normalizedDraft];
-    });
-
+    setSaving(true);
     try {
       const response = await fetch("/api/channels", {
         method: "PUT",
@@ -318,44 +343,88 @@ export function ChannelSettingsPanel({
           modelIds: normalizedDraft.modelIds,
         }),
       });
-      if (!response.ok) throw new Error("Failed to save channel.");
-    } catch {
-      // Keep the optimistic state; the next reload will retry from the server.
-    }
+      const payload = (await response.json().catch(() => ({}))) as {
+        channel?: ApiChannel;
+        message?: string;
+      };
+      if (!response.ok || !payload.channel) {
+        throw new Error(payload.message || copy.settingsChannelSaveError);
+      }
 
-    notifyRuntimeChannel(normalizedDraft);
-
-    if (draft.id === "default") {
-      onRuntimeConnectionChange({
-        ...runtimeConnection,
-        apiKey: normalizedDraft.apiKey,
-        baseUrl: normalizedDraft.baseUrl,
-        protocol: normalizedDraft.protocol,
-        status: "idle",
-        statusMessage: undefined,
+      const savedChannel = toChannelConfig(payload.channel);
+      setChannels((current) => {
+        const exists = current.some(
+          (channel) => channel.id === savedChannel.id,
+        );
+        return exists
+          ? current.map((channel) =>
+              channel.id === savedChannel.id ? savedChannel : channel,
+            )
+          : [...current, savedChannel];
       });
-    }
+      notifyRuntimeChannel(savedChannel);
 
-    closeEditor();
+      if (draft.id === "default") {
+        onRuntimeConnectionChange({
+          ...runtimeConnection,
+          apiKey: normalizedDraft.apiKey || runtimeConnection.apiKey,
+          baseUrl: savedChannel.baseUrl,
+          protocol: savedChannel.protocol,
+          status: "idle",
+          statusMessage: undefined,
+        });
+      }
+
+      toast.success(copy.settingsChannelSaveSuccess);
+      closeEditor();
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : copy.settingsChannelSaveError,
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function deleteChannel(channel: ChannelConfig) {
-    setChannels((current) => current.filter((item) => item.id !== channel.id));
-    await fetch(`/api/channels?id=${encodeURIComponent(channel.id)}`, {
-      method: "DELETE",
-    }).catch(() => undefined);
-    onModelsChange?.({
-      channelId: channel.id,
-      channelName: channel.name,
-      protocol: normalizeProtocol(channel.protocol),
-      baseUrl: channel.baseUrl,
-      apiKey: getPrimaryApiKey(channel),
-      apiKeys: channel.apiKeys,
-      models: [],
-    });
+    setDeletingId(channel.id);
+    try {
+      const response = await fetch(
+        `/api/channels?id=${encodeURIComponent(channel.id)}`,
+        { method: "DELETE" },
+      );
+      const payload = (await response.json().catch(() => ({}))) as {
+        message?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.message || copy.settingsChannelDeleteError);
+      }
+      setChannels((current) =>
+        current.filter((item) => item.id !== channel.id),
+      );
+      onModelsChange?.({
+        channelId: channel.id,
+        channelName: channel.name,
+        protocol: normalizeProtocol(channel.protocol),
+        baseUrl: channel.baseUrl,
+        apiKey: getPrimaryApiKey(channel),
+        apiKeys: channel.apiKeys,
+        models: [],
+      });
 
-    if (channel.id === "default") {
-      onRuntimeConnectionClear();
+      if (channel.id === "default") {
+        onRuntimeConnectionClear();
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : copy.settingsChannelDeleteError,
+      );
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -364,13 +433,14 @@ export function ChannelSettingsPanel({
     const channelName = draft?.name || copy.settingsDefaultChannel;
     const keys = normalizeApiKeys(apiKeys, draft?.apiKey || "");
     const results = await Promise.allSettled(
-      keys.map(async (apiKey) => {
+      (keys.length > 0 ? keys : [""]).map(async (apiKey) => {
         const response = await fetch("/api/models", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             baseUrl,
-            apiKey,
+            ...(apiKey ? { apiKey } : {}),
+            channelId,
             protocol: draft?.protocol || "openai-compatible",
           }),
         });
@@ -417,39 +487,57 @@ export function ChannelSettingsPanel({
 
   return (
     <div className="grid gap-4">
-      <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-        <p>{copy.settingsChannelsDescription}</p>
-        <Button className="shrink-0" onClick={openNewChannel} type="button">
-          <Plus />
-          {copy.settingsAddChannel}
-        </Button>
-      </div>
+      {showToolbar ? (
+        <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <p>{copy.settingsChannelsDescription}</p>
+          <Button className="shrink-0" onClick={openNewChannel} type="button">
+            <Plus />
+            {copy.settingsAddChannel}
+          </Button>
+        </div>
+      ) : null}
 
-      <div className="grid gap-3">
+      <div className="overflow-hidden border">
+        <div className="hidden grid-cols-[minmax(0,1fr)_10rem_minmax(12rem,1fr)_6rem_7rem] gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground lg:grid">
+          <span>渠道</span>
+          <span>协议</span>
+          <span>接口地址</span>
+          <span>模型</span>
+          <span className="text-right">操作</span>
+        </div>
         {channels.map((channel) => {
           const modelCount = channel.modelIds.length;
 
           return (
             <div
-              className="flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between"
+              className="grid gap-3 border-b p-4 last:border-b-0 lg:grid-cols-[minmax(0,1fr)_10rem_minmax(12rem,1fr)_6rem_7rem] lg:items-center"
               key={channel.id}
             >
               <div className="min-w-0">
-                <p className="truncate font-semibold">{channel.name}</p>
-                <p className="mt-1 truncate text-sm text-muted-foreground">
+                <p className="truncate font-medium">{channel.name}</p>
+                <p className="mt-1 text-xs text-muted-foreground lg:hidden">
                   {getProtocolLabel(channel.protocol)} ·{" "}
-                  {copy.settingsChannelModelCount(modelCount)} ·{" "}
-                  {channel.baseUrl || "-"}
+                  {copy.settingsChannelModelCount(modelCount)}
                 </p>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
+              <span className="hidden truncate text-sm lg:block">
+                {getProtocolLabel(channel.protocol)}
+              </span>
+              <span
+                className="truncate text-sm text-muted-foreground"
+                title={channel.baseUrl}
+              >
+                {channel.baseUrl || "-"}
+              </span>
+              <span className="hidden text-sm lg:block">{modelCount}</span>
+              <div className="flex items-center justify-end gap-1">
                 <Button
                   aria-label={`${copy.settingsCopyChannel}: ${channel.name}`}
                   onClick={() => copyChannel(channel)}
                   size="icon-sm"
                   title={`${copy.settingsCopyChannel}: ${channel.name}`}
                   type="button"
-                  variant="outline"
+                  variant="ghost"
                 >
                   <Copy />
                 </Button>
@@ -459,20 +547,25 @@ export function ChannelSettingsPanel({
                   size="icon-sm"
                   title={`${copy.settingsEditChannel}: ${channel.name}`}
                   type="button"
-                  variant="outline"
+                  variant="ghost"
                 >
                   <Pencil />
                 </Button>
                 <Button
                   aria-label={`${copy.settingsDeleteChannel}: ${channel.name}`}
                   className="text-destructive hover:text-destructive"
-                  onClick={() => deleteChannel(channel)}
+                  disabled={deletingId !== null}
+                  onClick={() => void deleteChannel(channel)}
                   size="icon-sm"
                   title={`${copy.settingsDeleteChannel}: ${channel.name}`}
                   type="button"
-                  variant="outline"
+                  variant="ghost"
                 >
-                  <Trash2 />
+                  {deletingId === channel.id ? (
+                    <LoaderCircle className="animate-spin" />
+                  ) : (
+                    <Trash2 />
+                  )}
                 </Button>
               </div>
             </div>
@@ -480,40 +573,29 @@ export function ChannelSettingsPanel({
         })}
       </div>
 
-      <Sheet
+      <Dialog
         onOpenChange={(open) => {
-          if (!open) {
-            closeEditor();
-          }
+          if (!open && !saving) closeEditor();
         }}
-        open={sheetOpen}
+        open={editorOpen}
       >
-        <SheetContent
-          className="w-full overflow-y-auto data-[side=right]:sm:max-w-2xl"
-          showCloseButton={false}
-          side="right"
-        >
-          {draft ? (
-            <>
-              <SheetHeader className="border-b px-5 py-4">
-                <div className="flex items-center gap-3">
-                  <SheetClose
-                    aria-label={copy.settingsCancel}
-                    render={
-                      <Button size="icon-sm" type="button" variant="ghost" />
-                    }
-                  >
-                    <X />
-                  </SheetClose>
-                  <SheetTitle>
-                    {draft.id === "default"
-                      ? copy.settingsEditChannel
-                      : copy.settingsNewChannel}
-                  </SheetTitle>
-                </div>
-              </SheetHeader>
+        {draft ? (
+          <DialogContent
+            className="max-h-[92dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-3xl"
+            showCloseButton={!saving}
+          >
+            <DialogHeader>
+              <DialogTitle>
+                {editorMode === "edit"
+                  ? copy.settingsEditChannel
+                  : copy.settingsNewChannel}
+              </DialogTitle>
+              <DialogDescription>
+                配置协议、接口地址、密钥和这个渠道可用的模型。
+              </DialogDescription>
+            </DialogHeader>
 
-              <div className="grid gap-5 px-5 pb-5">
+            <div className="-mx-4 grid min-h-0 gap-5 overflow-y-auto border-y px-4 py-5">
                 <div className="grid gap-2 sm:grid-cols-2 sm:gap-3">
                   <div className="grid gap-2">
                     <Label htmlFor="channel-name">
@@ -543,7 +625,6 @@ export function ChannelSettingsPanel({
                                   protocol: value as ChannelProtocol,
                                   baseUrl: defaultBaseUrlForProtocol(
                                     value as ChannelProtocol,
-                                    current.baseUrl,
                                   ),
                                 }
                               : current,
@@ -574,6 +655,9 @@ export function ChannelSettingsPanel({
                         <SelectItem value="bailian-dashscope">
                           阿里云百炼官方
                         </SelectItem>
+                        <SelectItem value="elevenlabs">
+                          ElevenLabs 官方
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -597,7 +681,9 @@ export function ChannelSettingsPanel({
                         ? AUTODL_COMFYUI_BASE_URL
                         : draft.protocol === "bailian-dashscope"
                           ? BAILIAN_DASHSCOPE_BASE_URL_PLACEHOLDER
-                        : "https://api.openai.com/v1"
+                          : draft.protocol === "elevenlabs"
+                            ? "https://api.elevenlabs.io/v1"
+                            : "https://api.openai.com/v1"
                     }
                     value={draft.baseUrl}
                   />
@@ -773,23 +859,32 @@ export function ChannelSettingsPanel({
                     </div>
                   )}
                 </div>
-              </div>
+            </div>
 
-              <SheetFooter className="border-t px-5 py-4 sm:flex-row sm:justify-end">
-                <Button onClick={closeEditor} type="button" variant="outline">
-                  {copy.settingsCancel}
-                </Button>
-                <Button onClick={saveDraft} type="button">
-                  {copy.settingsSave}
-                </Button>
-              </SheetFooter>
-            </>
-          ) : null}
-        </SheetContent>
-      </Sheet>
+            <DialogFooter>
+              <Button
+                disabled={saving}
+                onClick={closeEditor}
+                type="button"
+                variant="outline"
+              >
+                {copy.settingsCancel}
+              </Button>
+              <Button
+                disabled={saving}
+                onClick={() => void saveDraft()}
+                type="button"
+              >
+                {saving ? <LoaderCircle className="animate-spin" /> : null}
+                {saving ? copy.settingsChannelSaving : copy.settingsSave}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
     </div>
   );
-}
+});
 
 function ModelPicker({
   copy,
@@ -1130,6 +1225,9 @@ function normalizeProtocol(protocol: unknown): ChannelProtocol {
   if (protocol === "bailian-dashscope" || protocol === "阿里云百炼官方") {
     return "bailian-dashscope";
   }
+  if (protocol === "elevenlabs" || protocol === "ElevenLabs") {
+    return "elevenlabs";
+  }
   return "openai-compatible";
 }
 
@@ -1140,7 +1238,8 @@ function isChannelProtocol(value: string): value is ChannelProtocol {
     value === "google-gemini" ||
     value === "volcengine-ark" ||
     value === "autodl-comfyui" ||
-    value === "bailian-dashscope"
+    value === "bailian-dashscope" ||
+    value === "elevenlabs"
   );
 }
 
@@ -1156,6 +1255,8 @@ function getProtocolLabel(protocol: ChannelProtocol) {
       return "AutoDL ComfyUI";
     case "bailian-dashscope":
       return "阿里云百炼官方";
+    case "elevenlabs":
+      return "ElevenLabs 官方";
     default:
       return "OpenAI 兼容";
   }
@@ -1163,12 +1264,23 @@ function getProtocolLabel(protocol: ChannelProtocol) {
 
 function defaultBaseUrlForProtocol(
   protocol: ChannelProtocol,
-  currentBaseUrl: string,
 ) {
-  if (protocol === "autodl-comfyui")
-    return currentBaseUrl.trim() || AUTODL_COMFYUI_BASE_URL;
-  if (protocol === "bailian-dashscope") return "";
-  return currentBaseUrl;
+  switch (protocol) {
+    case "anthropic":
+      return "https://api.anthropic.com/v1";
+    case "google-gemini":
+      return "https://generativelanguage.googleapis.com/v1beta";
+    case "volcengine-ark":
+      return "https://ark.cn-beijing.volces.com/api/v3";
+    case "autodl-comfyui":
+      return AUTODL_COMFYUI_BASE_URL;
+    case "bailian-dashscope":
+      return "";
+    case "elevenlabs":
+      return "https://api.elevenlabs.io/v1";
+    default:
+      return "https://api.openai.com/v1";
+  }
 }
 
 function composeChannelModelId(channelId: string, modelId: string) {
@@ -1254,7 +1366,9 @@ function toChannelConfig(channel: ApiChannel): ChannelConfig {
     baseUrl: channel.baseUrl,
     apiKey: channel.apiKeys[0] ?? "",
     apiKeys: normalizeApiKeys(channel.apiKeys, channel.apiKeys[0] ?? ""),
-    apiKeyMode: channel.apiKeys.length > 1 ? "batch" : "single",
+    apiKeyMode: (channel.apiKeyCount ?? channel.apiKeys.length) > 1
+      ? "batch"
+      : "single",
     configuredApiKeyCount: channel.apiKeyCount ?? 0,
     modelIds: modelOptions
       .filter(

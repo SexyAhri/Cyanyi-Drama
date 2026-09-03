@@ -72,6 +72,13 @@ export type ShellCopy = {
   settingsChannelName: string;
   settingsChannelProtocol: string;
   settingsChannelModelCount: (count: number) => string;
+  settingsChannelLoadError: string;
+  settingsChannelRequiredFields: string;
+  settingsChannelApiKeyRequired: string;
+  settingsChannelSaveError: string;
+  settingsChannelSaveSuccess: string;
+  settingsChannelDeleteError: string;
+  settingsChannelSaving: string;
   settingsChannelSelectModels: string;
   settingsChannelNoModels: string;
   settingsSelectChannelModelsTitle: string;
@@ -262,6 +269,13 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsChannelName: "Channel name",
     settingsChannelProtocol: "Protocol",
     settingsChannelModelCount: (count) => `${count} models`,
+    settingsChannelLoadError: "Failed to load channels.",
+    settingsChannelRequiredFields: "Channel name and endpoint are required.",
+    settingsChannelApiKeyRequired: "A new channel requires at least one API key.",
+    settingsChannelSaveError: "Failed to save channel.",
+    settingsChannelSaveSuccess: "Channel saved.",
+    settingsChannelDeleteError: "Failed to delete channel.",
+    settingsChannelSaving: "Saving...",
     settingsChannelSelectModels: "Select models",
     settingsChannelNoModels: "Click Select models to add models.",
     settingsSelectChannelModelsTitle: "Select channel models",
@@ -456,6 +470,13 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsChannelName: "渠道名称",
     settingsChannelProtocol: "协议",
     settingsChannelModelCount: (count) => `${count} 个模型`,
+    settingsChannelLoadError: "渠道加载失败。",
+    settingsChannelRequiredFields: "请填写渠道名称和接口地址。",
+    settingsChannelApiKeyRequired: "新建渠道时至少需要一个 API Key。",
+    settingsChannelSaveError: "渠道保存失败。",
+    settingsChannelSaveSuccess: "渠道已保存。",
+    settingsChannelDeleteError: "渠道删除失败。",
+    settingsChannelSaving: "保存中...",
     settingsChannelSelectModels: "选择模型",
     settingsChannelNoModels: "点击“选择模型”拉取或手动增加模型。",
     settingsSelectChannelModelsTitle: "选择渠道模型",

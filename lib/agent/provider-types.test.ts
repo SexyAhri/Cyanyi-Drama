@@ -50,6 +50,19 @@ describe("model capability inference", () => {
     expect(voice.supportsToolCalling).toBe(false);
   });
 
+  it("recognizes ElevenLabs sound effects as synchronous audio", () => {
+    const soundEffects = inferModelCapabilities(
+      "eleven_text_to_sound_v2",
+      "elevenlabs",
+    );
+
+    expect(getPrimaryModelCapability(soundEffects)).toBe("audio");
+    expect(soundEffects.modalities).toEqual(["audio"]);
+    expect(soundEffects.supportsAsync).toBe(false);
+    expect(soundEffects.supportsReferenceAudio).toBe(false);
+    expect(soundEffects.maxDurationSeconds).toBe(30);
+  });
+
   it("defaults unknown provider models to text without enabling media", () => {
     const capabilities = inferModelCapabilities("custom-model");
 
