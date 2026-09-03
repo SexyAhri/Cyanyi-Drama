@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   adaptStudioEpisode,
+  deleteStudioEpisodeAudioTrack,
   generateStudioAssetVisualProfile,
+  updateStudioEpisodeAudioTrack,
+  uploadStudioEpisodeAudioTrack,
 } from "./api";
 
 describe("studio adaptation stream", () => {
@@ -144,5 +147,83 @@ describe("studio asset visual design stream", () => {
     expect(result.profile.spec.consistencyRules).toEqual([
       "保持剑眉与苍白脸色",
     ]);
+  });
+});
+
+describe("studio episode audio tracks", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("uploads an independent track with its mix settings", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({ asset: { id: "asset-1" }, track: { id: "track-1" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const file = new File(["audio"], "rain.wav", { type: "audio/wav" });
+
+    await uploadStudioEpisodeAudioTrack("project 1", "episode/1", {
+      file,
+      trackType: "ambience",
+      startSeconds: 1.5,
+      endSeconds: 12,
+      volume: 0.35,
+      loop: true,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "/api/projects/project%201/episodes/episode%2F1/audio/tracks",
+    );
+    expect(init).toMatchObject({ credentials: "same-origin", method: "POST" });
+    const form = init?.body as FormData;
+    expect(form.get("file")).toBe(file);
+    expect(form.get("trackType")).toBe("ambience");
+    expect(form.get("startSeconds")).toBe("1.5");
+    expect(form.get("endSeconds")).toBe("12");
+    expect(form.get("volume")).toBe("0.35");
+    expect(form.get("loop")).toBe("true");
+  });
+
+  it("updates and removes tracks within the selected episode", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ track: { id: "track 1" } }))
+      .mockResolvedValueOnce(Response.json({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await updateStudioEpisodeAudioTrack("project-1", "episode-1", {
+      id: "track 1",
+      startSeconds: 2,
+      endSeconds: null,
+      volume: 0.8,
+      loop: false,
+    });
+    await deleteStudioEpisodeAudioTrack(
+      "project-1",
+      "episode-1",
+      "track 1",
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/api/projects/project-1/episodes/episode-1/audio/tracks",
+    );
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      credentials: "same-origin",
+      method: "PATCH",
+      body: JSON.stringify({
+        id: "track 1",
+        startSeconds: 2,
+        endSeconds: null,
+        volume: 0.8,
+        loop: false,
+      }),
+    });
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/api/projects/project-1/episodes/episode-1/audio/tracks?id=track+1",
+    );
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({
+      credentials: "same-origin",
+      method: "DELETE",
+    });
   });
 });

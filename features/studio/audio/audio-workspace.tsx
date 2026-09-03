@@ -72,6 +72,7 @@ import {
   latestVoiceTask,
   voiceLineAsset,
 } from "./audio-view-model";
+import { EpisodeAudioTracks } from "./episode-audio-tracks";
 import { SoundPostPanel } from "./sound-post-panel";
 import { VoicePresetDialog } from "./voice-preset-dialog";
 
@@ -762,6 +763,9 @@ export function AudioWorkspace({
               onAudioModelChange={setAudioModelId}
               onControlTask={controlTask}
               onMerge={mergeAudio}
+              onRefresh={refreshAll}
+              projectId={projectId}
+              episodeId={episode.id}
               tasks={tasks}
             />
           ) : null}
@@ -1147,6 +1151,9 @@ function MergedAudio({
   onAudioModelChange,
   onControlTask,
   onMerge,
+  onRefresh,
+  projectId,
+  episodeId,
   tasks,
 }: {
   assets: ProjectMediaAsset[];
@@ -1159,51 +1166,65 @@ function MergedAudio({
   onAudioModelChange: (value: string) => void;
   onControlTask: (task: MediaTask, action: "cancel" | "retry") => Promise<void>;
   onMerge: () => Promise<void>;
+  onRefresh: () => Promise<unknown> | void;
+  projectId: string;
+  episodeId: string;
   tasks: MediaTask[];
 }) {
   const text = copy[locale];
-  const track = audioTracks.find((item) => item.trackType === "merged");
-  const asset = track?.assetId
-    ? assets.find((item) => item.id === track.assetId)
+  const mergedTrack = audioTracks.find((item) => item.trackType === "merged");
+  const mergedAsset = mergedTrack?.assetId
+    ? assets.find((item) => item.id === mergedTrack.assetId)
     : undefined;
   const task = tasks
     .filter((item) => item.targetType === "episode_audio")
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
   const output = task?.status === "succeeded" ? task.output?.[0] : undefined;
   return (
-    <section className="py-5">
-      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <label className="grid min-w-0 gap-1 text-xs font-medium sm:w-72">
-          {text.audioModel}
-          <ModelSelect
-            disabled={busy}
-            models={audioModels}
-            onChange={onAudioModelChange}
-            placeholder={text.audioModel}
+    <div className="divide-y">
+      <section className="py-5">
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <label className="grid min-w-0 gap-1 text-xs font-medium sm:w-72">
+            {text.audioModel}
+            <ModelSelect
+              disabled={busy}
+              models={audioModels}
+              onChange={onAudioModelChange}
+              placeholder={text.audioModel}
+              size="sm"
+              value={audioModelId}
+            />
+          </label>
+          <Button
+            disabled={busy || !audioModelId}
+            onClick={() => void onMerge()}
             size="sm"
-            value={audioModelId}
-          />
-        </label>
-        <Button
-          disabled={busy || !audioModelId}
-          onClick={() => void onMerge()}
-          size="sm"
-        >
-          <Merge className="size-4" />
-          {text.merge}
-        </Button>
-      </div>
-      <h2 className="mb-2 text-sm font-semibold">{text.mergedAudio}</h2>
-      <MediaCard
-        busyTaskId={busyTaskId}
-        empty={text.noMergedAudio}
-        kind="audio"
+          >
+            <Merge className="size-4" />
+            {text.merge}
+          </Button>
+        </div>
+        <h2 className="mb-2 text-sm font-semibold">{text.mergedAudio}</h2>
+        <MediaCard
+          busyTaskId={busyTaskId}
+          empty={text.noMergedAudio}
+          kind="audio"
+          locale={locale}
+          onTaskAction={onControlTask}
+          task={task}
+          url={mergedAsset?.url ?? output?.url}
+        />
+      </section>
+
+      <EpisodeAudioTracks
+        assets={assets}
+        episodeId={episodeId}
         locale={locale}
-        onTaskAction={onControlTask}
-        task={task}
-        url={asset?.url ?? output?.url}
+        onRefresh={onRefresh}
+        projectId={projectId}
+        tracks={audioTracks}
       />
-    </section>
+    </div>
   );
 }
 

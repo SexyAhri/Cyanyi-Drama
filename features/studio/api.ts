@@ -14,6 +14,7 @@ import type {
   EpisodeSplitResult,
   EpisodeSourceListResult,
   EditorProjectRecord,
+  EpisodeAudioTrackRecord,
   ProductionData,
   ProductionDeliverableCatalog,
   ProductionDeliverableRecord,
@@ -1196,6 +1197,68 @@ export async function mergeStudioEpisodeAudio(
       headers: { "Content-Type": "application/json" },
       method: "POST",
     },
+  );
+}
+
+export async function uploadStudioEpisodeAudioTrack(
+  projectId: string,
+  episodeId: string,
+  input: {
+    file: File;
+    trackType: "ambience" | "sfx" | "music";
+    startSeconds: number;
+    endSeconds?: number | null;
+    volume: number;
+    loop: boolean;
+  },
+) {
+  const form = new FormData();
+  form.set("file", input.file);
+  form.set("trackType", input.trackType);
+  form.set("startSeconds", String(input.startSeconds));
+  if (input.endSeconds !== undefined && input.endSeconds !== null)
+    form.set("endSeconds", String(input.endSeconds));
+  form.set("volume", String(input.volume));
+  form.set("loop", String(input.loop));
+  return request<{
+    asset: ProjectMediaAsset;
+    track: EpisodeAudioTrackRecord;
+  }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/audio/tracks`,
+    { body: form, method: "POST" },
+  );
+}
+
+export async function updateStudioEpisodeAudioTrack(
+  projectId: string,
+  episodeId: string,
+  input: {
+    id: string;
+    startSeconds?: number;
+    endSeconds?: number | null;
+    volume?: number;
+    loop?: boolean;
+  },
+) {
+  return request<{ track: EpisodeAudioTrackRecord }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/audio/tracks`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "PATCH",
+    },
+  );
+}
+
+export async function deleteStudioEpisodeAudioTrack(
+  projectId: string,
+  episodeId: string,
+  trackId: string,
+) {
+  const params = new URLSearchParams({ id: trackId });
+  return request<{ ok: true }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/audio/tracks?${params}`,
+    { method: "DELETE" },
   );
 }
 
