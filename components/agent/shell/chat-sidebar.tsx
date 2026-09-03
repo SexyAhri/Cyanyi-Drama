@@ -82,7 +82,6 @@ type ChatSidebarProps = {
   onOpenArchive: () => void;
   onOpenHelp: () => void;
   onOpenSearch: () => void;
-  onOpenSettings: () => void;
   onRenameThread?: (threadId: string, title: string) => void;
   onReorderThread?: (draggedThreadId: string, targetThreadId: string) => void;
   onSelectThread: (threadId: string) => void;
@@ -107,7 +106,6 @@ export function ChatSidebar({
   onOpenArchive,
   onOpenHelp,
   onOpenSearch,
-  onOpenSettings,
   onRenameThread,
   onReorderThread,
   onSelectThread,
@@ -159,13 +157,7 @@ export function ChatSidebar({
                 <NavMenuItem
                   item={{ ...item, label: getPrimaryLabel(item.id, copy) }}
                   key={item.id}
-                  onClick={
-                    item.href
-                      ? undefined
-                      : item.id === "search"
-                        ? onOpenSearch
-                        : onOpenSettings
-                  }
+                  onClick={item.id === "search" ? onOpenSearch : undefined}
                   size={compact ? "sm" : "default"}
                 />
               ))}
@@ -330,10 +322,6 @@ function getThreadActionCopy(locale: AgentLocale) {
 }
 
 function getPrimaryLabel(itemId: string, copy: ShellCopy) {
-  if (itemId === "drama-studio") {
-    return copy.dramaStudio;
-  }
-
   if (itemId === "search") {
     return copy.search;
   }

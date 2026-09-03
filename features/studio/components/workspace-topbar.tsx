@@ -4,15 +4,16 @@ import { useEffect, useState } from "react";
 import {
   ArrowLeft,
   BellDot,
-  Bot,
-  Clapperboard,
   Languages,
   ListTree,
   LoaderCircle,
+  MoreHorizontal,
   RefreshCw,
   Settings,
+  SunMoon,
 } from "lucide-react";
 import Link from "next/link";
+import { useTheme } from "next-themes";
 import { toast } from "sonner";
 
 import {
@@ -22,8 +23,16 @@ import {
   type ShellSettings,
 } from "@/components/agent/shell";
 import { AuthAccountMenu } from "@/components/auth/account-menu";
+import { ProductNavigation } from "@/components/navigation/product-navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useRuntimeConnection } from "@/hooks/use-runtime-connection";
 import type { ProjectConfig } from "@/lib/projects/types";
 import type { AuthUser } from "@/lib/server/auth";
@@ -145,131 +154,137 @@ export function WorkspaceTopbar({
   return (
     <>
       <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-2 sm:px-3">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Link
-              aria-label={copy.backToProjects}
-              className={buttonVariants({ size: "icon", variant: "ghost" })}
-              href="/projects"
-            />
-          }
-        >
-          <ArrowLeft className="size-4" />
-        </TooltipTrigger>
-        <TooltipContent>{copy.backToProjects}</TooltipContent>
-      </Tooltip>
-
-      <span className="hidden size-7 items-center justify-center rounded-md bg-foreground text-background sm:flex">
-        <Clapperboard className="size-4" />
-      </span>
-
-      <Button
-        aria-label={copy.openEpisodes}
-        className="lg:hidden"
-        onClick={onOpenEpisodes}
-        size="icon"
-        type="button"
-        variant="ghost"
-      >
-        <ListTree className="size-4" />
-      </Button>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2 text-sm">
-          <span className="truncate font-semibold">{projectName}</span>
-          {episodeName ? (
-            <>
-              <span className="text-border">/</span>
-              <span className="hidden truncate text-muted-foreground sm:inline">
-                {episodeName}
-              </span>
-            </>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="flex shrink-0 items-center gap-0.5">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label={copy.settings}
-                onClick={() => setSettingsOpen(true)}
-                size="icon"
-                type="button"
-                variant="ghost"
-              />
-            }
-          >
-            <Settings className="size-4" />
-          </TooltipTrigger>
-          <TooltipContent>{copy.settings}</TooltipContent>
-        </Tooltip>
         <Tooltip>
           <TooltipTrigger
             render={
               <Link
-                aria-label={copy.backToChat}
+                aria-label={copy.backToProjects}
                 className={buttonVariants({ size: "icon", variant: "ghost" })}
-                href="/chat"
+                href="/projects"
               />
             }
           >
-            <Bot className="size-4" />
+            <ArrowLeft className="size-4" />
           </TooltipTrigger>
-          <TooltipContent>{copy.backToChat}</TooltipContent>
+          <TooltipContent>{copy.backToProjects}</TooltipContent>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label={copy.refresh}
-                disabled={isRefreshing}
-                onClick={onRefresh}
-                size="icon"
-                type="button"
-                variant="ghost"
-              />
-            }
-          >
-            {isRefreshing ? (
-              <LoaderCircle className="size-4 animate-spin" />
-            ) : (
-              <RefreshCw className="size-4" />
-            )}
-          </TooltipTrigger>
-          <TooltipContent>{copy.refresh}</TooltipContent>
-        </Tooltip>
+
         <Button
-          aria-label={copy.openActivity}
-          className="xl:hidden"
-          onClick={onOpenActivity}
+          aria-label={copy.openEpisodes}
+          className="lg:hidden"
+          onClick={onOpenEpisodes}
           size="icon"
           type="button"
           variant="ghost"
         >
-          <BellDot className="size-4" />
+          <ListTree className="size-4" />
         </Button>
-        <ThemeToggle label={copy.theme} />
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label={copy.language}
-                onClick={onLocaleChange}
-                size="icon"
-                type="button"
-                variant="ghost"
-              />
-            }
+
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2 text-sm">
+            <span className="truncate font-semibold">{projectName}</span>
+            {episodeName ? (
+              <>
+                <span className="text-border">/</span>
+                <span className="hidden truncate text-muted-foreground sm:inline">
+                  {episodeName}
+                </span>
+              </>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-0.5">
+          <div className="hidden md:block">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label={copy.settings}
+                    onClick={() => setSettingsOpen(true)}
+                    size="icon"
+                    type="button"
+                    variant="ghost"
+                  />
+                }
+              >
+                <Settings className="size-4" />
+              </TooltipTrigger>
+              <TooltipContent>{copy.settings}</TooltipContent>
+            </Tooltip>
+          </div>
+          <div className="hidden md:block">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label={copy.refresh}
+                    disabled={isRefreshing}
+                    onClick={onRefresh}
+                    size="icon"
+                    type="button"
+                    variant="ghost"
+                  />
+                }
+              >
+                {isRefreshing ? (
+                  <LoaderCircle className="size-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-4" />
+                )}
+              </TooltipTrigger>
+              <TooltipContent>{copy.refresh}</TooltipContent>
+            </Tooltip>
+          </div>
+          <Button
+            aria-label={copy.openActivity}
+            className="xl:hidden"
+            onClick={onOpenActivity}
+            size="icon"
+            type="button"
+            variant="ghost"
           >
-            <Languages className="size-4" />
-          </TooltipTrigger>
-          <TooltipContent>{copy.language}</TooltipContent>
-        </Tooltip>
-        <AuthAccountMenu compact locale={locale} user={user} />
-      </div>
+            <BellDot className="size-4" />
+          </Button>
+          <div
+            aria-hidden="true"
+            className="mx-1 hidden h-5 w-px bg-border sm:block"
+          />
+          <ProductNavigation
+            compact
+            isAdmin={user.role === "ADMIN"}
+            locale={locale}
+          />
+          <div className="hidden md:block">
+            <ThemeToggle label={copy.theme} />
+          </div>
+          <div className="hidden md:block">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label={copy.language}
+                    onClick={onLocaleChange}
+                    size="icon"
+                    type="button"
+                    variant="ghost"
+                  />
+                }
+              >
+                <Languages className="size-4" />
+              </TooltipTrigger>
+              <TooltipContent>{copy.language}</TooltipContent>
+            </Tooltip>
+          </div>
+          <MobileWorkspaceActions
+            isRefreshing={isRefreshing}
+            locale={locale}
+            onLocaleChange={onLocaleChange}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onRefresh={onRefresh}
+          />
+          <AuthAccountMenu compact locale={locale} user={user} />
+        </div>
       </header>
 
       <AgentSettingsDialog
@@ -287,5 +302,69 @@ export function WorkspaceTopbar({
         showProjectVisualWorld
       />
     </>
+  );
+}
+
+function MobileWorkspaceActions({
+  isRefreshing,
+  locale,
+  onLocaleChange,
+  onOpenSettings,
+  onRefresh,
+}: {
+  isRefreshing: boolean;
+  locale: StudioLocale;
+  onLocaleChange: () => void;
+  onOpenSettings: () => void;
+  onRefresh: () => void;
+}) {
+  const copy = getStudioCopy(locale);
+  const { resolvedTheme, setTheme } = useTheme();
+  const moreActions = locale === "zh-CN" ? "更多操作" : "More actions";
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            aria-label={moreActions}
+            className="md:hidden"
+            size="icon-sm"
+            title={moreActions}
+            type="button"
+            variant="ghost"
+          />
+        }
+      >
+        <MoreHorizontal />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuItem onClick={onOpenSettings}>
+          <Settings />
+          {copy.settings}
+        </DropdownMenuItem>
+        <DropdownMenuItem disabled={isRefreshing} onClick={onRefresh}>
+          {isRefreshing ? (
+            <LoaderCircle className="animate-spin" />
+          ) : (
+            <RefreshCw />
+          )}
+          {copy.refresh}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={() =>
+            setTheme(resolvedTheme === "dark" ? "light" : "dark")
+          }
+        >
+          <SunMoon />
+          {copy.theme}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onLocaleChange}>
+          <Languages />
+          {copy.language}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

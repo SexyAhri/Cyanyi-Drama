@@ -163,7 +163,6 @@ export function ChatShell({
         onOpenArchive={() => setOpenPanel("archive")}
         onOpenHelp={() => setOpenPanel("help")}
         onOpenSearch={() => setOpenPanel("search")}
-        onOpenSettings={() => setOpenPanel("settings")}
         onLogout={onLogout}
         onRenameThread={onRenameThread}
         onReorderThread={onReorderThread}
@@ -178,6 +177,8 @@ export function ChatShell({
           appVersion={appVersion}
           currentThreadTitle={currentThreadTitle}
           copy={copy}
+          isAdmin={user?.role === "ADMIN"}
+          locale={locale}
           onNewChat={handleNewChat}
           onOpenSettings={() => setOpenPanel("settings")}
           topbarActions={topbarActions}

@@ -1,20 +1,22 @@
 "use client";
 
-import { Clapperboard, Pencil, Settings } from "lucide-react";
-import Link from "next/link";
+import { Pencil, Settings } from "lucide-react";
 
+import { ProductNavigation } from "@/components/navigation/product-navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { cn } from "@/lib/utils";
 
 import type { ShellCopy } from "./chat-shell-i18n";
+import type { AgentLocale } from "./chat-shell-types";
 
 type ChatTopbarProps = {
   appVersion?: string;
   copy: ShellCopy;
   currentThreadTitle: string;
+  isAdmin: boolean;
+  locale: AgentLocale;
   onNewChat: () => void;
   onOpenSettings: () => void;
   topbarActions?: React.ReactNode;
@@ -24,6 +26,8 @@ export function ChatTopbar({
   appVersion,
   copy,
   currentThreadTitle,
+  isAdmin,
+  locale,
   onNewChat,
   onOpenSettings,
   topbarActions,
@@ -49,20 +53,10 @@ export function ChatTopbar({
         {topbarActions ? (
           <div className="flex min-w-0 items-center gap-2">{topbarActions}</div>
         ) : null}
-        <Link
-          aria-label={copy.dramaStudio}
-          className={cn(
-            buttonVariants({ size: "sm", variant: "ghost" }),
-            "gap-1.5 px-2",
-          )}
-          href="/projects"
-        >
-          <Clapperboard className="size-4" />
-          <span className="hidden sm:inline">{copy.dramaStudio}</span>
-        </Link>
+        <ProductNavigation isAdmin={isAdmin} locale={locale} />
         {appVersion ? (
           <Badge
-            className="h-6 rounded-md text-[11px] text-muted-foreground"
+            className="hidden h-6 rounded-md text-[11px] text-muted-foreground xl:inline-flex"
             title={`${copy.projectVersion}: ${appVersion}`}
             variant="outline"
           >

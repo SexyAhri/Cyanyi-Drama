@@ -1,28 +1,12 @@
-import {
-  Clapperboard,
-  MessageSquare,
-  Search,
-  Settings,
-} from "lucide-react";
+import { MessageSquare, Search } from "lucide-react";
 
 import type { ShellNavItem, ShellThread } from "./chat-shell-types";
 
 export const primaryNavItems: ShellNavItem[] = [
   {
-    id: "drama-studio",
-    href: "/projects",
-    label: "Drama Studio",
-    icon: Clapperboard,
-  },
-  {
     id: "search",
     label: "Search",
     icon: Search,
-  },
-  {
-    id: "settings",
-    label: "Settings",
-    icon: Settings,
   },
 ];
 
