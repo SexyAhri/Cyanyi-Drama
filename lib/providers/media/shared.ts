@@ -42,8 +42,30 @@ export function resolveImageSize(ratio?: string, resolution?: string) {
     : /2k/i.test(resolution ?? "")
       ? 2048
       : 1024;
-  const scale = maxDimension / Math.max(widthRatio, heightRatio);
-  return `${Math.max(1, Math.round(widthRatio * scale))}x${Math.max(1, Math.round(heightRatio * scale))}`;
+  let scale = maxDimension / Math.max(widthRatio, heightRatio);
+  const pixelCount = widthRatio * scale * heightRatio * scale;
+  if (pixelCount < 655_360)
+    scale = Math.sqrt(655_360 / (widthRatio * heightRatio));
+  if (pixelCount > 8_294_400)
+    scale = Math.sqrt(8_294_400 / (widthRatio * heightRatio));
+
+  const roundDimension =
+    pixelCount < 655_360
+      ? roundUpToMultipleOfEight
+      : pixelCount > 8_294_400
+        ? roundDownToMultipleOfEight
+        : (value: number) => Math.max(1, Math.round(value));
+  const width = roundDimension(widthRatio * scale);
+  const height = roundDimension(heightRatio * scale);
+  return `${width}x${height}`;
+}
+
+function roundUpToMultipleOfEight(value: number) {
+  return Math.max(8, Math.ceil(value / 8) * 8);
+}
+
+function roundDownToMultipleOfEight(value: number) {
+  return Math.max(8, Math.floor(value / 8) * 8);
 }
 
 export async function referencesAsDataUrls(
