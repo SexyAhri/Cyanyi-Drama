@@ -99,8 +99,116 @@ describe("scene storyboard runtime", () => {
     });
   });
 
-  it("maps one approved scene to one storyboard card locally", () => {
+  it("splits one approved scene into short semantic action beats", () => {
     const panels = buildSceneStoryboardPanels([clip], {
+      artStyle: "中国水墨动画风格",
+      productionSpec: "约120秒，16:9",
+      visualRules: "冷调青蓝光影",
+      propNames: ["铁石"],
+      locale: "zh",
+    });
+
+    expect(panels).toHaveLength(3);
+    expect(panels[0]).toMatchObject({
+      clipId: "clip-1",
+      clipPanelIndex: 0,
+      panelIndex: 0,
+      sceneNumber: 0,
+      description: "韩宇双手紧握铁石。",
+      locationName: "韩家庄练武场",
+      characters: ["韩宇"],
+      props: ["铁石"],
+      durationSeconds: 5,
+      cameraMove: "低角度中景，固定机位",
+      voiceoverText: "寒夜见证少年的坚持。",
+      speakingCharacter: null,
+      lipSyncText: null,
+      phase: "scene",
+      status: "ready",
+      linkedToNextPanel: true,
+    });
+    expect(panels.map((panel) => panel.clipPanelIndex)).toEqual([0, 1, 2]);
+    expect(panels.map((panel) => panel.panelIndex)).toEqual([0, 1, 2]);
+    expect(panels.map((panel) => panel.sceneNumber)).toEqual([0, 0, 0]);
+    expect(panels.map((panel) => panel.durationSeconds)).toEqual([5, 5, 5]);
+    expect(panels.map((panel) => panel.description)).toEqual([
+      "韩宇双手紧握铁石。",
+      "韩宇猛然发力。",
+      "铁石缓缓离地。",
+    ]);
+    expect(panels.map((panel) => panel.linkedToNextPanel)).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    expect(panels[1].startState).toEqual(panels[0].endState);
+    expect(panels[2].startState).toEqual(panels[1].endState);
+    expect(panels[0].motionBeats).toEqual([
+      expect.objectContaining({
+        startSecond: 0,
+        endSecond: 5,
+        action: "韩宇双手紧握铁石。",
+        camera: "低角度中景，固定机位",
+      }),
+    ]);
+    expect(panels[1].cameraMove).toBe("低角度中景，缓慢向上推镜");
+    expect(panels[2].cameraMove).toBe("低角度中景，固定机位");
+    expect(panels[0].startState).toMatchObject({
+      hands: expect.stringContaining("距铁石受力接触点仅数厘米"),
+      props: expect.stringContaining("不得放在人物身后、画外或远景"),
+    });
+    expect(panels[0].imagePrompt).toContain("t=0 静态起始状态");
+    expect(panels[0].imagePrompt).toContain("起始构图与机位：低角度中景");
+    expect(panels[0].imagePrompt).not.toContain("缓慢向上推镜");
+    expect(panels[0].imagePrompt).not.toContain("韩宇双手紧握铁石");
+    expect(panels[1].imagePrompt).toContain("韩宇双手紧握铁石");
+    expect(panels[1].imagePrompt).not.toContain("猛然发力");
+    expect(panels[2].imagePrompt).toContain("韩宇猛然发力");
+    expect(panels[2].imagePrompt).not.toContain("铁石缓缓离地");
+    expect(panels[0].videoPrompt).toContain(
+      "唯一向前动作：韩宇双手紧握铁石。",
+    );
+    expect(panels[0].videoPrompt).toContain(
+      "摄影机：低角度中景，固定机位",
+    );
+    expect(panels[1].videoPrompt).toContain("唯一向前动作：韩宇猛然发力。");
+    expect(panels[2].videoPrompt).toContain("唯一向前动作：铁石缓缓离地。");
+    expect(panels[0].videoPrompt).toContain("从参考首帧 t=0 自然向前生成 5 秒");
+    expect(panels[0].videoPrompt).toContain("输出无声画面");
+    expect(panels[0].videoPrompt).toContain(
+      "对白、环境音、动作音效、音乐和精确口型均由后期独立制作",
+    );
+    expect(panels[0].videoPrompt).not.toContain("我一定要变强");
+    expect(panels[0].videoPrompt).not.toContain("凛冽寒风");
+    expect(panels.filter((panel) => panel.voiceoverText)).toHaveLength(1);
+    expect(panels[1].vfxCues).toEqual([
+      expect.objectContaining({ description: "稀薄劲气环绕双臂。" }),
+    ]);
+    expect(panels[1].sfxCues).toEqual([
+      expect.objectContaining({ description: "凛冽寒风，铁石摩擦声。" }),
+    ]);
+  });
+
+  it("does not stretch one simple action across an empty 15-second shot", () => {
+    const oneActionScript = productionScript.replace(
+      "韩宇双手紧握铁石，猛然发力，铁石缓缓离地。",
+      "韩宇抬头。",
+    );
+    const oneActionClip = {
+      ...clip,
+      content: oneActionScript,
+      screenplay: JSON.stringify({
+        ...screenplay,
+        scenes: [
+          {
+            ...screenplay.scenes[0],
+            content: [{ type: "action", text: "韩宇抬头。" }],
+          },
+        ],
+      }),
+    };
+
+    const panels = buildSceneStoryboardPanels([oneActionClip], {
       artStyle: "中国水墨动画风格",
       productionSpec: "约120秒，16:9",
       visualRules: "冷调青蓝光影",
@@ -110,25 +218,10 @@ describe("scene storyboard runtime", () => {
 
     expect(panels).toHaveLength(1);
     expect(panels[0]).toMatchObject({
-      clipId: "clip-1",
-      clipPanelIndex: 0,
-      panelIndex: 0,
-      sceneNumber: 0,
-      locationName: "韩家庄练武场",
-      characters: ["韩宇"],
-      props: ["铁石"],
-      durationSeconds: 15,
-      cameraMove: "低角度中景，缓慢向上推镜。",
-      voiceoverText: "寒夜见证少年的坚持。",
-      speakingCharacter: null,
-      lipSyncText: null,
-      phase: "scene",
-      status: "ready",
+      description: "韩宇抬头。",
+      durationSeconds: 5,
+      linkedToNextPanel: false,
     });
-    expect(panels[0].videoPrompt).toContain("仅生成静音视频");
-    expect(panels[0].videoPrompt).not.toContain("我一定要变强");
-    expect(panels[0].videoPrompt).not.toContain("凛冽寒风");
-    expect(panels[0].imagePrompt).toContain("稀薄劲气环绕双臂");
   });
 
   it("persists scene cards without a model request or hard review", async () => {
@@ -145,8 +238,8 @@ describe("scene storyboard runtime", () => {
     expect(result).toMatchObject({
       source: "local-production-script",
       clipCount: 1,
-      sceneCount: 1,
-      panelCount: 1,
+      sceneCount: 3,
+      panelCount: 3,
       promptTraces: [],
     });
     expect(saveStoryboard).toHaveBeenCalledWith(
@@ -158,11 +251,11 @@ describe("scene storyboard runtime", () => {
     expect(hooks.persistArtifact).toHaveBeenCalledWith(
       "storyboard.scenes",
       "episode-1",
-      expect.objectContaining({ sceneCount: 1 }),
+      expect.objectContaining({ sceneCount: 3 }),
     );
     expect(storyClipUpdate).toHaveBeenCalledWith({
       where: { id: "clip-1" },
-      data: { status: "storyboard_ready", shotCount: 1 },
+      data: { status: "storyboard_ready", shotCount: 3 },
     });
   });
 });

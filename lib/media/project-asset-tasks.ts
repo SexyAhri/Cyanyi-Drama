@@ -287,7 +287,11 @@ export async function createStoryboardPanelImageTask(input: {
     request: {
       prompt: compiledPrompt,
       ...(input.iteration ? { generationIteration: input.iteration } : {}),
-      ratio: input.ratio ?? input.mediaDefaults?.imageGenerationRatio ?? "1:1",
+      ratio:
+        input.ratio ??
+        input.mediaDefaults?.videoGenerationRatio ??
+        input.mediaDefaults?.imageGenerationRatio ??
+        "16:9",
       resolution:
         input.resolution ??
         input.mediaDefaults?.imageGenerationResolution ??
@@ -465,18 +469,8 @@ export async function createStoryboardPanelVideoTask(input: {
         url: panelImageUrl,
         storageKey: panel.imageAsset?.storageKey ?? undefined,
         mimeType: panel.imageAsset?.mimeType ?? undefined,
-        role: "reference_image",
+        role: "first_frame",
       });
-    const supportingReferences = await findStoryboardReferenceImages({
-      projectId: input.projectId,
-      characters: parseStringArray(panel.charactersJson),
-      props: parseStringArray(panel.propsJson),
-      locationName: panel.locationName,
-    });
-    for (const reference of supportingReferences) {
-      if (referenceImages.some((item) => item.url === reference.url)) continue;
-      referenceImages.push({ ...reference, role: "reference_image" });
-    }
   }
   const selectedReferences = referenceImages.slice(0, limits.maxReferenceImages);
   const tasks = segments.map((segment) => {
@@ -786,25 +780,12 @@ export async function previewStoryboardPanelPrompt(input: {
           code: "missing_reference_frame",
           message: "参考图模式需要先选择当前镜头图片",
         });
-      const supportingReferences = await findStoryboardReferenceImages({
-        projectId: input.projectId,
-        characters,
-        props,
-        locationName: panel.locationName,
-      });
-      const referenceUrls = [
-        ...(firstFrameUrl ? [firstFrameUrl] : []),
-        ...supportingReferences.map((reference) => reference.url),
-      ].filter((url, index, values) => values.indexOf(url) === index);
-      referenceCount = Math.min(
-        referenceUrls.length,
-        limits.maxReferenceImages,
-      );
+      referenceCount = firstFrameUrl && limits.maxReferenceImages > 0 ? 1 : 0;
       sources.push({
         key: "frame_mode",
         label: "画面参考",
         value: firstFrameUrl
-          ? `${referenceCount} 张参考图（分镜首图 + 可用角色 / 场景 / 道具）`
+          ? `${referenceCount} 张分镜首帧（角色 / 场景 / 道具设定已用于生成该首帧）`
           : "缺少当前镜头参考图",
       });
     }
@@ -822,7 +803,7 @@ export async function previewStoryboardPanelPrompt(input: {
       {
         key: "audio_mode",
         label: "模型音频",
-        value: "关闭（audioMode=none）",
+        value: "关闭（audioMode=none，声音由后期独立合成）",
       },
     );
     return {
@@ -1108,15 +1089,8 @@ export function compileStoryboardEventBlueprint(
 ) {
   const characters = parseStringArray(panel.charactersJson ?? null);
   const props = parseStringArray(panel.propsJson ?? null);
-  const sourceEvidence = parseStoredJsonValue<unknown[]>(
-    panel.sourceEvidenceJson,
-    [],
-  );
   const worldContext = asBlueprintRecord(
     parseStoredJsonValue(panel.worldContextJson, {}),
-  );
-  const actingNotes = asBlueprintRecord(
-    parseStoredJsonValue(panel.actingNotesJson, {}),
   );
   const photographyRules = asBlueprintRecord(
     parseStoredJsonValue(panel.photographyRules, {}),
@@ -1124,44 +1098,27 @@ export function compileStoryboardEventBlueprint(
   const startState = asBlueprintRecord(
     parseStoredJsonValue(panel.startStateJson, {}),
   );
-  const endState = asBlueprintRecord(
-    parseStoredJsonValue(panel.endStateJson, {}),
-  );
-  const shotIntent = asBlueprintRecord(worldContext.shotIntent);
-  const constraints = asBlueprintRecord(worldContext.constraints);
   const referenceScopes = asBlueprintArray(worldContext.referenceScopes);
   const environment = asBlueprintRecord(startState.environmentState);
   const sections: string[] = [
-    "用户补充提示（只能补充表现方式，不得替换下方剧情事实与状态）：",
+    "用户补充提示（只能补充首帧的静态表现方式，不得加入后续动作或结果）：",
     userPrompt,
-    "不可省略的结构化镜头制作蓝图：",
-    "1. 镜头意图",
-    `观众应读到：${blueprintText(shotIntent.audienceTakeaway, panel.description?.trim() || "按已批准剧情事件理解")}`,
-    `唯一主要可见事件：${blueprintText(shotIntent.primaryVisibleEvent, panel.description?.trim() || "按已批准分镜执行")}`,
-    `结束节拍：${blueprintText(shotIntent.endBeat, blueprintText(endState.body, "停在已批准结束状态"))}`,
+    "不可省略的静态首帧制作蓝图：",
+    "1. t=0 起始状态",
+    `首帧必须精确呈现：${formatBlueprintRecord(startState)}`,
+    `环境连续性：${formatBlueprintRecord(environment)}`,
     "2. 允许出镜的主体与资产",
-    `剧情事件：${panel.description?.trim() || "按已批准分镜执行"}`,
     `场景：${panel.locationName?.trim() || "未指定"}`,
     `角色：${characters.length ? characters.join("、") : "无明确出镜角色"}`,
     `道具：${props.length ? props.join("、") : "无关键道具"}`,
     ...formatReferenceScopes(referenceScopes),
-    "3. 世界、空间与开场状态",
+    "3. 世界与空间约束",
     `世界与能力规则：${formatBlueprintRecord(worldContext, ["shotIntent", "constraints", "riskFocus", "referenceScopes", "evidence"])}`,
-    `环境连续性：${formatBlueprintRecord(environment)}`,
-    `开场人物、道具与空间状态：${formatBlueprintRecord(startState, ["environmentState"])}`,
-    "4. 逐角色分拍表演",
-    ...formatActingBlueprint(actingNotes),
-    "5. 摄影机位与构图规则（完整契约）",
-    ...formatCameraBlueprint(photographyRules),
-    "6. 约束与风险",
-    `必须保持：${formatBlueprintList(constraints.mustHold)}`,
-    `只在本镜变化：${formatBlueprintList(constraints.changesHere)}`,
-    `不得出现：${formatBlueprintList(constraints.mustNotAppear)}`,
-    `最高风险项（最多三项）：${formatBlueprintList(worldContext.riskFocus)}`,
-    `原文事件依据（仅追溯，不代替画面实现）：${formatBlueprintList(sourceEvidence)}`,
-    "7. 静态首帧边界",
-    `作为后续视频首帧必须成立的静态起始状态：${formatBlueprintRecord(startState)}`,
-    "只表现这条已批准事件链的起始瞬间，不得提前画出结束结果，也不得省略、改写或新增剧情结果。",
+    "4. 起始机位与构图",
+    ...formatImageCameraBlueprint(photographyRules),
+    "5. 静态首帧边界",
+    "后续动作、动作分拍、运动轨迹、特效释放和结束状态仅供后续视频使用，禁止在本图中提前表现。",
+    "只画 t=0 的静止瞬间，不得出现运动模糊、动作进行态、动作结果或结束姿态。",
   ];
   return sections.join("\n");
 }
@@ -1302,21 +1259,10 @@ function formatReferenceScopes(scopes: unknown[]) {
   });
 }
 
-function formatActingBlueprint(value: BlueprintRecord) {
-  const characters = asBlueprintArray(value.characters);
-  if (!characters.length) return [formatBlueprintRecord(value)];
-  return characters.map((item, index) => {
-    const character = asBlueprintRecord(item);
-    return `角色${index + 1} ${blueprintText(character.name)}：优先级=${blueprintText(character.performancePriority, "未指定")}；允许微动作=${blueprintText(character.allowedMicroMotion, "仅限有依据的呼吸、眨眼、视线和重心变化")}；情绪=${blueprintText(character.emotion)}；动作=${blueprintText(character.action)}；表情=${blueprintText(character.expression)}；分拍=${formatBlueprintValue(character.beats)}`;
-  });
-}
-
-function formatCameraBlueprint(value: BlueprintRecord) {
+function formatImageCameraBlueprint(value: BlueprintRecord) {
   return [
     `摄影基础：${formatBlueprintRecord(value, ["cameraStart", "cameraPath", "cameraEnd"])}`,
     `起始机位：${formatBlueprintRecord(value.cameraStart)}`,
-    `唯一主运镜路径：${formatBlueprintRecord(value.cameraPath)}`,
-    `结束机位与剪辑点：${formatBlueprintRecord(value.cameraEnd)}`,
   ];
 }
 

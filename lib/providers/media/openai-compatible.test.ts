@@ -147,4 +147,35 @@ describe("OpenAI-compatible media provider", () => {
     ).rejects.toThrow("reference images are not supported");
     expect(fetchWithProviderRetry).toHaveBeenCalledTimes(1);
   });
+
+  it("uses a semantic first frame as the reference image in reference mode", async () => {
+    fetchWithProviderRetry.mockResolvedValue(
+      Response.json({ url: "https://cdn.test/shot.mp4" }),
+    );
+
+    await openAiCompatibleMediaProvider.generate({
+      protocol: "openai-compatible",
+      providerKey: "custom",
+      baseUrl: "https://provider.test/v1",
+      apiKey: "key-1",
+      model: "video-model",
+      kind: "video",
+      request: {
+        prompt: "人物从首帧自然向前移动",
+        videoMode: "reference",
+        referenceImages: [
+          {
+            url: "https://cdn.test/first-frame.png",
+            role: "first_frame",
+          },
+        ],
+      },
+    });
+
+    expect(
+      JSON.parse(fetchWithProviderRetry.mock.calls[0][1].body as string),
+    ).toMatchObject({
+      image: ["https://cdn.test/first-frame.png"],
+    });
+  });
 });

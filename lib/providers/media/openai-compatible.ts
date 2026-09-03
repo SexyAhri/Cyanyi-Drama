@@ -141,7 +141,9 @@ function buildVideoBody(model: string, request: MediaProviderRequest) {
   const referenceImages = references
     .filter(
       (reference) =>
-        (reference.role ?? "reference_image") === "reference_image",
+        (reference.role ?? "reference_image") === "reference_image" ||
+        (request.videoMode !== "first-last" &&
+          reference.role === "first_frame"),
     )
     .map((reference) => reference.url);
   const firstFrame = references.find(

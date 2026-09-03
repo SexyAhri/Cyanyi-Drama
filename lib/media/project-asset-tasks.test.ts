@@ -26,7 +26,7 @@ describe("storyboard media task contract", () => {
     expect(error).toMatchObject({ status: 409 });
   });
 
-  it("compiles ordered image production layers without dumping raw JSON", () => {
+  it("compiles only the static first-frame state without future motion", () => {
     const prompt = compileStoryboardEventBlueprint(
       "保持克制",
       {
@@ -75,11 +75,15 @@ describe("storyboard media task contract", () => {
       },
     );
 
-    expect(prompt).toContain("1. 镜头意图");
-    expect(prompt).toContain("唯一主要可见事件：双剑相抵");
-    expect(prompt).toContain("唯一主运镜路径：primaryMovement=track");
-    expect(prompt).toContain("不得出现：第三人");
+    expect(prompt).toContain("1. t=0 起始状态");
+    expect(prompt).toContain("首帧必须精确呈现：body=两人相对");
+    expect(prompt).toContain("角色：林澈、顾言");
+    expect(prompt).toContain("道具：长剑");
     expect(prompt).toContain("静态首帧边界");
+    expect(prompt).not.toContain("双剑相抵");
+    expect(prompt).not.toContain("林澈退半步");
+    expect(prompt).not.toContain("primaryMovement=track");
+    expect(prompt).not.toContain("剑刃相抵后停稳");
     expect(prompt).not.toContain('{"');
   });
 

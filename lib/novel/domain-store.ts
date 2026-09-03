@@ -277,9 +277,22 @@ export async function saveStoryboard(
         (panel.id ? existingById.get(panel.id) : undefined) ??
         (!panel.id ? existingByIdentity.get(identity) : undefined);
       const id = existingPanel?.id ?? randomUUID();
+      const imagePrompt =
+        input.preserveImagePrompts && existingPanel?.imagePrompt?.trim()
+          ? existingPanel.imagePrompt.trim()
+          : panel.imagePrompt?.trim() || null;
+      const videoPrompt =
+        input.preserveImagePrompts &&
+        existingPanel?.videoPromptDesignJson &&
+        existingPanel.videoPrompt?.trim()
+          ? existingPanel.videoPrompt.trim()
+          : panel.videoPrompt?.trim() || null;
+      const imageInputsChanged = Boolean(
+        existingPanel && !sameText(imagePrompt, existingPanel.imagePrompt),
+      );
       const videoInputsChanged = Boolean(
         existingPanel &&
-          (!sameText(panel.videoPrompt, existingPanel.videoPrompt) ||
+          (!sameText(videoPrompt, existingPanel.videoPrompt) ||
             finiteNumber(panel.durationSeconds) !==
               existingPanel.durationSeconds),
       );
@@ -296,16 +309,8 @@ export async function saveStoryboard(
         locationName: panel.locationName?.trim() || null,
         charactersJson: stringifyArray(panel.characters),
         propsJson: stringifyArray(panel.props),
-        imagePrompt:
-          input.preserveImagePrompts && existingPanel?.imagePrompt?.trim()
-            ? existingPanel.imagePrompt.trim()
-            : panel.imagePrompt?.trim() || null,
-        videoPrompt:
-          input.preserveImagePrompts &&
-          existingPanel?.videoPromptDesignJson &&
-          existingPanel.videoPrompt?.trim()
-            ? existingPanel.videoPrompt.trim()
-            : panel.videoPrompt?.trim() || null,
+        imagePrompt,
+        videoPrompt,
         imagePromptDesignJson: promptDesignJson(
           panel.imagePromptDesign,
           existingPanel?.imagePromptDesignJson,
@@ -352,14 +357,17 @@ export async function saveStoryboard(
             : panel.firstLastFramePrompt?.trim() || null,
         linkedToNextPanel: panel.linkedToNextPanel ?? false,
         sourceEvidenceJson: stringifyArray(panel.sourceEvidence),
-        ...(videoInputsChanged ? { videoAssetId: null } : {}),
+        ...(imageInputsChanged ? { imageAssetId: null } : {}),
+        ...(imageInputsChanged || videoInputsChanged
+          ? { videoAssetId: null }
+          : {}),
       };
       await tx.storyboardPanel.upsert({
         where: { id },
         create: { id, storyboardId: storyboard.id, ...data },
         update: data,
       });
-      if (videoInputsChanged)
+      if (imageInputsChanged || videoInputsChanged)
         await tx.storyboardVideoSegment.deleteMany({ where: { panelId: id } });
     }
     await tx.storyboardPanel.deleteMany({

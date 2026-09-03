@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   channelFindFirst: vi.fn(),
   enqueueTask: vi.fn(),
   projectConfigFindUnique: vi.fn(),
+  providerModelCount: vi.fn(),
   providerModelFindFirst: vi.fn(),
   mediaTaskCount: vi.fn(),
   storyboardPanelUpdate: vi.fn(),
@@ -18,7 +19,10 @@ vi.mock("@/lib/server/prisma", () => ({
   prisma: {
     channel: { findFirst: mocks.channelFindFirst },
     projectConfig: { findUnique: mocks.projectConfigFindUnique },
-    providerModel: { findFirst: mocks.providerModelFindFirst },
+    providerModel: {
+      count: mocks.providerModelCount,
+      findFirst: mocks.providerModelFindFirst,
+    },
     mediaTask: { count: mocks.mediaTaskCount },
     storyboardPanel: {
       findFirst: mocks.storyboardPanelFindFirst,
@@ -49,6 +53,7 @@ vi.mock("@/lib/assets/story-world", () => ({
 }));
 
 import {
+  createStoryboardPanelImageTask,
   createStoryboardPanelVideoTask,
   previewStoryboardPanelPrompt,
 } from "./project-asset-tasks";
@@ -62,6 +67,7 @@ describe("storyboard prompt preview", () => {
       providerKey: "openai",
     });
     mocks.providerModelFindFirst.mockResolvedValue({ capabilitiesJson: "{}" });
+    mocks.providerModelCount.mockResolvedValue(1);
     mocks.mediaTaskCount.mockResolvedValue(0);
     mocks.storyboardPanelUpdate.mockResolvedValue({});
     mocks.storyboardVideoSegmentDeleteMany.mockResolvedValue({ count: 0 });
@@ -90,9 +96,10 @@ describe("storyboard prompt preview", () => {
       "项目统一画风（最高优先级）：中国水墨动画风格",
     );
     expect(preview.compiledPrompt).toContain("故事时代硬约束：前现代世界");
-    expect(preview.compiledPrompt).toContain("不可省略的结构化镜头制作蓝图");
-    expect(preview.compiledPrompt).toContain("林玄受创");
+    expect(preview.compiledPrompt).toContain("不可省略的静态首帧制作蓝图");
     expect(preview.compiledPrompt).toContain("林玄站立");
+    expect(preview.compiledPrompt).not.toContain("林玄后退后站稳");
+    expect(preview.compiledPrompt).not.toContain("后退一步");
     expect(preview.compiledPrompt).toContain("嘴角溢出鲜血");
     expect(preview.finalPrompt).toContain("嘴角留有少量红色水迹");
     expect(preview.safetyRewrites).toEqual([
@@ -148,7 +155,7 @@ describe("storyboard prompt preview", () => {
         }),
         expect.objectContaining({
           key: "audio_mode",
-          value: "关闭（audioMode=none）",
+          value: "关闭（audioMode=none，声音由后期独立合成）",
         }),
       ]),
     );
@@ -190,6 +197,15 @@ describe("storyboard prompt preview", () => {
     );
     expect(preview.compiledPrompt).toBe(preview.basePrompt);
     expect(preview.finalPrompt).toBe(preview.basePrompt);
+    expect(preview.referenceCount).toBe(1);
+    expect(preview.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "frame_mode",
+          value: "1 张分镜首帧（角色 / 场景 / 道具设定已用于生成该首帧）",
+        }),
+      ]),
+    );
   });
 
   it("submits the designed video prompt unchanged with silent model audio", async () => {
@@ -232,8 +248,38 @@ describe("storyboard prompt preview", () => {
       videoMode: "reference",
     });
     expect(task.request.referenceImages).toEqual([
-      expect.objectContaining({ role: "reference_image" }),
+      expect.objectContaining({ role: "first_frame" }),
     ]);
+  });
+
+  it("generates storyboard first frames in the configured video ratio", async () => {
+    mocks.storyboardPanelFindFirst.mockResolvedValue({
+      ...panel(),
+      storyboard: {
+        status: "ready",
+        episode: panel().storyboard.episode,
+      },
+    });
+
+    await createStoryboardPanelImageTask({
+      userId: "user-1",
+      projectId: "project-1",
+      episodeId: "episode-1",
+      panelId: "panel-1",
+      channelId: "channel-1",
+      model: "image-model",
+      mediaDefaults: {
+        imageGenerationRatio: "1:1",
+        imageGenerationResolution: "1k",
+        imageGenerationCount: 1,
+        imageGenerationQuality: "high",
+        videoGenerationRatio: "16:9",
+        videoGenerationResolution: "1080p",
+        videoGenerationDuration: "10s",
+      },
+    });
+
+    expect(mocks.taskCreate.mock.calls[0][0].request.ratio).toBe("16:9");
   });
 
   it("creates one persisted task per local video segment", async () => {

@@ -49,6 +49,7 @@ beforeEach(() => {
       imagePrompt: "人工确认的旧图片提示词",
       videoPrompt: "人工确认的旧视频提示词",
       firstLastFramePrompt: "人工确认的首尾帧提示词",
+      durationSeconds: null,
       imageAssetId: "image-asset-1",
       imagePromptDesignJson: JSON.stringify({
         designNotes: ["旧设计重点"],
@@ -133,6 +134,9 @@ describe("storyboard persistence", () => {
     expect(storyboardPanelUpsert.mock.calls[0]?.[0]?.update).not.toHaveProperty(
       "imageAssetId",
     );
+    expect(storyboardPanelUpsert.mock.calls[0]?.[0]?.update).not.toHaveProperty(
+      "videoAssetId",
+    );
   });
 
   it("still allows explicit image prompt edits outside an AI rerun", async () => {
@@ -150,7 +154,11 @@ describe("storyboard persistence", () => {
 
     expect(storyboardPanelUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        update: expect.objectContaining({ imagePrompt: "人工新提示词" }),
+        update: expect.objectContaining({
+          imagePrompt: "人工新提示词",
+          imageAssetId: null,
+          videoAssetId: null,
+        }),
       }),
     );
   });
