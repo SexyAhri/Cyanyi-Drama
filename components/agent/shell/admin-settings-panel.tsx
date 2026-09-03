@@ -36,6 +36,7 @@ export type AdminSettingsPanelStatus = {
 type AdminSettingsPanelProps = {
   formId: string;
   onStatusChange: (status: AdminSettingsPanelStatus) => void;
+  showPricing?: boolean;
 };
 
 type CallbackUrls = {
@@ -111,6 +112,7 @@ const EMPTY_SECRETS: SecretDraft = {
 export function AdminSettingsPanel({
   formId,
   onStatusChange,
+  showPricing = true,
 }: AdminSettingsPanelProps) {
   const [settings, setSettings] = useState(EMPTY_SETTINGS);
   const [secrets, setSecrets] = useState(EMPTY_SECRETS);
@@ -435,7 +437,7 @@ export function AdminSettingsPanel({
         </div>
       </SettingsSection>
 
-      <SettingsSection
+      {showPricing ? <SettingsSection
         description="价格单位决定计费方式；同一模型可配置多个单位并叠加计费。"
         title="模型价格与计费方式"
       >
@@ -534,7 +536,7 @@ export function AdminSettingsPanel({
             )}
           </TableBody>
         </Table>
-      </SettingsSection>
+      </SettingsSection> : null}
     </form>
   );
 }
