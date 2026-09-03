@@ -40,7 +40,7 @@ describe("video segment planning", () => {
       action: "韩宇看向铁盒。韩子枫打开盒盖。古籍泛起微光。",
       durationSeconds: 18,
       maxDurationSeconds: 15,
-      prompt: "场景：破旧屋舍\n可见画面与动作：完整动作\n仅生成静音视频。",
+      prompt: "从参考首帧 t=0 向前生成。\n唯一向前动作：完整动作\n仅生成静音视频。",
     });
 
     expect(segments.map((segment) => segment.durationSeconds)).toEqual([9, 9]);
@@ -52,7 +52,8 @@ describe("video segment planning", () => {
     expect(segments[0].prompt).toContain(
       "本片段可见动作：韩宇看向铁盒。韩子枫打开盒盖。",
     );
-    expect(segments[0].prompt).not.toContain("可见画面与动作：完整动作");
+    expect(segments[0].prompt).not.toContain("唯一向前动作：完整动作");
+    expect(segments[0].prompt.match(/本片段可见动作：/gu)).toHaveLength(1);
     expect(segments[1].prompt).toContain("不重复前段动作");
   });
 });

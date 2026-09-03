@@ -528,48 +528,66 @@ async function renderEpisodeTimeline(
   if (!episodeId || !projectId)
     throw new Error("TIMELINE_RENDER_EPISODE_REQUIRED");
 
-  const [storyboard, editorProject, voiceLines] = await Promise.all([
-    prisma.storyboard.findFirst({
-      where: { projectId, episodeId, project: { userId } },
-      select: {
-        panels: {
-          orderBy: { panelIndex: "asc" },
-          select: {
-            id: true,
-            panelIndex: true,
-            imageAsset: { select: { url: true, storageKey: true } },
-            videoAsset: { select: { url: true, storageKey: true } },
-            lipSyncAsset: { select: { url: true, storageKey: true } },
-            videoSegments: {
-              select: {
-                id: true,
-                videoAsset: { select: { url: true, storageKey: true } },
+  const [storyboard, editorProject, voiceLines, episodeAudioTracks] =
+    await Promise.all([
+      prisma.storyboard.findFirst({
+        where: { projectId, episodeId, project: { userId } },
+        select: {
+          panels: {
+            orderBy: { panelIndex: "asc" },
+            select: {
+              id: true,
+              panelIndex: true,
+              imageAsset: { select: { url: true, storageKey: true } },
+              videoAsset: { select: { url: true, storageKey: true } },
+              lipSyncAsset: { select: { url: true, storageKey: true } },
+              videoSegments: {
+                select: {
+                  id: true,
+                  videoAsset: { select: { url: true, storageKey: true } },
+                },
               },
             },
           },
         },
-      },
-    }),
-    prisma.editorProject.findFirst({
-      where: {
-        episodeId,
-        episode: { projectId, project: { userId } },
-      },
-      select: { timelineJson: true },
-    }),
-    prisma.voiceLine.findMany({
-      where: { episodeId, episode: { projectId, project: { userId } } },
-      orderBy: { lineIndex: "asc" },
-      select: {
-        id: true,
-        lineIndex: true,
-        speaker: true,
-        content: true,
-        matchedPanelId: true,
-        durationSeconds: true,
-      },
-    }),
-  ]);
+      }),
+      prisma.editorProject.findFirst({
+        where: {
+          episodeId,
+          episode: { projectId, project: { userId } },
+        },
+        select: { timelineJson: true },
+      }),
+      prisma.voiceLine.findMany({
+        where: { episodeId, episode: { projectId, project: { userId } } },
+        orderBy: { lineIndex: "asc" },
+        select: {
+          id: true,
+          lineIndex: true,
+          speaker: true,
+          content: true,
+          matchedPanelId: true,
+          durationSeconds: true,
+        },
+      }),
+      prisma.episodeAudioTrack.findMany({
+        where: {
+          episodeId,
+          trackType: { in: ["merged", "ambience", "sfx", "music"] },
+          episode: { projectId, project: { userId } },
+        },
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          trackType: true,
+          startSeconds: true,
+          endSeconds: true,
+          volume: true,
+          metadataJson: true,
+          asset: { select: { url: true, storageKey: true } },
+        },
+      }),
+    ]);
   if (!storyboard) throw new Error("TIMELINE_RENDER_STORYBOARD_NOT_FOUND");
   const sequence = parseTimelineSequence(
     parseJsonValue(editorProject?.timelineJson),
@@ -638,14 +656,34 @@ async function renderEpisodeTimeline(
     transitionDurationSeconds: track.transitionDuration,
   }));
 
-  const audioTrack = await prisma.episodeAudioTrack.findFirst({
-    where: { episodeId, trackType: "merged" },
-    select: { asset: { select: { url: true, storageKey: true } } },
+  const renderAudioTracks = episodeAudioTracks.map((track) => {
+    const source = storedAssetSource(track.asset);
+    if (!source)
+      throw new Error(`TIMELINE_RENDER_AUDIO_TRACK_MISSING:${track.id}`);
+    const metadata = parseJsonValue(track.metadataJson);
+    const loop =
+      !!metadata &&
+      typeof metadata === "object" &&
+      !Array.isArray(metadata) &&
+      (metadata as Record<string, unknown>).loop === true;
+    return {
+      ...source,
+      kind:
+        track.trackType === "merged"
+          ? ("dialogue" as const)
+          : (track.trackType as "ambience" | "sfx" | "music"),
+      startSeconds: track.startSeconds ?? 0,
+      endSeconds: track.endSeconds,
+      volume: track.volume ?? 1,
+      loop,
+    };
   });
-  const audioSource = storedAssetSource(audioTrack?.asset);
+  const dialogueSource = renderAudioTracks.find(
+    (track) => track.kind === "dialogue",
+  );
   assertTimelineDialogueAudioCoverage(
     voiceLines.length,
-    audioSource?.storageKey ?? audioSource?.url,
+    dialogueSource?.storageKey ?? dialogueSource?.url,
   );
 
   const subtitles = buildTimelineSubtitles(voiceLines, sequence);
@@ -655,8 +693,7 @@ async function renderEpisodeTimeline(
   );
   const rendered = await renderTimelineVideo({
     segments,
-    audioUrl: audioSource?.url,
-    audioStorageKey: audioSource?.storageKey,
+    audioTracks: renderAudioTracks,
     subtitles,
     specification,
   });
@@ -671,7 +708,8 @@ async function renderEpisodeTimeline(
         panelCount: segments.length,
         imagePanelCount: segments.filter((segment) => segment.kind === "image")
           .length,
-        hasAudio: !!audioSource,
+        hasAudio: renderAudioTracks.length > 0,
+        audioTrackCount: renderAudioTracks.length,
         subtitleCount: subtitles.length,
         specification: rendered.specification,
       },

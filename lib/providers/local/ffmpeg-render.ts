@@ -32,10 +32,32 @@ export interface TimelineSubtitleCue {
   text: string;
 }
 
+export type TimelineAudioTrackKind =
+  | "dialogue"
+  | "ambience"
+  | "sfx"
+  | "music";
+
+export interface TimelineAudioTrack {
+  url?: string | null;
+  storageKey?: string | null;
+  kind: TimelineAudioTrackKind;
+  startSeconds?: number;
+  endSeconds?: number | null;
+  volume?: number;
+  loop?: boolean;
+}
+
+export interface MaterializedTimelineAudioTrack
+  extends Omit<TimelineAudioTrack, "url" | "storageKey"> {
+  path: string;
+}
+
 export interface RenderTimelineOptions {
   segments: TimelineSegment[];
   audioUrl?: string | null;
   audioStorageKey?: string | null;
+  audioTracks?: readonly TimelineAudioTrack[];
   subtitles?: readonly TimelineSubtitleCue[];
   format?: string;
   specification?: RenderSpecification;
@@ -65,15 +87,12 @@ export async function renderTimelineVideo(opts: RenderTimelineOptions) {
         outputPath: sourcePath,
         errorCode: `TIMELINE_RENDER_DOWNLOAD_FAILED:${seg.panelIndex}`,
       });
-      const hasSourceAudio =
-        seg.kind !== "image" && (await hasAudioStream(sourcePath));
       await executeFfmpeg(
         buildNormalizeSegmentArgs(
           sourcePath,
           normalizedPath,
           seg,
           specification,
-          hasSourceAudio,
         ),
       );
       inputPaths.push(normalizedPath);
@@ -98,6 +117,27 @@ export async function renderTimelineVideo(opts: RenderTimelineOptions) {
       });
     }
 
+    const audioTracks: MaterializedTimelineAudioTrack[] = [];
+    for (let index = 0; index < (opts.audioTracks?.length ?? 0); index += 1) {
+      const track = opts.audioTracks![index];
+      if (!track.url && !track.storageKey) continue;
+      const path = join(root, `soundtrack-${String(index).padStart(3, "0")}.audio`);
+      await writeMediaSource({
+        url: track.url,
+        storageKey: track.storageKey,
+        outputPath: path,
+        errorCode: `TIMELINE_RENDER_AUDIO_TRACK_DOWNLOAD_FAILED:${index}`,
+      });
+      audioTracks.push({
+        path,
+        kind: track.kind,
+        startSeconds: track.startSeconds,
+        endSeconds: track.endSeconds,
+        volume: track.volume,
+        loop: track.loop,
+      });
+    }
+
     let subtitlePath: string | null = null;
     if (opts.subtitles?.length) {
       const srt = buildSubtitleSrt(opts.subtitles, specification);
@@ -108,6 +148,11 @@ export async function renderTimelineVideo(opts: RenderTimelineOptions) {
     }
 
     const outputPath = join(root, "rendered.mp4");
+    const durationSeconds = segments.reduce(
+      (total, segment) =>
+        total + (segment.durationSeconds ?? specification.imageDurationSeconds),
+      0,
+    );
     await executeFfmpeg(
       buildConcatFfmpegArgs(
         listPath,
@@ -115,6 +160,8 @@ export async function renderTimelineVideo(opts: RenderTimelineOptions) {
         outputPath,
         specification,
         subtitlePath,
+        audioTracks,
+        durationSeconds,
       ),
     );
 
@@ -155,7 +202,6 @@ export function buildNormalizeSegmentArgs(
   outputPath: string,
   segment: TimelineSegment,
   specification: RenderSpecification,
-  hasSourceAudio = segment.kind !== "image",
 ) {
   const duration = segment.durationSeconds ?? specification.imageDurationSeconds;
   const args = ["-hide_banner", "-loglevel", "error", "-y"];
@@ -164,13 +210,12 @@ export function buildNormalizeSegmentArgs(
   if (segment.kind === "image")
     args.push("-loop", "1", "-framerate", String(specification.fps));
   args.push("-i", inputPath);
-  if (!hasSourceAudio)
-    args.push(
-      "-f",
-      "lavfi",
-      "-i",
-      `anullsrc=channel_layout=stereo:sample_rate=${specification.audioSampleRate}`,
-    );
+  args.push(
+    "-f",
+    "lavfi",
+    "-i",
+    `anullsrc=channel_layout=stereo:sample_rate=${specification.audioSampleRate}`,
+  );
   if (segment.kind === "image" || segment.durationSeconds)
     args.push("-t", String(duration));
   const filters = [
@@ -203,7 +248,7 @@ export function buildNormalizeSegmentArgs(
     "-map",
     "0:v:0",
     "-map",
-    `${hasSourceAudio ? 0 : 1}:a:0`,
+    "1:a:0",
     "-vf",
     filters.join(","),
     "-c:v",
@@ -242,6 +287,8 @@ export function buildConcatFfmpegArgs(
   outputPath: string,
   specification: RenderSpecification,
   subtitlePath: string | null = null,
+  independentAudioTracks: readonly MaterializedTimelineAudioTrack[] = [],
+  durationSeconds = 0,
 ) {
   const base = [
     "-hide_banner",
@@ -275,11 +322,21 @@ export function buildConcatFfmpegArgs(
         "90000",
       ]
     : ["-c:v", "copy"];
-  if (audioPath) {
-    base.push("-i", audioPath);
+  const audioTracks: MaterializedTimelineAudioTrack[] = [
+    ...(audioPath
+      ? [{ path: audioPath, kind: "dialogue" as const, volume: 1 }]
+      : []),
+    ...independentAudioTracks,
+  ];
+  for (const track of audioTracks) {
+    if (track.loop) base.push("-stream_loop", "-1");
+    base.push("-i", track.path);
+  }
+  if (audioTracks.length) {
+    const totalDuration = Math.max(0.001, durationSeconds);
     base.push(
       "-filter_complex",
-      "[0:a:0][1:a:0]sidechaincompress=threshold=0.025:ratio=8:attack=20:release=300[ducked];[ducked][1:a:0]amix=inputs=2:duration=first:dropout_transition=0:weights=0.8 1:normalize=0[mixed]",
+      buildAudioMixFilter(audioTracks, totalDuration, specification.audioSampleRate),
       ...videoArgs,
       "-c:a",
       specification.audioCodec,
@@ -293,6 +350,8 @@ export function buildConcatFfmpegArgs(
       "0:v:0",
       "-map",
       "[mixed]",
+      "-t",
+      totalDuration.toFixed(3),
       "-movflags",
       "+faststart",
     );
@@ -311,6 +370,77 @@ export function buildConcatFfmpegArgs(
   }
   base.push(outputPath);
   return base;
+}
+
+export function buildAudioMixFilter(
+  tracks: readonly MaterializedTimelineAudioTrack[],
+  durationSeconds: number,
+  sampleRate = 48_000,
+) {
+  if (!tracks.length) throw new Error("TIMELINE_AUDIO_TRACKS_EMPTY");
+  const totalDuration = Math.max(0.001, durationSeconds);
+  const filters: string[] = [];
+  const dialogueLabels: string[] = [];
+  const bedLabels: string[] = [];
+
+  tracks.forEach((track, index) => {
+    const start = clampAudioTime(track.startSeconds ?? 0, totalDuration);
+    const end = clampAudioTime(track.endSeconds ?? totalDuration, totalDuration);
+    const activeDuration = Math.max(0.001, end - start);
+    const volume = Math.min(2, Math.max(0, track.volume ?? 1));
+    const label = `track${index}`;
+    let chain =
+      `[${index + 1}:a:0]aresample=${sampleRate},` +
+      `aformat=sample_rates=${sampleRate}:channel_layouts=stereo,` +
+      `atrim=duration=${activeDuration.toFixed(3)},asetpts=PTS-STARTPTS`;
+    if (track.loop && activeDuration >= 0.2) {
+      const fade = Math.min(0.35, activeDuration / 2);
+      chain +=
+        `,afade=t=in:st=0:d=${fade.toFixed(3)}` +
+        `,afade=t=out:st=${Math.max(0, activeDuration - fade).toFixed(3)}:d=${fade.toFixed(3)}`;
+    }
+    if (start > 0) chain += `,adelay=${Math.round(start * 1_000)}:all=1`;
+    chain +=
+      `,volume=${volume.toFixed(3)},apad,` +
+      `atrim=duration=${totalDuration.toFixed(3)}[${label}]`;
+    filters.push(chain);
+    (track.kind === "dialogue" ? dialogueLabels : bedLabels).push(`[${label}]`);
+  });
+
+  const dialogue = combineAudioLabels(filters, dialogueLabels, "dialogue");
+  const bed = combineAudioLabels(filters, bedLabels, "bed");
+  if (dialogue && bed) {
+    filters.push(
+      `${dialogue}asplit=2[dialogue_sidechain][dialogue_mix]`,
+      `${bed}[dialogue_sidechain]sidechaincompress=threshold=0.025:ratio=8:attack=20:release=300[ducked]`,
+      `[ducked][dialogue_mix]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,atrim=duration=${totalDuration.toFixed(3)}[mixed]`,
+    );
+  } else {
+    filters.push(`${dialogue ?? bed}anull[mixed]`);
+  }
+  return filters.join(";");
+}
+
+function combineAudioLabels(
+  filters: string[],
+  labels: string[],
+  output: string,
+) {
+  if (!labels.length) return null;
+  if (labels.length === 1) {
+    filters.push(`${labels[0]}anull[${output}]`);
+  } else {
+    filters.push(
+      `${labels.join("")}amix=inputs=${labels.length}:duration=longest:dropout_transition=0:normalize=0[${output}]`,
+    );
+  }
+  return `[${output}]`;
+}
+
+function clampAudioTime(value: number, durationSeconds: number) {
+  return Number.isFinite(value)
+    ? Math.min(durationSeconds, Math.max(0, value))
+    : 0;
 }
 
 export function buildSubtitleSrt(
@@ -394,28 +524,6 @@ function escapeFilterValue(value: string) {
     .replace(/\\/g, "/")
     .replace(/:/g, "\\:")
     .replace(/'/g, "\\'");
-}
-
-async function hasAudioStream(inputPath: string) {
-  try {
-    await executeFfmpeg([
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-i",
-      inputPath,
-      "-map",
-      "0:a:0",
-      "-frames:a",
-      "1",
-      "-f",
-      "null",
-      "-",
-    ]);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function guessMediaExt(url: string, kind?: "image" | "video") {

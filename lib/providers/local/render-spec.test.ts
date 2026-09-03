@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildAudioMixFilter,
   buildConcatFfmpegArgs,
   buildNormalizeSegmentArgs,
   buildSubtitleSrt,
@@ -76,9 +77,16 @@ describe("render specification", () => {
     expect(video.join(" ")).toContain("afade=t=out:st=3.5:d=0.5");
     expect(image).toEqual(expect.arrayContaining(["-loop", "1", "-t", "4"]));
     expect(image.join(" ")).toContain("anullsrc");
-    expect(
-      buildConcatFfmpegArgs("inputs.txt", "audio.wav", "output.mp4", specification),
-    ).toEqual(
+    const concatArgs = buildConcatFfmpegArgs(
+      "inputs.txt",
+      "audio.wav",
+      "output.mp4",
+      specification,
+      null,
+      [],
+      8,
+    );
+    expect(concatArgs).toEqual(
       expect.arrayContaining([
         "-c:v",
         "copy",
@@ -87,11 +95,69 @@ describe("render specification", () => {
         "-ac",
         "2",
         "-filter_complex",
-        "[0:a:0][1:a:0]sidechaincompress=threshold=0.025:ratio=8:attack=20:release=300[ducked];[ducked][1:a:0]amix=inputs=2:duration=first:dropout_transition=0:weights=0.8 1:normalize=0[mixed]",
+        expect.stringContaining("[1:a:0]"),
       ]),
     );
-    expect(video).toEqual(expect.arrayContaining(["-map", "0:a:0"]));
+    expect(concatArgs[concatArgs.indexOf("-filter_complex") + 1]).not.toContain(
+      "[0:a:0]",
+    );
+    expect(video).toEqual(expect.arrayContaining(["-map", "1:a:0"]));
+    expect(video).not.toContain("0:a:0");
     expect(video).not.toContain("-an");
+  });
+
+  it("mixes independent sound layers and ducks them under dialogue", () => {
+    const tracks = [
+      { path: "dialogue.wav", kind: "dialogue" as const, volume: 1 },
+      {
+        path: "ambience.wav",
+        kind: "ambience" as const,
+        startSeconds: 2,
+        endSeconds: 10,
+        volume: 0.35,
+        loop: true,
+      },
+      {
+        path: "impact.wav",
+        kind: "sfx" as const,
+        startSeconds: 4.25,
+        endSeconds: 5,
+        volume: 0.8,
+      },
+    ];
+    const filter = buildAudioMixFilter(tracks, 12);
+
+    expect(filter).toContain("[1:a:0]");
+    expect(filter).toContain("[2:a:0]");
+    expect(filter).toContain("[3:a:0]");
+    expect(filter).toContain("adelay=2000:all=1");
+    expect(filter).toContain("adelay=4250:all=1");
+    expect(filter).toContain("volume=0.350");
+    expect(filter).toContain("volume=0.800");
+    expect(filter).toContain("asplit=2");
+    expect(filter).toContain("sidechaincompress=");
+
+    const specification = normalizeRenderSpecification();
+    const args = buildConcatFfmpegArgs(
+      "inputs.txt",
+      null,
+      "output.mp4",
+      specification,
+      null,
+      tracks,
+      12,
+    );
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "-stream_loop",
+        "-1",
+        "ambience.wav",
+        "-map",
+        "[mixed]",
+        "-t",
+        "12.000",
+      ]),
+    );
   });
 
   it("encodes safe SRT cues and transcodes video when burning subtitles", () => {
@@ -116,6 +182,8 @@ describe("render specification", () => {
       "output.mp4",
       specification,
       "C:\\Temp\\subtitles.srt",
+      [],
+      3,
     );
     expect(args).toEqual(
       expect.arrayContaining([

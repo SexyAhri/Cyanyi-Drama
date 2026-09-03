@@ -142,7 +142,8 @@ function segmentPrompt(input: {
 }
 
 function replaceVisibleAction(prompt: string, replacement: string) {
-  const pattern = /^(?:可见画面与动作|可见动作|Visible action)\s*[：:].*$/imu;
+  const pattern =
+    /^(?:唯一向前动作|本片段可见动作|可见画面与动作|可见动作|Only forward action|Visible action)\s*[：:].*$/imu;
   return pattern.test(prompt) ? prompt.replace(pattern, replacement) : prompt;
 }
 
