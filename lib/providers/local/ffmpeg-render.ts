@@ -223,6 +223,12 @@ export function buildNormalizeSegmentArgs(
     `pad=${specification.width}:${specification.height}:(ow-iw)/2:(oh-ih)/2:color=black`,
     "setsar=1",
   ];
+  if (segment.kind === "image") {
+    const zoomIncrement = 0.03 / Math.max(1, duration * specification.fps);
+    filters.push(
+      `zoompan=z='min(max(zoom,pzoom)+${zoomIncrement.toFixed(8)},1.03)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${specification.width}x${specification.height}:fps=${specification.fps}`,
+    );
+  }
   if (segment.kind !== "image" && segment.durationSeconds)
     filters.push(`tpad=stop_mode=clone:stop_duration=${duration}`);
   const transitionDuration = Math.min(

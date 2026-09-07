@@ -78,6 +78,9 @@ describe("render specification", () => {
     expect(video.join(" ")).toContain("afade=t=out:st=3.5:d=0.5");
     expect(image).toEqual(expect.arrayContaining(["-loop", "1", "-t", "4"]));
     expect(image.join(" ")).toContain("anullsrc");
+    expect(image.join(" ")).toContain("zoompan=");
+    expect(image.join(" ")).toContain("1.03");
+    expect(video.join(" ")).not.toContain("zoompan=");
     const concatArgs = buildConcatFfmpegArgs(
       "inputs.txt",
       "audio.wav",
