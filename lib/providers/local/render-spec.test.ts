@@ -136,6 +136,8 @@ describe("render specification", () => {
     expect(filter).toContain("volume=0.800");
     expect(filter).toContain("asplit=2");
     expect(filter).toContain("sidechaincompress=");
+    expect(filter).toContain("loudnorm=I=-16:LRA=11:TP=-1.5");
+    expect(filter).toContain("[premaster]");
 
     const specification = normalizeRenderSpecification();
     const args = buildConcatFfmpegArgs(

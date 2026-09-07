@@ -413,11 +413,14 @@ export function buildAudioMixFilter(
     filters.push(
       `${dialogue}asplit=2[dialogue_sidechain][dialogue_mix]`,
       `${bed}[dialogue_sidechain]sidechaincompress=threshold=0.025:ratio=8:attack=20:release=300[ducked]`,
-      `[ducked][dialogue_mix]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,atrim=duration=${totalDuration.toFixed(3)}[mixed]`,
+      `[ducked][dialogue_mix]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,atrim=duration=${totalDuration.toFixed(3)}[premaster]`,
     );
   } else {
-    filters.push(`${dialogue ?? bed}anull[mixed]`);
+    filters.push(`${dialogue ?? bed}anull[premaster]`);
   }
+  filters.push(
+    `[premaster]loudnorm=I=-16:LRA=11:TP=-1.5,atrim=duration=${totalDuration.toFixed(3)}[mixed]`,
+  );
   return filters.join(";");
 }
 
