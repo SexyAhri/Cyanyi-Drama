@@ -305,7 +305,7 @@ export function buildConcatFfmpegArgs(
   const videoArgs = subtitlePath
     ? [
         "-vf",
-        buildSubtitleVideoFilter(subtitlePath, specification),
+        buildSubtitleVideoFilter(subtitlePath),
         "-c:v",
         specification.videoCodec,
         "-preset",
@@ -450,10 +450,11 @@ export function buildSubtitleSrt(
   cues: readonly TimelineSubtitleCue[],
   specification: RenderSpecification,
 ) {
-  const fontSize = subtitleFontSize(specification);
+  const renderedFontSize =
+    (SUBTITLE_ASS_FONT_SIZE * specification.height) / ASS_PLAY_RESOLUTION_Y;
   const maxLineCharacters = Math.max(
-    12,
-    Math.min(28, Math.floor(specification.width / (fontSize * 1.3))),
+    8,
+    Math.min(28, Math.floor(specification.width / (renderedFontSize * 1.1))),
   );
   return cues
     .filter(
@@ -472,12 +473,7 @@ export function buildSubtitleSrt(
     .join("\n\n");
 }
 
-export function buildSubtitleVideoFilter(
-  subtitlePath: string,
-  specification: RenderSpecification,
-) {
-  const fontSize = subtitleFontSize(specification);
-  const margin = Math.max(24, Math.round(specification.height * 0.055));
+export function buildSubtitleVideoFilter(subtitlePath: string) {
   const fontName = process.platform === "win32" ? "Microsoft YaHei" : "Noto Sans CJK SC";
   const options = [`filename='${escapeFilterValue(subtitlePath)}'`];
   if (process.platform === "win32") {
@@ -485,17 +481,15 @@ export function buildSubtitleVideoFilter(
     options.push(`fontsdir='${escapeFilterValue(fontsDirectory)}'`);
   }
   options.push(
-    `force_style='FontName=${fontName},FontSize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=${margin}'`,
+    `force_style='FontName=${fontName},FontSize=${SUBTITLE_ASS_FONT_SIZE},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=${SUBTITLE_ASS_MARGIN}'`,
   );
   return `subtitles=${options.join(":")}`;
 }
 
-function subtitleFontSize(specification: RenderSpecification) {
-  return Math.max(
-    18,
-    Math.min(42, Math.round(Math.min(specification.width, specification.height) * 0.035)),
-  );
-}
+// libass scales SRT styles from its 288-line script coordinate system.
+const ASS_PLAY_RESOLUTION_Y = 288;
+const SUBTITLE_ASS_FONT_SIZE = 16;
+const SUBTITLE_ASS_MARGIN = 16;
 
 function subtitleTimestamp(seconds: number) {
   const totalMilliseconds = Math.max(0, Math.round(seconds * 1_000));

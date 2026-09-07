@@ -5,6 +5,7 @@ import {
   buildConcatFfmpegArgs,
   buildNormalizeSegmentArgs,
   buildSubtitleSrt,
+  buildSubtitleVideoFilter,
 } from "./ffmpeg-render";
 import { normalizeRenderSpecification } from "./render-spec";
 
@@ -177,6 +178,10 @@ describe("render specification", () => {
     );
     expect(srt).toContain("00:00:00,000 --> 00:00:01,250");
     expect(srt).toContain("Second unsafe line");
+
+    const subtitleFilter = buildSubtitleVideoFilter("C:\\Temp\\subtitles.srt");
+    expect(subtitleFilter).toContain("FontSize=16");
+    expect(subtitleFilter).toContain("MarginV=16");
 
     const args = buildConcatFfmpegArgs(
       "inputs.txt",
