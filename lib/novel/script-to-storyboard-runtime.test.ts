@@ -6,6 +6,10 @@ const getStoryboard = vi.hoisted(() => vi.fn());
 const saveStoryboard = vi.hoisted(() => vi.fn());
 const episodeFindFirst = vi.hoisted(() => vi.fn());
 const storyClipUpdate = vi.hoisted(() => vi.fn());
+const voiceLineFindMany = vi.hoisted(() => vi.fn());
+const voiceLineDeleteMany = vi.hoisted(() => vi.fn());
+const voiceLineCreateMany = vi.hoisted(() => vi.fn());
+const voiceLineUpdate = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/production/domain-store", () => ({
   listProductionClips,
@@ -16,11 +20,22 @@ vi.mock("@/lib/server/prisma", () => ({
   prisma: {
     episode: { findFirst: episodeFindFirst },
     storyClip: { update: storyClipUpdate },
+    voiceLine: { findMany: voiceLineFindMany },
+    $transaction: vi.fn(async (callback) =>
+      callback({
+        voiceLine: {
+          deleteMany: voiceLineDeleteMany,
+          createMany: voiceLineCreateMany,
+          update: voiceLineUpdate,
+        },
+      }),
+    ),
   },
 }));
 
 import {
   buildEpisodeStoryboard,
+  buildScreenplayVoiceLines,
   buildSceneStoryboardPanels,
   extractProductionDirectives,
 } from "./script-to-storyboard-runtime";
@@ -83,12 +98,24 @@ beforeEach(() => {
   listProductionProps.mockResolvedValue([{ name: "铁石" }]);
   getStoryboard.mockResolvedValue(null);
   saveStoryboard.mockImplementation(
-    async (_userId, _projectId, _episodeId, input) => ({
+    async (
+      _userId,
+      _projectId,
+      _episodeId,
+      input: { panels: Array<Record<string, unknown>> },
+    ) => ({
       id: "storyboard-1",
-      panels: input.panels,
+      panels: input.panels.map((panel: Record<string, unknown>, index: number) => ({
+        ...panel,
+        id: `panel-${index}`,
+      })),
     }),
   );
   storyClipUpdate.mockResolvedValue({});
+  voiceLineFindMany.mockResolvedValue([]);
+  voiceLineDeleteMany.mockResolvedValue({ count: 0 });
+  voiceLineCreateMany.mockResolvedValue({ count: 2 });
+  voiceLineUpdate.mockResolvedValue({});
 });
 
 describe("scene storyboard runtime", () => {
@@ -224,6 +251,33 @@ describe("scene storyboard runtime", () => {
     });
   });
 
+  it("maps screenplay speech to persisted storyboard panels", () => {
+    const panels = buildSceneStoryboardPanels([clip], {
+      artStyle: "中国水墨动画风格",
+      productionSpec: "约120秒，16:9",
+      visualRules: "冷调青蓝光影",
+      propNames: ["铁石"],
+      locale: "zh",
+    }).map((panel, index) => ({ ...panel, id: `panel-${index}` }));
+
+    expect(buildScreenplayVoiceLines([clip], panels)).toEqual([
+      expect.objectContaining({
+        lineIndex: 0,
+        speaker: "韩宇",
+        content: "我一定要变强。",
+        delivery: "dialogue",
+        matchedPanelId: "panel-2",
+      }),
+      expect.objectContaining({
+        lineIndex: 1,
+        speaker: "旁白",
+        content: "寒夜见证少年的坚持。",
+        delivery: "voiceover",
+        matchedPanelId: "panel-0",
+      }),
+    ]);
+  });
+
   it("persists scene cards without a model request or hard review", async () => {
     const hooks = {
       assertActive: vi.fn().mockResolvedValue(undefined),
@@ -240,6 +294,7 @@ describe("scene storyboard runtime", () => {
       clipCount: 1,
       sceneCount: 3,
       panelCount: 3,
+      voiceLineCount: 2,
       promptTraces: [],
     });
     expect(saveStoryboard).toHaveBeenCalledWith(
@@ -256,6 +311,22 @@ describe("scene storyboard runtime", () => {
     expect(storyClipUpdate).toHaveBeenCalledWith({
       where: { id: "clip-1" },
       data: { status: "storyboard_ready", shotCount: 3 },
+    });
+    expect(voiceLineCreateMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({
+          episodeId: "episode-1",
+          speaker: "韩宇",
+          content: "我一定要变强。",
+          matchedPanelId: "panel-2",
+        }),
+        expect.objectContaining({
+          episodeId: "episode-1",
+          speaker: "旁白",
+          content: "寒夜见证少年的坚持。",
+          matchedPanelId: "panel-0",
+        }),
+      ]),
     });
   });
 });

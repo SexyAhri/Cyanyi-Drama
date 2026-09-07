@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { screenplayConversionSchema } from "@/lib/prompts/schemas";
 import { listProductionClips, listProductionProps } from "@/lib/production/domain-store";
@@ -107,6 +107,12 @@ export async function buildEpisodeStoryboard(
   );
   if (!storyboard) throw new Error("STORYBOARD_PERSIST_FAILED");
 
+  const voiceLineCount = await syncScreenplayVoiceLines(
+    input.episodeId,
+    clips,
+    storyboard.panels,
+  );
+
   await Promise.all(
     clips.map((clip) =>
       prisma.storyClip.update({
@@ -124,6 +130,7 @@ export async function buildEpisodeStoryboard(
     sceneCount: panels.length,
     storyboardId: storyboard.id,
     sourceHash,
+    voiceLineCount,
   };
   await hooks.persistArtifact("storyboard.scenes", input.episodeId, artifact);
 
@@ -132,6 +139,177 @@ export async function buildEpisodeStoryboard(
     panelCount: storyboard.panels.length,
     promptTraces: [],
   };
+}
+
+type StoryboardVoicePanel = {
+  id: string;
+  clipId: string | null;
+  panelIndex: number;
+  sceneNumber: number | null;
+  speakingCharacter?: string | null;
+  lipSyncText?: string | null;
+  voiceoverText?: string | null;
+};
+
+type ScreenplayVoiceLine = {
+  lineIndex: number;
+  speaker: string;
+  content: string;
+  delivery: "dialogue" | "inner_monologue" | "voiceover";
+  emotionPrompt: string | null;
+  emotionStrength: number;
+  matchedPanelId: string;
+};
+
+export function buildScreenplayVoiceLines(
+  clips: ProductionClip[],
+  panels: StoryboardVoicePanel[],
+) {
+  const lines: ScreenplayVoiceLine[] = [];
+  let sceneNumber = 0;
+
+  for (const clip of clips) {
+    const screenplay = parseScreenplay(clip);
+    for (const scene of screenplay.scenes) {
+      const scenePanels = panels
+        .filter(
+          (panel) =>
+            panel.clipId === clip.id && panel.sceneNumber === sceneNumber,
+        )
+        .sort((left, right) => left.panelIndex - right.panelIndex);
+      sceneNumber += 1;
+      if (!scenePanels.length) continue;
+
+      const actionCount = scene.content.filter(
+        (content) => content.type === "action",
+      ).length;
+      let completedActions = 0;
+      for (const content of scene.content) {
+        if (content.type === "action") {
+          completedActions += 1;
+          continue;
+        }
+        const speaker =
+          content.type === "dialogue"
+            ? content.character
+            : (content.character ?? "旁白");
+        const delivery =
+          content.type === "dialogue"
+            ? ("dialogue" as const)
+            : content.character
+              ? ("inner_monologue" as const)
+              : ("voiceover" as const);
+        const spokenContent =
+          content.type === "dialogue" ? content.lines : content.text;
+        const performed = performedVoiceSegments(
+          content.type,
+          speaker,
+          spokenContent,
+          scenePanels,
+        );
+        const fallbackPanel =
+          scenePanels[
+            actionCount
+              ? Math.round(
+                  (completedActions / actionCount) * (scenePanels.length - 1),
+                )
+              : Math.floor((scenePanels.length - 1) / 2)
+          ];
+        const segments = performed.length
+          ? performed
+          : [{ content: spokenContent, panel: fallbackPanel }];
+        for (const segment of segments) {
+          lines.push({
+            lineIndex: lines.length,
+            speaker,
+            content: segment.content,
+            delivery,
+            emotionPrompt:
+              content.type === "dialogue"
+                ? (content.parenthetical ?? null)
+                : null,
+            emotionStrength: 0.5,
+            matchedPanelId: segment.panel.id,
+          });
+        }
+      }
+    }
+  }
+  return lines;
+}
+
+function performedVoiceSegments(
+  type: "dialogue" | "voiceover",
+  speaker: string,
+  content: string,
+  panels: StoryboardVoicePanel[],
+) {
+  let consumed = "";
+  const segments: Array<{ content: string; panel: StoryboardVoicePanel }> = [];
+  for (const panel of panels) {
+    const value =
+      type === "dialogue"
+        ? panel.speakingCharacter === speaker
+          ? panel.lipSyncText
+          : null
+        : panel.voiceoverText;
+    if (!value || !content.startsWith(consumed + value)) continue;
+    consumed += value;
+    segments.push({ content: value, panel });
+    if (consumed === content) return segments;
+  }
+  return [];
+}
+
+async function syncScreenplayVoiceLines(
+  episodeId: string,
+  clips: ProductionClip[],
+  panels: StoryboardVoicePanel[],
+) {
+  const lines = buildScreenplayVoiceLines(clips, panels);
+  const existing = await prisma.voiceLine.findMany({
+    where: { episodeId },
+    orderBy: { lineIndex: "asc" },
+    select: {
+      id: true,
+      speaker: true,
+      content: true,
+      delivery: true,
+      matchedPanelId: true,
+    },
+  });
+  const sameContract =
+    existing.length === lines.length &&
+    existing.every(
+      (line, index) =>
+        line.speaker === lines[index].speaker &&
+        line.content === lines[index].content &&
+        line.delivery === lines[index].delivery,
+    );
+
+  await prisma.$transaction(async (tx) => {
+    if (sameContract) {
+      for (const [index, line] of existing.entries()) {
+        if (line.matchedPanelId === lines[index].matchedPanelId) continue;
+        await tx.voiceLine.update({
+          where: { id: line.id },
+          data: { matchedPanelId: lines[index].matchedPanelId },
+        });
+      }
+      return;
+    }
+    await tx.voiceLine.deleteMany({ where: { episodeId } });
+    if (!lines.length) return;
+    await tx.voiceLine.createMany({
+      data: lines.map((line) => ({
+        id: randomUUID(),
+        episodeId,
+        ...line,
+        status: "draft",
+      })),
+    });
+  });
+  return lines.length;
 }
 
 export function buildSceneStoryboardPanels(
