@@ -45,10 +45,12 @@ import { StudioInspector } from "../inspector/studio-inspector";
 import { operationErrorMessage } from "../inspector/inspector-view-model";
 import { EpisodeSidebar } from "./episode-sidebar";
 import { StageNavigation } from "./stage-navigation";
+import { DirectorWorkflowBar } from "./director-workflow-bar";
 import { StageOverview } from "./stage-overview";
 import { WorkspaceTopbar } from "./workspace-topbar";
 import { WritingWorkspace } from "../writing/writing-workspace";
 import { updateStudioProjectConfig } from "../api";
+import { CanvasWorkspace } from "../canvas/canvas-workspace";
 
 export function WorkspacePage({
   projectId,
@@ -68,6 +70,7 @@ export function WorkspacePage({
   const [selection, setSelection] = useState<StudioSelectionContext>();
   const [analysisModelId, setAnalysisModelId] = useState("");
   const previousWorkflowSteps = useRef<Map<string, string> | null>(null);
+  const beforeCanvasLeave = useRef<(() => Promise<boolean>) | undefined>(undefined);
   const {
     analysisModels,
     audioModels,
@@ -79,6 +82,7 @@ export function WorkspacePage({
     useWorkspace(projectId);
 
   const requestedEpisodeId = searchParams.get("episode") ?? undefined;
+  const canvasOpen = searchParams.get("view") === "canvas";
   const requestedStage = searchParams.get("stage") as StudioStageId | null;
   const activeStage =
     requestedStage && STUDIO_STAGE_IDS.includes(requestedStage)
@@ -183,14 +187,22 @@ export function WorkspacePage({
     snapshot,
   ]);
 
-  function updateSelection(input: {
+  async function updateSelection(input: {
     episodeId?: string;
     stageId?: StudioStageId;
   }) {
+    if (beforeCanvasLeave.current && !(await beforeCanvasLeave.current())) return;
     const params = new URLSearchParams(searchParams.toString());
     params.delete("view");
     if (input.episodeId) params.set("episode", input.episodeId);
     if (input.stageId) params.set("stage", input.stageId);
+    router.replace(`${pathname}?${params}`, { scroll: false });
+  }
+
+  async function changeCanvasView(open: boolean) {
+    if (!open && beforeCanvasLeave.current && !(await beforeCanvasLeave.current())) return;
+    const params = new URLSearchParams(searchParams.toString());
+    if (open) params.set("view", "canvas"); else params.delete("view");
     router.replace(`${pathname}?${params}`, { scroll: false });
   }
 
@@ -268,6 +280,11 @@ export function WorkspacePage({
           onSelect={(stageId) => updateSelection({ stageId })}
           stages={stages}
         />
+        <DirectorWorkflowBar stage={activeStage} locale={locale} onSelect={(stageId) => updateSelection({ stageId })} />
+        <div className="flex items-center gap-2 border-b px-4 py-1.5">
+          <Button size="sm" variant={!canvasOpen ? "secondary" : "ghost"} onClick={() => void changeCanvasView(false)}>制作流程</Button>
+          <Button size="sm" variant={canvasOpen ? "secondary" : "ghost"} disabled={!selectedEpisode} onClick={() => void changeCanvasView(true)}>无限画布</Button>
+        </div>
 
         <div className="flex min-h-0 flex-1">
           <aside className="hidden w-64 shrink-0 border-r lg:block">
@@ -276,12 +293,14 @@ export function WorkspacePage({
 
           <main
             className={
-              fixedHeightWorkspace
+              canvasOpen ? "min-w-0 flex-1 overflow-hidden" : fixedHeightWorkspace
                 ? "min-w-0 flex-1 overflow-y-auto xl:overflow-hidden"
                 : "min-w-0 flex-1 overflow-y-auto"
             }
           >
-            {selectedStage?.id === "writing" && selectedEpisode ? (
+            {canvasOpen && selectedEpisode ? (
+              <CanvasWorkspace key={selectedEpisode.id} projectId={projectId} episodeId={selectedEpisode.id} imageModels={imageModels} videoModels={videoModels} snapshot={snapshot} onRefresh={() => refresh()} registerBeforeLeave={(handler) => { beforeCanvasLeave.current = handler; }} />
+            ) : selectedStage?.id === "writing" && selectedEpisode ? (
               <WritingWorkspace
                 analysisModelId={analysisModelId}
                 episode={selectedEpisode}
@@ -302,6 +321,9 @@ export function WorkspacePage({
               />
             ) : selectedStage?.id === "storyboard" && selectedEpisode ? (
               <StoryboardWorkspace
+                analysisModelId={analysisModelId}
+                models={analysisModels}
+                onAnalysisModelChange={changeAnalysisModel}
                 episode={selectedEpisode}
                 locale={locale}
                 onContextChange={setSelection}

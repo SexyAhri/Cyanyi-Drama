@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { PROMPT_CATALOG } from "./catalog";
+import { withProductionRules } from "./production-rules";
 import type { PromptId } from "./ids";
 import type {
   AgentContract,
@@ -45,7 +46,7 @@ export function renderPrompt(input: {
   const templateHash = sha256(template);
   const systemText = renderAgentSystemText(entry.agent, locale);
   const systemHash = sha256(systemText);
-  return {
+  const rendered: RenderedPrompt = {
     id: input.id,
     agentId: entry.agent.id,
     maxSemanticCorrections: entry.agent.retryPolicy.maxSemanticCorrections,
@@ -59,6 +60,9 @@ export function renderPrompt(input: {
     systemText,
     text,
   };
+  if (input.id === "asset_visual_design") return withProductionRules(rendered, "asset-prompt-generation");
+  if (input.id === "episode_adaptation") return withProductionRules(rendered, "script-generation");
+  return rendered;
 }
 
 export function getPromptTemplate(id: PromptId, locale: PromptLocale) {

@@ -280,10 +280,21 @@ model Episode {
   workflowRuns           WorkflowRun[]
   productionDeliverables ProductionDeliverable[]
   sourceVersions         EpisodeSourceVersion[]
+  canvas                 CreativeCanvas?
 
   @@unique([projectId, episodeNumber])
   @@index([projectId, episodeNumber])
   @@map("episodes")
+}
+
+model CreativeCanvas {
+  episodeId String @id @map("episode_id")
+  document Json
+  revision Int @default(0)
+  updatedAt DateTime @updatedAt @map("updated_at")
+  episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+
+  @@map("creative_canvases")
 }
 
 model Manuscript {

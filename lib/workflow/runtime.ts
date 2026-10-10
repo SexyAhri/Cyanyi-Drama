@@ -735,6 +735,8 @@ async function runStep(
         projectId: run.projectId,
         episodeId: run.episodeId,
         locale: getString(input.locale) === "en" ? "en" : "zh",
+        channelId: getString(input.channelId),
+        model: getString(input.model),
       },
       runtime,
     );

@@ -816,7 +816,7 @@ export async function saveStudioStoryboard(
 export async function startStudioStoryboardWorkflow(
   projectId: string,
   episodeId: string,
-  input: { locale: "en" | "zh" },
+  input: { locale: "en" | "zh"; channelId?: string; model?: string },
 ) {
   return request<{ workflow: WorkflowRunSummary; reused: boolean }>(
     `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard`,

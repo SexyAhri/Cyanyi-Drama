@@ -30,7 +30,7 @@ describe("getOpenAICompatibleImageSizeCandidates", () => {
     ]);
   });
 
-  it("matches the low-quality 16:9 size used by infinite canvas", () => {
+  it("maps low-quality 16:9 images to the expected dimensions", () => {
     expect(getOpenAICompatibleImageSizeCandidates("720p", "16:9")[0]).toEqual({
       height: 768,
       size: "1360x768",

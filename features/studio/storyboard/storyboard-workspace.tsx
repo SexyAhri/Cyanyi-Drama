@@ -28,6 +28,7 @@ import {
   startStudioStoryboardWorkflow,
 } from "../api";
 import { StatusIndicator } from "../components/status-indicator";
+import { ModelSelect } from "../components/model-select";
 import { getStudioCopy } from "../i18n";
 import {
   getWorkflowForStage,
@@ -40,8 +41,10 @@ import type {
   StudioStoryboardData,
   StudioStoryboardPanel,
   WorkspaceSnapshot,
+  StudioModelOption,
 } from "../types";
 import { PanelEditorDialog } from "./panel-editor-dialog";
+import { DirectorReviewPanel } from "./director-review-panel";
 import {
   getPanelContinuityIssues,
   mergeStoryboardPanelWithNext,
@@ -56,12 +59,18 @@ import {
 } from "./previs-view-model";
 
 export function StoryboardWorkspace({
+  analysisModelId,
+  models,
+  onAnalysisModelChange,
   episode,
   locale,
   onContextChange,
   onRefresh,
   snapshot,
 }: {
+  analysisModelId: string;
+  models: StudioModelOption[];
+  onAnalysisModelChange: (id: string) => void;
   episode: WorkspaceSnapshot["project"]["episodes"][number];
   locale: StudioLocale;
   onContextChange: (selection?: StudioSelectionContext) => void;
@@ -153,6 +162,8 @@ export function StoryboardWorkspace({
   }
 
   async function startWorkflow() {
+    const model = models.find((item) => item.id === analysisModelId);
+    if (!model) { toast.error(locale === "zh-CN" ? "请先选择导演分析模型" : "Select a director model first"); return; }
     setIsActing(true);
     try {
       const result = await startStudioStoryboardWorkflow(
@@ -160,6 +171,8 @@ export function StoryboardWorkspace({
         episode.id,
         {
           locale: locale === "en" ? "en" : "zh",
+          channelId: model.channelId,
+          model: model.modelId,
         },
       );
       toast.success(result.reused ? copy.workflowReused : copy.workflowStarted);
@@ -273,8 +286,9 @@ export function StoryboardWorkspace({
           </div>
         </div>
           <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <ModelSelect models={models} value={analysisModelId} onChange={onAnalysisModelChange} placeholder={locale === "zh-CN" ? "导演模型" : "Director model"} className="w-52" disabled={isActing || workflow?.status === "running"} />
             <WorkflowButtons
-              disabled={isActing}
+              disabled={isActing || !analysisModelId}
               hasWorkflow={Boolean(workflow)}
               locale={locale}
               onAction={controlWorkflow}
@@ -283,6 +297,15 @@ export function StoryboardWorkspace({
             />
           </div>
       </header>
+
+      <div className="shrink-0 border-b py-3 text-xs leading-6 text-muted-foreground">
+        {locale === "zh-CN" ? "导演流程：基础拆镜 → 镜头设计 → 独立审核 → 定向修复（最多一次）→ 分镜确认。原文台词与说话人绑定保留；视频使用无声画面，配音与口型在声音阶段处理。" : "Director flow: scene boundaries → shot design → independent review → one targeted repair → storyboard confirmation. Dialogue bindings stay intact; speech and lip sync are produced separately."}
+      </div>
+      {data?.storyboard?.status === "director_review_required" ? <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b py-3 text-sm">
+        <p className="text-destructive">{locale === "zh-CN" ? "导演审核仍有未解决问题。请检查分镜，确认后才能生成媒体；审核记录在任务产物中。" : "Director review requires attention. Inspect the shots before confirming them for media generation."}</p>
+        <Button variant="outline" size="sm" disabled={isActing} onClick={() => void savePanels(panels, "ready")}>{locale === "zh-CN" ? "已检查，确认分镜" : "Confirm reviewed storyboard"}</Button>
+      </div> : null}
+      <DirectorReviewPanel value={selectedPanel?.actingNotes?.directorReview} locale={locale} />
 
       <div className="min-w-0 pt-4 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col xl:overflow-hidden">
           {error ? (

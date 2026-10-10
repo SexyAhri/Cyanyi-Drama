@@ -24,6 +24,9 @@ export async function POST(request: Request, context: Context) {
   const { projectId, episodeId } = await context.params;
   const body = await readObject(request);
   const locale = body.locale === "en" ? "en" : "zh";
+  const channelId = typeof body.channelId === "string" ? body.channelId.trim() : undefined;
+  const model = typeof body.model === "string" ? body.model.trim() : undefined;
+  if (Boolean(channelId) !== Boolean(model)) return attachSessionCookie(Response.json({ message: "请选择完整的导演模型与渠道" }, { status: 400 }), sessionId);
   const result = await createOrReuseWorkflowRun({
     id: `workflow_${crypto.randomUUID()}`,
     userId: user.id,
@@ -32,13 +35,13 @@ export async function POST(request: Request, context: Context) {
     workflowType: "script-to-storyboard",
     targetType: "episode",
     targetId: episodeId,
-    input: { locale },
+    input: { locale, channelId, model },
     steps: [
       {
         key: "build_scene_storyboard",
         type: "build_scene_storyboard",
-        artifactTypes: ["storyboard.scenes"],
-        input: { locale },
+        artifactTypes: ["storyboard.scenes", "storyboard.director.batch"],
+        input: { locale, channelId, model },
         retryable: false,
         maxAttempts: 1,
       },

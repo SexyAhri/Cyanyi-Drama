@@ -12,6 +12,8 @@ import { decryptSecret } from "@/lib/server/crypto";
 import { prisma } from "@/lib/server/prisma";
 import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
+import { withProductionRules } from "@/lib/prompts/production-rules";
+import { lockSilentVideoPerformance } from "./director-prompt-locks";
 
 export type StoryboardMediaPromptKind = "image" | "video";
 export type StoryboardVideoMode = "reference" | "first-last";
@@ -133,7 +135,7 @@ export async function designStoryboardMediaPrompt(input: {
         : panel.videoPrompt) ||
     panel.description ||
     "";
-  const prompt = renderPrompt({
+  const basePrompt = renderPrompt({
     id: PROMPT_IDS.STORYBOARD_MEDIA_PROMPT_DESIGN,
     locale,
     variables: {
@@ -146,13 +148,18 @@ export async function designStoryboardMediaPrompt(input: {
       current_prompt: currentPrompt || (locale === "en" ? "Not supplied" : "未提供"),
     },
   });
+  const prompt = input.kind === "video"
+    ? withProductionRules(basePrompt, "video-prompt-generation")
+    : withProductionRules(basePrompt, "storyboard-generation");
   const result = await requestOpenAiText({
     ...provider,
     prompt,
     temperature: 0.35,
   });
+  const design = parseStoryboardMediaPromptDesignText(result.text);
+  if (input.kind === "video") design.prompt = lockSilentVideoPerformance(design.prompt, { ...panel, locale });
   return {
-    design: parseStoryboardMediaPromptDesignText(result.text),
+    design,
     rawOutput: result.outputText,
     trace: result.trace,
   };
@@ -178,7 +185,7 @@ export function parseStoryboardMediaPromptDesignText(
   };
 }
 
-async function resolvePromptDesignProvider(input: {
+export async function resolvePromptDesignProvider(input: {
   userId: string;
   channelId: string;
   model: string;

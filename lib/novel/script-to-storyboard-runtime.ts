@@ -2,7 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { screenplayConversionSchema } from "@/lib/prompts/schemas";
 import { estimateSpeechDurationSeconds } from "@/lib/prompts/validators";
-import { listProductionClips, listProductionProps } from "@/lib/production/domain-store";
+import {
+  listProductionClips,
+  listProductionProps,
+} from "@/lib/production/domain-store";
 import type {
   ActionPhase,
   SfxCueType,
@@ -14,6 +17,8 @@ import { prisma } from "@/lib/server/prisma";
 import { parseApprovedScreenplay } from "./approved-screenplay-parser";
 import { getStoryboard, saveStoryboard } from "./domain-store";
 import { splitSpokenTextForShots } from "./storyboard-dialogue-timing";
+import { directStoryboard } from "./storyboard-director";
+import { readProductionTemplate } from "@/lib/prompts/production-rules";
 
 type ProductionClip = NonNullable<
   Awaited<ReturnType<typeof listProductionClips>>
@@ -24,6 +29,8 @@ export type ScriptToStoryboardStepInput = {
   projectId: string;
   episodeId: string;
   locale?: "en" | "zh";
+  channelId?: string;
+  model?: string;
 };
 
 export type ScriptToStoryboardRuntimeHooks = {
@@ -84,14 +91,83 @@ export async function buildEpisodeStoryboard(
     propNames: props.map((prop) => prop.name),
     locale,
   };
-  const panels = buildSceneStoryboardPanels(clips, context);
+  const basePanels = buildSceneStoryboardPanels(clips, context);
+  const assets =
+    input.channelId && input.model
+      ? await Promise.all([
+          prisma.novelCharacter.findMany({
+            where: {
+              projectId: input.projectId,
+              name: {
+                in: unique(basePanels.flatMap((panel) => panel.characters)),
+              },
+            },
+            select: { name: true, visualProfileJson: true },
+          }),
+          prisma.novelLocation.findMany({
+            where: {
+              projectId: input.projectId,
+              name: {
+                in: unique(basePanels.map((panel) => panel.locationName)),
+              },
+            },
+            select: { name: true, visualProfileJson: true },
+          }),
+          prisma.novelProp.findMany({
+            where: {
+              projectId: input.projectId,
+              name: { in: unique(basePanels.flatMap((panel) => panel.props)) },
+            },
+            select: { name: true, visualProfileJson: true },
+          }),
+        ])
+      : null;
+  const director =
+    input.channelId && input.model
+      ? await directStoryboard({
+          userId,
+          channelId: input.channelId,
+          model: input.model,
+          panels: basePanels,
+          style: context.artStyle,
+          locale,
+          assets: assets
+            ? { characters: assets[0], locations: assets[1], props: assets[2] }
+            : {},
+          assertActive: hooks.assertActive,
+          persistArtifact: hooks.persistArtifact,
+        })
+      : null;
+  const panels = director?.panels ?? basePanels;
   const sourceHash = sha256(
     JSON.stringify({
-      clips: clips.map((clip) => ({ id: clip.id, screenplay: clip.screenplay })),
+      clips: clips.map((clip) => ({
+        id: clip.id,
+        screenplay: clip.screenplay,
+      })),
       artStyle: context.artStyle,
       productionSpec: context.productionSpec,
       visualRules: context.visualRules,
       plannerVersion: STORYBOARD_PLANNER_VERSION,
+      directorModel: input.model ?? null,
+      directorChannel: input.channelId ?? null,
+      directorAssets: assets,
+      directorTemplates: director
+        ? [
+            "storyboard-generation",
+            "storyboard-review",
+            "storyboard-repair",
+          ].map((task) =>
+            sha256(
+              readProductionTemplate(
+                task as
+                  | "storyboard-generation"
+                  | "storyboard-review"
+                  | "storyboard-repair",
+              ),
+            ),
+          )
+        : [],
     }),
   );
 
@@ -101,7 +177,8 @@ export async function buildEpisodeStoryboard(
     input.projectId,
     input.episodeId,
     {
-      status: "ready",
+      status:
+        director && !director.approved ? "director_review_required" : "ready",
       sourceHash,
       preserveImagePrompts: existingStoryboard?.sourceHash === sourceHash,
       panels,
@@ -127,7 +204,8 @@ export async function buildEpisodeStoryboard(
     ),
   );
   const artifact = {
-    source: "local-production-script",
+    source: director ? "storyboard-director" : "local-production-script",
+    directorReviews: director?.reviews ?? [],
     clipCount: clips.length,
     sceneCount: panels.length,
     storyboardId: storyboard.id,
@@ -139,7 +217,7 @@ export async function buildEpisodeStoryboard(
   return {
     ...artifact,
     panelCount: storyboard.panels.length,
-    promptTraces: [],
+    promptTraces: director?.traces ?? [],
   };
 }
 
@@ -325,8 +403,7 @@ export function buildSceneStoryboardPanels(
     const sourceScenes = parseApprovedScreenplay(clip.content);
     let clipPanelIndex = 0;
     return screenplay.scenes.flatMap((scene, screenplaySceneIndex) => {
-      const sourceScene =
-        sourceScenes[screenplaySceneIndex] ?? sourceScenes[0];
+      const sourceScene = sourceScenes[screenplaySceneIndex] ?? sourceScenes[0];
       const action = scene.content
         .filter((item) => item.type === "action")
         .map((item) => item.text.trim())
@@ -337,7 +414,9 @@ export function buildSceneStoryboardPanels(
         .map((item) => item.text.trim())
         .filter(Boolean)
         .join("\n");
-      const sceneText = [sourceScene?.sourceText, action].filter(Boolean).join("\n");
+      const sceneText = [sourceScene?.sourceText, action]
+        .filter(Boolean)
+        .join("\n");
       const props = unique([
         ...clip.props,
         ...context.propNames.filter((name) => sceneText.includes(name)),
@@ -349,7 +428,8 @@ export function buildSceneStoryboardPanels(
         ),
       ]);
       const requestedDurationSeconds = sourceScene?.durationSeconds ?? 8;
-      const camera = sourceScene?.camera || cameraFromDescription(scene.description);
+      const camera =
+        sourceScene?.camera || cameraFromDescription(scene.description);
       const actionBeats = buildSemanticBeats(
         action,
         requestedDurationSeconds,
@@ -365,15 +445,23 @@ export function buildSceneStoryboardPanels(
       const extraDialogueBeats = Array.from(
         { length: Math.max(0, lastDialogueBeat + 1 - actionBeats.length) },
         (_, index) => {
-          const speaker = dialogueByBeat.get(actionBeats.length + index)?.speaker;
+          const speaker = dialogueByBeat.get(
+            actionBeats.length + index,
+          )?.speaker;
           return context.locale === "en"
             ? `${speaker} continues speaking as the other character reacts.`
             : `${speaker}继续说话，对方自然回应。`;
         },
       );
       const actions = [...actionBeats, ...extraDialogueBeats];
-      const actionDurations = beatDurations(requestedDurationSeconds, actionBeats.length);
-      const voiceovers = distributeTextAcrossBeats(voiceover, actionBeats.length);
+      const actionDurations = beatDurations(
+        requestedDurationSeconds,
+        actionBeats.length,
+      );
+      const voiceovers = distributeTextAcrossBeats(
+        voiceover,
+        actionBeats.length,
+      );
       const vfxCues = collectVfxCues(scene, sourceScene?.visualEffects ?? "");
       const sfxCues = collectSfxCues(scene, sourceScene?.sound ?? "");
       const currentSceneNumber = sceneNumber++;
@@ -402,12 +490,14 @@ export function buildSceneStoryboardPanels(
           ? speakingCamera(plannedCamera, dialogue.speaker, context.locale)
           : plannedCamera;
         const endState = buildEndState(beatAction, context.locale);
-        const assignedVfx = beatIndex < actionBeats.length
-          ? cuesForBeat(vfxCues, beatIndex, actionBeats.length)
-          : [];
-        const assignedSfx = beatIndex < actionBeats.length
-          ? cuesForBeat(sfxCues, beatIndex, actionBeats.length)
-          : [];
+        const assignedVfx =
+          beatIndex < actionBeats.length
+            ? cuesForBeat(vfxCues, beatIndex, actionBeats.length)
+            : [];
+        const assignedSfx =
+          beatIndex < actionBeats.length
+            ? cuesForBeat(sfxCues, beatIndex, actionBeats.length)
+            : [];
         const globalIndex = panelIndex++;
         const currentClipPanelIndex = clipPanelIndex++;
         const promptFacts = {
@@ -467,7 +557,10 @@ export function buildSceneStoryboardPanels(
             },
           },
           vfxCues: assignedVfx.map((cue) => ({
-            atSecond: Math.max(0, Math.min(durationSeconds - 1, Math.floor(durationSeconds / 2))),
+            atSecond: Math.max(
+              0,
+              Math.min(durationSeconds - 1, Math.floor(durationSeconds / 2)),
+            ),
             phase: cue.phase,
             category: cue.category,
             description: cue.description,
@@ -507,12 +600,19 @@ function assignDialogueToBeats(
       completedActions += 1;
       continue;
     }
-    if (item.type !== "dialogue" || !item.character?.trim() || !item.lines.trim())
+    if (
+      item.type !== "dialogue" ||
+      !item.character?.trim() ||
+      !item.lines.trim()
+    )
       continue;
     const preferred = actionCount
       ? Math.round((completedActions / actionCount) * (actionBeatCount - 1))
       : 0;
-    for (const text of splitSpokenTextForShots(item.lines, TARGET_BEAT_SECONDS)) {
+    for (const text of splitSpokenTextForShots(
+      item.lines,
+      TARGET_BEAT_SECONDS,
+    )) {
       const beatIndex = Math.max(preferred, nextFreeBeat);
       assignments.set(beatIndex, {
         speaker: item.character.trim(),
@@ -540,21 +640,21 @@ export function extractProductionDirectives(sourceText: string) {
   };
 }
 
-function buildImagePrompt(
-  context: SceneStoryboardContext,
-  facts: PromptFacts,
-) {
+function buildImagePrompt(context: SceneStoryboardContext, facts: PromptFacts) {
   const framing = startingFraming(facts.camera, context.locale);
   const values =
     context.locale === "en"
       ? [
           context.artStyle,
-          context.productionSpec && `Production specification: ${context.productionSpec}`,
+          context.productionSpec &&
+            `Production specification: ${context.productionSpec}`,
           context.visualRules && `Global visual rules: ${context.visualRules}`,
           `Scene: ${facts.location}; time: ${facts.time}`,
           framing && `Starting composition: ${framing}`,
-          facts.characters.length && `Characters: ${facts.characters.join(", ")}`,
-          facts.speakingCharacter && `Visible speaker: show ${facts.speakingCharacter}'s face and mouth clearly in this frame.`,
+          facts.characters.length &&
+            `Characters: ${facts.characters.join(", ")}`,
+          facts.speakingCharacter &&
+            `Visible speaker: show ${facts.speakingCharacter}'s face and mouth clearly in this frame.`,
           facts.props.length && `Props: ${facts.props.join(", ")}`,
           `Opening pose at t=0: ${facts.startState}`,
           "Show a natural cinematic moment at the action's onset, with believable weight, breath, and eyelines. Keep the action outcome for the video.",
@@ -567,7 +667,8 @@ function buildImagePrompt(
           `场景：${facts.location}；时间：${facts.time}`,
           framing && `起始构图与机位：${framing}`,
           facts.characters.length && `出场角色：${facts.characters.join("、")}`,
-          facts.speakingCharacter && `可见说话人：${facts.speakingCharacter}的面部与口部必须清晰入画。`,
+          facts.speakingCharacter &&
+            `可见说话人：${facts.speakingCharacter}的面部与口部必须清晰入画。`,
           facts.props.length && `画面道具：${facts.props.join("、")}`,
           `t=0 起始姿态：${facts.startState}`,
           "呈现动作起势时自然的电影画面，保留人物重心、呼吸和视线；动作结果留给视频表现。",
@@ -576,25 +677,25 @@ function buildImagePrompt(
   return values.filter(Boolean).join("\n");
 }
 
-function buildVideoPrompt(
-  context: SceneStoryboardContext,
-  facts: PromptFacts,
-) {
+function buildVideoPrompt(context: SceneStoryboardContext, facts: PromptFacts) {
   const values =
     context.locale === "en"
       ? [
           `Continue from the reference frame for ${facts.durationSeconds} seconds, carrying the pose, gaze, and motion into this shot.`,
           `Visible action: ${facts.action}`,
-          facts.speakingCharacter && `During this shot, ${facts.speakingCharacter} speaks with natural facial and mouth movement; the others listen or react. The recorded voice and precise lip sync are added later.`,
+          facts.speakingCharacter &&
+            `During this shot, ${facts.speakingCharacter} speaks with natural facial and mouth movement; the others listen or react. The recorded voice and precise lip sync are added later.`,
           `End state: ${facts.endState}`,
           `Camera: ${facts.camera || fixedCamera(context.locale)}. Let the framing follow the action smoothly.`,
-          facts.visualEffects && `Effect synchronized to the action: ${facts.visualEffects}`,
+          facts.visualEffects &&
+            `Effect synchronized to the action: ${facts.visualEffects}`,
           "Keep contact, weight, breathing, gaze, and reactions continuous. Silent footage; no on-screen text.",
         ]
       : [
           `从参考画面自然承接 ${facts.durationSeconds} 秒，延续人物姿态、视线和动作趋势。`,
           `可见动作：${facts.action}`,
-          facts.speakingCharacter && `本镜由${facts.speakingCharacter}说话，面部与嘴部自然活动；其他人物倾听或回应。录音和精确口型在后期加入。`,
+          facts.speakingCharacter &&
+            `本镜由${facts.speakingCharacter}说话，面部与嘴部自然活动；其他人物倾听或回应。录音和精确口型在后期加入。`,
           `结束状态：${facts.endState}`,
           `摄影机：${facts.camera || fixedCamera(context.locale)}；随动作平顺调整构图。`,
           facts.visualEffects && `随动作同步出现的效果：${facts.visualEffects}`,
@@ -644,7 +745,9 @@ function buildSemanticBeats(
     locale,
   );
   if (!units.length)
-    return [locale === "en" ? "Hold the current visual state." : "保持当前画面状态。"];
+    return [
+      locale === "en" ? "Hold the current visual state." : "保持当前画面状态。",
+    ];
   const normalizedDuration = Math.max(1, Math.round(requestedDurationSeconds));
   const desiredCount = Math.max(
     1,
@@ -681,7 +784,8 @@ function anchorImplicitSubjects(
       activeCharacter = explicitCharacter;
       return unit;
     }
-    if (!activeCharacter || props.some((name) => unit.includes(name))) return unit;
+    if (!activeCharacter || props.some((name) => unit.includes(name)))
+      return unit;
     if (locale === "en")
       return /^(?:he|she|they)\b/iu.test(unit)
         ? unit.replace(/^(?:he|she|they)\b/iu, activeCharacter)
@@ -729,9 +833,14 @@ function beatDurations(requestedDurationSeconds: number, count: number) {
 function distributeTextAcrossBeats(value: string, count: number) {
   const result = Array.from({ length: count }, () => [] as string[]);
   const units =
-    value.match(/[^。！？!?；;\n]+[。！？!?；;]?/gu)?.map((item) => item.trim()).filter(Boolean) ?? [];
+    value
+      .match(/[^。！？!?；;\n]+[。！？!?；;]?/gu)
+      ?.map((item) => item.trim())
+      .filter(Boolean) ?? [];
   units.forEach((unit, index) => {
-    result[Math.min(count - 1, Math.floor((index * count) / units.length))].push(unit);
+    result[
+      Math.min(count - 1, Math.floor((index * count) / units.length))
+    ].push(unit);
   });
   return result.map((items) => items.join(""));
 }
@@ -766,8 +875,14 @@ function buildInitialState(input: {
       (input.locale === "en"
         ? "Keep the pre-action hand position."
         : "保持动作前的手部位置。"),
-    gaze: input.locale === "en" ? "Keep the established gaze direction." : "保持既定视线方向。",
-    screenDirection: input.locale === "en" ? "Keep the approved screen direction." : "保持已批准的画面朝向。",
+    gaze:
+      input.locale === "en"
+        ? "Keep the established gaze direction."
+        : "保持既定视线方向。",
+    screenDirection:
+      input.locale === "en"
+        ? "Keep the approved screen direction."
+        : "保持已批准的画面朝向。",
     props: interaction.props || propState,
   };
 }
@@ -806,10 +921,22 @@ function buildEndState(action: string, locale: "en" | "zh") {
       locale === "en"
         ? `${cleaned}; the action completes and settles.`
         : `${cleaned}，动作完成后停稳。`,
-    hands: locale === "en" ? "Hands settle at the completed action position." : "手部停在本次动作完成的位置。",
-    gaze: locale === "en" ? "Gaze settles with the completed action." : "视线随本次动作结束后稳定。",
-    screenDirection: locale === "en" ? "Keep the approved screen direction." : "保持已批准的画面朝向。",
-    props: locale === "en" ? "Props settle at the completed action position." : "道具停在本次动作完成的位置。",
+    hands:
+      locale === "en"
+        ? "Hands settle at the completed action position."
+        : "手部停在本次动作完成的位置。",
+    gaze:
+      locale === "en"
+        ? "Gaze settles with the completed action."
+        : "视线随本次动作结束后稳定。",
+    screenDirection:
+      locale === "en"
+        ? "Keep the approved screen direction."
+        : "保持已批准的画面朝向。",
+    props:
+      locale === "en"
+        ? "Props settle at the completed action position."
+        : "道具停在本次动作完成的位置。",
   };
 }
 
@@ -820,7 +947,13 @@ function stateBody(state: Record<string, unknown>) {
 function collectVfxCues(scene: Screenplay["scenes"][number], fallback: string) {
   return uniqueCues<VfxCue>([
     ...(fallback
-      ? [{ phase: "release" as const, category: "environment_interaction" as const, description: fallback }]
+      ? [
+          {
+            phase: "release" as const,
+            category: "environment_interaction" as const,
+            description: fallback,
+          },
+        ]
       : []),
     ...scene.content.flatMap((item) =>
       item.type === "action" ? (item.actionDesign?.vfxPlan ?? []) : [],
@@ -831,7 +964,13 @@ function collectVfxCues(scene: Screenplay["scenes"][number], fallback: string) {
 function collectSfxCues(scene: Screenplay["scenes"][number], fallback: string) {
   return uniqueCues<SfxCue>([
     ...(fallback
-      ? [{ phase: "release" as const, type: "environment" as const, description: fallback }]
+      ? [
+          {
+            phase: "release" as const,
+            type: "environment" as const,
+            description: fallback,
+          },
+        ]
       : []),
     ...scene.content.flatMap((item) =>
       item.type === "action" ? (item.actionDesign?.sfxPlan ?? []) : [],
@@ -908,18 +1047,16 @@ function continuityConstraint(locale: "en" | "zh") {
 }
 
 function futureActionConstraint(locale: "en" | "zh") {
-  return locale === "en" ? "Any action from a later beat." : "任何后续镜头动作。";
+  return locale === "en"
+    ? "Any action from a later beat."
+    : "任何后续镜头动作。";
 }
 
 function startingFraming(value: string, locale: "en" | "zh") {
   return value
     .split(/[，,。；;\n]/u)
     .map((part) => part.trim())
-    .filter(
-      (part) =>
-        part &&
-        !hasCameraMovement(part),
-    )
+    .filter((part) => part && !hasCameraMovement(part))
     .join(locale === "en" ? ", " : "，");
 }
 
@@ -960,11 +1097,13 @@ function visualOnly(value: string) {
 }
 
 function cameraFromDescription(value: string) {
-  return value
-    .split(/\r?\n/u)
-    .find((line) => /^(?:镜头表达|镜头|camera)\s*[：:]/iu.test(line.trim()))
-    ?.replace(/^[^：:]+[：:]\s*/u, "")
-    .trim() ?? "";
+  return (
+    value
+      .split(/\r?\n/u)
+      .find((line) => /^(?:镜头表达|镜头|camera)\s*[：:]/iu.test(line.trim()))
+      ?.replace(/^[^：:]+[：:]\s*/u, "")
+      .trim() ?? ""
+  );
 }
 
 function inferShotType(camera: string, characterCount: number) {

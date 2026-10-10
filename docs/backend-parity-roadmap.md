@@ -15,7 +15,7 @@
 - 每个里程碑同步增加测试，不把回归测试推迟到最后补。
 - 保留现有 FFmpeg Render、音频合并、媒体 SSE 和三家 Lip Sync Provider。
 - M7 前端只消费真实 API、Workflow、Media Task、Worker、Trace 和领域数据；禁止用定时器或本地假数据伪造执行进度与成功结果。
-- UI 维持 `shadcn/ui + Base UI + Tailwind semantic tokens + lucide-react` 技术边界，不为模仿参考项目引入另一套组件系统。
+- UI 维持 `shadcn/ui + Base UI + Tailwind semantic tokens + lucide-react` 技术边界，保持组件系统一致。
 
 ## 3. 里程碑总表
 
@@ -105,7 +105,7 @@ M2.5 将既有 9 个 Prompt 升级为 V2，并新增连续性监督 Prompt，共
 | Clip 级恢复 | Workflow Runtime | 每个成功或失败 Clip 立即写独立 Artifact；重试只请求失败或无效 Clip | 已完成 |
 | 工作流收口 | Parse API 与 Workflow Registry | M3 固定为分析、切片、剧本三步，M4 分镜和台词步骤不再混入 | 已完成 |
 
-M3 参考成熟工作流的分析、切片、逐 Clip 剧本顺序，但采用更强的原文完整覆盖约束，不依赖模糊边界猜测。增量 Artifact 写入与 Workflow Run 租约在同一事务校验，取消或租约丢失后不会继续提交 Artifact；领域写入在恢复时会通过有效性校验并补齐 Artifact。36 项 M3 定向测试覆盖原文空白、并发上限、稳定 Clip ID、剧本失效、部分失败恢复和工作流依赖；全量 114 项测试、TypeScript、变更文件 ESLint、生产构建、Prisma 校验和 13 组迁移状态均通过。
+M3 按分析、切片、逐 Clip 剧本顺序处理，但采用更强的原文完整覆盖约束，不依赖模糊边界猜测。增量 Artifact 写入与 Workflow Run 租约在同一事务校验，取消或租约丢失后不会继续提交 Artifact；领域写入在恢复时会通过有效性校验并补齐 Artifact。36 项 M3 定向测试覆盖原文空白、并发上限、稳定 Clip ID、剧本失效、部分失败恢复和工作流依赖；全量 114 项测试、TypeScript、变更文件 ESLint、生产构建、Prisma 校验和 13 组迁移状态均通过。
 
 ### 7.2 M4 Script-to-Storyboard 完成记录
 
@@ -119,7 +119,7 @@ M3 参考成熟工作流的分析、切片、逐 Clip 剧本顺序，但采用�
 | 集级台词分析 | Workflow Runtime 与 Voice Analyze | 全部分镜落库后执行，并写 `voice.lines` 与 Prompt Trace 增量 Artifact | 已完成 |
 | 工作流入口 | Storyboard API 与 Workflow Registry | `POST /storyboard` 创建分镜、台词两步工作流，支持去重、租约、取消与独立重试 | 已完成 |
 
-M4 保留参考成熟工作流的规划、摄影/表演并行、细化和台词分析顺序，并增加连续性监督、Prompt 版本化恢复和严格的 Clip 所有权校验。分镜只在全部 Clip 成功后统一落库；中途失败时，已完成 Phase 仍以 Artifact 保存。7 项新增测试覆盖部分失败恢复、分支失效范围、连续性隔离、稳定 Panel ID、跨剧集 Clip 拒绝和工作流依赖；全量 121 项测试、TypeScript、ESLint、生产构建、Prisma 校验和 14 组本地迁移状态均通过。
+M4 按规划、摄影/表演并行、细化和台词分析顺序处理，并增加连续性监督、Prompt 版本化恢复和严格的 Clip 所有权校验。分镜只在全部 Clip 成功后统一落库；中途失败时，已完成 Phase 仍以 Artifact 保存。7 项新增测试覆盖部分失败恢复、分支失效范围、连续性隔离、稳定 Panel ID、跨剧集 Clip 拒绝和工作流依赖；全量 121 项测试、TypeScript、ESLint、生产构建、Prisma 校验和 14 组本地迁移状态均通过。
 
 ### 7.3 M5 外部能力完成记录
 
@@ -185,9 +185,9 @@ M7 的目标不是再做一层聊天壳，而是把 M0-M6 已完成的领域能�
 - 用户选择角色、场景、道具、Panel 或时间线片段时，右侧 Agent 同步接收结构化上下文，不从 DOM 文本反推上下文。
 - 每个阶段保留稳定 URL 与选择状态，刷新、前进后退和深链访问不会丢失当前项目、剧集、阶段或选中实体。
 
-### 8.3 OpenAI 风格的原创设计约束
+### 8.3 界面设计约束
 
-M7 借鉴 [OpenAI Docs 的 UI guidelines](https://developers.openai.com/plugins/concepts/ui-guidelines) 所体现的设计原则，不复制 OpenAI 产品页面或品牌资产：
+界面遵循以下设计约束：
 
 - 使用系统字体栈、有限的正文与小字号层级、稳定的行高和一致的 4/8px 间距节奏，保证信息优先和长时间工作可读性。
 - 使用中性的语义色处理背景、文字、边框和状态，仅把项目品牌色用于少量主操作、选中态与状态强调；不使用装饰性渐变、纹理或大面积品牌色背景。
@@ -239,13 +239,6 @@ Project / Episode / Stage URL
 - 右侧 Agent 的建议和工具调用基于当前结构化上下文；审批、错误和工具结果继续遵循 `AgentEvent` 协议。
 - 关键桌面和移动视口无文本截断、控件重叠、不可达操作或布局跳动；键盘和屏幕阅读器可完成主要操作。
 - 现有 API 所有权、幂等、质量 Guard、Prompt Canary、计费与 Trace 回归测试持续通过。
-
-### 8.7 参考项目与许可边界
-
-- 外部 UI 参考项目仅用于研究生产流程的信息分组、阶段可见性和任务反馈；其源码采用限制性 source-available 许可，本项目不复制其源码、样式、文案、品牌、颜色、素材、组件实现或文件组织方式。
-- M7 使用 Cyanyi-Drama 自有领域模型、现有技术栈和六阶段信息架构独立实现，不引入参考项目的具体组件或编辑器方案，也不复刻其页面结构。
-- OpenAI 官方指南只作为通用视觉与交互原则来源；本项目保留独立品牌，不复用 OpenAI 商标与专有资产。
-- 新增第三方依赖前必须核对许可证和用途兼容性；需要保留的版权或 NOTICE 随依赖一并提交。
 
 ## 9. M8 专业影视部门工作流
 

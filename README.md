@@ -325,14 +325,9 @@ docs/                      集成、工具扩展和项目说明
 
 ## 文档
 
-- [集成指南](docs/integration-guide.md)
-- [项目结构](docs/project-structure.md)
 - [添加工具](docs/adding-tools.md)
 - [HITL 后端要求](docs/hitl-backend.md)
-- [示例页面](docs/examples.md)
-- [模板迁移说明](docs/template-migration.md)
 - [全链路开发计划（M0-M7）](docs/backend-parity-roadmap.md)
-- [Agent UI 模板历史计划](AGENT_UI_TEMPLATE_PLAN.md)
 - [M5 外部资产与媒体模板](docs/m5-external-capabilities.md)
 
 ## 项目状态
