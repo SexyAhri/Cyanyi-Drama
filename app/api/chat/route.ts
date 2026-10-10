@@ -24,6 +24,18 @@ import {
   type AgentComposerMetadata,
 } from "@/lib/agent/model-messages";
 import { getOpenAICompatibleImageSizeCandidates } from "@/lib/agent/media-size";
+import { resolveChatImageInputs } from "@/lib/agent/chat-image-inputs";
+import {
+  findPreviousImagePrompt,
+  findPreviousVideoPrompt,
+  isPreviousImagePromptRequest,
+} from "@/lib/agent/image-prompt-context";
+import {
+  isMediaSafetyRejection,
+  isReferenceSafetyRejection,
+  MediaSafetyRetryError,
+  rewriteRejectedMediaPrompt,
+} from "@/lib/agent/media-safety-retry";
 import {
   isSeedanceVideoModel,
   normalizeOpenAICompatibleVideoResolution,
@@ -38,6 +50,7 @@ import type {
   AgentEvent,
   AgentMessage,
   AgentToolCall,
+  MediaSafetyRetry,
 } from "@/lib/agent/types";
 import {
   createMediaTask,
@@ -117,6 +130,7 @@ type ImageGenerationResult = {
   requestParams?: MediaRequestParams;
   status: "success";
   mediaTaskId?: string;
+  safetyRetry?: MediaSafetyRetry;
 };
 
 type VideoGenerationResult = {
@@ -129,6 +143,7 @@ type VideoGenerationResult = {
   thumbnailUrl?: string;
   url: string;
   mediaTaskId?: string;
+  safetyRetry?: MediaSafetyRetry;
 };
 
 type VideoGenerationState = {
@@ -250,10 +265,6 @@ function toProviderErrorMessage(
   error: unknown,
   context: ProviderErrorContext = "media-generation",
 ) {
-  if (context === "media-generation") {
-    return toErrorMessage(error).trim() || "Generation failed.";
-  }
-
   return sanitizeProviderErrorMessage(toErrorMessage(error), context);
 }
 
@@ -667,6 +678,11 @@ function createAiSdkInstructions(
     return lines.join(" ");
   }
 
+  lines.push(
+    "Media tools automatically attempt at most one permissible prompt revision after a provider safety rejection. If that retry fails or no safe revision is possible, explain the outcome and stop generation for this turn.",
+    "If a media result includes safetyRetry, briefly disclose the revision and use its revisedPrompt when discussing the successful prompt.",
+  );
+
   if (mediaTools.enableImage) {
     lines.push(
       "The `image_generation` tool is enabled for this request. Use it only if the user wants an image, poster, illustration, photo edit, variation, or image-based reference transformation.",
@@ -689,6 +705,7 @@ function createAiSdkInstructions(
     "The registered image/video tools are the app's real generation path. Do not claim that you cannot access local generators or ask the user to copy a prompt when an explicit generation request can be fulfilled with a tool.",
     "When reference images are attached in the composer, the enabled media tools will automatically receive them. Do not ask the user to re-attach them unless they want to replace them.",
     "When calling media tools, treat the current image/video defaults as authoritative for model, ratio, resolution, format, style, and duration; do not override them unless the app has no configured value.",
+    "If the user asks to generate media from a prompt written earlier in this conversation, use that earlier positive scene prompt as the media tool prompt. Preserve its subject and setting; do not replace it with a new scene or the user's short follow-up request. If the earlier reply also contains a separate negative prompt, do not paste that negative list into the generation prompt unless the user explicitly asks for it.",
   );
 
   if (composer?.imageModel) {
@@ -718,11 +735,13 @@ function createAiSdkInstructions(
 function createAiSdkTools({
   composer,
   enabledTools,
+  languageModel,
   modelRoutes,
   runtime,
 }: {
   composer?: AgentComposerMetadata;
   enabledTools: ChatMediaToolIntent;
+  languageModel?: LanguageModel;
   modelRoutes?: Record<string, ModelRoute>;
   runtime: ProviderRuntime;
 }): ToolSet {
@@ -738,6 +757,13 @@ function createAiSdkTools({
   }
 
   const tools: ToolSet = {};
+  const safetyRetryStates: Record<
+    "image" | "video",
+    { used?: boolean; exhaustedError?: unknown }
+  > = {
+    image: {},
+    video: {},
+  };
 
   if (availableTools.enableImage) {
     tools.image_generation = tool({
@@ -791,14 +817,16 @@ function createAiSdkTools({
         const finalArgs = resolveMediaToolArgs(
           "image_generation",
           { count, format, prompt, quality, ratio, resolution, style },
-          composer,
+          resolveComposerRoutes(composer, modelRoutes),
           imageRoute.runtime,
         ) as ResolvedImageGenerationToolInput;
 
-        return enqueueAndWaitMediaGeneration({
+        return enqueueMediaWithSafetyRetry({
           kind: "image",
           runtime: imageRoute.runtime,
-          model: finalArgs.model ?? "",
+          model: imageRoute.model,
+          languageModel,
+          retryState: safetyRetryStates.image,
           request: {
             prompt: finalArgs.prompt,
             ratio: finalArgs.ratio,
@@ -857,14 +885,16 @@ function createAiSdkTools({
         const finalArgs = resolveMediaToolArgs(
           "video_generation",
           { duration, format, prompt, ratio, resolution },
-          composer,
+          resolveComposerRoutes(composer, modelRoutes),
           videoRoute.runtime,
         ) as ResolvedVideoGenerationToolInput;
 
-        return enqueueAndWaitMediaGeneration({
+        return enqueueMediaWithSafetyRetry({
           kind: "video",
           runtime: videoRoute.runtime,
-          model: finalArgs.model ?? "",
+          model: videoRoute.model,
+          languageModel,
+          retryState: safetyRetryStates.video,
           request: {
             prompt: finalArgs.prompt,
             ratio: finalArgs.ratio,
@@ -990,10 +1020,12 @@ async function* createMediaGenerationEvents({
   composer,
   prompt,
   runtime,
+  safetyRetry,
 }: {
   composer: AgentComposerMetadata;
   prompt: string;
   runtime: ProviderRuntime;
+  safetyRetry?: MediaSafetyRetry;
 }): AsyncIterable<AgentEvent> {
   const isVideo = composer.mode === "video";
   if (!runtime.userId) throw new Error("MEDIA_TASK_USER_REQUIRED");
@@ -1016,9 +1048,10 @@ async function* createMediaGenerationEvents({
     model: (isVideo ? composer.videoModel : composer.imageModel) ?? "",
     request: {
       prompt,
+      ...(safetyRetry ? { safetyRetry } : {}),
       ratio: composer.ratio,
       resolution: composer.resolution,
-      format: composer.imageFormat,
+      format: isVideo ? composer.videoFormat : composer.imageFormat,
       style: composer.style,
       count: composer.imageCount,
       n: composer.imageCount,
@@ -1045,12 +1078,17 @@ async function* createMediaGenerationEvents({
     role: "tool",
     content: "",
     createdAt: new Date().toISOString(),
+    metadata: {
+      directMediaGeneration: true,
+      mediaKind: mediaTaskKind,
+    },
   };
   const toolCall: AgentToolCall = {
     id: createId("tool"),
     name: isVideo ? "video_generation" : "image_generation",
     args: {
       prompt,
+      ...(safetyRetry ? { safetyRetry } : {}),
       model: isVideo ? composer.videoModel : composer.imageModel,
       ratio: composer.ratio,
       resolution: composer.resolution,
@@ -1150,7 +1188,10 @@ async function* createMediaGenerationEvents({
       type: "tool.done",
       messageId: toolMessage.id,
       toolCallId: toolCall.id,
-      result: resultWithTask,
+      result: {
+        ...resultWithTask,
+        ...(safetyRetry ? { safetyRetry } : {}),
+      },
     };
   } catch (error) {
     const errorMessage = toProviderErrorMessage(error);
@@ -1161,30 +1202,86 @@ async function* createMediaGenerationEvents({
       messageId: toolMessage.id,
       toolCallId: toolCall.id,
       error: errorMessage,
-      result: isVideo
-        ? {
-            requestParams: videoRequestParams,
-            mediaTaskId,
-            status: "error",
-          }
-        : {
-            requestParams: imageRequestParams,
-            mediaTaskId,
-            status: "error",
-          },
+      result: {
+        requestParams: isVideo ? videoRequestParams : imageRequestParams,
+        mediaTaskId,
+        status: "error",
+        providerError: toErrorMessage(error),
+        ...(safetyRetry ? { safetyRetry } : {}),
+      },
     };
   }
+}
+
+async function* createMediaGenerationWithSafetyRetryEvents({
+  composer,
+  languageModel,
+  prompt,
+  runtime,
+}: {
+  composer: AgentComposerMetadata;
+  languageModel?: LanguageModel;
+  prompt: string;
+  runtime: ProviderRuntime;
+}): AsyncIterable<AgentEvent> {
+  let rejection: string | undefined;
+  let rejectedToolCallId: string | undefined;
+  let rejectedTaskId: string | undefined;
+  const kind = composer.mode === "video" ? "video" : "image";
+  for await (const event of createMediaGenerationEvents({
+    composer,
+    prompt,
+    runtime,
+  })) {
+    if (event.type === "tool.error") {
+      const result = event.result as { providerError?: string; mediaTaskId?: string } | undefined;
+      const providerError = result?.providerError || event.error;
+      if (isMediaSafetyRejection(providerError)) {
+        rejection = providerError;
+        rejectedToolCallId = event.toolCallId;
+        rejectedTaskId = result?.mediaTaskId;
+      }
+    }
+    yield event;
+  }
+
+  if (!rejection) return;
+  const revisedPrompt = await rewriteRejectedMediaPrompt({
+    error: rejection,
+    kind,
+    model: languageModel,
+    prompt,
+  });
+  if (!revisedPrompt) return;
+
+  yield* createAssistantNoticeEvents(
+    `首次${kind === "image" ? "图片" : "视频"}生成被模型服务的安全检查拦截。我已调整提示词中可能引起误判的表述，正在尝试重新生成。`,
+    { explainedToolCallIds: [rejectedToolCallId] },
+  );
+  yield* createMediaGenerationEvents({
+    composer,
+    prompt: revisedPrompt,
+    runtime,
+    safetyRetry: {
+      originalPrompt: prompt,
+      revisedPrompt,
+      originalError: sanitizeProviderErrorMessage(rejection),
+      originalTaskId: rejectedTaskId,
+    },
+  });
 }
 
 async function* createChatMediaToolEvents({
   composer,
   intent,
+  languageModel,
   modelRoutes,
   runtime,
   prompt,
 }: {
   composer: AgentComposerMetadata;
   intent: ChatMediaToolIntent;
+  languageModel?: LanguageModel;
   modelRoutes?: Record<string, ModelRoute>;
   runtime: ProviderRuntime;
   prompt: string;
@@ -1205,8 +1302,10 @@ async function* createChatMediaToolEvents({
       runtime,
     );
 
-    yield* createMediaGenerationEvents({
-      composer: resolveComposerForMediaKind(resolvedComposer, mode),
+    const mediaComposer = resolveComposerForMediaKind(resolvedComposer, mode);
+    yield* createMediaGenerationWithSafetyRetryEvents({
+      composer: mediaComposer,
+      languageModel,
       prompt,
       runtime: mediaRoute.runtime,
     });
@@ -1254,7 +1353,7 @@ async function enqueueAndWaitMediaGeneration({
   model: string;
   request: Record<string, unknown>;
   runtime: ProviderRuntime;
-}) {
+}): Promise<ImageGenerationResult | VideoGenerationResult> {
   if (!runtime.userId || !runtime.channelId) {
     throw new Error("MEDIA_TASK_CHANNEL_REQUIRED");
   }
@@ -1289,15 +1388,85 @@ async function enqueueAndWaitMediaGeneration({
   });
   const completed = await waitForQueuedMediaTask(store, task.id);
   if (completed.status !== "succeeded")
-    throw new Error(completed.error?.message || "Media task failed.");
+    throw new MediaGenerationTaskError(
+      completed.error?.message || "Media task failed.",
+      task.id,
+    );
   return mediaTaskResultFromCompleted(completed, kind === "video", task.id);
+}
+
+class MediaGenerationTaskError extends Error {
+  constructor(message: string, readonly taskId: string) {
+    super(message);
+    this.name = "MediaGenerationTaskError";
+  }
+}
+
+async function enqueueMediaWithSafetyRetry({
+  kind,
+  languageModel,
+  model,
+  request,
+  retryState,
+  runtime,
+}: {
+  kind: "image" | "video";
+  languageModel?: LanguageModel;
+  model: string;
+  request: Record<string, unknown> & { prompt: string };
+  retryState: { used?: boolean; exhaustedError?: unknown };
+  runtime: ProviderRuntime;
+}): Promise<ImageGenerationResult | VideoGenerationResult> {
+  if (retryState.exhaustedError) throw retryState.exhaustedError;
+  try {
+    return await enqueueAndWaitMediaGeneration({
+      kind,
+      model,
+      request,
+      runtime,
+    });
+  } catch (error) {
+    const rejection = toErrorMessage(error);
+    if (!isMediaSafetyRejection(rejection) || retryState.used) throw error;
+    retryState.used = true;
+    const revisedPrompt = await rewriteRejectedMediaPrompt({
+      error: rejection,
+      kind,
+      model: languageModel,
+      prompt: request.prompt,
+    });
+    if (!revisedPrompt) {
+      retryState.exhaustedError = error;
+      throw error;
+    }
+
+    const safetyRetry: MediaSafetyRetry = {
+      originalPrompt: request.prompt,
+      revisedPrompt,
+      originalError: sanitizeProviderErrorMessage(rejection),
+      originalTaskId: error instanceof MediaGenerationTaskError ? error.taskId : undefined,
+    };
+    try {
+      const result = await enqueueAndWaitMediaGeneration({
+        kind,
+        model,
+        request: { ...request, prompt: revisedPrompt, safetyRetry },
+        runtime,
+      });
+      return { ...result, safetyRetry };
+    } catch (retryError) {
+      const failure = new MediaSafetyRetryError(retryError, safetyRetry);
+      retryState.exhaustedError = failure;
+      throw failure;
+    }
+  }
 }
 
 function mediaTaskResultFromCompleted(
   task: MediaTask,
   isVideo: boolean,
   mediaTaskId: string,
-) {
+): ImageGenerationResult | VideoGenerationResult {
   const assets = task.output ?? [];
   if (isVideo) {
     const asset = assets[0];
@@ -3584,6 +3753,16 @@ function sanitizeProviderErrorMessage(
     return "The current model does not support the selected size or resolution. Adjust ratio/resolution or switch models.";
   }
 
+  if (isReferenceSafetyRejection(text)) {
+    return "模型服务的安全检查拒绝了参考图片或视频。请更换参考素材后重试。";
+  }
+
+  if (isMediaSafetyRejection(text)) {
+    return /safety_violations=\[[^\]]*sexual/i.test(lower)
+      ? "模型服务的安全检查将这段提示词标记为性化内容并拒绝生成。请检查措辞后重试。"
+      : "模型服务的安全检查拒绝了本次生成。请检查描述或参考素材后重试。";
+  }
+
   if (
     /invalid[_\s-]?(duration|seconds)|unsupported[_\s-]?(duration|seconds)|duration is invalid|seconds is invalid/.test(
       lower,
@@ -3700,6 +3879,25 @@ async function* createRuntimeErrorEvents(
   };
 }
 
+async function* createAssistantNoticeEvents(
+  content: string,
+  metadata?: AgentMessage["metadata"],
+): AsyncIterable<AgentEvent> {
+  const messageId = createId("msg");
+  yield {
+    type: "message.created",
+    message: {
+      id: messageId,
+      role: "assistant",
+      content: "",
+      createdAt: new Date().toISOString(),
+      metadata,
+    },
+  };
+  yield { type: "message.delta", messageId, delta: content };
+  yield { type: "message.done", messageId };
+}
+
 function isMediaToolName(toolName: string) {
   return toolName === "image_generation" || toolName === "video_generation";
 }
@@ -3749,6 +3947,7 @@ async function* createAiSdkEvents({
     const tools = createAiSdkTools({
       composer,
       enabledTools: mediaToolIntent,
+      languageModel,
       modelRoutes,
       runtime: providerRuntime,
     });
@@ -3869,12 +4068,20 @@ async function* createAiSdkEvents({
           type: "tool.error",
           messageId,
           toolCallId: part.toolCallId,
-          error: toErrorMessage(part.error),
+          error: sanitizeProviderErrorMessage(
+            toErrorMessage(part.error),
+            toolName && isMediaToolName(toolName)
+              ? "media-generation"
+              : "chat-tool",
+          ),
           result:
             toolName && isMediaToolName(toolName)
               ? {
                   requestParams: args?.requestParams,
                   status: "error",
+                  ...(part.error instanceof MediaSafetyRetryError
+                    ? { safetyRetry: part.error.safetyRetry }
+                    : {}),
                 }
               : undefined,
         };
@@ -3908,6 +4115,9 @@ async function* createAiSdkEvents({
             ? {
                 requestParams: args?.requestParams,
                 status: "error",
+                ...(error instanceof MediaSafetyRetryError
+                  ? { safetyRetry: error.safetyRetry }
+                  : {}),
               }
             : undefined,
       };
@@ -3985,7 +4195,44 @@ export async function POST(request: Request) {
       sessionId,
     );
   }
-  const messages = normalizeMessages(body.messages, content, composer);
+  let messages: ReturnType<typeof normalizeMessages>;
+  try {
+    const normalizedMessages = normalizeMessages(body.messages, content, composer);
+    messages = composer?.mode === "image" || composer?.mode === "video"
+      ? normalizedMessages
+      : await resolveChatImageInputs(
+          normalizedMessages,
+          user.id,
+          new URL(request.url).origin,
+        );
+  } catch (error) {
+    return attachSessionCookie(
+      createAgentEventStreamResponse(createAssistantNoticeEvents(toErrorMessage(error))),
+      sessionId,
+    );
+  }
+  const refersToPreviousMediaPrompt = isPreviousImagePromptRequest(content);
+  const previousPromptKind =
+    composer?.mode === "video" ||
+    (composer?.mode === "chat" && getLastMediaToolKind(body.messages) === "video")
+      ? "video"
+      : "image";
+  const previousMediaPrompt = refersToPreviousMediaPrompt
+    ? previousPromptKind === "video"
+      ? findPreviousVideoPrompt(body.messages ?? [])
+      : findPreviousImagePrompt(body.messages ?? [])
+    : null;
+  const hasPromptRevision = /改成|换成|调整|修改|加入|增加|替换|change|replace|add/i.test(
+    content,
+  );
+  const referencedPrompt = previousMediaPrompt
+    ? hasPromptRevision
+      ? `${previousMediaPrompt.positive}\n\n${content}`
+      : previousMediaPrompt.positive
+    : null;
+  if (previousMediaPrompt && hasPromptRevision && composer?.mode === "chat") {
+    messages = [{ role: "system", content: `The user is revising this previously saved media prompt. Preserve its subject and setting while applying the latest requested changes. Saved prompt: ${previousMediaPrompt.positive}` }, ...messages];
+  }
   const requestedMediaToolIntent =
     composer?.mode === "chat"
       ? detectChatMediaToolIntent({
@@ -4023,6 +4270,21 @@ export async function POST(request: Request) {
       : { enableImage: false, enableVideo: false };
 
   try {
+    if (
+      (composer?.mode === "image" || composer?.mode === "video") &&
+      refersToPreviousMediaPrompt &&
+      !referencedPrompt
+    ) {
+      return attachSessionCookie(
+        createAgentEventStreamResponse(
+          createAssistantNoticeEvents(
+            `当前会话里没有找到上一版${previousPromptKind === "video" ? "视频" : "图片"}提示词，请先生成或粘贴提示词。`,
+          ),
+        ),
+        sessionId,
+      );
+    }
+
     if (composer?.mode === "image" || composer?.mode === "video") {
       const selectedMediaModel =
         composer.mode === "video" ? composer.videoModel : composer.imageModel;
@@ -4034,17 +4296,17 @@ export async function POST(request: Request) {
       });
       return attachSessionCookie(
         createAgentEventStreamResponse(
-          createMediaGenerationEvents({
+          createMediaGenerationWithSafetyRetryEvents({
             composer: resolveComposerForMediaKind(
               resolveComposerRoutes(composer, modelRoutes)!,
               composer.mode,
             ),
-            prompt: content,
+            languageModel: resolved.hasCredentials
+              ? resolved.languageModel
+              : undefined,
+            prompt: referencedPrompt ?? content,
             runtime: {
-              apiKey: mediaRoute.runtime.apiKey,
-              baseUrl: mediaRoute.runtime.baseUrl,
-              protocol: mediaRoute.runtime.protocol,
-              channelId: mediaRoute.runtime.channelId,
+              ...mediaRoute.runtime,
               userId: user.id,
               projectId: body.projectId?.trim() || undefined,
               episodeId: body.episodeId?.trim() || undefined,
@@ -4056,14 +4318,50 @@ export async function POST(request: Request) {
     }
 
     if (
-      requestedAvailableMediaToolIntent.enableImage ||
-      requestedAvailableMediaToolIntent.enableVideo
+      composer?.mode === "chat" &&
+      (previousPromptKind === "video"
+        ? mediaToolIntent.enableVideo
+        : mediaToolIntent.enableImage) &&
+      ((previousPromptKind === "video"
+        ? requestedAvailableMediaToolIntent.enableVideo
+        : requestedAvailableMediaToolIntent.enableImage) ||
+        (refersToPreviousMediaPrompt && /生成|再来|重试|重新|画|generate|render|retry/i.test(content))) &&
+      referencedPrompt &&
+      !hasPromptRevision
+    ) {
+      return attachSessionCookie(
+        createAgentEventStreamResponse(
+          createChatMediaToolEvents({
+            composer,
+            intent: {
+              enableImage: previousPromptKind === "image",
+              enableVideo: previousPromptKind === "video",
+            },
+            languageModel: resolved.hasCredentials
+              ? resolved.languageModel
+              : undefined,
+            modelRoutes,
+            prompt: referencedPrompt,
+            runtime: providerRuntime,
+          }),
+        ),
+        sessionId,
+      );
+    }
+
+    if (
+      !resolved.hasCredentials &&
+      (requestedAvailableMediaToolIntent.enableImage ||
+        requestedAvailableMediaToolIntent.enableVideo)
     ) {
       return attachSessionCookie(
         createAgentEventStreamResponse(
           createChatMediaToolEvents({
             composer: composer!,
             intent: requestedAvailableMediaToolIntent,
+            languageModel: resolved.hasCredentials
+              ? resolved.languageModel
+              : undefined,
             modelRoutes,
             prompt: content,
             runtime: providerRuntime,

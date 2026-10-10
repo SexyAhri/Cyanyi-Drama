@@ -158,6 +158,12 @@ async function pollArkVideo(
   initialPayload: unknown,
 ) {
   const initial = videoState(initialPayload);
+  if (initial.error || /failed|error|cancelled|canceled|rejected|blocked/i.test(initial.status ?? ""))
+    throw new Error(initial.error || providerErrorMessage(
+      initialPayload,
+      200,
+      `VIDEO_PROVIDER_FAILED:${initial.status}`,
+    ));
   if (initial.url) return [videoAsset(input, initial.url)];
   if (!initial.taskId) throw new Error("VIDEO_TASK_ID_MISSING");
   for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -173,9 +179,13 @@ async function pollArkVideo(
     if (!response.ok)
       throw new Error(providerErrorMessage(payload, response.status));
     const state = videoState(payload);
+    if (state.error || /failed|error|cancelled|canceled|rejected|blocked/i.test(state.status ?? ""))
+      throw new Error(state.error || providerErrorMessage(
+        payload,
+        response.status,
+        `VIDEO_PROVIDER_FAILED:${state.status}`,
+      ));
     if (state.url) return [videoAsset(input, state.url, initial.taskId)];
-    if (/failed|error|canceled/i.test(state.status ?? ""))
-      throw new Error(`VIDEO_PROVIDER_FAILED:${state.status}`);
   }
   throw new Error("VIDEO_POLL_TIMEOUT");
 }
@@ -225,6 +235,7 @@ function videoState(payload: unknown) {
   return {
     taskId: stringValue(data.id) || stringValue(data.task_id),
     status: stringValue(data.status),
+    error: providerErrorMessage({ error: data.error ?? value.error }, 200, "") || undefined,
     url:
       stringValue(data.url) ||
       stringValue(data.video_url) ||

@@ -358,6 +358,7 @@ export function Chat({
   }
 
   function handleRegenerateMessage(messageId: string) {
+    if (isAgentBusy) return;
     const previousUserMessage = findPreviousUserMessage(
       agent.messages,
       messageId,
@@ -398,6 +399,28 @@ export function Chat({
         composer: messageComposerSettings,
       },
     });
+  }
+
+  function handleRetryMedia(message: AgentMessage, edit: boolean) {
+    if (isAgentBusy || !message.toolCall) return;
+    const userMessage = findPreviousUserMessage(agent.messages, message.id);
+    const args = isRecord(message.toolCall.args) ? message.toolCall.args : {};
+    const result = isRecord(message.toolCall.result) ? message.toolCall.result : {};
+    const retry = isRecord(result.safetyRetry) ? result.safetyRetry : isRecord(args.safetyRetry) ? args.safetyRetry : {};
+    const prompt = getStringValue(retry, "revisedPrompt") ?? getStringValue(args, "prompt");
+    if (!userMessage || !prompt) {
+      toast.error("未找到本次生成的提示词，请重新输入描述");
+      return;
+    }
+    const settings = getComposerSettingsFromMediaToolTurn(agent.messages, userMessage.id, composerModelOptions, runtimeSettingsRef.current);
+    if (!settings) return;
+    if (edit) {
+      handleComposerSettingsChange(settings);
+      setInput(prompt);
+      toast.success("已恢复提示词、模型参数和参考图，修改后即可生成");
+      return;
+    }
+    void agent.sendMessage(prompt, { metadata: { ...runtime.metadata, composer: settings } });
   }
 
   return (
@@ -448,7 +471,7 @@ export function Chat({
                 suggestions={activeSuggestions}
               />
             ) : (
-              <ChatMessages messages={agent.messages}>
+              <ChatMessages key={activeThreadId ?? "new"} messages={agent.messages} latestLabel={activeLocale === "zh-CN" ? "回到最新" : "Jump to latest"}>
                 <MessageList
                   messages={agent.messages}
                   onApprove={agent.approveToolCall}
@@ -456,6 +479,8 @@ export function Chat({
                   onDeny={agent.denyToolCall}
                   onEditMessage={handleEditMessage}
                   onRegenerateMessage={handleRegenerateMessage}
+                  onRetryMedia={handleRetryMedia}
+                  locale={activeLocale}
                   onUseAsReferenceImage={handleUseAsReferenceImage}
                   pendingApprovalIds={agent.pendingApprovalIds}
                   isThinking={isAgentBusy}
@@ -616,13 +641,13 @@ function getComposerSettingsFromMediaToolTurn(
   }
 
   const args = mediaToolCall.args;
-  const referenceImages = Array.isArray(args.referenceImages)
-    ? args.referenceImages.filter(isReferenceImage)
-    : [];
-  const defaultSettings = createDefaultComposerSettings(
+  const defaultSettings = getComposerSettingsFromMessage(messages[userIndex], composerModelOptions, runtimeSettings) ?? createDefaultComposerSettings(
     composerModelOptions,
     runtimeSettings,
   );
+  const referenceImages = Array.isArray(args.referenceImages)
+    ? args.referenceImages.filter(isReferenceImage)
+    : isReferenceImage(args.referenceImage) ? [args.referenceImage] : defaultSettings.referenceImages;
   const isVideo = mediaToolCall.name === "video_generation";
   const ratio =
     getStringValue(args, "ratio") ??
@@ -661,10 +686,10 @@ function getComposerSettingsFromMediaToolTurn(
       videoFormat: isVideo
         ? getStringValue(args, "format") ?? "mp4"
         : defaultSettings.videoFormat,
-      style: getStringValue(args, "style") ?? "auto",
+      style: getStringValue(args, "style") ?? defaultSettings.style,
       duration,
-      template: "none",
-      templatePrompt: undefined,
+      template: defaultSettings.template,
+      templatePrompt: defaultSettings.templatePrompt,
       referenceImage: undefined,
       referenceImages,
     },

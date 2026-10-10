@@ -79,7 +79,7 @@ function asDataUrl(data: Uint8Array, contentType: string) {
   return `data:${contentType};base64,${Buffer.from(data).toString("base64")}`;
 }
 
-function contentTypeForKey(key: string) {
+export function contentTypeForKey(key: string) {
   const extension = key.split(".").pop()?.toLowerCase();
   return (
     {

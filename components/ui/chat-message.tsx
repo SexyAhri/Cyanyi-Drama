@@ -20,7 +20,7 @@ const chatBubbleVariants = cva(
     variants: {
       isUser: {
         true: "bg-primary text-primary-foreground",
-        false: "bg-muted text-foreground sm:max-w-[628px]",
+        false: "w-full rounded-none bg-transparent px-0 py-0 text-foreground sm:max-w-[628px]",
       },
       animation: {
         none: "",
@@ -107,6 +107,7 @@ export type Message = {
 };
 
 export type ChatMessageProps = Message & {
+  leadingContent?: React.ReactNode;
   emptyState?: React.ReactNode;
   showTimeStamp?: boolean;
   animation?: Animation;
@@ -115,6 +116,7 @@ export type ChatMessageProps = Message & {
 };
 
 export function ChatMessage({
+  leadingContent,
   role,
   content,
   createdAt,
@@ -219,12 +221,14 @@ export function ChatMessage({
       isUser={false}
       showTimeStamp={showTimeStamp}
       emptyState={emptyState}
+      leadingContent={leadingContent}
       supplementalContent={supplementalContent}
     />
   );
 }
 
 function AssistantText({
+  leadingContent,
   content,
   animation,
   actions,
@@ -235,6 +239,7 @@ function AssistantText({
   supplementalContent,
   emptyState,
 }: {
+  leadingContent?: React.ReactNode;
   content: string;
   animation: Animation;
   actions?: React.ReactNode;
@@ -247,12 +252,13 @@ function AssistantText({
 }) {
   const hasPrimaryContent = Boolean(content.trim() || emptyState);
 
-  if (!hasPrimaryContent && !supplementalContent) {
+  if (!hasPrimaryContent && !supplementalContent && !leadingContent) {
     return null;
   }
 
   return (
     <div className="group/message-row flex w-full min-w-0 max-w-full flex-col items-start">
+      {leadingContent ? <div className="mb-4 w-full min-w-0 max-w-[628px]">{leadingContent}</div> : null}
       {hasPrimaryContent ? (
         <Bubble animation={animation} isUser={false}>
           {content.trim() ? (

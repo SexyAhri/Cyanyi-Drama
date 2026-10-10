@@ -4,6 +4,8 @@ import type {
   AgentToolCall,
   ToolCallStatus,
 } from "@/lib/agent/types";
+import { extractImagePromptArtifact } from "@/lib/agent/image-prompt-context";
+import { getFinalPrompt, splitPromptReply } from "@/lib/agent/reply-sections";
 
 export class AgentEventMergeError extends Error {
   constructor(message: string) {
@@ -95,22 +97,47 @@ export function mergeAgentEvent(
       }));
 
     case "message.done":
-      return updateMessage(messages, event.messageId, (message) => ({
-        ...message,
-        metadata: {
-          ...message.metadata,
-          finishedAt: new Date().toISOString(),
-        },
-      }));
+      return updateMessage(messages, event.messageId, (message) => {
+        const replySections = message.role === "assistant" ? splitPromptReply(message.content) : null;
+        const finalPrompt = message.role === "assistant" ? getFinalPrompt(message.content) : null;
+        const imagePrompt =
+          message.role === "assistant"
+            ? extractImagePromptArtifact(message.content) ?? (finalPrompt ? { positive: finalPrompt } : null)
+            : null;
+        return {
+          ...message,
+          metadata: {
+            ...message.metadata,
+            finishedAt: new Date().toISOString(),
+            ...(replySections ? { replySections } : {}),
+            ...(imagePrompt
+              ? {
+                  imagePrompt: {
+                    ...imagePrompt,
+                    sourceMessageId: message.id,
+                  },
+                }
+              : {}),
+          },
+        };
+      });
 
-    case "tool.pending":
-      return updateMessage(messages, event.messageId, (message) => ({
+    case "tool.pending": {
+      const assistant = [...messages].reverse().find((message) => message.role === "assistant" || message.role === "user");
+      const staged = assistant?.role === "assistant"
+        ? updateMessage(messages, assistant.id, (message) => ({
+            ...message,
+            metadata: { ...message.metadata, processContentLength: message.content.length },
+          }))
+        : messages;
+      return updateMessage(staged, event.messageId, (message) => ({
         ...message,
         toolCall: {
           ...event.toolCall,
           status: "pending",
         },
       }));
+    }
 
     case "tool.running":
       return updateToolCall(
@@ -125,7 +152,7 @@ export function mergeAgentEvent(
 
     case "tool.done":
       return updateToolCall(
-        messages,
+        updateMessage(messages, event.messageId, (message) => ({ ...message, metadata: { ...message.metadata, finishedAt: new Date().toISOString() } })),
         event.messageId,
         event.toolCallId,
         (toolCall) => ({
@@ -137,7 +164,7 @@ export function mergeAgentEvent(
 
     case "tool.error":
       return updateToolCall(
-        messages,
+        updateMessage(messages, event.messageId, (message) => ({ ...message, metadata: { ...message.metadata, finishedAt: new Date().toISOString() } })),
         event.messageId,
         event.toolCallId,
         (toolCall) => ({

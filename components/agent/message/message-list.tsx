@@ -3,6 +3,7 @@ import type { AgentComposerReferenceImage } from "../composer";
 
 import { groupMessagesWithToolCards } from "./message-groups";
 import { MessageBubble } from "./message-bubble";
+import { ThinkingIndicator } from "../chat/thinking-indicator";
 import { ToolCard } from "../tool/tool-card";
 import type { ToolRegistry } from "../tool/tool-registry";
 
@@ -14,6 +15,7 @@ type MessageListProps = {
   onDeleteMessage?: (messageId: string) => void;
   onEditMessage?: (message: AgentMessage) => void;
   onRegenerateMessage?: (messageId: string) => void;
+  onRetryMedia?: (message: AgentMessage, edit: boolean) => void;
   onUseAsReferenceImage?: (referenceImage: AgentComposerReferenceImage) => void;
   isThinking?: boolean;
   locale?: "en" | "zh-CN";
@@ -28,6 +30,7 @@ export function MessageList({
   onDeleteMessage,
   onEditMessage,
   onRegenerateMessage,
+  onRetryMedia,
   onUseAsReferenceImage,
   isThinking = false,
   locale = "en",
@@ -63,10 +66,13 @@ export function MessageList({
               onDeny={onDeny}
               onEditMessage={onEditMessage}
               onRegenerateMessage={onRegenerateMessage}
+              onRetryMedia={onRetryMedia}
+              isBusy={isThinking}
               pendingApprovalIds={pendingApprovalIds}
               registry={registry}
               toolMessages={group.toolMessages}
               showThinking={group.message.id === thinkingAssistantId}
+              isReplyStreaming={isThinking && group.index > latestUserIndex}
               thinkingMessages={messages}
               onUseAsReferenceImage={onUseAsReferenceImage}
             />
@@ -94,6 +100,9 @@ export function MessageList({
             : null}
         </div>
       ))}
+      {isThinking && !thinkingAssistantId ? (
+        <ThinkingIndicator messages={messages} />
+      ) : null}
     </div>
   );
 }

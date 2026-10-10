@@ -117,10 +117,16 @@ export function PanelGenerationDialog({
   const [previewError, setPreviewError] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
   const nextPanel = nextStoryboardPanel(panel, panels);
-  const canUseFirstLast = Boolean(
-    panel.imageAssetId && nextPanel?.imageAssetId,
-  );
   const selectedModel = models.find((model) => model.id === modelId);
+  const canUseFirstLast = Boolean(
+    panel.imageAssetId &&
+      nextPanel?.imageAssetId &&
+      (selectedModel?.maxReferenceImages === undefined ||
+        selectedModel.maxReferenceImages >= 2) &&
+      (!panel.durationSeconds ||
+        !selectedModel?.maxDurationSeconds ||
+        panel.durationSeconds <= selectedModel.maxDurationSeconds),
+  );
 
   useEffect(() => {
     if (!models.some((model) => model.id === modelId)) {
@@ -133,12 +139,22 @@ export function PanelGenerationDialog({
   }, [canUseFirstLast, mode]);
 
   useEffect(() => {
+    if (!open || kind !== "video" || !canUseFirstLast || !selectedModel) return;
+    const supportsBothFrames = (selectedModel.maxReferenceImages ?? 0) >= 2;
+    const fitsDuration =
+      !panel.durationSeconds ||
+      !selectedModel.maxDurationSeconds ||
+      panel.durationSeconds <= selectedModel.maxDurationSeconds;
+    if (supportsBothFrames && fitsDuration) setMode("first-last");
+  }, [open, kind, canUseFirstLast, panel.id, panel.durationSeconds, selectedModel]);
+
+  useEffect(() => {
     if (!open) return;
     setPrompt(
       (kind === "image"
         ? panel.imagePrompt
         : mode === "first-last"
-          ? panel.firstLastFramePrompt
+          ? panel.firstLastFramePrompt || panel.videoPrompt
           : panel.videoPrompt) ??
         panel.description ??
         "",

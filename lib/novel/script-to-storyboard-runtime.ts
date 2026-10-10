@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { screenplayConversionSchema } from "@/lib/prompts/schemas";
+import { estimateSpeechDurationSeconds } from "@/lib/prompts/validators";
 import { listProductionClips, listProductionProps } from "@/lib/production/domain-store";
 import type {
   ActionPhase,
@@ -12,6 +13,7 @@ import { prisma } from "@/lib/server/prisma";
 
 import { parseApprovedScreenplay } from "./approved-screenplay-parser";
 import { getStoryboard, saveStoryboard } from "./domain-store";
+import { splitSpokenTextForShots } from "./storyboard-dialogue-timing";
 
 type ProductionClip = NonNullable<
   Awaited<ReturnType<typeof listProductionClips>>
@@ -41,7 +43,7 @@ type SceneStoryboardContext = {
   locale: "en" | "zh";
 };
 
-const STORYBOARD_PLANNER_VERSION = "semantic-beats-v2";
+const STORYBOARD_PLANNER_VERSION = "semantic-beats-v4-performance";
 const TARGET_BEAT_SECONDS = 5;
 
 export async function buildEpisodeStoryboard(
@@ -348,15 +350,30 @@ export function buildSceneStoryboardPanels(
       ]);
       const requestedDurationSeconds = sourceScene?.durationSeconds ?? 8;
       const camera = sourceScene?.camera || cameraFromDescription(scene.description);
-      const actions = buildSemanticBeats(
+      const actionBeats = buildSemanticBeats(
         action,
         requestedDurationSeconds,
         context.locale,
         characters,
         props,
       );
-      const durations = beatDurations(requestedDurationSeconds, actions.length);
-      const voiceovers = distributeTextAcrossBeats(voiceover, actions.length);
+      const dialogueByBeat = assignDialogueToBeats(
+        scene.content,
+        actionBeats.length,
+      );
+      const lastDialogueBeat = Math.max(-1, ...dialogueByBeat.keys());
+      const extraDialogueBeats = Array.from(
+        { length: Math.max(0, lastDialogueBeat + 1 - actionBeats.length) },
+        (_, index) => {
+          const speaker = dialogueByBeat.get(actionBeats.length + index)?.speaker;
+          return context.locale === "en"
+            ? `${speaker} continues speaking as the other character reacts.`
+            : `${speaker}继续说话，对方自然回应。`;
+        },
+      );
+      const actions = [...actionBeats, ...extraDialogueBeats];
+      const actionDurations = beatDurations(requestedDurationSeconds, actionBeats.length);
+      const voiceovers = distributeTextAcrossBeats(voiceover, actionBeats.length);
       const vfxCues = collectVfxCues(scene, sourceScene?.visualEffects ?? "");
       const sfxCues = collectSfxCues(scene, sourceScene?.sound ?? "");
       const currentSceneNumber = sceneNumber++;
@@ -369,16 +386,28 @@ export function buildSceneStoryboardPanels(
       });
 
       return actions.map((beatAction, beatIndex) => {
-        const durationSeconds = durations[beatIndex];
-        const beatCamera = cameraForBeat(
+        const dialogue = dialogueByBeat.get(beatIndex);
+        const durationSeconds = Math.max(
+          actionDurations[beatIndex] ?? 0,
+          dialogue ? estimateSpeechDurationSeconds(dialogue.text) : 0,
+          beatIndex >= actionBeats.length ? 3 : 1,
+        );
+        const plannedCamera = cameraForBeat(
           camera,
           beatIndex,
           actions.length,
           context.locale,
         );
+        const beatCamera = dialogue
+          ? speakingCamera(plannedCamera, dialogue.speaker, context.locale)
+          : plannedCamera;
         const endState = buildEndState(beatAction, context.locale);
-        const assignedVfx = cuesForBeat(vfxCues, beatIndex, actions.length);
-        const assignedSfx = cuesForBeat(sfxCues, beatIndex, actions.length);
+        const assignedVfx = beatIndex < actionBeats.length
+          ? cuesForBeat(vfxCues, beatIndex, actionBeats.length)
+          : [];
+        const assignedSfx = beatIndex < actionBeats.length
+          ? cuesForBeat(sfxCues, beatIndex, actionBeats.length)
+          : [];
         const globalIndex = panelIndex++;
         const currentClipPanelIndex = clipPanelIndex++;
         const promptFacts = {
@@ -388,6 +417,7 @@ export function buildSceneStoryboardPanels(
           characters,
           props,
           action: beatAction,
+          speakingCharacter: dialogue?.speaker,
           durationSeconds,
           startState: stateBody(startState),
           endState: stateBody(endState),
@@ -409,8 +439,8 @@ export function buildSceneStoryboardPanels(
           videoPrompt: buildVideoPrompt(context, promptFacts),
           durationSeconds,
           subtitleText: null,
-          speakingCharacter: null,
-          lipSyncText: null,
+          speakingCharacter: dialogue?.speaker ?? null,
+          lipSyncText: dialogue?.text ?? null,
           voiceoverText: voiceovers[beatIndex] || null,
           startState,
           endState,
@@ -464,6 +494,36 @@ export function buildSceneStoryboardPanels(
   });
 }
 
+function assignDialogueToBeats(
+  content: Screenplay["scenes"][number]["content"],
+  actionBeatCount: number,
+) {
+  const assignments = new Map<number, { speaker: string; text: string }>();
+  const actionCount = content.filter((item) => item.type === "action").length;
+  let completedActions = 0;
+  let nextFreeBeat = 0;
+  for (const item of content) {
+    if (item.type === "action") {
+      completedActions += 1;
+      continue;
+    }
+    if (item.type !== "dialogue" || !item.character?.trim() || !item.lines.trim())
+      continue;
+    const preferred = actionCount
+      ? Math.round((completedActions / actionCount) * (actionBeatCount - 1))
+      : 0;
+    for (const text of splitSpokenTextForShots(item.lines, TARGET_BEAT_SECONDS)) {
+      const beatIndex = Math.max(preferred, nextFreeBeat);
+      assignments.set(beatIndex, {
+        speaker: item.character.trim(),
+        text,
+      });
+      nextFreeBeat = beatIndex + 1;
+    }
+  }
+  return assignments;
+}
+
 export function extractProductionDirectives(sourceText: string) {
   return {
     productionSpec: readLabeledValue(sourceText, [
@@ -494,9 +554,10 @@ function buildImagePrompt(
           `Scene: ${facts.location}; time: ${facts.time}`,
           framing && `Starting composition: ${framing}`,
           facts.characters.length && `Characters: ${facts.characters.join(", ")}`,
+          facts.speakingCharacter && `Visible speaker: show ${facts.speakingCharacter}'s face and mouth clearly in this frame.`,
           facts.props.length && `Props: ${facts.props.join(", ")}`,
-          `Static state at t=0: ${facts.startState}`,
-          "Freeze the instant before this shot's action begins. Do not show the future action, motion in progress, or its result.",
+          `Opening pose at t=0: ${facts.startState}`,
+          "Show a natural cinematic moment at the action's onset, with believable weight, breath, and eyelines. Keep the action outcome for the video.",
           "No subtitles, captions, logos, watermarks, or readable text.",
         ]
       : [
@@ -506,9 +567,10 @@ function buildImagePrompt(
           `场景：${facts.location}；时间：${facts.time}`,
           framing && `起始构图与机位：${framing}`,
           facts.characters.length && `出场角色：${facts.characters.join("、")}`,
+          facts.speakingCharacter && `可见说话人：${facts.speakingCharacter}的面部与口部必须清晰入画。`,
           facts.props.length && `画面道具：${facts.props.join("、")}`,
-          `t=0 静态起始状态：${facts.startState}`,
-          "凝固在本镜动作开始前的瞬间，不得提前表现之后的动作、动作过程或动作结果。",
+          `t=0 起始姿态：${facts.startState}`,
+          "呈现动作起势时自然的电影画面，保留人物重心、呼吸和视线；动作结果留给视频表现。",
           "画面中不得出现字幕、标题、标识、水印或任何可读文字。",
         ];
   return values.filter(Boolean).join("\n");
@@ -521,22 +583,22 @@ function buildVideoPrompt(
   const values =
     context.locale === "en"
       ? [
-          `Advance naturally from the reference first frame at t=0 for ${facts.durationSeconds} seconds. The first frame already defines the characters, setting, props, composition, and style; do not reset them.`,
-          `Only forward action: ${facts.action}`,
+          `Continue from the reference frame for ${facts.durationSeconds} seconds, carrying the pose, gaze, and motion into this shot.`,
+          `Visible action: ${facts.action}`,
+          facts.speakingCharacter && `During this shot, ${facts.speakingCharacter} speaks with natural facial and mouth movement; the others listen or react. The recorded voice and precise lip sync are added later.`,
           `End state: ${facts.endState}`,
-          `Camera: ${facts.camera || fixedCamera(context.locale)}. Use this single camera behavior for the entire shot, with no cuts.`,
+          `Camera: ${facts.camera || fixedCamera(context.locale)}. Let the framing follow the action smoothly.`,
           facts.visualEffects && `Effect synchronized to the action: ${facts.visualEffects}`,
-          "Preserve contact, weight, inertia, and spatial continuity. Do not replay the starting pose or introduce later actions.",
-          "Output silent footage. Dialogue, ambience, action sounds, music, and exact lip sync are produced independently in post-production. Characters keep their mouths naturally closed unless the visible action explicitly requires otherwise. Do not render text.",
+          "Keep contact, weight, breathing, gaze, and reactions continuous. Silent footage; no on-screen text.",
         ]
       : [
-          `从参考首帧 t=0 自然向前生成 ${facts.durationSeconds} 秒；首帧已经定义人物、场景、道具、构图和画风，不得重新设计或重置画面。`,
-          `唯一向前动作：${facts.action}`,
+          `从参考画面自然承接 ${facts.durationSeconds} 秒，延续人物姿态、视线和动作趋势。`,
+          `可见动作：${facts.action}`,
+          facts.speakingCharacter && `本镜由${facts.speakingCharacter}说话，面部与嘴部自然活动；其他人物倾听或回应。录音和精确口型在后期加入。`,
           `结束状态：${facts.endState}`,
-          `摄影机：${facts.camera || fixedCamera(context.locale)}；全镜只使用这一种摄影机行为，不切镜。`,
+          `摄影机：${facts.camera || fixedCamera(context.locale)}；随动作平顺调整构图。`,
           facts.visualEffects && `随动作同步出现的效果：${facts.visualEffects}`,
-          "保持接触关系、重量、惯性和空间连续，不得重演首帧姿态，不得提前加入后续动作。",
-          "输出无声画面；对白、环境音、动作音效、音乐和精确口型均由后期独立制作。除非可见动作明确需要，角色嘴部自然闭合；不得渲染任何文字。",
+          "保持接触、重量、呼吸、视线和人物反应的连续性。输出无声画面，不生成画面文字。",
         ];
   return values.filter(Boolean).join("\n");
 }
@@ -548,6 +610,7 @@ type PromptFacts = {
   characters: string[];
   props: string[];
   action: string;
+  speakingCharacter?: string;
   durationSeconds: number;
   startState: string;
   endState: string;
@@ -696,8 +759,8 @@ function buildInitialState(input: {
   return {
     body:
       input.locale === "en"
-        ? `${subject} are at ${input.location}; ${propState}; every subject is still before the shot action begins.${interaction.body}`
-        : `${subject}位于${input.location}；${propState}；所有主体静止，本镜动作尚未发生。${interaction.body}`,
+        ? `${subject} are at ${input.location}; ${propState}; carry forward the prior pose with natural breathing and readiness.${interaction.body}`
+        : `${subject}位于${input.location}；${propState}；承接上一镜姿态，保持自然呼吸与动作起势。${interaction.body}`,
     hands:
       interaction.hands ||
       (input.locale === "en"
@@ -824,6 +887,12 @@ function cameraForBeat(
   return [framing, fixedCamera(locale)]
     .filter(Boolean)
     .join(locale === "en" ? ", " : "，");
+}
+
+function speakingCamera(camera: string, speaker: string, locale: "en" | "zh") {
+  return locale === "en"
+    ? `${camera}; keep ${speaker}'s face and mouth visible while preserving the eyeline`
+    : `${camera}；保持视线轴线，清楚呈现${speaker}的面部与口部`;
 }
 
 function hasCameraMovement(value: string) {

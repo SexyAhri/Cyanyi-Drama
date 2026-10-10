@@ -1,4 +1,4 @@
-import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import { isValidElement, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -22,36 +22,47 @@ export function MarkdownRenderer({ children }: MarkdownRendererProps) {
 function Code({
   children,
   className,
+  node,
   ...props
 }: ComponentPropsWithoutRef<"code"> & { node?: unknown }) {
-  const match = /language-(\w+)/.exec(className ?? "");
+  void node;
+  return (
+    <code
+      className={cn(
+        "font-mono [:not(pre)>&]:break-all [:not(pre)>&]:rounded-md [:not(pre)>&]:bg-muted [:not(pre)>&]:px-1 [:not(pre)>&]:py-0.5",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </code>
+  );
+}
 
-  if (!match) {
-    return (
-      <code
-        className={cn(
-          "font-mono [:not(pre)>&]:break-all [:not(pre)>&]:rounded-md [:not(pre)>&]:bg-background/50 [:not(pre)>&]:px-1 [:not(pre)>&]:py-0.5",
-          className,
-        )}
-        {...props}
-      >
-        {children}
-      </code>
-    );
-  }
-
+function CodeBlock({ children }: { children?: ReactNode }) {
+  const className = isValidElement<{ className?: string }>(children)
+    ? children.props.className
+    : undefined;
+  const language = /language-([\w-]+)/.exec(className ?? "")?.[1];
+  const isPlainText = !language || /^(text|txt|plain|plaintext|prompt|markdown|md)$/i.test(language);
   const code = takeStringContents(children);
 
   return (
-    <div className="group/code relative mb-4 min-w-0 max-w-full">
-      <pre className="max-w-full overflow-x-auto rounded-md border bg-background/50 p-4 font-mono text-sm [scrollbar-width:none]">
-        <code className={className} {...props}>
-          {children}
+    <div className="group/code relative min-w-0 max-w-full overflow-hidden rounded-xl border border-border/60 bg-muted/35">
+      <div className="flex min-h-9 items-center justify-between gap-3 border-b border-border/40 px-3 text-xs text-muted-foreground">
+        <span>{isPlainText ? "文本" : language}</span>
+        <CopyButton content={code} copyMessage="已复制" />
+      </div>
+      <pre className={cn(
+        "max-w-full p-3 text-sm leading-6",
+        isPlainText
+          ? "whitespace-pre-wrap break-words font-sans [overflow-wrap:anywhere]"
+          : "overflow-x-auto font-mono",
+      )}>
+        <code className={cn(className, isPlainText && "font-sans")}>
+          {code}
         </code>
       </pre>
-      <div className="invisible absolute right-2 top-2 flex rounded-lg p-1 opacity-0 transition-all duration-200 group-hover/code:visible group-hover/code:opacity-100">
-        <CopyButton content={code} copyMessage="Copied code to clipboard." />
-      </div>
     </div>
   );
 }
@@ -63,6 +74,9 @@ function takeStringContents(node: ReactNode): string {
 
   if (Array.isArray(node)) {
     return node.map((child) => takeStringContents(child)).join("");
+  }
+  if (isValidElement<{ children?: ReactNode }>(node)) {
+    return takeStringContents(node.props.children);
   }
 
   return "";
@@ -102,7 +116,7 @@ const components = {
   li: withClass("li", "my-1.5"),
   ol: withClass("ol", "list-decimal space-y-2 pl-6"),
   p: withClass("p", "max-w-full whitespace-pre-wrap [overflow-wrap:anywhere]"),
-  pre: ({ children }: { children?: ReactNode }) => children,
+  pre: CodeBlock,
   strong: withClass("strong", "font-semibold"),
   table: withClass(
     "table",

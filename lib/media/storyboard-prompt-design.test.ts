@@ -196,12 +196,10 @@ describe("storyboard media prompt design", () => {
     expect(text).toContain("铁盒边缘冷光");
     expect(text).toContain("衣袖摩擦与铁盒轻响");
     expect(text).toContain('"ironBox": "韩宇双手托住"');
-    expect(text).toContain("不得复制对白、旁白、内心独白或字幕正文");
-    expect(text).toContain(
-      "输出无声画面，对白、环境音、动作音效、音乐和精确口型均由后期独立制作",
-    );
-    expect(text).toContain("不要求机械地逐秒罗列");
-    expect(text).toContain("audioMode 由提交层单独传递");
+    expect(text).toContain("视频 prompt 不复制对白、旁白或字幕正文");
+    expect(text).toContain("明确只有该角色自然开口，其他人物倾听或回应");
+    expect(text).toContain("动作须适合给定时长，避免逐秒命令");
+    expect(text).toContain("audioMode 由提交层提供");
   });
 
   it("keeps a freeform model response as an editable prompt", () => {

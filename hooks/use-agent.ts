@@ -43,6 +43,7 @@ export function useAgent({
   const [error, setError] = useState<Error | null>(null);
   const [pendingApprovalIds, setPendingApprovalIds] = useState<string[]>([]);
   const [events, setEvents] = useState<AgentEvent[]>([]);
+  const operationInFlight = useRef(false);
 
   const reportError = useCallback(
     (unknownError: unknown) => {
@@ -86,9 +87,10 @@ export function useAgent({
     async (content: string, options: SendMessageOptions = {}) => {
       const trimmed = content.trim();
 
-      if (!trimmed) {
+      if (!trimmed || operationInFlight.current) {
         return;
       }
+      operationInFlight.current = true;
 
       const userMessage: AgentMessage = {
         id: crypto.randomUUID(),
@@ -122,6 +124,7 @@ export function useAgent({
       } catch (unknownError) {
         reportError(unknownError);
       } finally {
+        operationInFlight.current = false;
         setIsLoading(false);
         setIsStreaming(false);
       }
@@ -145,9 +148,10 @@ export function useAgent({
         return;
       }
 
-      if (pendingApprovalIds.includes(approvalId)) {
+      if (operationInFlight.current || pendingApprovalIds.includes(approvalId)) {
         return;
       }
+      operationInFlight.current = true;
 
       setError(null);
       setIsLoading(true);
@@ -165,6 +169,7 @@ export function useAgent({
       } catch (unknownError) {
         reportError(unknownError);
       } finally {
+        operationInFlight.current = false;
         setIsLoading(false);
         setIsStreaming(false);
         setPendingApprovalIds((current) =>

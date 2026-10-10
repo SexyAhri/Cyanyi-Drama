@@ -902,6 +902,7 @@ function VoiceLineDetails({
           model: lipModel.modelId,
           panelId: panel.id,
           audioAssetId: audio.id,
+          voiceLineId: line.id,
         }),
       text.submitted,
     );

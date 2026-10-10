@@ -48,6 +48,7 @@ type ToolCardProps = {
   locale?: "en" | "zh-CN";
   registry?: ToolRegistry;
   embedded?: boolean;
+  hideProcessDetails?: boolean;
   onUseAsReferenceImage?: (referenceImage: AgentComposerReferenceImage) => void;
 };
 
@@ -132,6 +133,7 @@ export function ToolCard({
   locale = "en",
   registry = defaultToolRegistry,
   embedded = false,
+  hideProcessDetails = false,
   onUseAsReferenceImage,
 }: ToolCardProps) {
   const registryItem = registry[toolCall.name];
@@ -147,6 +149,7 @@ export function ToolCard({
   if (isMediaTool) {
     return (
       <MediaToolCard
+        hideProcessDetails={hideProcessDetails}
         createdAt={createdAt}
         onUseAsReferenceImage={onUseAsReferenceImage}
         toolCall={toolCall}

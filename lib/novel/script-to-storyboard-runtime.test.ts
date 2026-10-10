@@ -179,39 +179,43 @@ describe("scene storyboard runtime", () => {
       }),
     ]);
     expect(panels[1].cameraMove).toBe("低角度中景，缓慢向上推镜");
-    expect(panels[2].cameraMove).toBe("低角度中景，固定机位");
+    expect(panels[2].cameraMove).toContain("清楚呈现韩宇的面部与口部");
     expect(panels[0].startState).toMatchObject({
       hands: expect.stringContaining("距铁石受力接触点仅数厘米"),
       props: expect.stringContaining("不得放在人物身后、画外或远景"),
     });
-    expect(panels[0].imagePrompt).toContain("t=0 静态起始状态");
+    expect(panels[0].imagePrompt).toContain("t=0 起始姿态");
     expect(panels[0].imagePrompt).toContain("起始构图与机位：低角度中景");
     expect(panels[0].imagePrompt).not.toContain("缓慢向上推镜");
     expect(panels[0].imagePrompt).not.toContain("韩宇双手紧握铁石");
     expect(panels[1].imagePrompt).toContain("韩宇双手紧握铁石");
     expect(panels[1].imagePrompt).not.toContain("猛然发力");
     expect(panels[2].imagePrompt).toContain("韩宇猛然发力");
+    expect(panels[2].imagePrompt).toContain("可见说话人：韩宇的面部与口部必须清晰入画");
     expect(panels[2].imagePrompt).not.toContain("铁石缓缓离地");
     expect(panels[0].videoPrompt).toContain(
-      "唯一向前动作：韩宇双手紧握铁石。",
+      "可见动作：韩宇双手紧握铁石。",
     );
     expect(panels[0].videoPrompt).toContain(
       "摄影机：低角度中景，固定机位",
     );
-    expect(panels[1].videoPrompt).toContain("唯一向前动作：韩宇猛然发力。");
-    expect(panels[2].videoPrompt).toContain("唯一向前动作：铁石缓缓离地。");
-    expect(panels[0].videoPrompt).toContain("从参考首帧 t=0 自然向前生成 5 秒");
+    expect(panels[1].videoPrompt).toContain("可见动作：韩宇猛然发力。");
+    expect(panels[2].videoPrompt).toContain("可见动作：铁石缓缓离地。");
+    expect(panels[2].videoPrompt).toContain("本镜由韩宇说话");
+    expect(panels[2]).toMatchObject({
+      speakingCharacter: "韩宇",
+      lipSyncText: "我一定要变强。",
+    });
+    expect(panels[0].videoPrompt).toContain("从参考画面自然承接 5 秒");
     expect(panels[0].videoPrompt).toContain("输出无声画面");
-    expect(panels[0].videoPrompt).toContain(
-      "对白、环境音、动作音效、音乐和精确口型均由后期独立制作",
-    );
+    expect(panels[0].videoPrompt).not.toContain("嘴部自然闭合");
     expect(panels[0].videoPrompt).not.toContain("我一定要变强");
     expect(panels[0].videoPrompt).not.toContain("凛冽寒风");
     expect(panels.filter((panel) => panel.voiceoverText)).toHaveLength(1);
-    expect(panels[1].vfxCues).toEqual([
+    expect(panels.flatMap((panel) => panel.vfxCues)).toEqual([
       expect.objectContaining({ description: "稀薄劲气环绕双臂。" }),
     ]);
-    expect(panels[1].sfxCues).toEqual([
+    expect(panels.flatMap((panel) => panel.sfxCues)).toEqual([
       expect.objectContaining({ description: "凛冽寒风，铁石摩擦声。" }),
     ]);
   });
@@ -276,6 +280,69 @@ describe("scene storyboard runtime", () => {
         matchedPanelId: "panel-0",
       }),
     ]);
+  });
+
+  it("gives a speaker change its own visible dialogue panel", () => {
+    const twoSpeakerClip = {
+      ...clip,
+      screenplay: JSON.stringify({
+        ...screenplay,
+        scenes: [{
+          ...screenplay.scenes[0],
+          characters: ["韩宇", "韩子枫"],
+          content: [
+            screenplay.scenes[0].content[0],
+            { type: "dialogue", character: "韩宇", parenthetical: null, lines: "父亲，你回来了。" },
+            { type: "dialogue", character: "韩子枫", parenthetical: null, lines: "我回来了。" },
+          ],
+        }],
+      }),
+    };
+    const panels = buildSceneStoryboardPanels([twoSpeakerClip], {
+      artStyle: "中国水墨动画风格",
+      productionSpec: "约120秒，16:9",
+      visualRules: "冷调青蓝光影",
+      propNames: ["铁石"],
+      locale: "zh",
+    }).map((panel, index) => ({ ...panel, id: `panel-${index}` }));
+
+    expect(panels).toHaveLength(4);
+    expect(panels[2]).toMatchObject({ speakingCharacter: "韩宇", lipSyncText: "父亲，你回来了。" });
+    expect(panels[3]).toMatchObject({ speakingCharacter: "韩子枫", lipSyncText: "我回来了。" });
+    expect(buildScreenplayVoiceLines([twoSpeakerClip], panels).map((line) => line.matchedPanelId))
+      .toEqual(["panel-2", "panel-3"]);
+  });
+
+  it("splits long speech into separate short lip sync shots", () => {
+    const longLine = "我一定要变强，因为只有这样才能保护父亲，也才能查清当年发生的事情。";
+    const longClip = {
+      ...clip,
+      screenplay: JSON.stringify({
+        ...screenplay,
+        scenes: [{
+          ...screenplay.scenes[0],
+          content: [
+            screenplay.scenes[0].content[0],
+            { type: "dialogue", character: "韩宇", parenthetical: null, lines: longLine },
+          ],
+        }],
+      }),
+    };
+    const panels = buildSceneStoryboardPanels([longClip], {
+      artStyle: "中国水墨动画风格",
+      productionSpec: "约120秒，16:9",
+      visualRules: "冷调青蓝光影",
+      propNames: ["铁石"],
+      locale: "zh",
+    }).map((panel, index) => ({ ...panel, id: `panel-${index}` }));
+    const dialoguePanels = panels.filter((panel) => panel.lipSyncText);
+    expect(dialoguePanels.length).toBeGreaterThan(1);
+    expect(dialoguePanels.every((panel) => panel.durationSeconds <= 5)).toBe(true);
+    expect(dialoguePanels.map((panel) => panel.lipSyncText).join("")).toBe(longLine);
+    expect(buildScreenplayVoiceLines([longClip], panels)
+      .filter((line) => line.delivery === "dialogue")
+      .map((line) => line.matchedPanelId))
+      .toEqual(dialoguePanels.map((panel) => panel.id));
   });
 
   it("persists scene cards without a model request or hard review", async () => {

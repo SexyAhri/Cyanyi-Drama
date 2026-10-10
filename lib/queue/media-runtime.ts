@@ -463,14 +463,20 @@ async function performLipSync(
     },
     select: {
       id: true,
+      speakingCharacter: true,
+      lipSyncText: true,
+      charactersJson: true,
       imageAsset: { select: { url: true, storageKey: true } },
       videoAsset: { select: { url: true, storageKey: true } },
       lipSyncAsset: { select: { url: true, storageKey: true } },
+      videoSegments: { select: { videoAsset: { select: { url: true, storageKey: true } } } },
     },
   });
   if (!panel) throw new Error("LIP_SYNC_PANEL_NOT_FOUND");
 
+  if (panel.videoSegments.length > 1) throw new Error("LIP_SYNC_SEGMENTED_VIDEO_UNSUPPORTED");
   const videoUrl =
+    (await resolveAssetUrl(panel.videoSegments[0]?.videoAsset)) ??
     (await resolveAssetUrl(panel.videoAsset)) ??
     (await resolveAssetUrl(panel.lipSyncAsset));
   const imageUrl = await resolveAssetUrl(panel.imageAsset);
@@ -480,25 +486,33 @@ async function performLipSync(
       ? ((request as Record<string, unknown>).audioAssetId as string)
       : undefined;
 
-  let audioUrl: string | null = null;
-  let durationSeconds: number | undefined;
-  if (audioAssetId) {
-    const asset = await prisma.mediaAsset.findFirst({
-      where: { id: audioAssetId },
-      select: { url: true, storageKey: true },
-    });
-    audioUrl = await resolveAssetUrl(asset);
-  } else if (episodeId) {
-    const voiceLine = await prisma.voiceLine.findFirst({
-      where: { matchedPanelId: resolvedPanelId, episodeId },
-      select: {
-        durationSeconds: true,
-        audioAsset: { select: { url: true, storageKey: true } },
-      },
-    });
-    audioUrl = await resolveAssetUrl(voiceLine?.audioAsset);
-    durationSeconds = voiceLine?.durationSeconds ?? undefined;
-  }
+  const voiceLineId = stringField(request, "voiceLineId");
+  if (!voiceLineId || !episodeId || !audioAssetId)
+    throw new Error("LIP_SYNC_VOICE_LINE_REQUIRED");
+  const voiceLine = await prisma.voiceLine.findFirst({
+    where: {
+      id: voiceLineId,
+      episodeId,
+      matchedPanelId: resolvedPanelId,
+      audioAssetId,
+      delivery: "dialogue",
+      episode: { projectId, project: { userId } },
+    },
+    select: {
+      speaker: true,
+      content: true,
+      durationSeconds: true,
+      audioAsset: { select: { url: true, storageKey: true } },
+    },
+  });
+  if (!voiceLine) throw new Error("LIP_SYNC_VOICE_LINE_MISMATCH");
+  const characters = parseJsonValue(panel.charactersJson);
+  if (panel.speakingCharacter !== voiceLine.speaker ||
+      panel.lipSyncText?.trim() !== voiceLine.content.trim() ||
+      !Array.isArray(characters) || !characters.includes(voiceLine.speaker))
+    throw new Error("LIP_SYNC_SPEAKER_NOT_VISIBLE");
+  const audioUrl = await resolveAssetUrl(voiceLine.audioAsset);
+  const durationSeconds = voiceLine.durationSeconds ?? undefined;
   if (!audioUrl) throw new Error("LIP_SYNC_AUDIO_MISSING");
 
   const keys = JSON.parse(decryptSecret(channel.encryptedApiKeys)) as string[];
@@ -622,9 +636,10 @@ async function renderEpisodeTimeline(
     ) continue;
     const panel = segment?.panel ?? panels.get(trackPanelId);
     if (!panel) continue;
-    const lipSyncSource = segment
-      ? undefined
-      : storedAssetSource(panel.lipSyncAsset);
+    const lipSyncSource =
+      segment && panel.videoSegments.length > 1
+        ? undefined
+        : storedAssetSource(panel.lipSyncAsset);
     const videoSource = segment
       ? storedAssetSource(segment.videoAsset)
       : lipSyncSource
@@ -1015,17 +1030,27 @@ async function linkGeneratedAsset(
           : { imageAssetId: asset.id, updatedAt: new Date() },
     });
   } else if (task.targetType === "voice_line" && task.kind === "audio") {
-    await prisma.voiceLine.updateMany({
-      where: {
-        id: task.targetId,
-        episode: { projectId, project: { userId } },
-      },
-      data: {
-        audioAssetId: asset.id,
-        status: "generated",
-        updatedAt: new Date(),
-      },
+    const line = await prisma.voiceLine.findFirst({
+      where: { id: task.targetId, episode: { projectId, project: { userId } } },
+      select: { matchedPanelId: true },
     });
+    if (!line) return;
+    await prisma.$transaction([
+      prisma.voiceLine.updateMany({
+        where: { id: task.targetId, episode: { projectId, project: { userId } } },
+        data: {
+          audioAssetId: asset.id,
+          status: "generated",
+          updatedAt: new Date(),
+        },
+      }),
+      ...(line.matchedPanelId
+        ? [prisma.storyboardPanel.updateMany({
+            where: { id: line.matchedPanelId, storyboard: { projectId, project: { userId } } },
+            data: { lipSyncAssetId: null, updatedAt: new Date() },
+          })]
+        : []),
+    ]);
   } else if (
     task.targetType === "lip_sync" &&
     (task.kind === "video" || task.kind === "lipsync")

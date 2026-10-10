@@ -245,6 +245,8 @@ export async function saveStoryboard(
         firstLastFramePrompt: true,
         durationSeconds: true,
         imageAssetId: true,
+        speakingCharacter: true,
+        lipSyncText: true,
         imagePromptDesignJson: true,
         videoPromptDesignJson: true,
         firstLastFramePromptDesignJson: true,
@@ -295,6 +297,11 @@ export async function saveStoryboard(
           (!sameText(videoPrompt, existingPanel.videoPrompt) ||
             finiteNumber(panel.durationSeconds) !==
               existingPanel.durationSeconds),
+      );
+      const dialogueChanged = Boolean(
+        existingPanel &&
+          (!sameText(panel.speakingCharacter, existingPanel.speakingCharacter) ||
+            !sameText(panel.lipSyncText, existingPanel.lipSyncText)),
       );
       retainedIds.push(id);
       const data = {
@@ -360,6 +367,9 @@ export async function saveStoryboard(
         ...(imageInputsChanged ? { imageAssetId: null } : {}),
         ...(imageInputsChanged || videoInputsChanged
           ? { videoAssetId: null }
+          : {}),
+        ...(imageInputsChanged || videoInputsChanged || dialogueChanged
+          ? { lipSyncAssetId: null }
           : {}),
       };
       await tx.storyboardPanel.upsert({

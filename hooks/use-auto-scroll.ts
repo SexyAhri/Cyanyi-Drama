@@ -11,8 +11,10 @@ export function useAutoScroll(dependencies: React.DependencyList) {
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
 
   const scrollToBottom = () => {
+    setShouldAutoScroll(true);
     if (containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      previousScrollTop.current = containerRef.current.scrollTop;
     }
   };
 
@@ -25,10 +27,10 @@ export function useAutoScroll(dependencies: React.DependencyList) {
     const distanceFromBottom = Math.abs(
       scrollHeight - scrollTop - clientHeight,
     );
-    const isScrollingUp = previousScrollTop.current
+    const isScrollingUp = previousScrollTop.current !== null
       ? scrollTop < previousScrollTop.current
       : false;
-    const scrollUpDistance = previousScrollTop.current
+    const scrollUpDistance = previousScrollTop.current !== null
       ? previousScrollTop.current - scrollTop
       : 0;
     const isDeliberateScrollUp =
@@ -55,11 +57,24 @@ export function useAutoScroll(dependencies: React.DependencyList) {
 
   useEffect(() => {
     if (shouldAutoScroll) {
-      scrollToBottom();
+      const viewport = containerRef.current;
+      if (viewport) viewport.scrollTop = viewport.scrollHeight;
     }
     // The dependency list mirrors the chatbot-kit hook API.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, dependencies);
+
+  useEffect(() => {
+    const viewport = containerRef.current;
+    const content = viewport?.firstElementChild;
+    if (!viewport || !content || !shouldAutoScroll) return;
+    const observer = new ResizeObserver(() => {
+      viewport.scrollTop = viewport.scrollHeight;
+      previousScrollTop.current = viewport.scrollTop;
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [shouldAutoScroll]);
 
   return {
     containerRef,

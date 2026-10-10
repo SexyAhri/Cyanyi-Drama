@@ -1,4 +1,5 @@
 import type { AgentMessage } from "../../../lib/agent/types";
+import { splitPromptReply } from "@/lib/agent/reply-sections";
 
 export type MessageGroup = {
   id: string;
@@ -44,7 +45,7 @@ export function groupMessagesWithToolCards(
     standaloneToolMessages.push({ index, message });
   }
 
-  return [
+  const ordinaryGroups = [
     ...groups,
     ...standaloneToolMessages.map(({ index, message }) => ({
       id: message.id,
@@ -53,6 +54,8 @@ export function groupMessagesWithToolCards(
       toolMessages: [message],
     })),
   ].sort((left, right) => left.index - right.index);
+
+  return groupMediaTurns(messages, ordinaryGroups);
 }
 
 function findPreviousGroup(groups: MessageGroup[], index: number) {
@@ -65,4 +68,53 @@ function findPreviousGroup(groups: MessageGroup[], index: number) {
   }
 
   return null;
+}
+
+function groupMediaTurns(messages: AgentMessage[], groups: MessageGroup[]) {
+  const result: MessageGroup[] = [];
+  let start = 0;
+  while (start < messages.length) {
+    let end = start + 1;
+    while (end < messages.length && messages[end].role !== "user") end++;
+    const turn = messages.slice(start, end);
+    const tools = turn.filter((message) => message.toolCall);
+    const hasMedia = tools.some((message) => message.toolCall?.name === "image_generation" || message.toolCall?.name === "video_generation");
+    if (!hasMedia) {
+      result.push(...groups.filter((group) => group.index >= start && group.index < end));
+    } else {
+      const user = turn.find((message) => message.role === "user");
+      if (user) result.push({ id: user.id, index: start, message: user, toolMessages: [] });
+      const assistants = turn.filter((message) => message.role === "assistant");
+      const process: string[] = [];
+      const final: string[] = [];
+      for (const assistant of assistants) {
+        const boundary = assistant.metadata?.processContentLength;
+        if (typeof boundary === "number") {
+          process.push(assistant.content.slice(0, boundary));
+          final.push(assistant.content.slice(boundary));
+        } else if (Array.isArray(assistant.metadata?.explainedToolCallIds)) process.push(assistant.content);
+        else final.push(assistant.content);
+      }
+      const base = assistants.at(-1);
+      const finalContent = final.filter((text) => text.trim()).join("\n\n");
+      const sections = splitPromptReply(finalContent);
+      if (sections) process.push(sections.analysis);
+      const finished = turn.map((message) => message.metadata?.finishedAt)
+        .filter((value): value is string => typeof value === "string").sort().at(-1);
+      const active = tools.some((message) => ["pending", "running"].includes(message.toolCall!.status));
+      const anchor = base ?? { id: tools[0].id, role: "assistant" as const, content: "", createdAt: tools[0].createdAt };
+      result.push({
+        id: anchor.id, index: start + (user ? 1 : 0), toolMessages: tools,
+        message: { ...anchor, content: sections?.answer ?? finalContent, metadata: {
+          ...anchor.metadata, mediaTurn: true, processTexts: process.filter((text) => text.trim()),
+          processStartedAt: user?.createdAt ?? turn[0].createdAt,
+          processFinishedAt: active ? undefined : finished, processActive: active,
+          explainedToolCallIds: assistants.flatMap((message) =>
+            Array.isArray(message.metadata?.explainedToolCallIds) ? message.metadata.explainedToolCallIds : []),
+        } },
+      });
+    }
+    start = end;
+  }
+  return result;
 }

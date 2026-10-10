@@ -225,7 +225,7 @@ function getReferenceImagePartsFromComposer(composer: AgentComposerMetadata) {
       return {
         type: "image" as const,
         image: url,
-        mediaType: referenceImage.mimeType,
+        mediaType: resolveReferenceImageMediaType(referenceImage),
       };
     })
     .filter(
@@ -237,6 +237,30 @@ function getReferenceImagePartsFromComposer(composer: AgentComposerMetadata) {
         mediaType: string | undefined;
       } => Boolean(referenceImage),
     );
+}
+
+export function resolveReferenceImageMediaType(referenceImage: {
+  url?: string;
+  format?: string;
+  mimeType?: string;
+}) {
+  const declared = referenceImage.mimeType?.split(";")[0].trim().toLowerCase();
+  if (declared && /^image\/[a-z0-9.+-]+$/.test(declared)) return declared;
+  const inline = /^data:(image\/[a-z0-9.+-]+)[;,]/i.exec(referenceImage.url ?? "")?.[1];
+  if (inline) return inline.toLowerCase();
+  const format = referenceImage.format?.trim().toLowerCase().replace(/^\./, "") ||
+    /\.([a-z0-9]+)(?:[?#]|$)/i.exec(referenceImage.url ?? "")?.[1]?.toLowerCase();
+  return format
+    ? ({
+        png: "image/png",
+        jpg: "image/jpeg",
+        jpeg: "image/jpeg",
+        webp: "image/webp",
+        gif: "image/gif",
+        avif: "image/avif",
+        bmp: "image/bmp",
+      } as Record<string, string>)[format]
+    : undefined;
 }
 
 function getMessageReferenceImageParts(message: AgentMessage) {

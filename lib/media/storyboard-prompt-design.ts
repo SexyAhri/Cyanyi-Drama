@@ -129,7 +129,7 @@ export async function designStoryboardMediaPrompt(input: {
     (input.kind === "image"
       ? panel.imagePrompt
       : mode === "first-last"
-        ? panel.firstLastFramePrompt
+        ? panel.firstLastFramePrompt || panel.videoPrompt
         : panel.videoPrompt) ||
     panel.description ||
     "";

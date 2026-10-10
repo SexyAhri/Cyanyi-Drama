@@ -1835,6 +1835,14 @@ function formatMediaMeta(label: string, format?: string) {
 }
 
 function getDownloadFilename(src: string, mimeType?: string) {
+  const assetId = /\/api\/media\/assets\/([^/?]+)\/content(?:[?#]|$)/.exec(src)?.[1];
+  if (assetId) {
+    try {
+      return `${decodeURIComponent(assetId).replace(/[^a-zA-Z0-9._-]/g, "_")}.${mimeTypeToExtension(mimeType || "image/png") || "png"}`;
+    } catch {
+      return `${assetId.replace(/[^a-zA-Z0-9._-]/g, "_")}.${mimeTypeToExtension(mimeType || "image/png") || "png"}`;
+    }
+  }
   try {
     const pathname = new URL(src).pathname;
     const lastSegment = pathname.split("/").pop()?.trim();

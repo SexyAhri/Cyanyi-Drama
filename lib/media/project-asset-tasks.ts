@@ -391,7 +391,7 @@ export async function createStoryboardPanelVideoTask(input: {
   const rawBasePrompt =
     input.prompt?.trim() ||
     (input.mode === "first-last"
-      ? panel.firstLastFramePrompt?.trim()
+      ? panel.firstLastFramePrompt?.trim() || panel.videoPrompt?.trim()
       : panel.videoPrompt?.trim()) ||
     panel.description?.trim();
   if (!rawBasePrompt)
@@ -412,6 +412,8 @@ export async function createStoryboardPanelVideoTask(input: {
     protocol: channel.protocol,
     capabilities: parseStoredJsonValue(selectedModel.capabilitiesJson, {}),
   });
+  if (input.mode === "first-last" && limits.maxReferenceImages < 2)
+    throw new ProjectAssetTaskError("当前视频模型不支持同时提交首帧和尾帧", 400);
   const durationSeconds =
     parseDurationSeconds(input.duration) ??
     panel.durationSeconds ??
@@ -556,7 +558,7 @@ export async function createStoryboardPanelVideoTask(input: {
     }),
     prisma.storyboardPanel.update({
       where: { id: panel.id },
-      data: { videoAssetId: null },
+      data: { videoAssetId: null, lipSyncAssetId: null },
     }),
   ]);
   const queued = [];
@@ -677,7 +679,7 @@ export async function previewStoryboardPanelPrompt(input: {
     (input.kind === "image"
       ? panel.imagePrompt?.trim()
       : input.mode === "first-last"
-        ? panel.firstLastFramePrompt?.trim()
+        ? panel.firstLastFramePrompt?.trim() || panel.videoPrompt?.trim()
         : panel.videoPrompt?.trim()) ||
     panel.description?.trim() ||
     "";
@@ -730,6 +732,12 @@ export async function previewStoryboardPanelPrompt(input: {
         blocking: true,
         code: "segmented_first_last_unsupported",
         message: `当前场次需拆为 ${segments.length} 段，首尾帧模式缺少中间衔接帧，请改用参考图模式`,
+      });
+    if (input.mode === "first-last" && limits.maxReferenceImages < 2)
+      issues.push({
+        blocking: true,
+        code: "first_last_model_unsupported",
+        message: "当前视频模型不支持同时提交首帧和尾帧",
       });
     let referenceCount = 0;
     const sources: StoryboardPromptPreview["sources"] = [
@@ -1101,24 +1109,16 @@ export function compileStoryboardEventBlueprint(
   const referenceScopes = asBlueprintArray(worldContext.referenceScopes);
   const environment = asBlueprintRecord(startState.environmentState);
   const sections: string[] = [
-    "用户补充提示（只能补充首帧的静态表现方式，不得加入后续动作或结果）：",
+    "镜头起始画面：",
     userPrompt,
-    "不可省略的静态首帧制作蓝图：",
-    "1. t=0 起始状态",
-    `首帧必须精确呈现：${formatBlueprintRecord(startState)}`,
-    `环境连续性：${formatBlueprintRecord(environment)}`,
-    "2. 允许出镜的主体与资产",
+    `起始姿态：${formatBlueprintRecord(startState)}`,
+    `环境：${formatBlueprintRecord(environment)}`,
     `场景：${panel.locationName?.trim() || "未指定"}`,
     `角色：${characters.length ? characters.join("、") : "无明确出镜角色"}`,
     `道具：${props.length ? props.join("、") : "无关键道具"}`,
     ...formatReferenceScopes(referenceScopes),
-    "3. 世界与空间约束",
-    `世界与能力规则：${formatBlueprintRecord(worldContext, ["shotIntent", "constraints", "riskFocus", "referenceScopes", "evidence"])}`,
-    "4. 起始机位与构图",
     ...formatImageCameraBlueprint(photographyRules),
-    "5. 静态首帧边界",
-    "后续动作、动作分拍、运动轨迹、特效释放和结束状态仅供后续视频使用，禁止在本图中提前表现。",
-    "只画 t=0 的静止瞬间，不得出现运动模糊、动作进行态、动作结果或结束姿态。",
+    "保留自然呼吸、重心与视线，让画面看起来是连续表演中的一帧；动作结果留给视频。",
   ];
   return sections.join("\n");
 }

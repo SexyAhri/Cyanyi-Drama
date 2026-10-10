@@ -1,6 +1,6 @@
 "use client";
 
-import { Copy, Download, Pencil, RotateCcw, Star, Trash2 } from "lucide-react";
+import { Copy, Download, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -12,11 +12,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { AgentMessage } from "@/lib/agent/types";
+import { getReplySections } from "@/lib/agent/reply-sections";
 
 import type { AgentComposerReferenceImage } from "../composer";
 import { ThinkingIndicator } from "../chat/thinking-indicator";
 import { ToolCard } from "../tool/tool-card";
 import type { ToolRegistry } from "../tool/tool-registry";
+import { MediaTurnProcess } from "./media-turn-process";
 
 const copy = {
   "zh-CN": {
@@ -55,7 +57,10 @@ type MessageBubbleProps = {
   onEditMessage?: (message: AgentMessage) => void;
   onDeleteMessage?: (messageId: string) => void;
   onRegenerateMessage?: (messageId: string) => void;
+  onRetryMedia?: (message: AgentMessage, edit: boolean) => void;
+  isBusy?: boolean;
   showThinking?: boolean;
+  isReplyStreaming?: boolean;
   thinkingMessages?: AgentMessage[];
   locale?: "en" | "zh-CN";
   registry?: ToolRegistry;
@@ -71,17 +76,50 @@ export function MessageBubble({
   onEditMessage,
   onDeleteMessage,
   onRegenerateMessage,
+  onRetryMedia,
+  isBusy = false,
   showThinking = false,
+  isReplyStreaming = false,
   thinkingMessages = [],
   locale = "en",
   registry,
 }: MessageBubbleProps) {
   const messageAttachments = getMessageAttachments(message);
+  const contentIsToolError =
+    message.role === "assistant" &&
+    toolMessages.some(
+      (toolMessage) =>
+        toolMessage.toolCall?.status === "error" &&
+        toolMessage.toolCall.error?.trim() === message.content.trim(),
+    );
+  const hasAssistantReply =
+    message.role === "assistant" &&
+    (Boolean(message.content.trim()) ||
+      (Array.isArray(message.metadata?.explainedToolCallIds) && message.metadata.explainedToolCallIds.length > 0)) &&
+    !contentIsToolError;
+  const visibleToolMessages = toolMessages.filter((toolMessage) => {
+    const toolCall = toolMessage.toolCall;
+    const isFailedMediaTool =
+      toolCall?.status === "error" &&
+      (toolCall.name === "image_generation" ||
+        toolCall.name === "video_generation");
+    const explainedToolCallIds = message.metadata?.explainedToolCallIds;
+    const hasExplanation = !toolMessage.metadata?.directMediaGeneration ||
+      (Array.isArray(explainedToolCallIds) && explainedToolCallIds.includes(toolCall?.id));
+    const toolIndex = toolMessages.indexOf(toolMessage);
+    const hasSuccessfulRetry = toolMessages.slice(toolIndex + 1).some((candidate) => {
+      const result = candidate.toolCall?.result as { safetyRetry?: unknown } | undefined;
+      return candidate.toolCall?.name === toolCall?.name && candidate.toolCall?.status === "done" && Boolean(result?.safetyRetry);
+    });
+    if (message.metadata?.mediaTurn && isFailedMediaTool && hasSuccessfulRetry) return false;
+    return !(hasAssistantReply && hasExplanation && isFailedMediaTool);
+  });
   const supplementalContent =
-    message.role === "assistant" && toolMessages.length > 0 ? (
+    message.role === "assistant" && visibleToolMessages.length > 0 ? (
       <div className="space-y-3">
-        {toolMessages.map((toolMessage) => (
+        {visibleToolMessages.map((toolMessage) => (
           <ToolCard
+            hideProcessDetails={message.metadata?.mediaTurn === true}
             createdAt={toolMessage.createdAt}
             embedded
             isApprovalSubmitting={
@@ -102,14 +140,31 @@ export function MessageBubble({
     ) : undefined;
 
   const downloadableAsset = getDownloadableAsset(toolMessages);
+  const isMediaTurn = message.metadata?.mediaTurn === true;
+  const replySections = message.role === "assistant" && !isMediaTurn && !isReplyStreaming
+    ? getReplySections(message.metadata?.replySections, message.content) : null;
+  const analysisMessage = replySections ? { ...message, metadata: {
+    ...message.metadata,
+    processTexts: [replySections.analysis],
+    processStartedAt: message.createdAt,
+    processFinishedAt: message.metadata?.finishedAt,
+  } } : null;
+  const lastMediaTool = toolMessages.filter((tool) => tool.toolCall?.name === "image_generation" || tool.toolCall?.name === "video_generation").at(-1);
+  const failedMedia = lastMediaTool?.toolCall?.status === "error" ? lastMediaTool : undefined;
   const actions = (
+    <div className="space-y-2">
+      {failedMedia && onRetryMedia ? <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" disabled={isBusy} onClick={() => onRetryMedia(failedMedia, false)}>{locale === "zh-CN" ? "重试生成" : "Retry generation"}</Button>
+        <Button size="sm" variant="ghost" disabled={isBusy} onClick={() => onRetryMedia(failedMedia, true)}>{locale === "zh-CN" ? "修改描述" : "Edit description"}</Button>
+      </div> : null}
     <MessageBubbleActions
       canDownload={Boolean(downloadableAsset)}
       isAssistant={message.role === "assistant"}
       isUser={message.role === "user"}
       locale={locale}
-      onCopy={() => void copyMessageContent(message.content, locale)}
-      onDelete={onDeleteMessage ? () => onDeleteMessage(message.id) : undefined}
+      hasContent={Boolean(message.content.trim())}
+      onCopy={() => void copyMessageContent(replySections?.answer ?? message.content, locale)}
+      onDelete={!isBusy && onDeleteMessage ? () => onDeleteMessage(message.id) : undefined}
       onDownload={
         downloadableAsset
           ? () =>
@@ -120,29 +175,31 @@ export function MessageBubble({
               )
           : undefined
       }
-      onEdit={onEditMessage ? () => onEditMessage(message) : undefined}
+      onEdit={!isBusy && onEditMessage ? () => onEditMessage(message) : undefined}
       onRegenerate={
-        onRegenerateMessage ? () => onRegenerateMessage(message.id) : undefined
+        !isBusy && onRegenerateMessage ? () => onRegenerateMessage(message.id) : undefined
       }
     />
+    </div>
   );
 
   return (
     <ChatMessage
-      actions={actions}
-      animation="scale"
-      content={message.content}
+      leadingContent={isMediaTurn ? <div className="space-y-4"><MediaTurnProcess message={message} tools={toolMessages} locale={locale} />{supplementalContent}</div> : analysisMessage ? <MediaTurnProcess message={analysisMessage} tools={[]} locale={locale} fallbackLabel={locale === "zh-CN" ? "分析与建议" : "Analysis and suggestions"} /> : undefined}
+      actions={isReplyStreaming || (showThinking && !message.content.trim()) ? undefined : actions}
+      animation={showThinking && !message.content.trim() ? "none" : "scale"}
+      content={contentIsToolError ? "" : replySections?.answer ?? message.content}
       createdAt={message.createdAt ? new Date(message.createdAt) : undefined}
       experimental_attachments={messageAttachments}
       id={message.id}
       role={message.role === "user" ? "user" : "assistant"}
-      showTimeStamp={Boolean(message.createdAt)}
+      showTimeStamp={!isMediaTurn && Boolean(message.createdAt) && !(showThinking && !message.content.trim())}
       emptyState={
         showThinking ? (
           <ThinkingIndicator messages={thinkingMessages} />
         ) : undefined
       }
-      supplementalContent={supplementalContent}
+      supplementalContent={isMediaTurn ? undefined : supplementalContent}
     />
   );
 }
@@ -208,6 +265,7 @@ function getMessageAttachments(message: AgentMessage) {
 }
 
 function MessageBubbleActions({
+  hasContent,
   canDownload,
   isAssistant,
   isUser,
@@ -218,6 +276,7 @@ function MessageBubbleActions({
   onEdit,
   onRegenerate,
 }: {
+  hasContent: boolean;
   canDownload: boolean;
   isAssistant: boolean;
   isUser: boolean;
@@ -231,8 +290,8 @@ function MessageBubbleActions({
   const text = copy[locale];
   return (
     <TooltipProvider>
-      <div className="flex items-center gap-1 rounded-xl border border-border/60 bg-background/95 px-1.5 py-1 shadow-xs backdrop-blur">
-        <ActionButton icon={Copy} label={text.copy} onClick={onCopy} />
+      <div className="flex items-center gap-1 py-1">
+        {hasContent ? <ActionButton icon={Copy} label={text.copy} onClick={onCopy} /> : null}
         {isUser ? (
           <ActionButton
             disabled={!onEdit}
@@ -249,10 +308,7 @@ function MessageBubbleActions({
             onClick={onRegenerate}
           />
         ) : null}
-        {isAssistant ? (
-          <ActionButton disabled icon={Star} label={text.favorite} />
-        ) : null}
-        {isAssistant ? (
+        {isAssistant && canDownload ? (
           <ActionButton
             disabled={!canDownload}
             icon={Download}

@@ -96,7 +96,7 @@ describe("storyboard prompt preview", () => {
       "项目统一画风（最高优先级）：中国水墨动画风格",
     );
     expect(preview.compiledPrompt).toContain("故事时代硬约束：前现代世界");
-    expect(preview.compiledPrompt).toContain("不可省略的静态首帧制作蓝图");
+    expect(preview.compiledPrompt).toContain("镜头起始画面");
     expect(preview.compiledPrompt).toContain("林玄站立");
     expect(preview.compiledPrompt).not.toContain("林玄后退后站稳");
     expect(preview.compiledPrompt).not.toContain("后退一步");

@@ -1270,6 +1270,7 @@ export async function generateStudioLipSync(
     model: string;
     panelId: string;
     audioAssetId: string;
+    voiceLineId: string;
   },
 ) {
   return request<{ task: MediaTask }>(

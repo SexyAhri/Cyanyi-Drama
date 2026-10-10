@@ -358,7 +358,18 @@ export async function updateVoiceLine(
       episodeId,
       episode: { projectId, project: { userId } },
     },
-    select: { id: true },
+    select: {
+      id: true,
+      speaker: true,
+      content: true,
+      delivery: true,
+      matchedPanelId: true,
+      voicePresetId: true,
+      voiceProfilePrompt: true,
+      emotionPrompt: true,
+      emotionStrength: true,
+      optimizeInstructions: true,
+    },
   });
   if (!line) return null;
 
@@ -391,31 +402,58 @@ export async function updateVoiceLine(
     throw new Error("VOICE_LINE_CONTENT_REQUIRED");
   }
 
-  const updated = await prisma.voiceLine.update({
-    where: { id: line.id },
-    data: {
-      ...(input.speaker !== undefined ? { speaker } : {}),
-      ...(input.content !== undefined ? { content } : {}),
-      ...(input.voicePresetId !== undefined
-        ? { voicePresetId: input.voicePresetId || null }
-        : {}),
-      ...(input.voiceProfilePrompt !== undefined
-        ? { voiceProfilePrompt: input.voiceProfilePrompt?.trim() || null }
-        : {}),
-      ...(input.emotionPrompt !== undefined
-        ? { emotionPrompt: input.emotionPrompt?.trim() || null }
-        : {}),
-      ...(input.emotionStrength !== undefined
-        ? { emotionStrength: finiteNumber(input.emotionStrength) }
-        : {}),
-      ...(input.optimizeInstructions !== undefined
-        ? { optimizeInstructions: input.optimizeInstructions }
-        : {}),
-      ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
-      ...(input.matchedPanelId !== undefined
-        ? { matchedPanelId: input.matchedPanelId || null }
-        : {}),
-    },
+  const audioChanged =
+    (input.speaker !== undefined && speaker !== line.speaker) ||
+    (input.content !== undefined && content !== line.content) ||
+    (input.delivery !== undefined && input.delivery !== line.delivery) ||
+    (input.voicePresetId !== undefined && (input.voicePresetId || null) !== line.voicePresetId) ||
+    (input.voiceProfilePrompt !== undefined && (input.voiceProfilePrompt?.trim() || null) !== line.voiceProfilePrompt) ||
+    (input.emotionPrompt !== undefined && (input.emotionPrompt?.trim() || null) !== line.emotionPrompt) ||
+    (input.emotionStrength !== undefined && finiteNumber(input.emotionStrength) !== line.emotionStrength) ||
+    (input.optimizeInstructions !== undefined && input.optimizeInstructions !== line.optimizeInstructions);
+  const nextPanelId = input.matchedPanelId !== undefined
+    ? input.matchedPanelId || null
+    : line.matchedPanelId;
+  const visualChanged = audioChanged || nextPanelId !== line.matchedPanelId;
+  const updated = await prisma.$transaction(async (tx) => {
+    const saved = await tx.voiceLine.update({
+      where: { id: line.id },
+      data: {
+        ...(input.speaker !== undefined ? { speaker } : {}),
+        ...(input.content !== undefined ? { content } : {}),
+        ...(input.voicePresetId !== undefined
+          ? { voicePresetId: input.voicePresetId || null }
+          : {}),
+        ...(input.voiceProfilePrompt !== undefined
+          ? { voiceProfilePrompt: input.voiceProfilePrompt?.trim() || null }
+          : {}),
+        ...(input.emotionPrompt !== undefined
+          ? { emotionPrompt: input.emotionPrompt?.trim() || null }
+          : {}),
+        ...(input.emotionStrength !== undefined
+          ? { emotionStrength: finiteNumber(input.emotionStrength) }
+          : {}),
+        ...(input.optimizeInstructions !== undefined
+          ? { optimizeInstructions: input.optimizeInstructions }
+          : {}),
+        ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
+        ...(input.matchedPanelId !== undefined
+          ? { matchedPanelId: input.matchedPanelId || null }
+          : {}),
+        ...(audioChanged
+          ? { audioAssetId: null, durationSeconds: null, status: "draft" }
+          : {}),
+      },
+    });
+    if (visualChanged) {
+      const panelIds = [...new Set([line.matchedPanelId, nextPanelId].filter((id): id is string => Boolean(id)))];
+      if (panelIds.length)
+        await tx.storyboardPanel.updateMany({
+          where: { id: { in: panelIds }, storyboard: { projectId, episodeId, project: { userId } } },
+          data: { lipSyncAssetId: null },
+        });
+    }
+    return saved;
   });
   return toVoiceLine(updated);
 }
@@ -553,7 +591,7 @@ export async function buildEditorTimeline(
           duration: segment.durationSeconds,
           imageAssetId: panel.imageAssetId,
           videoAssetId: segment.videoAssetId,
-          lipSyncAssetId: null,
+          lipSyncAssetId: panel.videoSegments.length === 1 ? panel.lipSyncAssetId : null,
         }))
       : [
           {

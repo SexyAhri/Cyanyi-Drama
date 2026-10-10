@@ -19,7 +19,21 @@ export async function fetchWithProviderRetry(
   const now = options.now ?? Date.now;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const response = await fetchImpl(input, init);
+    let response: Response;
+    try {
+      response = await fetchImpl(input, init);
+    } catch (error) {
+      if (!isPreTlsDisconnect(error)) throw error;
+      if (attempt >= maxAttempts)
+        throw new Error("PROVIDER_TLS_CONNECTION_RESET", { cause: error });
+      const delayMs = Math.min(
+        maxBackoffMs,
+        baseDelayMs * 2 ** Math.max(0, attempt - 1),
+      );
+      if (options.sleep) await options.sleep(delayMs);
+      else await abortableSleep(delayMs, init?.signal);
+      continue;
+    }
     if (response.status !== 429 || attempt >= maxAttempts) return response;
 
     const retryAfterMs = parseRetryAfterMs(
@@ -37,6 +51,14 @@ export async function fetchWithProviderRetry(
   }
 
   throw new Error("PROVIDER_RETRY_EXHAUSTED");
+}
+
+function isPreTlsDisconnect(error: unknown) {
+  const cause = error instanceof Error ? error.cause : undefined;
+  return (
+    cause instanceof Error &&
+    /before secure TLS connection was established/i.test(cause.message)
+  );
 }
 
 export function parseRetryAfterMs(value: string | null, now = Date.now()) {

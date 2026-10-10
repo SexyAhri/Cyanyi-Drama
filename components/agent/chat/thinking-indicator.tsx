@@ -1,19 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BrainCircuit, Sparkles } from "lucide-react";
+import { Circle } from "lucide-react";
 
 import type { AgentMessage } from "@/lib/agent/types";
-import { cn } from "@/lib/utils";
-
-const thinkingLabels = [
-  "正在思考",
-  "正在组织答案",
-  "正在核对上下文",
-];
 
 export function ThinkingIndicator({ messages }: { messages: AgentMessage[] }) {
-  const [labelIndex, setLabelIndex] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const latestUserIndex = findLastIndex(messages, (message) => message.role === "user");
   const currentTurn = latestUserIndex >= 0 ? messages.slice(latestUserIndex + 1) : [];
   const hasAssistantText = currentTurn.some(
@@ -31,47 +24,44 @@ export function ThinkingIndicator({ messages }: { messages: AgentMessage[] }) {
   );
 
   useEffect(() => {
-    if (hasCompletedTool || activeTool || hasAssistantText) {
+    if (activeTool || hasAssistantText || latestUserIndex < 0) {
       return;
     }
 
     const timer = window.setInterval(() => {
-      setLabelIndex((current) => (current + 1) % thinkingLabels.length);
-    }, 1800);
+      setElapsedSeconds((current) => current + 1);
+    }, 1000);
 
     return () => window.clearInterval(timer);
-  }, [activeTool, hasAssistantText, hasCompletedTool]);
+  }, [activeTool, hasAssistantText, latestUserIndex]);
 
   if (hasAssistantText || activeTool || latestUserIndex < 0) {
     return null;
   }
 
-  const label = hasCompletedTool ? "正在整理结果" : thinkingLabels[labelIndex];
+  const label = hasCompletedTool ? "正在整理生成结果" : "正在等待回复";
+  const elapsedLabel = elapsedSeconds < 60
+    ? `${elapsedSeconds} 秒`
+    : `${Math.floor(elapsedSeconds / 60)} 分 ${elapsedSeconds % 60} 秒`;
 
   return (
     <div
       aria-live="polite"
-      className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground"
+      aria-label={label}
+      className="flex min-h-8 items-center gap-2.5 py-1 text-sm text-muted-foreground"
       role="status"
     >
-      <span className="relative flex size-5 items-center justify-center rounded-full bg-primary/10 text-primary">
-        <BrainCircuit className="size-3.5" />
-        <Sparkles className="absolute -right-1 -top-1 size-2.5 animate-pulse" />
-      </span>
-      <span>{label}</span>
-      <span className="flex items-center gap-0.5" aria-hidden="true">
-        {[0, 1, 2].map((dot) => (
-          <span
-            className={cn(
-              "size-1 rounded-full bg-primary/60",
-              dot === 0 && "animate-bounce [animation-delay:-0.3s]",
-              dot === 1 && "animate-bounce [animation-delay:-0.15s]",
-              dot === 2 && "animate-bounce",
-            )}
-            key={dot}
-          />
-        ))}
-      </span>
+      <Circle
+        aria-hidden="true"
+        className="size-3 shrink-0 animate-pulse fill-current text-foreground motion-reduce:animate-none"
+        strokeWidth={0}
+      />
+      <span aria-hidden="true">{label}<span className="ml-0.5">…</span></span>
+      {elapsedSeconds >= 5 ? (
+        <span aria-hidden="true" className="text-xs tabular-nums">
+          已等待 {elapsedLabel}
+        </span>
+      ) : null}
     </div>
   );
 }

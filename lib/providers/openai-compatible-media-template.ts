@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import type { MediaAsset } from "@/lib/media/task-contract";
 import { fetchWithProviderRetry } from "@/lib/providers/http";
+import { providerErrorMessage } from "@/lib/providers/media/shared";
 
 export type TemplateBodyValue =
   | string
@@ -165,6 +166,20 @@ export async function executeOpenAiCompatibleMediaTemplate(input: {
   if (!created.response.ok)
     throw new Error(templateProviderError(template, created.payload, created.response.status));
 
+  const initialState = stringValue(
+    readJsonPath(created.payload, template.response.statusPath),
+  )?.toLocaleLowerCase();
+  const failureStates = normalizedSet(
+    template.polling?.failStates ?? ["failed", "error", "canceled", "cancelled", "rejected", "blocked"],
+  );
+  if (initialState && failureStates.has(initialState))
+    throw new Error(templateProviderError(
+      template,
+      created.payload,
+      created.response.status,
+      `OPENAI_COMPAT_TEMPLATE_TASK_FAILED:${initialState}`,
+    ));
+
   if (template.mode === "sync")
     return toMediaAssets(
       template.mediaType,
@@ -180,7 +195,7 @@ export async function executeOpenAiCompatibleMediaTemplate(input: {
     intervalMs: 3_000,
     timeoutMs: 10 * 60_000,
     doneStates: ["succeeded", "completed", "success", "done"],
-    failStates: ["failed", "error", "canceled", "cancelled"],
+    failStates: ["failed", "error", "canceled", "cancelled", "rejected", "blocked"],
   };
   const doneStates = normalizedSet(polling.doneStates);
   const failStates = normalizedSet(polling.failStates);
@@ -209,7 +224,12 @@ export async function executeOpenAiCompatibleMediaTemplate(input: {
     )?.toLocaleLowerCase();
     const statusUrls = extractOutputUrls(template, statusResult.payload, false);
     if (state && failStates.has(state))
-      throw new Error(`OPENAI_COMPAT_TEMPLATE_TASK_FAILED:${state}`);
+      throw new Error(templateProviderError(
+        template,
+        statusResult.payload,
+        statusResult.response.status,
+        `OPENAI_COMPAT_TEMPLATE_TASK_FAILED:${state}`,
+      ));
     if (!state && statusUrls.length)
       return toMediaAssets(template.mediaType, input.model, statusUrls, {
         mode: "async",
@@ -452,16 +472,13 @@ function templateProviderError(
   template: OpenAiCompatibleMediaTemplate,
   payload: unknown,
   status: number,
+  fallback = "unknown",
 ) {
   const mapped = readJsonPath(payload, template.response.errorPath);
-  if (typeof mapped === "string" && mapped.trim())
-    return `OPENAI_COMPAT_TEMPLATE_PROVIDER_FAILED:${status}:${mapped.trim()}`;
-  const fallback = isRecord(payload) && isRecord(payload.error)
-    ? payload.error.message
-    : isRecord(payload)
-      ? payload.message
-      : payload;
-  return `OPENAI_COMPAT_TEMPLATE_PROVIDER_FAILED:${status}:${String(fallback ?? "unknown").slice(0, 500)}`;
+  const mappedMessage = typeof mapped === "string" ? mapped.trim() : "";
+  const standardMessage = providerErrorMessage(payload, status, "");
+  const detail = [...new Set([mappedMessage, standardMessage].filter(Boolean))].join(": ");
+  return `OPENAI_COMPAT_TEMPLATE_PROVIDER_FAILED:${status}:${(detail || fallback).slice(0, 1000)}`;
 }
 
 function resolveEndpointUrl(baseUrl: string, path: string) {

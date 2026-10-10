@@ -1,4 +1,5 @@
 import type { MediaAsset } from "@/lib/media/task-contract";
+import { getOpenAICompatibleImageSizeCandidates } from "@/lib/agent/media-size";
 import { normalizeOpenAICompatibleVideoSeconds } from "@/lib/agent/media-video";
 import { fetchWithProviderRetry } from "@/lib/providers/http";
 import { executeOpenAiCompatibleMediaTemplate } from "@/lib/providers/openai-compatible-media-template";
@@ -48,7 +49,12 @@ async function generateImage(
     ? process.env.OPENAI_COMPATIBLE_IMAGE_EDIT_PATH || "images/edits"
     : process.env.OPENAI_COMPATIBLE_IMAGE_GENERATION_PATH ||
       "images/generations";
-  const size = resolveImageSize(input.request.ratio, input.request.resolution);
+  const size = /^gpt-image-2(?:$|[-.])/i.test(input.model)
+    ? getOpenAICompatibleImageSizeCandidates(
+        input.request.resolution ?? "1k",
+        input.request.ratio ?? "1:1",
+      )[0]?.size
+    : resolveImageSize(input.request.ratio, input.request.resolution);
   const response = await requestImage(input, endpoint, references, size);
   const payload = await readProviderJson(response);
   if (!response.ok)
@@ -88,7 +94,7 @@ function requestImage(
       headers: { Authorization: `Bearer ${input.apiKey}` },
       body: form,
       cache: "no-store",
-    });
+    }, { maxAttempts: 3 });
   }
   return fetchWithProviderRetry(joinUrl(input.baseUrl, endpoint), {
     method: "POST",
@@ -101,7 +107,7 @@ function requestImage(
       ...(input.request.quality ? { quality: input.request.quality } : {}),
     }),
     cache: "no-store",
-  });
+  }, { maxAttempts: 3 });
 }
 
 function normalizeImageCount(value?: number) {
@@ -230,6 +236,12 @@ async function pollVideoResult(input: {
   statusPath: (taskId: string) => string;
 }) {
   const initial = extractVideoState(input.initialPayload);
+  if (initial.error || /failed|error|cancelled|canceled|rejected|blocked/i.test(initial.status ?? ""))
+    throw new Error(initial.error || providerErrorMessage(
+      input.initialPayload,
+      200,
+      `VIDEO_PROVIDER_FAILED:${initial.status}`,
+    ));
   if (initial.url) return [videoAsset(input.input, initial.url)];
   if (!initial.taskId) throw new Error("VIDEO_TASK_ID_MISSING");
   for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -245,9 +257,13 @@ async function pollVideoResult(input: {
     if (!response.ok)
       throw new Error(providerErrorMessage(payload, response.status));
     const state = extractVideoState(payload);
+    if (state.error || /failed|error|cancelled|canceled|rejected|blocked/i.test(state.status ?? ""))
+      throw new Error(state.error || providerErrorMessage(
+        payload,
+        response.status,
+        `VIDEO_PROVIDER_FAILED:${state.status}`,
+      ));
     if (state.url) return [videoAsset(input.input, state.url, initial.taskId)];
-    if (/failed|error|canceled/i.test(state.status ?? ""))
-      throw new Error(`VIDEO_PROVIDER_FAILED:${state.status}`);
   }
   throw new Error("VIDEO_POLL_TIMEOUT");
 }
@@ -322,6 +338,7 @@ function extractVideoState(payload: unknown) {
   return {
     taskId: stringValue(data.id) || stringValue(data.task_id),
     status: stringValue(data.status),
+    error: providerErrorMessage({ error: data.error ?? value.error }, 200, "") || undefined,
     url:
       stringValue(data.url) ||
       stringValue(data.video_url) ||

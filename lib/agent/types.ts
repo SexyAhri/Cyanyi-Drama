@@ -1,5 +1,12 @@
 export type AgentMessageRole = "user" | "assistant" | "tool";
 
+export type MediaSafetyRetry = {
+  originalPrompt: string;
+  revisedPrompt: string;
+  originalError?: string;
+  originalTaskId?: string;
+};
+
 export type ToolCallStatus =
   | "pending"
   | "approved"

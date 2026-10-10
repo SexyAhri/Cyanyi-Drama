@@ -218,8 +218,10 @@ Chat.displayName = "Chat";
 export function ChatMessages({
   messages,
   children,
+  latestLabel = "回到最新",
 }: React.PropsWithChildren<{
   messages: unknown[];
+  latestLabel?: string;
 }>) {
   const {
     containerRef,
@@ -248,13 +250,14 @@ export function ChatMessages({
         <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-end pr-2">
           <div className="flex w-full justify-end">
             <Button
-              className="pointer-events-auto h-8 w-8 rounded-full ease-in-out animate-in fade-in-0 slide-in-from-bottom-1"
+              className="pointer-events-auto gap-1.5 rounded-full border bg-background px-3 shadow-sm"
               onClick={scrollToBottom}
-              size="icon"
+              size="sm"
               type="button"
               variant="ghost"
             >
               <ArrowDown className="h-4 w-4" />
+              <span>{latestLabel}</span>
             </Button>
           </div>
         </div>

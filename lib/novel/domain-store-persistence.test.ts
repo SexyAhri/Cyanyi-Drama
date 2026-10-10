@@ -51,6 +51,8 @@ beforeEach(() => {
       firstLastFramePrompt: "人工确认的首尾帧提示词",
       durationSeconds: null,
       imageAssetId: "image-asset-1",
+      speakingCharacter: "韩宇",
+      lipSyncText: "旧台词",
       imagePromptDesignJson: JSON.stringify({
         designNotes: ["旧设计重点"],
         continuitySafeguards: ["旧连续性"],
@@ -160,6 +162,24 @@ describe("storyboard persistence", () => {
           videoAssetId: null,
         }),
       }),
+    );
+  });
+
+  it("invalidates old lip sync media when the visible speaker changes", async () => {
+    await saveStoryboard("user-1", "project-1", "episode-1", {
+      status: "ready",
+      panels: [{
+        clipId: "clip-1",
+        clipPanelIndex: 0,
+        panelIndex: 0,
+        imagePrompt: "人工确认的旧图片提示词",
+        videoPrompt: "人工确认的旧视频提示词",
+        speakingCharacter: "韩子枫",
+        lipSyncText: "新台词",
+      }],
+    });
+    expect(storyboardPanelUpsert.mock.calls[0]?.[0]?.update).toEqual(
+      expect.objectContaining({ lipSyncAssetId: null }),
     );
   });
 

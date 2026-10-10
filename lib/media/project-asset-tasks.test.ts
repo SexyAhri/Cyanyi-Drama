@@ -75,11 +75,10 @@ describe("storyboard media task contract", () => {
       },
     );
 
-    expect(prompt).toContain("1. t=0 起始状态");
-    expect(prompt).toContain("首帧必须精确呈现：body=两人相对");
+    expect(prompt).toContain("起始姿态：body=两人相对");
     expect(prompt).toContain("角色：林澈、顾言");
     expect(prompt).toContain("道具：长剑");
-    expect(prompt).toContain("静态首帧边界");
+    expect(prompt).toContain("连续表演中的一帧");
     expect(prompt).not.toContain("双剑相抵");
     expect(prompt).not.toContain("林澈退半步");
     expect(prompt).not.toContain("primaryMovement=track");

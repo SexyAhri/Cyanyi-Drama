@@ -1,5 +1,6 @@
 import type { AgentComposerReferenceImage } from "../composer";
-import type { AgentToolCall } from "@/lib/agent/types";
+import type { AgentToolCall, MediaSafetyRetry } from "@/lib/agent/types";
+import { resolveReferenceImageMediaType } from "@/lib/agent/model-messages";
 
 type ImageResult = {
   images?: Array<{
@@ -8,11 +9,13 @@ type ImageResult = {
     url?: string;
     width?: number;
   }>;
+  safetyRetry?: MediaSafetyRetry;
 };
 
 type VideoResult = {
   thumbnailUrl?: string;
   url?: string;
+  safetyRetry?: MediaSafetyRetry;
 };
 
 type MediaArgs = {
@@ -20,6 +23,7 @@ type MediaArgs = {
   model?: string;
   prompt?: string;
   templatePrompt?: string;
+  safetyRetry?: MediaSafetyRetry;
 };
 
 export type MediaToolLifecycle =
@@ -36,6 +40,7 @@ export type MediaToolPresentation = {
   lifecycle: MediaToolLifecycle;
   previewSrc?: string;
   referenceImage?: AgentComposerReferenceImage;
+  safetyRetry?: MediaSafetyRetry;
 };
 
 export function getMediaToolPresentation(
@@ -52,12 +57,20 @@ export function getMediaToolPresentation(
       kind: "image",
       lifecycle: resolveLifecycle(toolCall.status, Boolean(assetUrl)),
       previewSrc: assetUrl,
+      safetyRetry: result.safetyRetry ?? args.safetyRetry,
       referenceImage: assetUrl
         ? {
             format: image?.format ?? args.format,
+            mimeType: resolveReferenceImageMediaType({
+              url: assetUrl,
+              format: image?.format ?? args.format,
+            }),
             height: image?.height,
             model: args.model,
-            prompt: args.prompt?.trim() || args.templatePrompt?.trim(),
+            prompt:
+              result.safetyRetry?.revisedPrompt?.trim() ||
+              args.prompt?.trim() ||
+              args.templatePrompt?.trim(),
             sourceToolCallId: toolCall.id,
             url: assetUrl,
             width: image?.width,
@@ -74,6 +87,7 @@ export function getMediaToolPresentation(
       kind: "video",
       lifecycle: resolveLifecycle(toolCall.status, Boolean(result.url)),
       previewSrc: result.thumbnailUrl,
+      safetyRetry: result.safetyRetry ?? args.safetyRetry,
     };
   }
 
