@@ -991,6 +991,7 @@ async function linkGeneratedAsset(
         });
     });
   } else if (task.targetType === "storyboard_panel") {
+    if ((request as Record<string, unknown>).canvasDeferredSelection === true) return;
     const segmentId = stringField(request, "videoSegmentId");
     const segmentIndex = numberField(request, "videoSegmentIndex");
     if (task.kind === "video" && segmentId) {

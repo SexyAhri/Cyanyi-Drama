@@ -208,7 +208,7 @@ export async function loadStudioProductionData(
 export async function startStoryToScriptWorkflow(
   projectId: string,
   episodeId: string,
-  input: { locale: "en" | "zh" },
+  input: { locale: "en" | "zh"; channelId: string; model: string },
 ) {
   return request<{ workflow: WorkflowRunSummary; reused: boolean }>(
     `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/parse`,
@@ -242,10 +242,9 @@ export async function retryStudioWorkflowStep(runId: string, stepKey: string) {
 }
 
 export async function deleteStudioWorkflow(runId: string) {
-  return request<{ ok: true }>(
-    `/api/workflows/${encodeURIComponent(runId)}`,
-    { method: "DELETE" },
-  );
+  return request<{ ok: true }>(`/api/workflows/${encodeURIComponent(runId)}`, {
+    method: "DELETE",
+  });
 }
 
 export async function splitStudioNovel(
@@ -356,13 +355,7 @@ export async function transitionStudioDeliverable(
   projectId: string,
   deliverableId: string,
   input: {
-    action:
-      | "submit"
-      | "approve"
-      | "reject"
-      | "lock"
-      | "supersede"
-      | "restore";
+    action: "submit" | "approve" | "reject" | "lock" | "supersede" | "restore";
     gateKey?: string;
     note?: string;
   },
@@ -526,7 +519,8 @@ export async function adaptStudioEpisode(
       string,
       unknown
     > | null;
-    const message = typeof body?.message === "string" ? body.message.trim() : "";
+    const message =
+      typeof body?.message === "string" ? body.message.trim() : "";
     throw new StudioApiError(
       isRuntimeLocaleCompatible(message) ? message : studioRequestFallback(),
       response.status,
@@ -589,7 +583,9 @@ async function* readJsonLineStream(stream: ReadableStream<Uint8Array>) {
   }
 }
 
-function isEpisodeSourceRecord(value: unknown): value is EpisodeSourceVersionRecord {
+function isEpisodeSourceRecord(
+  value: unknown,
+): value is EpisodeSourceVersionRecord {
   return (
     Boolean(value) &&
     typeof value === "object" &&
@@ -639,7 +635,8 @@ export async function generateStudioAssetVisualProfile(
       string,
       unknown
     > | null;
-    const message = typeof body?.message === "string" ? body.message.trim() : "";
+    const message =
+      typeof body?.message === "string" ? body.message.trim() : "";
     throw new StudioApiError(
       isRuntimeLocaleCompatible(message) ? message : studioRequestFallback(),
       response.status,
@@ -664,8 +661,7 @@ export async function generateStudioAssetVisualProfile(
         500,
       );
   }
-  if (!target || !profile)
-    throw new StudioApiError(studioRequestFallback(), 0);
+  if (!target || !profile) throw new StudioApiError(studioRequestFallback(), 0);
   return { target, profile };
 }
 
@@ -798,6 +794,7 @@ export async function saveStudioStoryboard(
   projectId: string,
   episodeId: string,
   input: {
+    expectedVersion?: number;
     status: string;
     sourceHash: string | null;
     panels: StudioStoryboardPanel[];

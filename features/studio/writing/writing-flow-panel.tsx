@@ -6,10 +6,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 import { StatusIndicator } from "../components/status-indicator";
+import { ModelSelect } from "../components/model-select";
 import { formatStudioDate, getStudioCopy } from "../i18n";
 import { runtimeStatusToStageStatus } from "../stage-state";
 import type {
   StudioLocale,
+  StudioModelOption,
   WorkflowRunSummary,
 } from "../types";
 import { workflowStepLabel } from "../workflow-labels";
@@ -22,13 +24,16 @@ const PLACEMENT_STEPS = [
   {
     key: "organize_production_script",
     type: "organize_production_script",
-    execution: "local",
+    execution: "ai",
   },
 ] as const;
 
 type WorkflowAction = "cancel" | "retry" | "pause" | "resume";
 
 export function WritingFlowPanel({
+  analysisModelId,
+  models,
+  onAnalysisModelChange,
   adaptationWorkflow,
   canStartPlacement,
   isActing,
@@ -37,6 +42,9 @@ export function WritingFlowPanel({
   onStartPlacement,
   placementWorkflow,
 }: {
+  analysisModelId: string;
+  models: StudioModelOption[];
+  onAnalysisModelChange: (value: string) => void;
   adaptationWorkflow?: WorkflowRunSummary;
   canStartPlacement: boolean;
   isActing: boolean;
@@ -78,6 +86,18 @@ export function WritingFlowPanel({
         </div>
 
         <div className="mt-5 space-y-2 border-t pt-5">
+          <ModelSelect
+            models={models}
+            value={analysisModelId}
+            onChange={onAnalysisModelChange}
+            placeholder={
+              locale === "en" ? "AI organization model" : "AI 整理模型"
+            }
+            ariaLabel={
+              locale === "en" ? "AI organization model" : "AI 整理模型"
+            }
+            disabled={isActing || workflowActive}
+          />
           {!workflowActive ? (
             <Button
               className="w-full"
@@ -129,7 +149,9 @@ function WorkflowBlock({
   const steps = workflow?.steps.length
     ? workflow.steps.map((step) => ({
         ...step,
-        execution: isAiStep(workflow.workflowType) ? "ai" : "local",
+        execution:
+          workflow.execution ??
+          (isAiStep(workflow.workflowType) ? "ai" : "local"),
       }))
     : plannedSteps.map((step, index) => ({
         ...step,
@@ -182,7 +204,9 @@ function WorkflowBlock({
 }
 
 function isAiStep(workflowType: string) {
-  return workflowType === "episode-adaptation";
+  return (
+    workflowType === "episode-adaptation" || workflowType === "story-to-script"
+  );
 }
 
 function WorkflowActions({

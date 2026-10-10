@@ -54,7 +54,10 @@ import {
 } from "../api";
 import { ModelSelect } from "../components/model-select";
 import { StatusIndicator } from "../components/status-indicator";
-import { runtimeStatusToStageStatus } from "../stage-state";
+import {
+  getWorkflowContentRevision,
+  runtimeStatusToStageStatus,
+} from "../stage-state";
 import type {
   ProductionData,
   ProductionDeliverableCatalog,
@@ -229,12 +232,14 @@ export function AudioWorkspace({
 }) {
   const text = copy[locale];
   const projectId = snapshot.project.id;
+  const audioWorkflowRevision = snapshot.workflows
+    .filter((workflow) => workflow.episodeId === episode.id && ["voice-analysis", "voice-performance-design"].includes(workflow.workflowType))
+    .map(getWorkflowContentRevision).join("|");
   const [data, setData] = useState<AudioData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [busyHeaderAction, setBusyHeaderAction] =
-    useState<HeaderAction>(null);
+  const [busyHeaderAction, setBusyHeaderAction] = useState<HeaderAction>(null);
   const [busyTaskId, setBusyTaskId] = useState("");
   const [selectedLineId, setSelectedLineId] = useState("");
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
@@ -283,7 +288,7 @@ export function AudioWorkspace({
     setLoading(true);
     void load(controller.signal);
     return () => controller.abort();
-  }, [load]);
+  }, [load, audioWorkflowRevision]);
 
   useEffect(() => {
     setAnalysisModelId((current) =>
@@ -587,9 +592,7 @@ export function AudioWorkspace({
               <h2 className="text-sm font-medium text-foreground">
                 {text.noLines}
               </h2>
-              <p className="max-w-md text-sm leading-6">
-                {text.noLinesDetail}
-              </p>
+              <p className="max-w-md text-sm leading-6">{text.noLinesDetail}</p>
             </div>
           ) : (
             <>
@@ -631,107 +634,109 @@ export function AudioWorkspace({
                 </div>
               ) : null}
               <div className="grid border-y xl:min-h-0 xl:flex-1 xl:grid-cols-[17rem_minmax(0,1fr)] xl:overflow-hidden">
-              <aside className="flex min-h-0 flex-col border-b xl:border-r xl:border-b-0">
-                <div className="flex h-11 items-center justify-between gap-3 border-b px-3 text-xs">
-                  <label className="flex min-w-0 items-center gap-2 font-semibold">
-                    <Checkbox
-                      aria-label={text.lines}
-                      checked={allChecked}
-                      onCheckedChange={(checked) =>
-                        setCheckedIds(
-                          checked ? lines.map((line) => line.id) : [],
-                        )
-                      }
-                    />
-                    <span className="truncate">{text.lines}</span>
-                  </label>
-                  <span className="shrink-0 text-muted-foreground">
-                    {checkedIds.length} {text.selected}
-                  </span>
-                </div>
-                <div className="max-h-80 overflow-y-auto p-1.5 xl:max-h-none xl:flex-1">
-                  {lines.map((line) => {
-                    const task = latestVoiceTask(line.id, tasks);
-                    const checked = checkedIds.includes(line.id);
-                    return (
-                      <div
-                        className={cn(
-                          "flex items-start gap-2 rounded-md px-2 py-1",
-                          selectedLine?.id === line.id && "bg-muted",
-                        )}
-                        key={line.id}
-                      >
-                        <Checkbox
-                          aria-label={`${text.lines} ${line.lineIndex + 1}`}
-                          checked={checked}
-                          className="mt-3"
-                          onCheckedChange={(next) =>
-                            setCheckedIds((current) =>
-                              next
-                                ? [...new Set([...current, line.id])]
-                                : current.filter((id) => id !== line.id),
-                            )
-                          }
-                        />
-                        <button
-                          className="min-w-0 flex-1 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                          onClick={() => setSelectedLineId(line.id)}
-                          type="button"
+                <aside className="flex min-h-0 flex-col border-b xl:border-r xl:border-b-0">
+                  <div className="flex h-11 items-center justify-between gap-3 border-b px-3 text-xs">
+                    <label className="flex min-w-0 items-center gap-2 font-semibold">
+                      <Checkbox
+                        aria-label={text.lines}
+                        checked={allChecked}
+                        onCheckedChange={(checked) =>
+                          setCheckedIds(
+                            checked ? lines.map((line) => line.id) : [],
+                          )
+                        }
+                      />
+                      <span className="truncate">{text.lines}</span>
+                    </label>
+                    <span className="shrink-0 text-muted-foreground">
+                      {checkedIds.length} {text.selected}
+                    </span>
+                  </div>
+                  <div className="max-h-80 overflow-y-auto p-1.5 xl:max-h-none xl:flex-1">
+                    {lines.map((line) => {
+                      const task = latestVoiceTask(line.id, tasks);
+                      const checked = checkedIds.includes(line.id);
+                      return (
+                        <div
+                          className={cn(
+                            "flex items-start gap-2 rounded-md px-2 py-1",
+                            selectedLine?.id === line.id && "bg-muted",
+                          )}
+                          key={line.id}
                         >
-                          <span className="flex items-center gap-2">
-                            <span className="truncate text-sm font-medium">
-                              {line.speaker}
+                          <Checkbox
+                            aria-label={`${text.lines} ${line.lineIndex + 1}`}
+                            checked={checked}
+                            className="mt-3"
+                            onCheckedChange={(next) =>
+                              setCheckedIds((current) =>
+                                next
+                                  ? [...new Set([...current, line.id])]
+                                  : current.filter((id) => id !== line.id),
+                              )
+                            }
+                          />
+                          <button
+                            className="min-w-0 flex-1 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                            onClick={() => setSelectedLineId(line.id)}
+                            type="button"
+                          >
+                            <span className="flex items-center gap-2">
+                              <span className="truncate text-sm font-medium">
+                                {line.speaker}
+                              </span>
+                              {task ? (
+                                <StatusIndicator
+                                  compact
+                                  locale={locale}
+                                  status={runtimeStatusToStageStatus(
+                                    task.status,
+                                  )}
+                                />
+                              ) : null}
                             </span>
-                            {task ? (
-                              <StatusIndicator
-                                compact
-                                locale={locale}
-                                status={runtimeStatusToStageStatus(task.status)}
-                              />
-                            ) : null}
-                          </span>
-                          <span className="mt-0.5 block line-clamp-2 text-xs leading-5 text-muted-foreground">
-                            {line.content}
-                          </span>
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </aside>
+                            <span className="mt-0.5 block line-clamp-2 text-xs leading-5 text-muted-foreground">
+                              {line.content}
+                            </span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </aside>
 
-              {selectedLine && data ? (
-                <VoiceLineDetails
-                  assets={data.assets}
-                  audioModel={audioModels.find(
-                    (item) => item.id === audioModelId,
-                  )}
-                  audioModelId={audioModelId}
-                  audioModels={audioModels}
-                  busy={busy}
-                  busyTaskId={busyTaskId}
-                  line={selectedLine}
-                  lipModel={lipSyncModels.find(
-                    (item) => item.id === lipModelId,
-                  )}
-                  lipModels={lipSyncModels}
-                  lipModelId={lipModelId}
-                  locale={locale}
-                  onControlTask={controlTask}
-                  onAudioModelChange={setAudioModelId}
-                  onGenerate={() => generateLines([selectedLine.id])}
-                  onLipModelChange={setLipModelId}
-                  onRun={run}
-                  panels={panels}
-                  presets={data.presets}
-                  speakerOptions={speakerOptions}
-                  projectId={projectId}
-                  episodeId={episode.id}
-                  setData={setData}
-                  tasks={tasks}
-                />
-              ) : null}
-            </div>
+                {selectedLine && data ? (
+                  <VoiceLineDetails
+                    assets={data.assets}
+                    audioModel={audioModels.find(
+                      (item) => item.id === audioModelId,
+                    )}
+                    audioModelId={audioModelId}
+                    audioModels={audioModels}
+                    busy={busy}
+                    busyTaskId={busyTaskId}
+                    line={selectedLine}
+                    lipModel={lipSyncModels.find(
+                      (item) => item.id === lipModelId,
+                    )}
+                    lipModels={lipSyncModels}
+                    lipModelId={lipModelId}
+                    locale={locale}
+                    onControlTask={controlTask}
+                    onAudioModelChange={setAudioModelId}
+                    onGenerate={() => generateLines([selectedLine.id])}
+                    onLipModelChange={setLipModelId}
+                    onRun={run}
+                    panels={panels}
+                    presets={data.presets}
+                    speakerOptions={speakerOptions}
+                    projectId={projectId}
+                    episodeId={episode.id}
+                    setData={setData}
+                    tasks={tasks}
+                  />
+                ) : null}
+              </div>
             </>
           )}
         </TabsContent>
@@ -1012,9 +1017,7 @@ function VoiceLineDetails({
               </div>
             </section>
             <section className="min-w-0 border-t pt-5 2xl:border-t-0 2xl:border-l 2xl:pt-0 2xl:pl-6">
-              <h3 className="text-sm font-semibold">
-                {text.linePerformance}
-              </h3>
+              <h3 className="text-sm font-semibold">{text.linePerformance}</h3>
               <div className="mt-3 grid gap-4">
                 <div className="grid gap-1.5">
                   <div className="flex items-center justify-between gap-3 text-xs font-medium">

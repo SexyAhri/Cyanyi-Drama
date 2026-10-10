@@ -1,14 +1,10 @@
-import type {
-  ProjectAssetCatalog,
-  ProjectMediaAsset,
-} from "../types";
+import type { ProjectAssetCatalog, ProjectMediaAsset } from "../types";
 import type { MediaTask } from "@/lib/media/task-contract";
 import {
-  compileAssetVisualProfile,
   parseAssetVisualProfile,
   type AssetVisualProfile,
 } from "@/lib/assets/visual-profile";
-import { getProjectArtStyleDirective } from "@/lib/projects/art-style";
+import { buildAssetGenerationPrompt } from "@/lib/assets/generation-prompt";
 
 export type StudioAssetKind = "character" | "location" | "prop";
 
@@ -51,13 +47,11 @@ export function buildStudioAssetEntities(
   if (kind === "character") {
     return catalog.characters.map((character) => {
       const visualProfile = parseAssetVisualProfile(character.visualProfile);
-      const appearanceDescription = preferredDescription(
-        character.appearances,
-      );
+      const appearanceDescription = preferredDescription(character.appearances);
       return {
         id: character.id,
         description: character.introduction,
-        generationPrompt: buildGenerationPrompt({
+        generationPrompt: buildAssetGenerationPrompt({
           kind,
           name: character.name,
           description: character.introduction,
@@ -99,7 +93,7 @@ export function buildStudioAssetEntities(
       return {
         id: location.id,
         description: location.summary,
-        generationPrompt: buildGenerationPrompt({
+        generationPrompt: buildAssetGenerationPrompt({
           kind,
           name: location.name,
           description: location.summary,
@@ -135,7 +129,7 @@ export function buildStudioAssetEntities(
     return {
       id: prop.id,
       description: prop.summary,
-      generationPrompt: buildGenerationPrompt({
+      generationPrompt: buildAssetGenerationPrompt({
         kind,
         name: prop.name,
         description: prop.summary,
@@ -147,25 +141,25 @@ export function buildStudioAssetEntities(
       name: prop.name,
       visualProfile,
       candidates: catalog.assets
-      .filter((asset) =>
-        asset.references.some(
-          (reference) =>
-            reference.entityType === "prop" && reference.entityId === prop.id,
-        ),
-      )
-      .map((asset) => ({
-        id: asset.id,
-        assetId: asset.id,
-        createdAt: asset.createdAt,
-        description: null,
-        selected: asset.references.some(
-          (reference) =>
-            reference.entityType === "prop" &&
-            reference.entityId === prop.id &&
-            reference.role === "selected",
-        ),
-        url: asset.url,
-      })),
+        .filter((asset) =>
+          asset.references.some(
+            (reference) =>
+              reference.entityType === "prop" && reference.entityId === prop.id,
+          ),
+        )
+        .map((asset) => ({
+          id: asset.id,
+          assetId: asset.id,
+          createdAt: asset.createdAt,
+          description: null,
+          selected: asset.references.some(
+            (reference) =>
+              reference.entityType === "prop" &&
+              reference.entityId === prop.id &&
+              reference.role === "selected",
+          ),
+          url: asset.url,
+        })),
     };
   });
 }
@@ -177,8 +171,7 @@ export function getProjectSourceAssets(
   return catalog.assets.filter((asset) =>
     asset.references.some(
       (reference) =>
-        reference.entityType === "project" &&
-        reference.entityId === projectId,
+        reference.entityType === "project" && reference.entityId === projectId,
     ),
   );
 }
@@ -206,78 +199,7 @@ function preferredDescription(
 ) {
   return (
     items.find((item) => item.selected && item.description?.trim())
-      ?.description ?? items.find((item) => item.description?.trim())?.description
+      ?.description ??
+    items.find((item) => item.description?.trim())?.description
   );
-}
-
-function buildGenerationPrompt(input: {
-  artStyle?: string;
-  kind: StudioAssetKind;
-  name: string;
-  description?: string | null;
-  visualDescription?: string | null;
-  visualProfile?: AssetVisualProfile;
-  details?: Record<string, unknown>;
-}) {
-  const kindLabel =
-    input.kind === "character"
-      ? "角色"
-      : input.kind === "location"
-        ? "场景"
-        : "道具";
-  const lines = input.artStyle
-    ? [
-        getProjectArtStyleDirective(input.artStyle, "zh"),
-        `${kindLabel}名称：${input.name.trim()}`,
-      ]
-    : [`${kindLabel}名称：${input.name.trim()}`];
-  const profile = compileAssetVisualProfile(input.visualProfile);
-  if (profile) lines.push("已锁定视觉设定：", profile);
-  if (!input.visualProfile && input.visualDescription?.trim())
-    lines.push(`视觉设定：${input.visualDescription.trim()}`);
-  if (input.description?.trim())
-    lines.push(`${kindLabel}描述：${input.description.trim()}`);
-  const details = formatPromptDetails(input.details);
-  if (details.length) lines.push("详细设定：", ...details);
-  return lines.join("\n");
-}
-
-function formatPromptDetails(value?: Record<string, unknown>) {
-  if (!value) return [];
-  return Object.entries(value).flatMap(([key, item]) =>
-    formatPromptValue(key, item),
-  );
-}
-
-function formatPromptValue(key: string, value: unknown): string[] {
-  if (typeof value === "string")
-    return value.trim() ? [`${key}：${value.trim()}`] : [];
-  if (typeof value === "number" || typeof value === "boolean")
-    return [`${key}：${String(value)}`];
-  if (Array.isArray(value)) {
-    const scalarValues = value
-      .filter(
-        (item): item is string | number | boolean =>
-          typeof item === "string" ||
-          typeof item === "number" ||
-          typeof item === "boolean",
-      )
-      .map((item) => String(item).trim())
-      .filter(Boolean);
-    const nestedValues = value.flatMap((item, index) =>
-      item && typeof item === "object" && !Array.isArray(item)
-        ? formatPromptValue(`${key}.${index + 1}`, item)
-        : [],
-    );
-    return [
-      ...(scalarValues.length ? [`${key}：${scalarValues.join("；")}`] : []),
-      ...nestedValues,
-    ];
-  }
-  if (value && typeof value === "object")
-    return Object.entries(value as Record<string, unknown>).flatMap(
-      ([nestedKey, nestedValue]) =>
-        formatPromptValue(`${key}.${nestedKey}`, nestedValue),
-    );
-  return [];
 }

@@ -1,7 +1,20 @@
 "use client";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 
-import { Bot, LoaderCircle, Send, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import {
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  CheckCheck,
+  Clapperboard,
+  Layers3,
+  SlidersHorizontal,
+  Sparkles,
+} from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { MessageList } from "@/components/agent/message";
 import type { ToolRegistry } from "@/components/agent/tool/tool-registry";
@@ -19,37 +32,16 @@ import type {
   StudioAgentContext,
   StudioLocale,
   StudioModelOption,
+  StudioSelectionContext,
   WorkspaceSnapshot,
 } from "../types";
 import { ModelSelect } from "../components/model-select";
 import { createStudioAgentAdapter } from "./studio-agent-adapter";
-
-const copy = {
-  "zh-CN": {
-    ask: "询问当前制作状态",
-    check: "检查当前阶段",
-    empty: "上下文 Agent",
-    failed: "列出失败任务",
-    retry: "重试失败媒体任务",
-    send: "发送",
-    selected: "当前选择",
-    messages: "Agent 消息",
-    model: "Agent 模型",
-    working: "Agent 正在处理",
-  },
-  en: {
-    ask: "Ask about the current production state",
-    check: "Check current stage",
-    empty: "Context agent",
-    failed: "List failed tasks",
-    retry: "Retry failed media task",
-    send: "Send",
-    selected: "Selected",
-    messages: "Agent messages",
-    model: "Agent model",
-    working: "Agent is working",
-  },
-} as const;
+import {
+  directorAssistantCopy,
+  getDirectorSuggestions,
+} from "./director-assistant-copy";
+import { DirectorPromptReview } from "./director-prompt-review";
 
 const operations = [
   "cancel_media_task",
@@ -59,6 +51,13 @@ const operations = [
   "revise_screenplay",
   "retry_media_task",
   "retry_workflow",
+  "update_canvas_prompt",
+  "start_script_organization",
+  "start_storyboard_generation",
+  "start_voice_analysis",
+  "start_voice_design",
+  "start_episode_adaptation",
+  "start_asset_visual_design",
 ] as const;
 
 function createStudioToolRegistry(locale: StudioLocale): ToolRegistry {
@@ -72,6 +71,13 @@ function createStudioToolRegistry(locale: StudioLocale): ToolRegistry {
           "Revise screenplay",
           "Retry media task",
           "Retry workflow",
+          "Update canvas prompt",
+          "Organize scenes and assets",
+          "Generate storyboard",
+          "Analyze dialogue",
+          "Design voice performance",
+          "Adapt episode faithfully",
+          "Design asset appearance",
         ]
       : [
           "取消媒体任务",
@@ -81,6 +87,13 @@ function createStudioToolRegistry(locale: StudioLocale): ToolRegistry {
           "修改剧本",
           "重试媒体任务",
           "重试工作流",
+          "修改画布提示词草稿",
+          "AI 场次与资产整理",
+          "分镜生成",
+          "台词分析",
+          "配音表演设计",
+          "忠实剧本改编",
+          "资产视觉设计",
         ];
   const description =
     locale === "en"
@@ -93,7 +106,52 @@ function createStudioToolRegistry(locale: StudioLocale): ToolRegistry {
         description,
         label: labels[index],
         name,
-        showArgs: name === "revise_screenplay",
+        showArgs:
+          name === "revise_screenplay" ||
+          name === "update_canvas_prompt" ||
+          name.startsWith("start_"),
+        ...(name.startsWith("start_")
+          ? {
+              renderArgs: (value: unknown) => {
+                const plan =
+                  value && typeof value === "object" && "production" in value
+                    ? (value.production as {
+                        target?: string;
+                        model?: string;
+                        note?: string;
+                      })
+                    : null;
+                return plan ? (
+                  <div className="space-y-1 text-xs leading-relaxed">
+                    <p>
+                      {locale === "en" ? "Target" : "目标"}：{plan.target}
+                    </p>
+                    <p>
+                      {locale === "en" ? "Model" : "模型"}：{plan.model}
+                    </p>
+                    <p className="text-muted-foreground">{plan.note}</p>
+                  </div>
+                ) : null;
+              },
+              renderResult: () => (
+                <p className="text-xs text-muted-foreground">
+                  {locale === "en"
+                    ? "Submitted. Follow progress and results in Tasks."
+                    : "已提交，可在任务栏查看进度与结果。"}
+                </p>
+              ),
+            }
+          : {}),
+        ...(name === "update_canvas_prompt"
+          ? {
+              renderArgs: (value: unknown) => (
+                <DirectorPromptReview value={value} locale={locale} />
+              ),
+              renderResult: (value: unknown) => (
+                <DirectorPromptReview value={value} locale={locale} completed />
+              ),
+            }
+          : {}),
       },
     ]),
   );
@@ -107,6 +165,10 @@ export function AgentPanel({
   onAnalysisModelChange,
   onRefresh,
   snapshot,
+  selections,
+  onSelectContext,
+  onEditContext,
+  beforeSend,
 }: {
   analysisModelId: string;
   context: StudioAgentContext;
@@ -115,9 +177,27 @@ export function AgentPanel({
   onAnalysisModelChange: (modelId: string) => void;
   onRefresh: () => Promise<unknown> | void;
   snapshot: WorkspaceSnapshot;
+  selections?: StudioSelectionContext[];
+  onSelectContext?: (selection: StudioSelectionContext) => void;
+  onEditContext?: (selection: StudioSelectionContext) => void;
+  beforeSend?: () => Promise<boolean>;
 }) {
-  const text = copy[locale];
+  const text = directorAssistantCopy[locale];
   const [input, setInput] = useState("");
+  const [preparing, setPreparing] = useState(false);
+  const submitting = useRef(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsId = useId();
+  const [showJump, setShowJump] = useState(false);
+  const scrollPane = useRef<HTMLDivElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
+  const followTail = useRef(true);
+  const lastInput = useRef("");
+  const suggestions = getDirectorSuggestions(context, locale);
+  const selectedModel = models.find((model) => model.id === analysisModelId);
+  const episode = snapshot.project.episodes.find(
+    (episode) => episode.id === context.episodeId,
+  );
   const adapter = useMemo(
     () => createStudioAgentAdapter(snapshot.project.id),
     [snapshot.project.id],
@@ -131,63 +211,206 @@ export function AgentPanel({
     },
   });
   const reset = agent.reset;
-  const contextKey = `${context.episodeId ?? ""}:${context.stageId}:${context.selection?.kind ?? ""}:${context.selection?.id ?? ""}`;
+  const busy = preparing || agent.isLoading || agent.isStreaming;
+  const awaitingApproval = agent.messages.some(
+    (message) => message.toolCall?.status === "pending",
+  );
+  const contextKey = context.episodeId ?? "project";
 
   useEffect(() => {
     reset();
     setInput("");
+    followTail.current = true;
+    setShowJump(false);
+    lastInput.current = "";
   }, [contextKey, reset]);
+  useEffect(() => {
+    if (followTail.current && scrollPane.current)
+      scrollPane.current.scrollTop = scrollPane.current.scrollHeight;
+  }, [agent.messages, busy]);
+  useEffect(() => {
+    if (agent.error) setInput((current) => current || lastInput.current);
+  }, [agent.error]);
 
-  function submit(value = input) {
+  function useSuggestion(prompt: string) {
+    setInput(prompt);
+    composer.current?.focus();
+  }
+
+  async function submit(value = input) {
     const content = value.trim();
-    if (!content || agent.isLoading || agent.isStreaming) return;
-    const selectedModel = models.find(
-      (model) => model.id === analysisModelId,
-    );
-    setInput("");
-    void agent.sendMessage(content, {
-      metadata: {
-        locale,
-        studioContext: context,
-        studioAgentModel: selectedModel
-          ? {
-              channelId: selectedModel.channelId,
-              model: selectedModel.modelId,
-            }
-          : undefined,
-      },
-    });
+    if (!content || busy || submitting.current) return;
+    submitting.current = true;
+    setPreparing(true);
+    try {
+      if (beforeSend && !(await beforeSend())) return;
+      const selectedModel = models.find(
+        (model) => model.id === analysisModelId,
+      );
+      setInput("");
+      lastInput.current = content;
+      followTail.current = true;
+      setShowJump(false);
+      await agent.sendMessage(content, {
+        metadata: {
+          locale,
+          studioContext: context,
+          studioAgentModel: selectedModel
+            ? {
+                channelId: selectedModel.channelId,
+                model: selectedModel.modelId,
+              }
+            : undefined,
+        },
+      });
+    } finally {
+      submitting.current = false;
+      setPreparing(false);
+    }
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b px-3 py-3">
-        <p className="truncate text-xs font-medium">
-          {getStageCopy(locale, context.stageId).title}
-        </p>
-        <p className="mt-1 truncate text-[11px] text-muted-foreground">
-          {context.selection
-            ? `${text.selected} · ${context.selection.label}`
-            : snapshot.project.name}
-        </p>
-        <ModelSelect
-          ariaLabel={text.model}
-          className="mt-3 h-8"
-          disabled={agent.isLoading || agent.isStreaming}
-          models={models}
-          onChange={onAnalysisModelChange}
-          placeholder={text.model}
-          value={analysisModelId}
-        />
-      </div>
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+      <header className="shrink-0 border-b px-4 py-3">
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-muted">
+            <Clapperboard className="size-4" aria-hidden="true" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-sm font-medium">{text.title}</h2>
+            <p
+              className="truncate text-[11px] text-muted-foreground"
+              title={episode?.name ?? snapshot.project.name}
+            >
+              {episode?.name ?? snapshot.project.name}
+            </p>
+          </div>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant={settingsOpen ? "secondary" : "ghost"}
+                  aria-label={text.settings}
+                  aria-expanded={settingsOpen}
+                  aria-controls={settingsId}
+                  onClick={() => setSettingsOpen(!settingsOpen)}
+                />
+              }
+            >
+              <SlidersHorizontal className="size-4" />
+            </TooltipTrigger>
+            <TooltipContent>{text.settings}</TooltipContent>
+          </Tooltip>
+        </div>
+        {selections && onSelectContext && (
+          <div className="mt-3 space-y-1.5">
+            <label
+              className="block text-[11px] text-muted-foreground"
+              htmlFor={settingsId + "-target"}
+            >
+              {text.target}
+            </label>
+            <NativeSelect
+              id={settingsId + "-target"}
+              aria-label={text.target}
+              disabled={busy || selections.length === 0}
+              value={context.canvasNodeId ?? ""}
+              onChange={(event) => {
+                const target = selections.find(
+                  (item) =>
+                    (item.metadata?.canvasNodeId ?? item.id) ===
+                    event.target.value,
+                );
+                if (target) onSelectContext(target);
+              }}
+              className="h-9 w-full min-w-0 rounded-lg border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <NativeSelectOption value="" disabled>
+                {selections.length ? text.pickTarget : text.noTargets}
+              </NativeSelectOption>
+              {selections.map((item) => (
+                <NativeSelectOption
+                  key={String(item.metadata?.canvasNodeId ?? item.id)}
+                  value={String(item.metadata?.canvasNodeId ?? item.id)}
+                >
+                  {item.label}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+            <p className="text-[11px] leading-5 text-muted-foreground">
+              {text.targetHint}
+            </p>
+            {context.selection?.kind === "panel" && onEditContext && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={() => {
+                  if (context.selection) onEditContext(context.selection);
+                }}
+              >
+                {text.editShot}
+              </Button>
+            )}
+          </div>
+        )}
+        <div
+          className="mt-3 flex min-w-0 items-center gap-2 text-[11px]"
+          aria-label={text.context}
+        >
+          <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-muted-foreground">
+            {context.view === "canvas"
+              ? text.canvas
+              : getStageCopy(locale, context.stageId).title}
+          </span>
+          <span
+            className="flex min-w-0 items-center gap-1.5"
+            title={context.selection?.label ?? text.noSelection}
+          >
+            <Layers3
+              className="size-3 shrink-0 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <span className="truncate">
+              {context.selection?.label ??
+                (context.episodeId ? text.episode : text.project)}
+            </span>
+          </span>
+        </div>
+        {settingsOpen && (
+          <div id={settingsId} className="mt-3 border-t pt-3">
+            <p className="mb-2 text-xs text-muted-foreground">{text.model}</p>
+            <ModelSelect
+              ariaLabel={text.model}
+              className="h-8"
+              disabled={busy}
+              models={models}
+              onChange={onAnalysisModelChange}
+              placeholder={text.noModel}
+              value={analysisModelId}
+            />
+          </div>
+        )}
+      </header>
 
       <div
+        ref={scrollPane}
         aria-busy={agent.isLoading || agent.isStreaming}
         aria-label={text.messages}
         aria-live="polite"
         aria-relevant="additions text"
-        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 py-4"
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4 py-5"
         role="log"
+        onScroll={(event) => {
+          const pane = event.currentTarget;
+          const nearBottom =
+            pane.scrollHeight - pane.scrollTop - pane.clientHeight < 96;
+          followTail.current = nearBottom;
+          setShowJump(!nearBottom);
+        }}
       >
         {agent.isLoading || agent.isStreaming ? (
           <span className="sr-only" role="status">
@@ -198,84 +421,177 @@ export function AgentPanel({
           <MessageList
             locale={locale}
             messages={agent.messages}
-            onApprove={agent.approveToolCall}
+            onApprove={async (approvalId) => {
+              if (busy || submitting.current) return;
+              submitting.current = true;
+              setPreparing(true);
+              try {
+                if (beforeSend && !(await beforeSend())) return;
+                await agent.approveToolCall(approvalId);
+              } finally {
+                submitting.current = false;
+                setPreparing(false);
+              }
+            }}
             onDeny={agent.denyToolCall}
             pendingApprovalIds={agent.pendingApprovalIds}
             registry={registry}
+            isThinking={busy}
           />
         ) : (
-          <div className="flex min-h-56 flex-col items-center justify-center gap-4 text-center">
-            <span className="flex size-9 items-center justify-center rounded-md border bg-muted/30">
-              <Bot className="size-4" />
+          <div className="flex h-full min-h-60 flex-col justify-center pb-6">
+            <span className="mb-4 flex size-11 items-center justify-center rounded-2xl bg-muted/70">
+              <Sparkles
+                className="size-5 text-muted-foreground"
+                aria-hidden="true"
+              />
             </span>
-            <p className="text-sm font-medium">{text.empty}</p>
-            <div className="flex max-w-64 flex-wrap justify-center gap-2">
-              {[text.check, text.failed, text.retry].map((suggestion) => (
-                <Button
-                  key={suggestion}
-                  onClick={() => submit(suggestion)}
-                  size="sm"
+            <h3 className="text-base font-medium">
+              {context.view === "canvas" ? text.emptyCanvas : text.empty}
+            </h3>
+            <p className="mt-2 text-xs leading-6 text-muted-foreground">
+              {text.description}
+            </p>
+            <div className="mt-5 grid gap-2">
+              {suggestions.map((suggestion) => (
+                <button
+                  key={suggestion.title}
+                  onClick={() => useSuggestion(suggestion.prompt)}
                   type="button"
-                  variant="outline"
+                  disabled={busy}
+                  title={text.draft}
+                  className="group flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left text-xs transition-colors hover:border-foreground/20 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                 >
-                  <Sparkles className="size-3.5" />
-                  {suggestion}
-                </Button>
+                  <span>{suggestion.title}</span>
+                  <ArrowUp
+                    className="size-3.5 rotate-45 text-muted-foreground transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 motion-reduce:transition-none"
+                    aria-hidden="true"
+                  />
+                </button>
               ))}
             </div>
           </div>
         )}
       </div>
+      {showJump && agent.messages.length > 0 && (
+        <div className="flex shrink-0 justify-center pb-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 rounded-full text-xs shadow-sm"
+            onClick={() => {
+              followTail.current = true;
+              setShowJump(false);
+              if (scrollPane.current)
+                scrollPane.current.scrollTop = scrollPane.current.scrollHeight;
+            }}
+          >
+            <ArrowDown className="size-3" />
+            {text.jump}
+          </Button>
+        </div>
+      )}
 
       <form
-        className="border-t p-3"
+        className="shrink-0 border-t bg-background p-3"
         onSubmit={(event) => {
           event.preventDefault();
           submit();
         }}
       >
-        <div className="relative">
+        {awaitingApproval && (
+          <p
+            className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground"
+            role="status"
+          >
+            <CheckCheck className="size-3.5" />
+            {text.needsApproval}
+          </p>
+        )}
+        <div className="rounded-2xl border bg-muted/25 p-1 transition-shadow focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15">
           <Textarea
+            ref={composer}
             aria-label={text.ask}
-            className="max-h-32 min-h-20 resize-none pr-11"
-            disabled={agent.isLoading || agent.isStreaming}
+            className="max-h-36 min-h-20 resize-none rounded-xl border-0 bg-transparent px-2.5 py-2.5 text-sm leading-6 shadow-none focus-visible:ring-0 dark:bg-transparent"
+            disabled={busy}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
+              if (
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing &&
+                event.keyCode !== 229
+              ) {
                 event.preventDefault();
-                submit();
+                void submit();
               }
             }}
             placeholder={text.ask}
             value={input}
           />
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  aria-label={text.send}
-                  className="absolute right-2 bottom-2"
-                  disabled={
-                    !input.trim() || agent.isLoading || agent.isStreaming
-                  }
-                  size="icon-sm"
-                  type="submit"
-                />
+          <div className="flex min-w-0 items-center justify-between gap-2 px-2 pb-1.5">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setSettingsOpen(!settingsOpen)}
+              className="min-w-0 truncate text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              title={
+                selectedModel
+                  ? `${selectedModel.name} · ${selectedModel.channelName}`
+                  : text.noModel
               }
             >
-              {agent.isLoading || agent.isStreaming ? (
-                <LoaderCircle className="size-4 animate-spin" />
-              ) : (
-                <Send className="size-4" />
-              )}
-            </TooltipTrigger>
-            <TooltipContent>{text.send}</TooltipContent>
-          </Tooltip>
+              {selectedModel?.name ?? text.noModel}
+            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label={text.send}
+                    className="size-8 shrink-0 rounded-full"
+                    disabled={!input.trim() || busy}
+                    size="icon-sm"
+                    type="submit"
+                  />
+                }
+              >
+                {busy ? (
+                  <span
+                    className="size-2 rounded-full bg-current motion-safe:animate-pulse"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <ArrowUp className="size-4" />
+                )}
+              </TooltipTrigger>
+              <TooltipContent>{text.send}</TooltipContent>
+            </Tooltip>
+          </div>
         </div>
+        <p className="mt-2 text-center text-[10px] leading-4 text-muted-foreground">
+          {text.inputHint}
+        </p>
         {agent.error ? (
-          <p className="mt-2 text-xs text-destructive" role="alert">
-            {agent.error.message}
-          </p>
+          <div
+            className="mt-2 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-xs"
+            role="alert"
+          >
+            <p className="flex items-center gap-2 font-medium">
+              <AlertCircle className="size-3.5 text-destructive" />
+              {text.errorTitle}
+            </p>
+            <p className="mt-1.5 leading-5 text-muted-foreground">
+              {text.errorRecovery}
+            </p>
+            <details className="mt-2">
+              <summary className="cursor-pointer text-muted-foreground">
+                {text.errorDetails}
+              </summary>
+              <p className="mt-2 max-h-28 overflow-y-auto whitespace-pre-wrap break-words leading-5 text-muted-foreground">
+                {agent.error.message}
+              </p>
+            </details>
+          </div>
         ) : null}
       </form>
     </div>

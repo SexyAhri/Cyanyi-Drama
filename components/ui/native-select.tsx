@@ -1,61 +1,153 @@
-import * as React from "react"
+"use client";
 
-import { cn } from "@/lib/utils"
-import { ChevronDownIcon } from "lucide-react"
+import * as React from "react";
+import { cn } from "@/lib/utils";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./select";
 
-type NativeSelectProps = Omit<React.ComponentProps<"select">, "size"> & {
-  size?: "sm" | "default"
+type NativeSelectProps = Omit<
+  React.ComponentProps<"select">,
+  "size" | "multiple"
+> & {
+  size?: "sm" | "default";
+};
+
+type Choice = { value: string; label: React.ReactNode; disabled: boolean };
+function getChoices(
+  children: React.ReactNode,
+  groupDisabled = false,
+): Choice[] {
+  return React.Children.toArray(children).flatMap((child) => {
+    if (
+      !React.isValidElement<{
+        value?: string | number;
+        children?: React.ReactNode;
+        disabled?: boolean;
+      }>(child)
+    )
+      return [];
+    if (
+      child.type === React.Fragment ||
+      child.type === "optgroup" ||
+      child.type === NativeSelectOptGroup
+    )
+      return getChoices(
+        child.props.children,
+        groupDisabled || Boolean(child.props.disabled),
+      );
+    if (child.type !== "option" && child.type !== NativeSelectOption) return [];
+    return [
+      {
+        value: String(child.props.value ?? ""),
+        label: child.props.children,
+        disabled: groupDisabled || Boolean(child.props.disabled),
+      },
+    ];
+  });
 }
 
 function NativeSelect({
   className,
   size = "default",
+  children,
+  value,
+  defaultValue,
+  disabled,
+  id,
+  title,
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledBy,
+  "aria-describedby": ariaDescribedBy,
+  "aria-invalid": ariaInvalid,
+  required,
   ...props
 }: NativeSelectProps) {
+  const choices = getChoices(children);
+  const [draft, setDraft] = React.useState(() =>
+    String(
+      defaultValue ?? choices.find((choice) => !choice.disabled)?.value ?? "",
+    ),
+  );
+  const selectedValue = value === undefined ? draft : String(value);
+  const selected = choices.find((choice) => choice.value === selectedValue);
+  const field = React.useRef<HTMLSelectElement | null>(null);
   return (
     <div
-      className={cn(
-        "group/native-select relative w-fit has-[select:disabled]:opacity-50",
-        className
-      )}
+      className={cn("min-w-0 w-full", className)}
       data-slot="native-select-wrapper"
       data-size={size}
     >
+      <Select
+        disabled={disabled}
+        required={required}
+        value={selectedValue}
+        onValueChange={(next) => {
+          if (next === null || next === selectedValue) return;
+          if (value === undefined) setDraft(next);
+          // Preserve native form values and React change events for existing callers.
+          if (field.current) {
+            field.current.value = next;
+            field.current.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        }}
+      >
+        <SelectTrigger
+          id={id}
+          aria-label={ariaLabel}
+          aria-labelledby={ariaLabelledBy}
+          aria-describedby={ariaDescribedBy}
+          aria-invalid={ariaInvalid}
+          title={title}
+          size={size}
+          className="h-full min-h-8 min-w-0 w-full max-w-full bg-background text-xs shadow-none focus-visible:ring-2 focus-visible:ring-ring/30"
+        >
+          <SelectValue>
+            <span className="min-w-0 flex-1 truncate">{selected?.label}</span>
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent
+          align="start"
+          alignItemWithTrigger={false}
+          className="max-h-[min(20rem,var(--available-height))] min-w-0 max-w-[calc(100vw-1rem)] rounded-xl border border-border p-1 shadow-lg ring-0"
+        >
+          {choices.map((choice) => (
+            <SelectItem
+              key={choice.value}
+              value={choice.value}
+              disabled={choice.disabled}
+              className="min-w-0 cursor-pointer rounded-lg py-2 pl-2.5 pr-8 text-xs leading-5 data-highlighted:bg-accent data-highlighted:text-accent-foreground"
+            >
+              <span className="min-w-0 flex-1 whitespace-normal break-words">
+                {choice.label}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       <select
-        data-slot="native-select"
-        data-size={size}
-        className="h-8 w-full min-w-0 appearance-none rounded-lg border border-input bg-transparent py-1 pr-8 pl-2.5 text-sm transition-colors outline-none select-none selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 data-[size=sm]:h-7 data-[size=sm]:rounded-[min(var(--radius-md),10px)] data-[size=sm]:py-0.5 dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40"
         {...props}
-      />
-      <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground select-none" aria-hidden="true" data-slot="native-select-icon" />
+        ref={field}
+        hidden
+        aria-hidden="true"
+        tabIndex={-1}
+        disabled={disabled}
+        value={selectedValue}
+      >
+        {children}
+      </select>
     </div>
-  )
+  );
 }
 
-function NativeSelectOption({
-  className,
-  ...props
-}: React.ComponentProps<"option">) {
-  return (
-    <option
-      data-slot="native-select-option"
-      className={cn("bg-[Canvas] text-[CanvasText]", className)}
-      {...props}
-    />
-  )
+function NativeSelectOption(props: React.ComponentProps<"option">) {
+  return <option {...props} />;
 }
-
-function NativeSelectOptGroup({
-  className,
-  ...props
-}: React.ComponentProps<"optgroup">) {
-  return (
-    <optgroup
-      data-slot="native-select-optgroup"
-      className={cn("bg-[Canvas] text-[CanvasText]", className)}
-      {...props}
-    />
-  )
+function NativeSelectOptGroup(props: React.ComponentProps<"optgroup">) {
+  return <optgroup {...props} />;
 }
-
-export { NativeSelect, NativeSelectOptGroup, NativeSelectOption }
+export { NativeSelect, NativeSelectOptGroup, NativeSelectOption };

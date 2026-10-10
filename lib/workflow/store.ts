@@ -28,6 +28,7 @@ const summarySelect = {
   projectId: true,
   episodeId: true,
   workflowType: true,
+  input: true,
   targetType: true,
   targetId: true,
   status: true,
@@ -312,9 +313,7 @@ export async function updateWorkflowRunStatus(
       heartbeatAt: now,
       updatedAt: now,
       ...(status === "running" ? { startedAt: current.startedAt ?? now } : {}),
-      ...(status === "queued"
-        ? { activeDedupeKey }
-        : {}),
+      ...(status === "queued" ? { activeDedupeKey } : {}),
       ...(status === "succeeded" || status === "failed" || status === "canceled"
         ? {
             completedAt: now,
@@ -539,10 +538,7 @@ function buildRetryArtifactWhere(input: {
       : [{ stepId: input.targetStepId }];
   return {
     runId: input.runId,
-    OR: [
-      { stepId: { in: input.downstreamStepIds } },
-      ...targetFilters,
-    ],
+    OR: [{ stepId: { in: input.downstreamStepIds } }, ...targetFilters],
   };
 }
 
@@ -605,9 +601,12 @@ function resolveDownstreamStepKeys(
 }
 
 type Row = Prisma.WorkflowRunGetPayload<{ include: typeof include }>;
-type SummaryRow = Prisma.WorkflowRunGetPayload<{ select: typeof summarySelect }>;
+type SummaryRow = Prisma.WorkflowRunGetPayload<{
+  select: typeof summarySelect;
+}>;
 
 function toRunSummary(row: SummaryRow) {
+  const input = row.input as Record<string, unknown> | null;
   return {
     id: row.id,
     traceId: row.traceId,
@@ -615,6 +614,12 @@ function toRunSummary(row: SummaryRow) {
     projectId: row.projectId,
     episodeId: row.episodeId ?? undefined,
     workflowType: row.workflowType,
+    execution:
+      row.workflowType === "story-to-script"
+        ? input?.channelId && input?.model
+          ? ("ai" as const)
+          : ("local" as const)
+        : undefined,
     targetType: row.targetType ?? undefined,
     targetId: row.targetId ?? undefined,
     status: row.status,
@@ -747,10 +752,7 @@ function buildRunDedupeKey(run: {
   });
 }
 
-async function hasConflictingActiveRun(
-  runId: string,
-  activeDedupeKey: string,
-) {
+async function hasConflictingActiveRun(runId: string, activeDedupeKey: string) {
   return Boolean(
     await prisma.workflowRun.count({
       where: { id: { not: runId }, activeDedupeKey },

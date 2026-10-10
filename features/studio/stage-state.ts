@@ -137,13 +137,28 @@ export function getStudioStageStates(
     shotStatus === "completed" ? "ready" : "blocked",
     Boolean(episode),
   );
+  const audioWorkflow = workflows.find((workflow) =>
+    ["voice-analysis", "voice-performance-design"].includes(
+      workflow.workflowType,
+    ),
+  );
+  const displayedAudioStatus =
+    audioWorkflow &&
+    ["queued", "running", "canceling", "paused", "failed", "blocked"].includes(
+      audioWorkflow.status,
+    )
+      ? runtimeStatusToStageStatus(audioWorkflow.status)
+      : audioStatus;
 
   return [
     withWorkflow("writing", writingStatus, writingWorkflow),
     withTasks("assets", assetStatus, assetTasks),
     withWorkflow("storyboard", storyboardStatus, storyboardWorkflow),
     withTasks("shots", shotStatus, shots),
-    withTasks("audio", audioStatus, audio),
+    {
+      ...withTasks("audio", displayedAudioStatus, audio),
+      workflow: audioWorkflow,
+    },
     withTasks("delivery", deliveryStatus, delivery),
   ];
 }
@@ -192,12 +207,17 @@ export function getWorkflowForStage(
   if (stageId === "storyboard") {
     return latestWorkflow(workflows, "script-to-storyboard");
   }
+  if (stageId === "audio") {
+    return workflows.find((workflow) =>
+      ["voice-analysis", "voice-performance-design"].includes(
+        workflow.workflowType,
+      ),
+    );
+  }
   return undefined;
 }
 
-export function runtimeStatusToStageStatus(
-  status: string,
-): StudioStageStatus {
+export function runtimeStatusToStageStatus(status: string): StudioStageStatus {
   if (status === "succeeded") return "completed";
   if (status === "canceled") return "canceled";
   if (status === "paused") return "paused";

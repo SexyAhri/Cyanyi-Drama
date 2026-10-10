@@ -48,10 +48,7 @@ import type {
   StudioSelectionContext,
   WorkspaceSnapshot,
 } from "../types";
-import {
-  AdaptationDialog,
-  type AdaptationRequest,
-} from "./adaptation-dialog";
+import { AdaptationDialog, type AdaptationRequest } from "./adaptation-dialog";
 import { WritingFlowPanel } from "./writing-flow-panel";
 
 type AdaptationDraft = {
@@ -67,6 +64,7 @@ export function WritingWorkspace({
   episode,
   locale,
   models,
+  onAnalysisModelChange,
   onContextChange,
   onRefresh,
   snapshot,
@@ -75,6 +73,7 @@ export function WritingWorkspace({
   episode: WorkspaceSnapshot["project"]["episodes"][number];
   locale: StudioLocale;
   models: StudioModelOption[];
+  onAnalysisModelChange: (value: string) => void;
   onContextChange: (selection?: StudioSelectionContext) => void;
   onRefresh: () => Promise<unknown> | void;
   snapshot: WorkspaceSnapshot;
@@ -100,9 +99,9 @@ export function WritingWorkspace({
   const [adaptationDraft, setAdaptationDraft] =
     useState<AdaptationDraft | null>(null);
   const episodeIdRef = useRef(episode.id);
-  const [sourceCatalog, setSourceCatalog] = useState<
-    Awaited<ReturnType<typeof loadStudioEpisodeSources>> | null
-  >(null);
+  const [sourceCatalog, setSourceCatalog] = useState<Awaited<
+    ReturnType<typeof loadStudioEpisodeSources>
+  > | null>(null);
   const [selectedSourceIds, setSelectedSourceIds] = useState<
     Partial<Record<"original" | "adapted", string>>
   >({});
@@ -112,7 +111,8 @@ export function WritingWorkspace({
   const { adaptation: adaptationWorkflow, production: placementWorkflow } =
     getWritingWorkflowRuns(workflows);
   const writingWorkflowRevision = getWritingWorkflowContentRevision(workflows);
-  const placementWorkflowRevision = getWorkflowContentRevision(placementWorkflow);
+  const placementWorkflowRevision =
+    getWorkflowContentRevision(placementWorkflow);
   const isDirty = novelText !== savedText;
 
   useEffect(() => {
@@ -222,10 +222,13 @@ export function WritingWorkspace({
     sourceVersions.find(
       (source) => source.id === selectedSourceIds[sourceKind],
     ) ??
-    sourceVersions.find((source) => source.id === sourceCatalog?.activeSourceId) ??
+    sourceVersions.find(
+      (source) => source.id === sourceCatalog?.activeSourceId,
+    ) ??
     sourceVersions[0];
   const selectedSourceIsActive =
-    Boolean(selectedSource) && selectedSource?.id === sourceCatalog?.activeSourceId;
+    Boolean(selectedSource) &&
+    selectedSource?.id === sourceCatalog?.activeSourceId;
   const displayedSourceText = selectedSourceIsActive
     ? novelText
     : (selectedSource?.content ?? "");
@@ -335,12 +338,25 @@ export function WritingWorkspace({
 
   async function startWorkflow() {
     if (!savedText.trim() || isDirty) return;
+    const model = models.find((item) => item.id === analysisModelId);
+    if (!model) {
+      toast.error(
+        locale === "en"
+          ? "Select an analysis model first"
+          : "请先选择用于 AI 整理的分析模型",
+      );
+      return;
+    }
     setIsActing(true);
     try {
       const result = await startStoryToScriptWorkflow(
         snapshot.project.id,
         episode.id,
-        { locale: locale === "en" ? "en" : "zh" },
+        {
+          locale: locale === "en" ? "en" : "zh",
+          channelId: model.channelId,
+          model: model.modelId,
+        },
       );
       toast.success(result.reused ? copy.workflowReused : copy.workflowStarted);
       await onRefresh();
@@ -400,13 +416,15 @@ export function WritingWorkspace({
                     ? adaptationPhaseLabel(copy, adaptationDraft.phase)
                     : copy.adaptationFailed
                   : selectedSourceIsActive
-                  ? isDirty
-                    ? copy.unsavedChanges
-                    : copy.productionSource
-                  : copy.sourceReadOnly}
+                    ? isDirty
+                      ? copy.unsavedChanges
+                      : copy.productionSource
+                    : copy.sourceReadOnly}
               </span>
               {selectedSourceIsActive &&
-              !(tab === "adapted" && adaptationDraft?.episodeId === episode.id) ? (
+              !(
+                tab === "adapted" && adaptationDraft?.episodeId === episode.id
+              ) ? (
                 <Button
                   disabled={!isDirty || isSaving || workflowActive}
                   onClick={() => void saveSource()}
@@ -438,9 +456,7 @@ export function WritingWorkspace({
         </div>
       </header>
 
-      <div
-        className="grid min-w-0 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_19rem] xl:overflow-hidden"
-      >
+      <div className="grid min-w-0 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_19rem] xl:overflow-hidden">
         <Tabs
           className="min-w-0 py-5 xl:min-h-0 xl:overflow-hidden xl:pr-7"
           onValueChange={(value) =>
@@ -453,18 +469,22 @@ export function WritingWorkspace({
               <BookOpenText className="size-4" />
               {copy.originalSource}
               <Badge className="ml-1" variant="secondary">
-                {(sourceCatalog?.sources ?? []).filter(
-                  (source) => source.kind === "original",
-                ).length}
+                {
+                  (sourceCatalog?.sources ?? []).filter(
+                    (source) => source.kind === "original",
+                  ).length
+                }
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="adapted">
               <FilePenLine className="size-4" />
               {copy.adaptedSource}
               <Badge className="ml-1" variant="secondary">
-                {(sourceCatalog?.sources ?? []).filter(
-                  (source) => source.kind === "adapted",
-                ).length}
+                {
+                  (sourceCatalog?.sources ?? []).filter(
+                    (source) => source.kind === "adapted",
+                  ).length
+                }
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="screenplay">
@@ -480,10 +500,10 @@ export function WritingWorkspace({
               (source) => source.kind === kind,
             );
             const source =
+              versions.find((item) => item.id === selectedSourceIds[kind]) ??
               versions.find(
-                (item) => item.id === selectedSourceIds[kind],
+                (item) => item.id === sourceCatalog?.activeSourceId,
               ) ??
-              versions.find((item) => item.id === sourceCatalog?.activeSourceId) ??
               versions[0];
             const isActive = source?.id === sourceCatalog?.activeSourceId;
             return (
@@ -495,7 +515,8 @@ export function WritingWorkspace({
                 <SourceVersionPane
                   activeSourceId={sourceCatalog?.activeSourceId ?? null}
                   adaptationDraft={
-                    kind === "adapted" && adaptationDraft?.episodeId === episode.id
+                    kind === "adapted" &&
+                    adaptationDraft?.episodeId === episode.id
                       ? adaptationDraft
                       : null
                   }
@@ -521,7 +542,10 @@ export function WritingWorkspace({
               </TabsContent>
             );
           })}
-          <TabsContent className="mt-4 xl:min-h-0 xl:overflow-y-auto" value="screenplay">
+          <TabsContent
+            className="mt-4 xl:min-h-0 xl:overflow-y-auto"
+            value="screenplay"
+          >
             <ScreenplayList
               clips={clips}
               emptyLabel={copy.noClips}
@@ -534,9 +558,14 @@ export function WritingWorkspace({
         </Tabs>
 
         <WritingFlowPanel
+          analysisModelId={analysisModelId}
+          models={models}
+          onAnalysisModelChange={onAnalysisModelChange}
           adaptationWorkflow={adaptationWorkflow}
           canStartPlacement={
-            Boolean(savedText.trim()) && !isDirty
+            Boolean(savedText.trim()) &&
+            !isDirty &&
+            models.some((model) => model.id === analysisModelId)
           }
           isActing={isActing}
           locale={locale}
@@ -608,21 +637,26 @@ function SourceVersionPane({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-col gap-3 border-y py-3 sm:flex-row sm:items-center">
-        <Select onValueChange={(value) => value && onSelect(value)} value={source.id}>
+        <Select
+          onValueChange={(value) => value && onSelect(value)}
+          value={source.id}
+        >
           <SelectTrigger className="h-8 w-full sm:w-64">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {versions.map((version) => (
               <SelectItem key={version.id} value={version.id}>
-                {copy.sourceVersion} {version.version} · {formatStudioDate(locale, version.createdAt)}
+                {copy.sourceVersion} {version.version} ·{" "}
+                {formatStudioDate(locale, version.createdAt)}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
         <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
           <Badge variant="outline">
-            {kind === "adapted" ? copy.adaptedSource : copy.originalSource} v{source.version}
+            {kind === "adapted" ? copy.adaptedSource : copy.originalSource} v
+            {source.version}
           </Badge>
           {isActive ? <Badge>{copy.productionSource}</Badge> : null}
           {!isActive ? (
@@ -632,7 +666,9 @@ function SourceVersionPane({
               size="sm"
               type="button"
             >
-              {isActivating ? <LoaderCircle className="size-4 animate-spin" /> : null}
+              {isActivating ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : null}
               {copy.setProductionSource}
             </Button>
           ) : null}
@@ -653,7 +689,9 @@ function SourceVersionPane({
       ) : null}
 
       <Textarea
-        aria-label={kind === "adapted" ? copy.adaptedSource : copy.originalSource}
+        aria-label={
+          kind === "adapted" ? copy.adaptedSource : copy.originalSource
+        }
         className="mt-4 h-[min(56dvh,42rem)] min-h-80 resize-y overflow-y-auto rounded-md bg-card p-4 leading-7 field-sizing-fixed xl:min-h-0 xl:flex-1 xl:resize-none"
         disabled={!isActive || isSaving || workflowActive}
         onChange={(event) => onChange(event.target.value)}

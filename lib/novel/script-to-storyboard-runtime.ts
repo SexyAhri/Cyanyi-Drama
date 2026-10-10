@@ -18,6 +18,11 @@ import { parseApprovedScreenplay } from "./approved-screenplay-parser";
 import { getStoryboard, saveStoryboard } from "./domain-store";
 import { splitSpokenTextForShots } from "./storyboard-dialogue-timing";
 import { directStoryboard } from "./storyboard-director";
+import { buildDirectorScenes } from "./storyboard-scene-contract";
+import {
+  parseAssetVisualProfile,
+  compileAssetVisualProfile,
+} from "@/lib/assets/visual-profile";
 import { readProductionTemplate } from "@/lib/prompts/production-rules";
 
 type ProductionClip = NonNullable<
@@ -35,6 +40,10 @@ export type ScriptToStoryboardStepInput = {
 
 export type ScriptToStoryboardRuntimeHooks = {
   assertActive: () => Promise<void>;
+  loadArtifact?: (
+    artifactType: string,
+    refId: string,
+  ) => Promise<unknown | null>;
   persistArtifact: (
     artifactType: string,
     refId: string,
@@ -50,7 +59,7 @@ type SceneStoryboardContext = {
   locale: "en" | "zh";
 };
 
-const STORYBOARD_PLANNER_VERSION = "semantic-beats-v4-performance";
+const STORYBOARD_PLANNER_VERSION = "scene-director-v5";
 const TARGET_BEAT_SECONDS = 5;
 
 export async function buildEpisodeStoryboard(
@@ -91,7 +100,11 @@ export async function buildEpisodeStoryboard(
     propNames: props.map((prop) => prop.name),
     locale,
   };
-  const basePanels = buildSceneStoryboardPanels(clips, context);
+  const scenes = buildDirectorScenes(clips, context.propNames);
+  const basePanels =
+    input.channelId && input.model
+      ? []
+      : buildSceneStoryboardPanels(clips, context);
   const assets =
     input.channelId && input.model
       ? await Promise.all([
@@ -99,7 +112,7 @@ export async function buildEpisodeStoryboard(
             where: {
               projectId: input.projectId,
               name: {
-                in: unique(basePanels.flatMap((panel) => panel.characters)),
+                in: unique(scenes.flatMap((scene) => scene.characters)),
               },
             },
             select: { name: true, visualProfileJson: true },
@@ -108,7 +121,7 @@ export async function buildEpisodeStoryboard(
             where: {
               projectId: input.projectId,
               name: {
-                in: unique(basePanels.map((panel) => panel.locationName)),
+                in: unique(scenes.map((scene) => scene.heading.location)),
               },
             },
             select: { name: true, visualProfileJson: true },
@@ -116,7 +129,7 @@ export async function buildEpisodeStoryboard(
           prisma.novelProp.findMany({
             where: {
               projectId: input.projectId,
-              name: { in: unique(basePanels.flatMap((panel) => panel.props)) },
+              name: { in: unique(scenes.flatMap((scene) => scene.props)) },
             },
             select: { name: true, visualProfileJson: true },
           }),
@@ -128,17 +141,36 @@ export async function buildEpisodeStoryboard(
           userId,
           channelId: input.channelId,
           model: input.model,
-          panels: basePanels,
+          scenes,
           style: context.artStyle,
+          productionSpec: context.productionSpec,
+          visualRules: context.visualRules,
           locale,
           assets: assets
-            ? { characters: assets[0], locations: assets[1], props: assets[2] }
-            : {},
+            ? {
+                characters: assets[0].map(compactAsset),
+                locations: assets[1].map(compactAsset),
+                props: assets[2].map(compactAsset),
+              }
+            : { characters: [], locations: [], props: [] },
           assertActive: hooks.assertActive,
           persistArtifact: hooks.persistArtifact,
+          loadArtifact: hooks.loadArtifact,
         })
       : null;
-  const panels = director?.panels ?? basePanels;
+  const panels = director
+    ? director.panels.map((panel) => ({
+        ...panel,
+        worldContext: {
+          productionSpec: context.productionSpec,
+          visualRules: context.visualRules,
+          shotIntent: {
+            primaryVisibleEvent: panel.description,
+            endBeat: panel.endState.body,
+          },
+        },
+      }))
+    : basePanels;
   const sourceHash = sha256(
     JSON.stringify({
       clips: clips.map((clip) => ({
@@ -172,15 +204,49 @@ export async function buildEpisodeStoryboard(
   );
 
   await hooks.assertActive();
+  const [currentClips, currentEpisode, currentStoryboard] = await Promise.all([
+    listProductionClips(userId, input.projectId, input.episodeId),
+    prisma.episode.findFirst({
+      where: {
+        id: input.episodeId,
+        projectId: input.projectId,
+        project: { userId },
+      },
+      select: {
+        novelText: true,
+        project: { select: { config: { select: { artStyle: true } } } },
+      },
+    }),
+    getStoryboard(userId, input.projectId, input.episodeId),
+  ]);
+  if (
+    !currentEpisode ||
+    JSON.stringify(
+      currentClips?.map((clip) => ({
+        id: clip.id,
+        screenplay: clip.screenplay,
+      })),
+    ) !==
+      JSON.stringify(
+        clips.map((clip) => ({ id: clip.id, screenplay: clip.screenplay })),
+      ) ||
+    currentEpisode.novelText !== episode.novelText ||
+    currentEpisode.project.config?.artStyle !== episode.project.config?.artStyle
+  )
+    throw new Error("生成期间剧本或风格已修改，已完成草稿保留，请重新生成分镜");
+  if (currentStoryboard?.version !== existingStoryboard?.version)
+    throw new Error("生成期间分镜已修改，已完成草稿保留，请重新加载后处理");
   const storyboard = await saveStoryboard(
     userId,
     input.projectId,
     input.episodeId,
     {
+      expectedVersion: existingStoryboard?.version ?? null,
       status:
         director && !director.approved ? "director_review_required" : "ready",
       sourceHash,
-      preserveImagePrompts: existingStoryboard?.sourceHash === sourceHash,
+      preserveImagePrompts:
+        !director && existingStoryboard?.sourceHash === sourceHash,
       panels,
     },
   );
@@ -207,7 +273,7 @@ export async function buildEpisodeStoryboard(
     source: director ? "storyboard-director" : "local-production-script",
     directorReviews: director?.reviews ?? [],
     clipCount: clips.length,
-    sceneCount: panels.length,
+    sceneCount: scenes.length,
     storyboardId: storyboard.id,
     sourceHash,
     voiceLineCount,
@@ -221,6 +287,21 @@ export async function buildEpisodeStoryboard(
   };
 }
 
+function compactAsset(asset: { name: string; visualProfileJson: unknown }) {
+  let value = asset.visualProfileJson;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      value = null;
+    }
+  }
+  return {
+    name: asset.name,
+    visualSpec: compileAssetVisualProfile(parseAssetVisualProfile(value)),
+  };
+}
+
 type StoryboardVoicePanel = {
   id: string;
   clipId: string | null;
@@ -229,6 +310,7 @@ type StoryboardVoicePanel = {
   speakingCharacter?: string | null;
   lipSyncText?: string | null;
   voiceoverText?: string | null;
+  actingNotes?: Record<string, unknown>;
 };
 
 type ScreenplayVoiceLine = {
@@ -264,7 +346,7 @@ export function buildScreenplayVoiceLines(
         (content) => content.type === "action",
       ).length;
       let completedActions = 0;
-      for (const content of scene.content) {
+      for (const [contentIndex, content] of scene.content.entries()) {
         if (content.type === "action") {
           completedActions += 1;
           continue;
@@ -285,7 +367,14 @@ export function buildScreenplayVoiceLines(
           content.type,
           speaker,
           spokenContent,
-          scenePanels,
+          scenePanels.filter((panel) => {
+            const source = panel.actingNotes?.sourceSpeech;
+            return (
+              !source ||
+              typeof source !== "object" ||
+              (source as Record<string, unknown>).contentIndex === contentIndex
+            );
+          }),
         );
         const fallbackPanel =
           scenePanels[

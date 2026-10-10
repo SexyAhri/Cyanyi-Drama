@@ -89,9 +89,11 @@ export function CanvasViewport({ containerRef, viewport, tool, backgroundMode = 
     const target = event.target instanceof Element ? event.target : null;
     const shouldPan = event.button === 1 || (event.button === 0 && (space.current || tool === "pan"));
     if (!shouldPan) return;
+    if (event.button === 0 && !space.current && target?.closest("[data-node-id],[data-connection-id],[data-canvas-no-zoom],button,a,summary,input,textarea,select,video,audio,[contenteditable=true]")) return;
     if (event.button !== 1 && !space.current && target?.closest("input,textarea,select,video,[contenteditable=true]")) return;
     event.preventDefault(); event.stopPropagation();
     suppressClick.current = true;
+    if (event.button === 0 && !space.current) onCanvasDeselect?.();
     event.currentTarget.focus({ preventScroll: true });
     event.currentTarget.setPointerCapture(event.pointerId);
     pan.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, viewport: latest.current.viewport, moved: false };

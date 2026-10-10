@@ -17,7 +17,6 @@ import {
 } from "@/components/ui/empty";
 import {
   Sheet,
-  SheetClose,
   SheetContent,
   SheetDescription,
   SheetHeader,
@@ -67,10 +66,22 @@ export function WorkspacePage({
   const searchParams = useSearchParams();
   const [episodesOpen, setEpisodesOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  const [canvasSelections, setCanvasSelections] = useState<
+    StudioSelectionContext[]
+  >([]);
+  const selectCanvasNode = useRef<((nodeId: string) => void) | undefined>(
+    undefined,
+  );
+  const editCanvasPanel = useRef<((nodeId: string) => void) | undefined>(
+    undefined,
+  );
   const [selection, setSelection] = useState<StudioSelectionContext>();
   const [analysisModelId, setAnalysisModelId] = useState("");
   const previousWorkflowSteps = useRef<Map<string, string> | null>(null);
-  const beforeCanvasLeave = useRef<(() => Promise<boolean>) | undefined>(undefined);
+  const beforeCanvasLeave = useRef<(() => Promise<boolean>) | undefined>(
+    undefined,
+  );
   const {
     analysisModels,
     audioModels,
@@ -83,6 +94,8 @@ export function WorkspacePage({
 
   const requestedEpisodeId = searchParams.get("episode") ?? undefined;
   const canvasOpen = searchParams.get("view") === "canvas";
+  const inspectorVisible =
+    activityOpen || (!canvasOpen && wideLayout && !inspectorCollapsed);
   const requestedStage = searchParams.get("stage") as StudioStageId | null;
   const activeStage =
     requestedStage && STUDIO_STAGE_IDS.includes(requestedStage)
@@ -108,8 +121,13 @@ export function WorkspacePage({
       episodeId: selectedEpisode?.id,
       selection,
       stageId: activeStage,
+      view: canvasOpen ? ("canvas" as const) : ("workflow" as const),
+      canvasNodeId:
+        typeof selection?.metadata?.canvasNodeId === "string"
+          ? selection.metadata.canvasNodeId
+          : undefined,
     }),
-    [activeStage, selectedEpisode?.id, selection],
+    [activeStage, selectedEpisode?.id, selection, canvasOpen],
   );
 
   useEffect(() => {
@@ -132,7 +150,9 @@ export function WorkspacePage({
       analysisModel: model.modelId,
     }).catch((requestError) => {
       toast.error(
-        requestError instanceof Error ? requestError.message : copy.actionFailed,
+        requestError instanceof Error
+          ? requestError.message
+          : copy.actionFailed,
       );
     });
   }
@@ -191,7 +211,8 @@ export function WorkspacePage({
     episodeId?: string;
     stageId?: StudioStageId;
   }) {
-    if (beforeCanvasLeave.current && !(await beforeCanvasLeave.current())) return;
+    if (beforeCanvasLeave.current && !(await beforeCanvasLeave.current()))
+      return;
     const params = new URLSearchParams(searchParams.toString());
     params.delete("view");
     if (input.episodeId) params.set("episode", input.episodeId);
@@ -200,10 +221,30 @@ export function WorkspacePage({
   }
 
   async function changeCanvasView(open: boolean) {
-    if (!open && beforeCanvasLeave.current && !(await beforeCanvasLeave.current())) return;
+    if (
+      !open &&
+      beforeCanvasLeave.current &&
+      !(await beforeCanvasLeave.current())
+    )
+      return;
     const params = new URLSearchParams(searchParams.toString());
-    if (open) params.set("view", "canvas"); else params.delete("view");
+    if (open) params.set("view", "canvas");
+    else params.delete("view");
+    if (selection?.kind === "panel") params.set("panel", selection.id);
     router.replace(`${pathname}?${params}`, { scroll: false });
+  }
+
+  async function openPanel(panelId: string) {
+    if (beforeCanvasLeave.current && !(await beforeCanvasLeave.current()))
+      return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("view");
+    params.set("stage", "shots");
+    params.set("panel", panelId);
+    router.replace(`${pathname}?${params}`, { scroll: false });
+  }
+  function openActivity() {
+    setActivityOpen(true);
   }
 
   if (isLoading && !snapshot) {
@@ -264,7 +305,7 @@ export function WorkspacePage({
           isRefreshing={isRefreshing}
           locale={locale}
           onLocaleChange={toggleLocale}
-          onOpenActivity={() => setActivityOpen(true)}
+          onOpenActivity={() => void openActivity()}
           onOpenEpisodes={() => setEpisodesOpen(true)}
           onProjectConfigChange={() => refresh()}
           onRefresh={() => void refresh()}
@@ -280,29 +321,99 @@ export function WorkspacePage({
           onSelect={(stageId) => updateSelection({ stageId })}
           stages={stages}
         />
-        <DirectorWorkflowBar stage={activeStage} locale={locale} onSelect={(stageId) => updateSelection({ stageId })} />
-        <div className="flex items-center gap-2 border-b px-4 py-1.5">
-          <Button size="sm" variant={!canvasOpen ? "secondary" : "ghost"} onClick={() => void changeCanvasView(false)}>制作流程</Button>
-          <Button size="sm" variant={canvasOpen ? "secondary" : "ghost"} disabled={!selectedEpisode} onClick={() => void changeCanvasView(true)}>无限画布</Button>
+        {!canvasOpen && (
+          <DirectorWorkflowBar
+            stage={activeStage}
+            locale={locale}
+            onSelect={(stageId) => updateSelection({ stageId })}
+          />
+        )}
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-1.5">
+          <Button
+            size="sm"
+            variant={!canvasOpen ? "secondary" : "ghost"}
+            onClick={() => void changeCanvasView(false)}
+          >
+            制作流程
+          </Button>
+          <Button
+            size="sm"
+            variant={canvasOpen ? "secondary" : "ghost"}
+            disabled={!selectedEpisode}
+            onClick={() => void changeCanvasView(true)}
+          >
+            无限画布
+          </Button>
+          {!canvasOpen && selection?.kind === "panel" && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void changeCanvasView(true)}
+            >
+              在画布中打开此镜头
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant={inspectorVisible ? "secondary" : "ghost"}
+            onClick={() =>
+              inspectorVisible
+                ? (setActivityOpen(false), setInspectorCollapsed(true))
+                : openActivity()
+            }
+          >
+            导演助手与任务
+          </Button>
         </div>
 
-        <div className="flex min-h-0 flex-1">
-          <aside className="hidden w-64 shrink-0 border-r lg:block">
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+          <aside
+            className={
+              canvasOpen ? "hidden" : "hidden w-64 shrink-0 border-r lg:block"
+            }
+          >
             {sidebar}
           </aside>
 
           <main
             className={
-              canvasOpen ? "min-w-0 flex-1 overflow-hidden" : fixedHeightWorkspace
-                ? "min-w-0 flex-1 overflow-y-auto xl:overflow-hidden"
-                : "min-w-0 flex-1 overflow-y-auto"
+              canvasOpen
+                ? "min-h-0 min-w-0 flex-1 overflow-hidden"
+                : fixedHeightWorkspace
+                  ? "min-h-0 min-w-0 flex-1 overflow-y-auto xl:overflow-hidden"
+                  : "min-h-0 min-w-0 flex-1 overflow-y-auto"
             }
           >
             {canvasOpen && selectedEpisode ? (
-              <CanvasWorkspace key={selectedEpisode.id} projectId={projectId} episodeId={selectedEpisode.id} imageModels={imageModels} videoModels={videoModels} snapshot={snapshot} onRefresh={() => refresh()} registerBeforeLeave={(handler) => { beforeCanvasLeave.current = handler; }} />
+              <CanvasWorkspace
+                key={selectedEpisode.id}
+                projectId={projectId}
+                episodeId={selectedEpisode.id}
+                imageModels={imageModels}
+                videoModels={videoModels}
+                lipSyncModels={lipSyncModels}
+                snapshot={snapshot}
+                locale={locale}
+                focusedPanelId={searchParams.get("panel") ?? undefined}
+                onContextChange={setSelection}
+                onSelectionsChange={setCanvasSelections}
+                registerSelectNode={(handler) => {
+                  selectCanvasNode.current = handler;
+                }}
+                registerEditPanel={(handler) => {
+                  editCanvasPanel.current = handler;
+                }}
+                onOpenStage={(stageId) => void updateSelection({ stageId })}
+                onOpenPanel={(panelId) => void openPanel(panelId)}
+                onRefresh={() => refresh()}
+                registerBeforeLeave={(handler) => {
+                  beforeCanvasLeave.current = handler;
+                }}
+              />
             ) : selectedStage?.id === "writing" && selectedEpisode ? (
               <WritingWorkspace
                 analysisModelId={analysisModelId}
+                onAnalysisModelChange={changeAnalysisModel}
                 episode={selectedEpisode}
                 locale={locale}
                 models={analysisModels}
@@ -321,6 +432,7 @@ export function WorkspacePage({
               />
             ) : selectedStage?.id === "storyboard" && selectedEpisode ? (
               <StoryboardWorkspace
+                focusedPanelId={searchParams.get("panel") ?? undefined}
                 analysisModelId={analysisModelId}
                 models={analysisModels}
                 onAnalysisModelChange={changeAnalysisModel}
@@ -332,6 +444,7 @@ export function WorkspacePage({
               />
             ) : selectedStage?.id === "shots" && selectedEpisode ? (
               <ShotsWorkspace
+                focusedPanelId={searchParams.get("panel") ?? undefined}
                 analysisModels={analysisModels}
                 episode={selectedEpisode}
                 imageModels={imageModels}
@@ -375,8 +488,33 @@ export function WorkspacePage({
             )}
           </main>
 
-          <aside className="hidden w-80 shrink-0 border-l xl:block">
-            {wideLayout ? (
+          <aside
+            aria-label={
+              locale === "en" ? "Director and tasks" : "导演助手与任务"
+            }
+            className={
+              inspectorVisible
+                ? "flex h-[48%] min-h-0 w-full shrink-0 flex-col border-t bg-background md:h-auto md:w-80 md:border-t-0 md:border-l xl:w-96"
+                : "hidden"
+            }
+          >
+            <header className="flex h-10 shrink-0 items-center justify-between border-b px-3">
+              <span className="text-xs font-medium">
+                {copy.productionActivity}
+              </span>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={copy.close}
+                onClick={() => {
+                  setActivityOpen(false);
+                  setInspectorCollapsed(true);
+                }}
+              >
+                <X className="size-4" />
+              </Button>
+            </header>
+            <div className="min-h-0 flex-1">
               <StudioInspector
                 analysisModelId={analysisModelId}
                 context={inspectorContext}
@@ -385,8 +523,28 @@ export function WorkspacePage({
                 onAnalysisModelChange={changeAnalysisModel}
                 onRefresh={() => refresh()}
                 snapshot={snapshot}
+                selections={canvasOpen ? canvasSelections : undefined}
+                onEditContext={
+                  canvasOpen
+                    ? (item) => {
+                        const nodeId = item.metadata?.canvasNodeId;
+                        if (typeof nodeId === "string")
+                          editCanvasPanel.current?.(nodeId);
+                      }
+                    : undefined
+                }
+                onSelectContext={(item) => {
+                  const nodeId = item.metadata?.canvasNodeId;
+                  if (canvasOpen && typeof nodeId === "string")
+                    selectCanvasNode.current?.(nodeId);
+                }}
+                beforeSend={async () =>
+                  !canvasOpen ||
+                  !beforeCanvasLeave.current ||
+                  (await beforeCanvasLeave.current())
+                }
               />
-            ) : null}
+            </div>
           </aside>
         </div>
 
@@ -397,46 +555,6 @@ export function WorkspacePage({
               <SheetDescription>{copy.selectEpisode}</SheetDescription>
             </SheetHeader>
             {sidebar}
-          </SheetContent>
-        </Sheet>
-
-        <Sheet onOpenChange={setActivityOpen} open={activityOpen}>
-          <SheetContent
-            className="w-[min(90vw,24rem)] gap-0 p-0"
-            showCloseButton={false}
-            side="right"
-          >
-            <SheetHeader className="flex h-12 shrink-0 flex-row items-center justify-between border-b px-3 py-0">
-              <SheetTitle className="text-sm">
-                {copy.productionActivity}
-              </SheetTitle>
-              <SheetDescription className="sr-only">
-                {copy.productionActivity}
-              </SheetDescription>
-              <SheetClose
-                render={
-                  <Button
-                    aria-label={copy.close}
-                    size="icon-sm"
-                    type="button"
-                    variant="ghost"
-                  />
-                }
-              >
-                <X className="size-4" />
-              </SheetClose>
-            </SheetHeader>
-            {activityOpen ? (
-              <StudioInspector
-                analysisModelId={analysisModelId}
-                context={inspectorContext}
-                locale={locale}
-                models={analysisModels}
-                onAnalysisModelChange={changeAnalysisModel}
-                onRefresh={() => refresh()}
-                snapshot={snapshot}
-              />
-            ) : null}
           </SheetContent>
         </Sheet>
       </div>

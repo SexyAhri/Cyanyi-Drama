@@ -13,6 +13,7 @@ import {
 } from "@/lib/assets/project-store";
 import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
 import type { ChannelProtocol } from "@/lib/agent/provider-types";
+import type { MediaReferenceImage } from "@/lib/providers/media/types";
 import { sanitizeMediaPrompt } from "@/lib/media/provider-prompt-safety";
 import {
   applyProjectArtStyle,
@@ -59,14 +60,8 @@ export async function createProjectImageTask(
   const channel = await prisma.channel.findFirst({
     where: accessibleChannelWhere(input.userId, input.channelId),
   });
-  if (
-    !channel ||
-    !isMediaChannelProtocol(channel.protocol)
-  ) {
-    throw new ProjectAssetTaskError(
-      "图片生成需要有效且受支持的媒体渠道",
-      400,
-    );
+  if (!channel || !isMediaChannelProtocol(channel.protocol)) {
+    throw new ProjectAssetTaskError("图片生成需要有效且受支持的媒体渠道", 400);
   }
 
   const selectedModel = await prisma.providerModel.count({
@@ -109,9 +104,7 @@ export async function createProjectImageTask(
   const artStyle = await loadProjectArtStyle(input.projectId);
   const referenceImages = [
     ...explicitReferenceImages,
-    ...(input.useSelectedReference
-      ? selectedReferenceImages
-      : []),
+    ...(input.useSelectedReference ? selectedReferenceImages : []),
   ].slice(0, 9);
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
@@ -162,6 +155,8 @@ export async function createProjectImageTask(
 }
 
 export async function createStoryboardPanelImageTask(input: {
+  idempotencyKey?: string;
+  canvasNodeId?: string;
   userId: string;
   projectId: string;
   episodeId: string;
@@ -174,19 +169,14 @@ export async function createStoryboardPanelImageTask(input: {
   resolution?: string;
   mediaDefaults?: MediaGenerationDefaults;
   iteration?: GenerationIterationDiagnostics;
+  canvasReferences?: MediaReferenceImage[];
 }) {
   const channel = await prisma.channel.findFirst({
     where: accessibleChannelWhere(input.userId, input.channelId),
     select: { id: true, protocol: true, providerKey: true },
   });
-  if (
-    !channel ||
-    !isMediaChannelProtocol(channel.protocol)
-  ) {
-    throw new ProjectAssetTaskError(
-      "图片生成需要有效且受支持的媒体渠道",
-      400,
-    );
+  if (!channel || !isMediaChannelProtocol(channel.protocol)) {
+    throw new ProjectAssetTaskError("图片生成需要有效且受支持的媒体渠道", 400);
   }
   const selectedModel = await prisma.providerModel.count({
     where: {
@@ -239,15 +229,24 @@ export async function createStoryboardPanelImageTask(input: {
   if (!panel) throw new ProjectAssetTaskError("分镜格不存在", 404);
   assertStoryboardApprovedForMedia(panel.storyboard.status);
   const prompt =
-    input.prompt?.trim() || panel.imagePrompt?.trim() || panel.description?.trim();
+    input.prompt?.trim() ||
+    panel.imagePrompt?.trim() ||
+    panel.description?.trim();
   if (!prompt) throw new ProjectAssetTaskError("分镜格缺少图片提示词", 400);
 
-  const referenceImages = await findStoryboardReferenceImages({
+  const automaticReferences = await findStoryboardReferenceImages({
     projectId: input.projectId,
     characters: parseStringArray(panel.charactersJson),
     props: parseStringArray(panel.propsJson),
     locationName: panel.locationName,
   });
+  const referenceImages = [
+    ...(input.canvasReferences ?? []),
+    ...automaticReferences,
+  ].filter(
+    (reference, index, all) =>
+      all.findIndex((item) => item.url === reference.url) === index,
+  );
   const productionDesign = await loadStoryboardProductionDesign({
     userId: input.userId,
     projectId: input.projectId,
@@ -277,6 +276,7 @@ export async function createStoryboardPanelImageTask(input: {
     projectId: input.projectId,
     episodeId: input.episodeId,
     batchId: input.batchId,
+    idempotencyKey: input.idempotencyKey,
     channelId: input.channelId,
     targetType: "storyboard_panel",
     targetId: panel.id,
@@ -286,6 +286,7 @@ export async function createStoryboardPanelImageTask(input: {
     model: input.model,
     request: {
       prompt: compiledPrompt,
+      ...(input.canvasNodeId ? {canvasNodeId:input.canvasNodeId,canvasDeferredSelection:true,canvasGenerationId:input.idempotencyKey} : {}),
       ...(input.iteration ? { generationIteration: input.iteration } : {}),
       ratio:
         input.ratio ??
@@ -313,6 +314,8 @@ export async function createStoryboardPanelImageTask(input: {
 }
 
 export async function createStoryboardPanelVideoTask(input: {
+  idempotencyKey?: string;
+  canvasNodeId?: string;
   userId: string;
   projectId: string;
   episodeId: string;
@@ -328,19 +331,14 @@ export async function createStoryboardPanelVideoTask(input: {
   mode?: "reference" | "first-last";
   lastFramePanelId?: string;
   iteration?: GenerationIterationDiagnostics;
+  canvasReferences?: MediaReferenceImage[];
 }) {
   const channel = await prisma.channel.findFirst({
     where: accessibleChannelWhere(input.userId, input.channelId),
     select: { id: true, protocol: true, providerKey: true },
   });
-  if (
-    !channel ||
-    !isMediaChannelProtocol(channel.protocol)
-  ) {
-    throw new ProjectAssetTaskError(
-      "视频生成需要有效且受支持的媒体渠道",
-      400,
-    );
+  if (!channel || !isMediaChannelProtocol(channel.protocol)) {
+    throw new ProjectAssetTaskError("视频生成需要有效且受支持的媒体渠道", 400);
   }
   const selectedModel = await prisma.providerModel.findFirst({
     where: {
@@ -413,7 +411,10 @@ export async function createStoryboardPanelVideoTask(input: {
     capabilities: parseStoredJsonValue(selectedModel.capabilitiesJson, {}),
   });
   if (input.mode === "first-last" && limits.maxReferenceImages < 2)
-    throw new ProjectAssetTaskError("当前视频模型不支持同时提交首帧和尾帧", 400);
+    throw new ProjectAssetTaskError(
+      "当前视频模型不支持同时提交首帧和尾帧",
+      400,
+    );
   const durationSeconds =
     parseDurationSeconds(input.duration) ??
     panel.durationSeconds ??
@@ -437,7 +438,14 @@ export async function createStoryboardPanelVideoTask(input: {
     role?: "reference_image" | "first_frame" | "last_frame";
   }> = [];
   if (input.mode === "first-last") {
-    const firstFrameUrl = await mediaAssetUrl(panel.imageAsset);
+    const explicitFirst = input.canvasReferences?.find(
+      (item) => item.role === "first_frame",
+    );
+    const explicitLast = input.canvasReferences?.find(
+      (item) => item.role === "last_frame",
+    );
+    const firstFrameUrl =
+      explicitFirst?.url ?? (await mediaAssetUrl(panel.imageAsset));
     const lastFrame = await findLastFramePanel({
       userId: input.userId,
       projectId: input.projectId,
@@ -447,38 +455,77 @@ export async function createStoryboardPanelVideoTask(input: {
       linkedToNextPanel: panel.linkedToNextPanel,
       lastFramePanelId: input.lastFramePanelId,
     });
-    const lastFrameUrl = await mediaAssetUrl(lastFrame?.imageAsset);
+    const lastFrameUrl =
+      explicitLast?.url ?? (await mediaAssetUrl(lastFrame?.imageAsset));
     if (!firstFrameUrl || !lastFrameUrl)
       throw new ProjectAssetTaskError("首尾帧模式需要首帧和尾帧图片", 400);
     referenceImages.push(
       {
         url: firstFrameUrl,
-        storageKey: panel.imageAsset?.storageKey ?? undefined,
-        mimeType: panel.imageAsset?.mimeType ?? undefined,
+        storageKey:
+          explicitFirst?.storageKey ??
+          panel.imageAsset?.storageKey ??
+          undefined,
+        mimeType:
+          explicitFirst?.mimeType ?? panel.imageAsset?.mimeType ?? undefined,
         role: "first_frame",
       },
       {
         url: lastFrameUrl,
-        storageKey: lastFrame?.imageAsset?.storageKey ?? undefined,
-        mimeType: lastFrame?.imageAsset?.mimeType ?? undefined,
+        storageKey:
+          explicitLast?.storageKey ??
+          lastFrame?.imageAsset?.storageKey ??
+          undefined,
+        mimeType:
+          explicitLast?.mimeType ??
+          lastFrame?.imageAsset?.mimeType ??
+          undefined,
         role: "last_frame",
       },
     );
   } else {
-    const panelImageUrl = await mediaAssetUrl(panel.imageAsset);
+    const explicitFirst = input.canvasReferences?.find(
+      (item) => item.role === "first_frame",
+    );
+    const panelImageUrl =
+      explicitFirst?.url ?? (await mediaAssetUrl(panel.imageAsset));
     if (panelImageUrl)
       referenceImages.push({
         url: panelImageUrl,
-        storageKey: panel.imageAsset?.storageKey ?? undefined,
-        mimeType: panel.imageAsset?.mimeType ?? undefined,
+        storageKey:
+          explicitFirst?.storageKey ??
+          panel.imageAsset?.storageKey ??
+          undefined,
+        mimeType:
+          explicitFirst?.mimeType ?? panel.imageAsset?.mimeType ?? undefined,
         role: "first_frame",
       });
   }
-  const selectedReferences = referenceImages.slice(0, limits.maxReferenceImages);
+  for (const reference of input.canvasReferences ?? []) {
+    if (
+      !referenceImages.some(
+        (item) => item.url === reference.url && item.role === reference.role,
+      )
+    )
+      referenceImages.push(reference);
+  }
+  if (
+    input.canvasReferences?.length &&
+    referenceImages.length > limits.maxReferenceImages
+  )
+    throw new ProjectAssetTaskError(
+      `当前模型最多支持 ${limits.maxReferenceImages} 张参考图片，请减少连线或选择其他模型`,
+      400,
+    );
+  const selectedReferences = referenceImages.slice(
+    0,
+    limits.maxReferenceImages,
+  );
   const tasks = segments.map((segment) => {
     const segmentId = storyboardVideoSegmentId(panel.id, segment.index);
     return createMediaTask({
       id: `media_task_${randomUUID()}`,
+      idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}:segment:${segment.index}` : undefined,
       projectId: input.projectId,
       episodeId: input.episodeId,
       batchId: input.batchId,
@@ -491,6 +538,7 @@ export async function createStoryboardPanelVideoTask(input: {
       model: input.model,
       request: {
         prompt: segment.prompt,
+        ...(input.canvasNodeId ? {canvasNodeId:input.canvasNodeId,canvasDeferredSelection:true,canvasGenerationId:input.idempotencyKey} : {}),
         ...(input.iteration ? { generationIteration: input.iteration } : {}),
         ratio:
           input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9",
@@ -515,7 +563,7 @@ export async function createStoryboardPanelVideoTask(input: {
   });
   const store = createDatabaseMediaTaskStore(input.userId);
   for (const task of tasks) await store.create(task);
-  await prisma.$transaction([
+  if (!input.canvasNodeId) await prisma.$transaction([
     ...segments.map((segment, index) =>
       prisma.storyboardVideoSegment.upsert({
         where: {
@@ -612,6 +660,7 @@ export type StoryboardPromptPreview = {
 };
 
 export async function previewStoryboardPanelPrompt(input: {
+  canvasReferences?: MediaReferenceImage[];
   userId: string;
   projectId: string;
   episodeId: string;
@@ -756,7 +805,7 @@ export async function previewStoryboardPanelPrompt(input: {
       },
     ];
     if (input.mode === "first-last") {
-      const firstFrameUrl = await mediaAssetUrl(panel.imageAsset);
+      const firstFrameUrl = input.canvasReferences?.find(ref => ref.role === "first_frame")?.url ?? await mediaAssetUrl(panel.imageAsset);
       const lastFrame = await findLastFramePanel({
         userId: input.userId,
         projectId: input.projectId,
@@ -766,7 +815,7 @@ export async function previewStoryboardPanelPrompt(input: {
         linkedToNextPanel: panel.linkedToNextPanel,
         lastFramePanelId: input.lastFramePanelId,
       });
-      const lastFrameUrl = await mediaAssetUrl(lastFrame?.imageAsset);
+      const lastFrameUrl = input.canvasReferences?.find(ref => ref.role === "last_frame")?.url ?? await mediaAssetUrl(lastFrame?.imageAsset);
       if (!firstFrameUrl || !lastFrameUrl)
         issues.push({
           blocking: true,
@@ -781,8 +830,8 @@ export async function previewStoryboardPanelPrompt(input: {
         value: `${referenceCount}/2 张首尾帧（按首帧、尾帧顺序）`,
       });
     } else {
-      const firstFrameUrl = await mediaAssetUrl(panel.imageAsset);
-      if (!firstFrameUrl)
+      const firstFrameUrl = input.canvasReferences?.find(ref => ref.role === "first_frame")?.url ?? await mediaAssetUrl(panel.imageAsset);
+      if (!firstFrameUrl && !input.canvasReferences?.length)
         issues.push({
           blocking: true,
           code: "missing_reference_frame",
@@ -796,6 +845,15 @@ export async function previewStoryboardPanelPrompt(input: {
           ? `${referenceCount} 张分镜首帧（角色 / 场景 / 道具设定已用于生成该首帧）`
           : "缺少当前镜头参考图",
       });
+    }
+    if (input.canvasReferences?.length) {
+      const references = [...input.canvasReferences];
+      const defaultFirst = await mediaAssetUrl(panel.imageAsset);
+      if (defaultFirst && !references.some(ref => ref.role === "first_frame"))
+        references.push({ url: defaultFirst, role: "first_frame" });
+      referenceCount = references.filter((ref, index) => references.findIndex(other => other.url === ref.url && other.role === ref.role) === index).length;
+      if (referenceCount > limits.maxReferenceImages) issues.push({blocking:true,code:"canvas_reference_limit",message:`当前模型最多支持 ${limits.maxReferenceImages} 张图片，实际使用 ${referenceCount} 张`});
+      sources.push({key:"canvas_references",label:"画布引用",value:`${referenceCount} 张图片（包含镜头默认首帧）`});
     }
     sources.push(
       {
@@ -842,7 +900,7 @@ export async function previewStoryboardPanelPrompt(input: {
     props,
     locationName: panel.locationName,
   });
-  const referenceCount = supportingReferences.length;
+  const referenceCount = [...(input.canvasReferences ?? []), ...supportingReferences].filter((ref,index,all)=>all.findIndex(other=>other.url===ref.url)===index).length;
   let compiledPrompt = "";
   let generationPrompt = "";
   const sources: StoryboardPromptPreview["sources"] = [
@@ -953,10 +1011,7 @@ async function findLastFramePanel(input: {
 }
 
 async function mediaAssetUrl(
-  asset:
-    | { url: string | null; storageKey: string | null }
-    | null
-    | undefined,
+  asset: { url: string | null; storageKey: string | null } | null | undefined,
 ) {
   if (asset?.storageKey) return resolveStoredMediaUrl(asset.storageKey);
   return asset?.url ?? null;
@@ -1236,7 +1291,10 @@ function formatBlueprintRecord(
 ) {
   const excluded = new Set(excludedKeys);
   const entries = Object.entries(asBlueprintRecord(value))
-    .filter(([key, item]) => !excluded.has(key) && item !== null && item !== undefined)
+    .filter(
+      ([key, item]) =>
+        !excluded.has(key) && item !== null && item !== undefined,
+    )
     .map(([key, item]) => `${key}=${formatBlueprintValue(item)}`);
   return entries.length ? entries.join("；") : "无额外规则";
 }
@@ -1252,7 +1310,10 @@ function formatBlueprintValue(value: unknown): string {
 }
 
 function formatReferenceScopes(scopes: unknown[]) {
-  if (!scopes.length) return ["参考资产继承范围：仅按本镜已批准资产设定继承永久身份，不继承临时姿态与状态"];
+  if (!scopes.length)
+    return [
+      "参考资产继承范围：仅按本镜已批准资产设定继承永久身份，不继承临时姿态与状态",
+    ];
   return scopes.map((value, index) => {
     const scope = asBlueprintRecord(value);
     return `参考资产${index + 1}：${blueprintText(scope.assetName)}${scope.assetVersion ? `（版本 ${blueprintText(scope.assetVersion)}）` : ""}；继承=${formatBlueprintList(scope.inherit)}；排除=${formatBlueprintList(scope.exclude)}`;
@@ -1294,10 +1355,15 @@ function compileStoryboardImageVisualProfile(item: {
       ? [`一致性规则：${spec.consistencyRules.join("；")}`]
       : []),
     ...(spec.negativePrompt ? [`排除项：${spec.negativePrompt}`] : []),
-  ].filter((line) => !line.endsWith("：")).join("\n");
+  ]
+    .filter((line) => !line.endsWith("："))
+    .join("\n");
 }
 
-function parseStoredJsonValue<T>(value: string | null | undefined, fallback: T): T {
+function parseStoredJsonValue<T>(
+  value: string | null | undefined,
+  fallback: T,
+): T {
   try {
     return value ? (JSON.parse(value) as T) : fallback;
   } catch {
@@ -1376,8 +1442,7 @@ async function createTargetEntity(input: CreateProjectImageTaskInput) {
         },
         select: { id: true },
       });
-      if (!appearance)
-        throw new ProjectAssetTaskError("角色外观不存在", 404);
+      if (!appearance) throw new ProjectAssetTaskError("角色外观不存在", 404);
       return { id: appearance.id, entityType: "character_appearance" as const };
     }
     const row = await prisma.characterAppearance.create({
@@ -1446,17 +1511,21 @@ async function findSelectedReferenceImages(input: CreateProjectImageTaskInput) {
         selected: true,
         imageAsset: { url: { not: null } },
       },
-      include: { imageAsset: { select: { url: true, storageKey: true, mimeType: true } } },
+      include: {
+        imageAsset: { select: { url: true, storageKey: true, mimeType: true } },
+      },
       orderBy: { updatedAt: "desc" },
       take: 3,
     });
     return rows.flatMap((row) =>
       row.imageAsset?.url
-        ? [{
-            url: row.imageAsset.url,
-            storageKey: row.imageAsset.storageKey ?? undefined,
-            mimeType: row.imageAsset.mimeType ?? undefined,
-          }]
+        ? [
+            {
+              url: row.imageAsset.url,
+              storageKey: row.imageAsset.storageKey ?? undefined,
+              mimeType: row.imageAsset.mimeType ?? undefined,
+            },
+          ]
         : [],
     );
   }
@@ -1468,17 +1537,21 @@ async function findSelectedReferenceImages(input: CreateProjectImageTaskInput) {
         selected: true,
         imageAsset: { url: { not: null } },
       },
-      include: { imageAsset: { select: { url: true, storageKey: true, mimeType: true } } },
+      include: {
+        imageAsset: { select: { url: true, storageKey: true, mimeType: true } },
+      },
       orderBy: { updatedAt: "desc" },
       take: 3,
     });
     return rows.flatMap((row) =>
       row.imageAsset?.url
-        ? [{
-            url: row.imageAsset.url,
-            storageKey: row.imageAsset.storageKey ?? undefined,
-            mimeType: row.imageAsset.mimeType ?? undefined,
-          }]
+        ? [
+            {
+              url: row.imageAsset.url,
+              storageKey: row.imageAsset.storageKey ?? undefined,
+              mimeType: row.imageAsset.mimeType ?? undefined,
+            },
+          ]
         : [],
     );
   }
@@ -1491,17 +1564,21 @@ async function findSelectedReferenceImages(input: CreateProjectImageTaskInput) {
       role: "selected",
       mediaAsset: { kind: "image", url: { not: null } },
     },
-    include: { mediaAsset: { select: { url: true, storageKey: true, mimeType: true } } },
+    include: {
+      mediaAsset: { select: { url: true, storageKey: true, mimeType: true } },
+    },
     orderBy: { createdAt: "desc" },
     take: 3,
   });
   return references.flatMap((reference) =>
     reference.mediaAsset.url
-      ? [{
-          url: reference.mediaAsset.url,
-          storageKey: reference.mediaAsset.storageKey ?? undefined,
-          mimeType: reference.mediaAsset.mimeType ?? undefined,
-        }]
+      ? [
+          {
+            url: reference.mediaAsset.url,
+            storageKey: reference.mediaAsset.storageKey ?? undefined,
+            mimeType: reference.mediaAsset.mimeType ?? undefined,
+          },
+        ]
       : [],
   );
 }
@@ -1530,7 +1607,11 @@ async function findStoryboardReferenceImages(input: {
       select: {
         appearances: {
           where: { selected: true, imageAsset: { url: { not: null } } },
-          include: { imageAsset: { select: { url: true, storageKey: true, mimeType: true } } },
+          include: {
+            imageAsset: {
+              select: { url: true, storageKey: true, mimeType: true },
+            },
+          },
           orderBy: { updatedAt: "desc" },
           take: 1,
         },
@@ -1552,7 +1633,11 @@ async function findStoryboardReferenceImages(input: {
       select: {
         images: {
           where: { selected: true, imageAsset: { url: { not: null } } },
-          include: { imageAsset: { select: { url: true, storageKey: true, mimeType: true } } },
+          include: {
+            imageAsset: {
+              select: { url: true, storageKey: true, mimeType: true },
+            },
+          },
           orderBy: { updatedAt: "desc" },
           take: 1,
         },
@@ -1566,7 +1651,8 @@ async function findStoryboardReferenceImages(input: {
         mimeType: asset.mimeType ?? undefined,
       });
   }
-  const propNames = input.props?.map((name) => name.trim()).filter(Boolean) ?? [];
+  const propNames =
+    input.props?.map((name) => name.trim()).filter(Boolean) ?? [];
   if (propNames.length) {
     const props = await prisma.novelProp.findMany({
       where: { projectId: input.projectId, name: { in: propNames } },
@@ -1581,7 +1667,11 @@ async function findStoryboardReferenceImages(input: {
           role: "selected",
           mediaAsset: { kind: "image", url: { not: null } },
         },
-        select: { mediaAsset: { select: { url: true, storageKey: true, mimeType: true } } },
+        select: {
+          mediaAsset: {
+            select: { url: true, storageKey: true, mimeType: true },
+          },
+        },
       });
       for (const reference of propAssets) {
         const asset = reference.mediaAsset;
@@ -1642,10 +1732,7 @@ function withStoryboardImageContinuityRequirements(input: {
 }
 
 function storyboardEnvironmentDirective(
-  panel: Pick<
-    StoryboardEventBlueprintPanel,
-    "startStateJson" | "endStateJson"
-  >,
+  panel: Pick<StoryboardEventBlueprintPanel, "startStateJson" | "endStateJson">,
   episode?: { description?: string | null; novelText?: string | null },
 ) {
   const startState = asBlueprintRecord(
@@ -1691,9 +1778,7 @@ function storyboardEnvironmentDirective(
     );
   const dayScene =
     episodeTime === "day" ||
-    /白天|日间|日光|阳光|晴|daylight|sunlight|daytime|clear sky/i.test(
-      summary,
-    );
+    /白天|日间|日光|阳光|晴|daylight|sunlight|daytime|clear sky/i.test(summary);
   return [
     ...(episodeTime
       ? [
@@ -1727,7 +1812,10 @@ function reconcileStoryboardPromptTime(
   if (time === "day")
     return value
       .replace(/weather\s*=\s*(?:深夜|夜间|冬夜)/gi, "weather=白天")
-      .replace(/keyLightSource\s*=\s*(?:月光|灯笼|烛光)/gi, "keyLightSource=日间实景光")
+      .replace(
+        /keyLightSource\s*=\s*(?:月光|灯笼|烛光)/gi,
+        "keyLightSource=日间实景光",
+      )
       .replace(/cold winter night|moonlight|nighttime/gi, "日间自然环境");
   return value;
 }
@@ -1755,9 +1843,13 @@ function stableEpisodeTimeOfDay(episode?: {
     firstTime === "night"
       ? /次日|翌日|第二天|天亮|破晓|清晨|早晨|正午|中午|下午|白昼|白天|日间|next day|dawn|morning|noon|afternoon|daytime/i
       : /当晚|入夜|夜幕降临|深夜|夜色|夜晚|夜间|傍晚|黄昏|暮色|that night|nightfall|nighttime|evening|dusk/i;
-  return transitionPattern.test(context.slice(
-    firstTime === "night" ? (nightMatch?.index ?? 0) + nightMatch![0].length : (dayMatch?.index ?? 0) + dayMatch![0].length,
-  ))
+  return transitionPattern.test(
+    context.slice(
+      firstTime === "night"
+        ? (nightMatch?.index ?? 0) + nightMatch![0].length
+        : (dayMatch?.index ?? 0) + dayMatch![0].length,
+    ),
+  )
     ? null
     : firstTime;
 }

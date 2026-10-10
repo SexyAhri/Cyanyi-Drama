@@ -15,6 +15,7 @@ const labels = {
       "episode-split-planning": "AI 分集规划",
       "storyboard-prompt-design": "AI 分镜提示设计",
       "voice-performance-design": "AI 配音设计",
+      "voice-analysis": "台词分析",
       "visual-asset-extraction": "AI 视觉资产识别",
       "story-to-script": "场次与资产归位",
       "script-to-storyboard": "分镜生成",
@@ -26,6 +27,7 @@ const labels = {
       plan_episode_split: "规划剧集边界",
       design_storyboard_media_prompt: "设计镜头提示词",
       design_voice_performance: "设计角色声线与表演",
+      analyze_episode_voice: "提取台词与说话人",
       extract_visual_assets: "识别角色、场景与道具",
       analyze_novel: "角色、场景与道具识别",
       organize_production_script: "归位场次与本集资产",
@@ -72,6 +74,7 @@ const labels = {
       "episode-split-planning": "AI episode planning",
       "storyboard-prompt-design": "AI storyboard prompt design",
       "voice-performance-design": "AI voice design",
+      "voice-analysis": "Dialogue analysis",
       "visual-asset-extraction": "AI visual asset extraction",
       "story-to-script": "Scene and asset placement",
       "script-to-storyboard": "Storyboard generation",
@@ -83,6 +86,7 @@ const labels = {
       plan_episode_split: "Plan episode boundaries",
       design_storyboard_media_prompt: "Design shot prompt",
       design_voice_performance: "Design voices and delivery",
+      analyze_episode_voice: "Extract dialogue and speakers",
       extract_visual_assets: "Identify characters, locations, and props",
       analyze_novel: "Identify characters, locations, and props",
       organize_production_script: "Place scenes and episode assets",
@@ -124,7 +128,9 @@ const labels = {
 } as const;
 
 export function workflowLabel(locale: StudioLocale, value: string) {
-  return lookup(labels[locale].workflows, value) ?? labels[locale].generationTask;
+  return (
+    lookup(labels[locale].workflows, value) ?? labels[locale].generationTask
+  );
 }
 
 export function workflowStepLabel(locale: StudioLocale, value: string) {
@@ -136,10 +142,14 @@ export function mediaTaskLabel(
   targetType: string | undefined,
   kind: MediaTaskKind,
 ) {
-  const target = targetType ? lookup(labels[locale].tasks, targetType) : undefined;
+  const target = targetType
+    ? lookup(labels[locale].tasks, targetType)
+    : undefined;
   const kindLabel = lookup(labels[locale].kinds, kind);
   if (targetType === "storyboard_panel" && kindLabel)
-    return locale === "en" ? `${kindLabel} · ${target}` : `${target}${kindLabel}`;
+    return locale === "en"
+      ? `${kindLabel} · ${target}`
+      : `${target}${kindLabel}`;
   return target ?? kindLabel ?? labels[locale].generationTask;
 }
 
@@ -154,15 +164,15 @@ export function workflowStepOperationLabel(
   const stepLabel = workflowStepLabel(locale, step.type || step.key);
   const department =
     workflowType === "story-to-script"
-        ? step.type === "parse_novel" || step.key === "analyze_novel"
-          ? "AI"
-          : locale === "zh-CN"
-            ? "本地"
-            : "Local"
+      ? step.type === "parse_novel" || step.key === "analyze_novel"
+        ? "AI"
+        : locale === "zh-CN"
+          ? "本地"
+          : "Local"
       : workflowType === "script-to-storyboard"
-          ? locale === "zh-CN"
-            ? "分镜"
-            : "Storyboard"
+        ? locale === "zh-CN"
+          ? "分镜"
+          : "Storyboard"
         : workflowLabel(locale, workflowType);
   return `${department}-${stepLabel}`;
 }

@@ -63,7 +63,9 @@ describe("prompt registry", () => {
       },
     });
 
-    expect(rendered.text).toContain("Keep {{character_library}} as source text");
+    expect(rendered.text).toContain(
+      "Keep {{character_library}} as source text",
+    );
   });
 
   it("produces stable locale-specific hashes", () => {
@@ -143,6 +145,7 @@ function contractError(code: string, id: PromptId, detail: string) {
 
 function expectedVersion(id: PromptId) {
   const versions: Record<PromptId, number> = {
+    [PROMPT_IDS.PRODUCTION_SCRIPT_ORGANIZATION]: 1,
     [PROMPT_IDS.STORY_CHARACTER_ANALYSIS]: 3,
     [PROMPT_IDS.STORY_LOCATION_PROP_ANALYSIS]: 5,
     [PROMPT_IDS.STORY_CLIP_SEGMENTATION]: 5,

@@ -12,7 +12,7 @@ import {
   Merge,
   TriangleAlert,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -45,6 +45,7 @@ import type {
 } from "../types";
 import { PanelEditorDialog } from "./panel-editor-dialog";
 import { DirectorReviewPanel } from "./director-review-panel";
+import { StoryboardProgressPanel } from "./storyboard-progress-panel";
 import {
   getPanelContinuityIssues,
   mergeStoryboardPanelWithNext,
@@ -59,6 +60,7 @@ import {
 } from "./previs-view-model";
 
 export function StoryboardWorkspace({
+  focusedPanelId,
   analysisModelId,
   models,
   onAnalysisModelChange,
@@ -68,6 +70,7 @@ export function StoryboardWorkspace({
   onRefresh,
   snapshot,
 }: {
+  focusedPanelId?: string;
   analysisModelId: string;
   models: StudioModelOption[];
   onAnalysisModelChange: (id: string) => void;
@@ -83,6 +86,10 @@ export function StoryboardWorkspace({
   const [isLoading, setIsLoading] = useState(true);
   const [isActing, setIsActing] = useState(false);
   const [selectedPanelId, setSelectedPanelId] = useState("");
+  const [showSaved, setShowSaved] = useState(false);
+  useEffect(() => {
+    if (focusedPanelId) setSelectedPanelId(focusedPanelId);
+  }, [focusedPanelId]);
   const projectId = snapshot.project.id;
   const workflows = snapshot.workflows.filter(
     (workflow) => workflow.episodeId === episode.id,
@@ -123,6 +130,27 @@ export function StoryboardWorkspace({
     void load(controller.signal);
     return () => controller.abort();
   }, [load, workflowRevision]);
+  const progressActive = ["queued", "running", "canceling"].includes(
+    data?.progress?.status ?? workflow?.status ?? "",
+  );
+  useEffect(() => {
+    if (!progressActive) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      if (controller.signal.aborted) return;
+      await load(controller.signal);
+      if (!controller.signal.aborted) timer = setTimeout(poll, 5000);
+    };
+    timer = setTimeout(poll, 5000);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [load, progressActive]);
+  useEffect(() => {
+    setShowSaved(false);
+  }, [episode.id, workflow?.id]);
 
   const panels = useMemo(
     () => data?.storyboard?.panels ?? [],
@@ -130,10 +158,27 @@ export function StoryboardWorkspace({
   );
   const selectedPanel =
     panels.find((panel) => panel.id === selectedPanelId) ?? panels[0];
+  const showProgress =
+    !!data?.progress &&
+    (progressActive ||
+      data.progress.completedPanels > 0 ||
+      data.progress.status === "paused") &&
+    !showSaved;
+  const focusedOnce = useRef("");
+  useEffect(() => {
+    if (
+      focusedPanelId &&
+      focusedOnce.current !== focusedPanelId &&
+      panels.some((panel) => panel.id === focusedPanelId)
+    ) {
+      focusedOnce.current = focusedPanelId;
+      setSelectedPanelId(focusedPanelId);
+    }
+  }, [focusedPanelId, panels]);
 
   useEffect(() => {
     onContextChange(
-      selectedPanel
+      selectedPanel && !showProgress
         ? {
             id: selectedPanel.id,
             kind: "panel",
@@ -145,7 +190,7 @@ export function StoryboardWorkspace({
           }
         : undefined,
     );
-  }, [copy.panel, onContextChange, selectedPanel]);
+  }, [copy.panel, onContextChange, selectedPanel, showProgress]);
 
   useEffect(() => {
     if (!panels.length) {
@@ -163,7 +208,14 @@ export function StoryboardWorkspace({
 
   async function startWorkflow() {
     const model = models.find((item) => item.id === analysisModelId);
-    if (!model) { toast.error(locale === "zh-CN" ? "请先选择导演分析模型" : "Select a director model first"); return; }
+    if (!model) {
+      toast.error(
+        locale === "zh-CN"
+          ? "请先选择导演分析模型"
+          : "Select a director model first",
+      );
+      return;
+    }
     setIsActing(true);
     try {
       const result = await startStudioStoryboardWorkflow(
@@ -285,120 +337,170 @@ export function StoryboardWorkspace({
             ) : null}
           </div>
         </div>
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <ModelSelect models={models} value={analysisModelId} onChange={onAnalysisModelChange} placeholder={locale === "zh-CN" ? "导演模型" : "Director model"} className="w-52" disabled={isActing || workflow?.status === "running"} />
-            <WorkflowButtons
-              disabled={isActing || !analysisModelId}
-              hasWorkflow={Boolean(workflow)}
-              locale={locale}
-              onAction={controlWorkflow}
-              onStart={startWorkflow}
-              status={workflow?.status}
-            />
-          </div>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {data?.progress && panels.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowSaved((value) => !value)}
+            >
+              {showSaved
+                ? locale === "en"
+                  ? "Generation progress"
+                  : "返回生成进度"
+                : locale === "en"
+                  ? "Previous production shots"
+                  : "查看已有正式分镜"}
+            </Button>
+          )}
+          <ModelSelect
+            models={models}
+            value={analysisModelId}
+            onChange={onAnalysisModelChange}
+            placeholder={locale === "zh-CN" ? "导演模型" : "Director model"}
+            className="w-52"
+            disabled={isActing || workflow?.status === "running"}
+          />
+          <WorkflowButtons
+            disabled={isActing || !analysisModelId}
+            hasWorkflow={Boolean(workflow)}
+            locale={locale}
+            onAction={controlWorkflow}
+            onStart={startWorkflow}
+            status={workflow?.status}
+          />
+        </div>
       </header>
 
       <div className="shrink-0 border-b py-3 text-xs leading-6 text-muted-foreground">
-        {locale === "zh-CN" ? "导演流程：基础拆镜 → 镜头设计 → 独立审核 → 定向修复（最多一次）→ 分镜确认。原文台词与说话人绑定保留；视频使用无声画面，配音与口型在声音阶段处理。" : "Director flow: scene boundaries → shot design → independent review → one targeted repair → storyboard confirmation. Dialogue bindings stay intact; speech and lip sync are produced separately."}
+        {locale === "zh-CN"
+          ? "导演流程：结构化剧本 → 按场次并行拆镜与表演设计 → 汇总审核 → 问题场次定向修复 → 分镜确认。原文台词与说话人逐条关联，已完成场次即时展示；视频使用无声画面，配音与口型在声音阶段处理。"
+          : "Director flow: structured screenplay → parallel scene planning and performance design → consolidated review → targeted scene repair → storyboard confirmation. Completed scenes appear immediately; original dialogue is linked precisely. Speech and lip sync are produced separately."}
       </div>
-      {data?.storyboard?.status === "director_review_required" ? <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b py-3 text-sm">
-        <p className="text-destructive">{locale === "zh-CN" ? "导演审核仍有未解决问题。请检查分镜，确认后才能生成媒体；审核记录在任务产物中。" : "Director review requires attention. Inspect the shots before confirming them for media generation."}</p>
-        <Button variant="outline" size="sm" disabled={isActing} onClick={() => void savePanels(panels, "ready")}>{locale === "zh-CN" ? "已检查，确认分镜" : "Confirm reviewed storyboard"}</Button>
-      </div> : null}
-      <DirectorReviewPanel value={selectedPanel?.actingNotes?.directorReview} locale={locale} />
+      {data?.storyboard?.status === "director_review_required" ? (
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b py-3 text-sm">
+          <p className="text-destructive">
+            {locale === "zh-CN"
+              ? "导演审核仍有未解决问题。请检查分镜，确认后才能生成媒体；审核记录在任务产物中。"
+              : "Director review requires attention. Inspect the shots before confirming them for media generation."}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isActing}
+            onClick={() => void savePanels(panels, "ready")}
+          >
+            {locale === "zh-CN"
+              ? "已检查，确认分镜"
+              : "Confirm reviewed storyboard"}
+          </Button>
+        </div>
+      ) : null}
+      <DirectorReviewPanel
+        value={selectedPanel?.actingNotes?.directorReview}
+        locale={locale}
+      />
 
       <div className="min-w-0 pt-4 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col xl:overflow-hidden">
-          {error ? (
-            <div className="flex items-center justify-between gap-3 border-b py-3">
-              <p className="text-sm text-destructive">{error}</p>
-              <Button onClick={() => void load()} size="sm" variant="outline">
-                {copy.retry}
-              </Button>
-            </div>
-          ) : null}
+        {error ? (
+          <div className="flex items-center justify-between gap-3 border-b py-3">
+            <p className="text-sm text-destructive">{error}</p>
+            <Button onClick={() => void load()} size="sm" variant="outline">
+              {copy.retry}
+            </Button>
+          </div>
+        ) : null}
 
-          {!panels.length ? (
-            <div className="flex min-h-96 flex-col items-center justify-center gap-3 border-b text-center text-muted-foreground">
-              <Clapperboard className="size-6" />
-              <p className="max-w-md text-sm leading-6">{copy.noStoryboard}</p>
-            </div>
-          ) : (
-            <div className="grid min-h-152 border-b lg:grid-cols-[15rem_minmax(0,1fr)] xl:min-h-0 xl:flex-1 xl:overflow-hidden">
-              <aside className="border-b lg:border-r lg:border-b-0 xl:flex xl:min-h-0 xl:flex-col">
-                <div className="flex h-11 items-center justify-between border-b px-3">
-                  <h2 className="text-xs font-semibold">
-                    {copy.storyboardPanels}
-                  </h2>
-                  <Badge variant="secondary">{panels.length}</Badge>
-                </div>
-                <div className="max-h-80 overflow-y-auto p-1.5 xl:max-h-none xl:flex-1">
-                  {panels.map((panel) => {
-                    const issues = getPanelContinuityIssues(
-                      panel,
-                      data?.continuityIssues ?? [],
-                    );
-                    const readiness = getPrevisReadiness(panel, issues);
-                    return (
-                      <button
-                        className={cn(
-                          "grid h-16 w-full grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md px-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-                          panel.id === selectedPanel?.id
-                            ? "bg-muted"
-                            : "hover:bg-muted/60",
-                        )}
-                        key={panel.id}
-                        onClick={() => setSelectedPanelId(panel.id)}
-                        type="button"
-                      >
-                        <span className="font-mono text-[11px] text-muted-foreground">
-                          {String(panel.panelIndex + 1).padStart(2, "0")}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium">
-                            {panel.shotType || copy.panel}
-                          </span>
-                          <span
-                            className="mt-1 block truncate text-xs text-muted-foreground"
-                            title={panelListMetadata(panel, copy.seconds)}
-                          >
-                            {panelListMetadata(panel, copy.seconds)}
-                          </span>
-                        </span>
-                        <Badge
-                          className={cn(
-                            "shrink-0 font-mono text-[10px]",
-                            readiness.isReady &&
-                              "border-status-success/30 text-status-success",
-                          )}
-                          variant="outline"
-                        >
-                          {readiness.complete}/{readiness.total}
-                        </Badge>
-                      </button>
-                    );
-                  })}
-                </div>
-              </aside>
-
-              {selectedPanel ? (
-                <PanelDetails
-                  canMerge={Boolean(
-                    mergeStoryboardPanelWithNext(panels, selectedPanel.id),
-                  )}
-                  canSplit={(selectedPanel.durationSeconds ?? 0) >= 2}
-                  issues={getPanelContinuityIssues(
-                    selectedPanel,
+        {showProgress && data?.progress ? (
+          <>
+            <StoryboardProgressPanel
+              key={data.progress.runId}
+              progress={data.progress}
+              locale={locale}
+            />
+          </>
+        ) : !panels.length ? (
+          <div className="flex min-h-96 flex-col items-center justify-center gap-3 border-b text-center text-muted-foreground">
+            <Clapperboard className="size-6" />
+            <p className="max-w-md text-sm leading-6">{copy.noStoryboard}</p>
+          </div>
+        ) : (
+          <div className="grid min-h-152 border-b lg:grid-cols-[15rem_minmax(0,1fr)] xl:min-h-0 xl:flex-1 xl:overflow-hidden">
+            <aside className="border-b lg:border-r lg:border-b-0 xl:flex xl:min-h-0 xl:flex-col">
+              <div className="flex h-11 items-center justify-between border-b px-3">
+                <h2 className="text-xs font-semibold">
+                  {copy.storyboardPanels}
+                </h2>
+                <Badge variant="secondary">{panels.length}</Badge>
+              </div>
+              <div className="max-h-80 overflow-y-auto p-1.5 xl:max-h-none xl:flex-1">
+                {panels.map((panel) => {
+                  const issues = getPanelContinuityIssues(
+                    panel,
                     data?.continuityIssues ?? [],
-                  )}
-                  locale={locale}
-                  onMerge={mergePanel}
-                  onSave={savePanel}
-                  onSplit={splitPanel}
-                  panel={selectedPanel}
-                />
-              ) : null}
-            </div>
-          )}
+                  );
+                  const readiness = getPrevisReadiness(panel, issues);
+                  return (
+                    <button
+                      className={cn(
+                        "grid h-16 w-full grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md px-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                        panel.id === selectedPanel?.id
+                          ? "bg-muted"
+                          : "hover:bg-muted/60",
+                      )}
+                      key={panel.id}
+                      onClick={() => setSelectedPanelId(panel.id)}
+                      type="button"
+                    >
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {String(panel.panelIndex + 1).padStart(2, "0")}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">
+                          {panel.shotType || copy.panel}
+                        </span>
+                        <span
+                          className="mt-1 block truncate text-xs text-muted-foreground"
+                          title={panelListMetadata(panel, copy.seconds)}
+                        >
+                          {panelListMetadata(panel, copy.seconds)}
+                        </span>
+                      </span>
+                      <Badge
+                        className={cn(
+                          "shrink-0 font-mono text-[10px]",
+                          readiness.isReady &&
+                            "border-status-success/30 text-status-success",
+                        )}
+                        variant="outline"
+                      >
+                        {readiness.complete}/{readiness.total}
+                      </Badge>
+                    </button>
+                  );
+                })}
+              </div>
+            </aside>
+
+            {selectedPanel ? (
+              <PanelDetails
+                canMerge={Boolean(
+                  mergeStoryboardPanelWithNext(panels, selectedPanel.id),
+                )}
+                canSplit={(selectedPanel.durationSeconds ?? 0) >= 2}
+                issues={getPanelContinuityIssues(
+                  selectedPanel,
+                  data?.continuityIssues ?? [],
+                )}
+                locale={locale}
+                onMerge={mergePanel}
+                onSave={savePanel}
+                onSplit={splitPanel}
+                panel={selectedPanel}
+              />
+            ) : null}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -510,7 +612,13 @@ function PanelDetails({
             </h2>
           </div>
           <p className="mt-1 truncate text-xs text-muted-foreground">
-            {[panel.locationName, panel.cameraMove, panel.durationSeconds ? `${panel.durationSeconds} ${copy.seconds}` : null]
+            {[
+              panel.locationName,
+              panel.cameraMove,
+              panel.durationSeconds
+                ? `${panel.durationSeconds} ${copy.seconds}`
+                : null,
+            ]
               .filter(Boolean)
               .join(" · ")}
           </p>
@@ -557,74 +665,134 @@ function PanelDetails({
         defaultValue="overview"
         key={panel.id}
       >
-        <TabsList className="max-w-full shrink-0 justify-start overflow-x-auto" variant="line">
+        <TabsList
+          className="max-w-full shrink-0 justify-start overflow-x-auto"
+          variant="line"
+        >
           <TabsTrigger value="overview">{tools.overview}</TabsTrigger>
           <TabsTrigger value="action">{tools.actionPerformance}</TabsTrigger>
           <TabsTrigger value="camera">{tools.cameraDesign}</TabsTrigger>
           <TabsTrigger value="prompts">{tools.generationPrompts}</TabsTrigger>
           <TabsTrigger value="continuity">
             {tools.continuity}
-            {issues.length ? <Badge variant="secondary">{issues.length}</Badge> : null}
+            {issues.length ? (
+              <Badge variant="secondary">{issues.length}</Badge>
+            ) : null}
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent className="mt-0 min-h-0 overflow-y-auto py-5 pr-2" value="overview">
+        <TabsContent
+          className="mt-0 min-h-0 overflow-y-auto py-5 pr-2"
+          value="overview"
+        >
           <div className="grid gap-8 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
             <div className="min-w-0 space-y-6">
               <section>
-                <h3 className="text-xs font-semibold text-muted-foreground">{copy.panelDescription}</h3>
-                <p className="mt-2 whitespace-pre-wrap text-base leading-7">{description}</p>
+                <h3 className="text-xs font-semibold text-muted-foreground">
+                  {copy.panelDescription}
+                </h3>
+                <p className="mt-2 whitespace-pre-wrap text-base leading-7">
+                  {description}
+                </p>
               </section>
               <section className="border-t pt-5">
                 <h3 className="text-sm font-semibold">{tools.dialogue}</h3>
                 <dl className="mt-3 grid gap-4 sm:grid-cols-2">
                   <PanelSpec label={copy.subtitle} value={panel.subtitleText} />
-                  <PanelSpec label={tools.speaker} value={panel.speakingCharacter} />
+                  <PanelSpec
+                    label={tools.speaker}
+                    value={panel.speakingCharacter}
+                  />
                   <PanelSpec label={tools.lipSync} value={panel.lipSyncText} />
-                  <PanelSpec label={tools.voiceover} value={panel.voiceoverText} />
+                  <PanelSpec
+                    label={tools.voiceover}
+                    value={panel.voiceoverText}
+                  />
                 </dl>
               </section>
             </div>
             <aside className="border-t pt-5 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-6">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-semibold">{copy.previsReadiness}</span>
-                <span className="font-mono text-muted-foreground">{readiness.complete}/{readiness.total}</span>
+                <span className="font-mono text-muted-foreground">
+                  {readiness.complete}/{readiness.total}
+                </span>
               </div>
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
                 <div
-                  className={cn("h-full bg-status-warning", readiness.isReady && "bg-status-success")}
-                  style={{ width: `${(readiness.complete / readiness.total) * 100}%` }}
+                  className={cn(
+                    "h-full bg-status-warning",
+                    readiness.isReady && "bg-status-success",
+                  )}
+                  style={{
+                    width: `${(readiness.complete / readiness.total) * 100}%`,
+                  }}
                 />
               </div>
               {readiness.missing.length ? (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {readiness.missing.map((key) => (
-                    <Badge key={key} variant="outline">{previsSpecLabel(copy, key)}</Badge>
+                    <Badge key={key} variant="outline">
+                      {previsSpecLabel(copy, key)}
+                    </Badge>
                   ))}
                 </div>
               ) : null}
               <dl className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-                <PanelSpec label={tools.scene} value={panel.sceneNumber === null ? null : String(panel.sceneNumber + 1)} />
-                <PanelSpec label={copy.duration} value={panel.durationSeconds ? `${panel.durationSeconds} ${copy.seconds}` : null} />
+                <PanelSpec
+                  label={tools.scene}
+                  value={
+                    panel.sceneNumber === null
+                      ? null
+                      : String(panel.sceneNumber + 1)
+                  }
+                />
+                <PanelSpec
+                  label={copy.duration}
+                  value={
+                    panel.durationSeconds
+                      ? `${panel.durationSeconds} ${copy.seconds}`
+                      : null
+                  }
+                />
                 <PanelSpec label={copy.location} value={panel.locationName} />
-                <PanelSpec label={copy.cast} value={panel.characters.join(" · ")} />
-                <PanelSpec label={copy.propAssets} value={panel.props.join(" · ")} />
+                <PanelSpec
+                  label={copy.cast}
+                  value={panel.characters.join(" · ")}
+                />
+                <PanelSpec
+                  label={copy.propAssets}
+                  value={panel.props.join(" · ")}
+                />
               </dl>
             </aside>
           </div>
         </TabsContent>
 
-        <TabsContent className="mt-0 min-h-0 overflow-y-auto py-5 pr-2" value="action">
+        <TabsContent
+          className="mt-0 min-h-0 overflow-y-auto py-5 pr-2"
+          value="action"
+        >
           <div className="grid gap-8 xl:grid-cols-[minmax(0,1.2fr)_minmax(22rem,0.8fr)]">
             <section>
               <h3 className="text-sm font-semibold">{tools.motionBeats}</h3>
               <ol className="mt-3 divide-y border-y">
                 {panel.motionBeats.map((beat, index) => (
-                  <li className="grid gap-2 py-3 sm:grid-cols-[5rem_minmax(0,1fr)]" key={`${String(beat.startSecond)}-${String(beat.endSecond)}-${index}`}>
-                    <span className="font-mono text-xs text-muted-foreground">{String(beat.startSecond ?? "?")}-{String(beat.endSecond ?? "?")}s</span>
+                  <li
+                    className="grid gap-2 py-3 sm:grid-cols-[5rem_minmax(0,1fr)]"
+                    key={`${String(beat.startSecond)}-${String(beat.endSecond)}-${index}`}
+                  >
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {String(beat.startSecond ?? "?")}-
+                      {String(beat.endSecond ?? "?")}s
+                    </span>
                     <span>
-                      <span className="block text-sm">{String(beat.action ?? "-")}</span>
-                      <span className="mt-1 block text-xs text-muted-foreground">{String(beat.camera ?? "-")}</span>
+                      <span className="block text-sm">
+                        {String(beat.action ?? "-")}
+                      </span>
+                      <span className="mt-1 block text-xs text-muted-foreground">
+                        {String(beat.camera ?? "-")}
+                      </span>
                     </span>
                   </li>
                 ))}
@@ -634,14 +802,25 @@ function PanelDetails({
               <h3 className="text-sm font-semibold">{copy.actingDirection}</h3>
               <div className="mt-3 divide-y border-y">
                 {panel.characters.map((character) => {
-                  const direction = acting.find((item) => item.name === character);
+                  const direction = acting.find(
+                    (item) => item.name === character,
+                  );
                   return (
                     <div className="py-3" key={character}>
                       <p className="text-sm font-medium">{character}</p>
                       <dl className="mt-2 grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
-                        <PanelSpec label={copy.emotion} value={direction?.emotion} />
-                        <PanelSpec label={copy.action} value={direction?.action} />
-                        <PanelSpec label={copy.expression} value={direction?.expression} />
+                        <PanelSpec
+                          label={copy.emotion}
+                          value={direction?.emotion}
+                        />
+                        <PanelSpec
+                          label={copy.action}
+                          value={direction?.action}
+                        />
+                        <PanelSpec
+                          label={copy.expression}
+                          value={direction?.expression}
+                        />
                       </dl>
                     </div>
                   );
@@ -655,62 +834,121 @@ function PanelDetails({
           </section>
         </TabsContent>
 
-        <TabsContent className="mt-0 min-h-0 overflow-y-auto py-5 pr-2" value="camera">
+        <TabsContent
+          className="mt-0 min-h-0 overflow-y-auto py-5 pr-2"
+          value="camera"
+        >
           <section>
             <h3 className="text-sm font-semibold">{tools.cameraDesign}</h3>
             <dl className="mt-4 grid gap-x-8 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
-              <PanelSpec label={copy.composition} value={photography.composition} />
-              <PanelSpec label={copy.focalLength} value={photography.focalLength} />
-              <PanelSpec label={copy.cameraPosition} value={photography.cameraPosition} />
+              <PanelSpec
+                label={copy.composition}
+                value={photography.composition}
+              />
+              <PanelSpec
+                label={copy.focalLength}
+                value={photography.focalLength}
+              />
+              <PanelSpec
+                label={copy.cameraPosition}
+                value={photography.cameraPosition}
+              />
               <PanelSpec label={copy.cameraAngle} value={photography.camera} />
               <PanelSpec label={copy.cameraMove} value={panel.cameraMove} />
               <PanelSpec label={copy.lighting} value={photography.lighting} />
-              <PanelSpec label={copy.depthOfField} value={photography.depthOfField} />
+              <PanelSpec
+                label={copy.depthOfField}
+                value={photography.depthOfField}
+              />
               <PanelSpec label={copy.colorTone} value={photography.colorTone} />
             </dl>
           </section>
           <section className="mt-7 border-t pt-5">
             <h3 className="text-sm font-semibold">{tools.worldContext}</h3>
             <dl className="mt-4 grid gap-x-8 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
-              <PanelSpec label={tools.realm} value={recordText(panel.worldContext.realm)} />
-              <PanelSpec label={tools.technique} value={recordText(panel.worldContext.technique)} />
-              <PanelSpec label={tools.powerRule} value={recordText(panel.worldContext.powerRule)} />
-              <PanelSpec label={tools.environmentScale} value={recordText(panel.worldContext.environmentScale)} />
+              <PanelSpec
+                label={tools.realm}
+                value={recordText(panel.worldContext.realm)}
+              />
+              <PanelSpec
+                label={tools.technique}
+                value={recordText(panel.worldContext.technique)}
+              />
+              <PanelSpec
+                label={tools.powerRule}
+                value={recordText(panel.worldContext.powerRule)}
+              />
+              <PanelSpec
+                label={tools.environmentScale}
+                value={recordText(panel.worldContext.environmentScale)}
+              />
             </dl>
           </section>
         </TabsContent>
 
-        <TabsContent className="mt-0 min-h-0 overflow-y-auto py-5 pr-2" value="prompts">
+        <TabsContent
+          className="mt-0 min-h-0 overflow-y-auto py-5 pr-2"
+          value="prompts"
+        >
           <div className="grid gap-7 lg:grid-cols-2">
             <PromptBlock label={tools.imagePrompt} value={panel.imagePrompt} />
             <PromptBlock label={tools.videoPrompt} value={panel.videoPrompt} />
           </div>
           <section className="mt-7 grid gap-7 border-t pt-5 lg:grid-cols-2">
-            <CueList cues={panel.vfxCues} label={tools.vfxCues} locale={locale} time={(cue) => `${String(cue.atSecond ?? "?")}s`} />
-            <CueList cues={panel.sfxCues} label={tools.sfxCues} locale={locale} time={(cue) => `${String(cue.startSecond ?? "?")}-${String(cue.endSecond ?? "?")}s`} />
+            <CueList
+              cues={panel.vfxCues}
+              label={tools.vfxCues}
+              locale={locale}
+              time={(cue) => `${String(cue.atSecond ?? "?")}s`}
+            />
+            <CueList
+              cues={panel.sfxCues}
+              label={tools.sfxCues}
+              locale={locale}
+              time={(cue) =>
+                `${String(cue.startSecond ?? "?")}-${String(cue.endSecond ?? "?")}s`
+              }
+            />
           </section>
           {panel.sourceEvidence.length ? (
             <section className="mt-7 border-t pt-5">
               <h3 className="text-sm font-semibold">{tools.sourceEvidence}</h3>
               <div className="mt-3 space-y-3">
                 {panel.sourceEvidence.map((evidence) => (
-                  <p className="border-l-2 pl-3 text-sm leading-6 text-muted-foreground" key={evidence}>{evidence}</p>
+                  <p
+                    className="border-l-2 pl-3 text-sm leading-6 text-muted-foreground"
+                    key={evidence}
+                  >
+                    {evidence}
+                  </p>
                 ))}
               </div>
             </section>
           ) : null}
         </TabsContent>
 
-        <TabsContent className="mt-0 min-h-0 overflow-y-auto py-5 pr-2" value="continuity">
+        <TabsContent
+          className="mt-0 min-h-0 overflow-y-auto py-5 pr-2"
+          value="continuity"
+        >
           {issues.length ? (
             <div className="space-y-3">
               {issues.map((issue, index) => (
-                <Alert key={`${issue.code}-${index}`} variant={issue.severity === "error" ? "destructive" : "default"}>
+                <Alert
+                  key={`${issue.code}-${index}`}
+                  variant={
+                    issue.severity === "error" ? "destructive" : "default"
+                  }
+                >
                   <TriangleAlert />
                   <AlertTitle>{issue.entityName || issue.code}</AlertTitle>
                   <AlertDescription>
                     {issue.message}
-                    {issue.suggestedFix ? <span className="mt-1 block">{copy.suggestedFix}：{issue.suggestedFix}</span> : null}
+                    {issue.suggestedFix ? (
+                      <span className="mt-1 block">
+                        {copy.suggestedFix}：{issue.suggestedFix}
+                      </span>
+                    ) : null}
                   </AlertDescription>
                 </Alert>
               ))}
@@ -727,7 +965,13 @@ function PanelDetails({
   );
 }
 
-function PromptBlock({ label, value }: { label: string; value: string | null }) {
+function PromptBlock({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | null;
+}) {
   return (
     <section className="min-w-0">
       <h3 className="text-sm font-semibold">{label}</h3>
@@ -799,7 +1043,12 @@ function CueList({
               <span className="min-w-0">
                 <span className="flex flex-wrap items-center gap-1.5">
                   <Badge variant="outline">
-                    {cueLabel(locale, recordText(cue.phase) || recordText(cue.type) || recordText(cue.category))}
+                    {cueLabel(
+                      locale,
+                      recordText(cue.phase) ||
+                        recordText(cue.type) ||
+                        recordText(cue.category),
+                    )}
                   </Badge>
                   {cue.category ? (
                     <span className="text-xs text-muted-foreground">

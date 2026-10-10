@@ -60,6 +60,7 @@ import {
 } from "./shot-view-model";
 
 export function ShotsWorkspace({
+  focusedPanelId,
   analysisModels,
   episode,
   imageModels,
@@ -69,6 +70,7 @@ export function ShotsWorkspace({
   snapshot,
   videoModels,
 }: {
+  focusedPanelId?: string;
   analysisModels: StudioModelOption[];
   episode: WorkspaceSnapshot["project"]["episodes"][number];
   imageModels: StudioModelOption[];
@@ -88,6 +90,7 @@ export function ShotsWorkspace({
   const [kind, setKind] = useState<ShotMediaKind>("image");
   const [tab, setTab] = useState<ShotMediaKind | "vfx">("image");
   const [selectedPanelId, setSelectedPanelId] = useState("");
+  useEffect(() => { if (focusedPanelId) setSelectedPanelId(focusedPanelId); }, [focusedPanelId]);
   const [checkedPanelIds, setCheckedPanelIds] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isSelecting, setIsSelecting] = useState(false);
@@ -141,6 +144,13 @@ export function ShotsWorkspace({
     () => storyboardData?.storyboard?.panels ?? [],
     [storyboardData?.storyboard?.panels],
   );
+  const focusedOnce = useRef("");
+  useEffect(() => {
+    if (focusedPanelId && focusedOnce.current !== focusedPanelId && panels.some(panel => panel.id === focusedPanelId)) {
+      focusedOnce.current = focusedPanelId;
+      setSelectedPanelId(focusedPanelId);
+    }
+  }, [focusedPanelId, panels]);
   const selectedPanel =
     panels.find((panel) => panel.id === selectedPanelId) ?? panels[0];
 

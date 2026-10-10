@@ -1,7 +1,7 @@
 "use client";
 
 import { LoaderCircle, Pencil, Save } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   Accordion,
@@ -41,26 +41,44 @@ export function PanelEditorDialog({
   locale,
   onSave,
   panel,
+  open: controlledOpen,
+  onOpenChange,
+  showTrigger = true,
 }: {
   locale: StudioLocale;
   onSave: (panel: StudioStoryboardPanel) => Promise<unknown> | void;
   panel: StudioStoryboardPanel;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  showTrigger?: boolean;
 }) {
   const copy = getStudioCopy(locale);
   const guidance = getPanelEditorGuidance(locale);
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  function setOpen(next: boolean) {
+    if (controlledOpen === undefined) setInternalOpen(next);
+    onOpenChange?.(next);
+  }
   const [draft, setDraft] = useState(() => toDraft(panel));
   const [isSaving, setIsSaving] = useState(false);
+  const latestPanel = useRef(panel);
+  const openedPanel = useRef(panel);
+  latestPanel.current = panel;
 
   useEffect(() => {
-    if (open) setDraft(toDraft(panel));
-  }, [open, panel]);
+    if (open) {
+      openedPanel.current = latestPanel.current;
+      setDraft(toDraft(latestPanel.current));
+    }
+  }, [open, panel.id]);
 
   async function save() {
     setIsSaving(true);
     try {
       await onSave({
         ...panel,
+        updatedAt: openedPanel.current.updatedAt,
         description: nullable(draft.description),
         sceneNumber: nonnegativeIntegerOrNull(draft.sceneNumber),
         shotType: nullable(draft.shotType),
@@ -122,14 +140,14 @@ export function PanelEditorDialog({
 
   return (
     <Dialog onOpenChange={setOpen} open={open}>
-      <DialogTrigger
-        render={
-          <Button size="icon-sm" title={copy.edit} variant="outline" />
-        }
-      >
-        <Pencil className="size-4" />
-        <span className="sr-only">{copy.edit}</span>
-      </DialogTrigger>
+      {showTrigger && (
+        <DialogTrigger
+          render={<Button size="icon-sm" title={copy.edit} variant="outline" />}
+        >
+          <Pencil className="size-4" />
+          <span className="sr-only">{copy.edit}</span>
+        </DialogTrigger>
+      )}
       <DialogContent className="max-h-[calc(100dvh-1rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-hidden rounded-lg sm:max-h-[min(92dvh,52rem)] sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>
@@ -192,7 +210,10 @@ export function PanelEditorDialog({
                     inputMode="decimal"
                     min="0.1"
                     onChange={(event) =>
-                      setDraft({ ...draft, durationSeconds: event.target.value })
+                      setDraft({
+                        ...draft,
+                        durationSeconds: event.target.value,
+                      })
                     }
                     placeholder={guidance.placeholders.duration}
                     step="0.1"
@@ -200,7 +221,11 @@ export function PanelEditorDialog({
                     value={draft.durationSeconds}
                   />
                 </Field>
-                <Field label={locale === "zh-CN" ? "场次（从 1 开始）" : "Scene (from 1)"}>
+                <Field
+                  label={
+                    locale === "zh-CN" ? "场次（从 1 开始）" : "Scene (from 1)"
+                  }
+                >
                   <Input
                     disabled={isSaving}
                     inputMode="numeric"
@@ -254,7 +279,9 @@ export function PanelEditorDialog({
                   ] as const
                 ).map(([key, label]) => (
                   <SuggestionField
-                    className={key === "colorTone" ? "sm:col-span-2" : undefined}
+                    className={
+                      key === "colorTone" ? "sm:col-span-2" : undefined
+                    }
                     disabled={isSaving}
                     key={key}
                     label={label}
@@ -316,17 +343,24 @@ export function PanelEditorDialog({
                     value={draft.subtitleText}
                   />
                 </Field>
-                <Field label={locale === "zh-CN" ? "口型角色" : "Lip-sync speaker"}>
+                <Field
+                  label={locale === "zh-CN" ? "口型角色" : "Lip-sync speaker"}
+                >
                   <Input
                     disabled={isSaving}
                     maxLength={160}
                     onChange={(event) =>
-                      setDraft({ ...draft, speakingCharacter: event.target.value })
+                      setDraft({
+                        ...draft,
+                        speakingCharacter: event.target.value,
+                      })
                     }
                     value={draft.speakingCharacter}
                   />
                 </Field>
-                <Field label={locale === "zh-CN" ? "口型文本" : "Lip-sync text"}>
+                <Field
+                  label={locale === "zh-CN" ? "口型文本" : "Lip-sync text"}
+                >
                   <Textarea
                     className="h-20 resize-y overflow-y-auto field-sizing-fixed"
                     disabled={isSaving}
@@ -375,16 +409,50 @@ export function PanelEditorDialog({
               <AccordionContent className="grid gap-3 px-1 sm:grid-cols-2">
                 {(
                   [
-                    ["startBody", locale === "zh-CN" ? "开始 · 姿态" : "Start · Body"],
-                    ["startHands", locale === "zh-CN" ? "开始 · 手部" : "Start · Hands"],
-                    ["startGaze", locale === "zh-CN" ? "开始 · 视线" : "Start · Gaze"],
-                    ["startScreenDirection", locale === "zh-CN" ? "开始 · 画面方向" : "Start · Screen direction"],
-                    ["startProps", locale === "zh-CN" ? "开始 · 道具状态" : "Start · Props"],
-                    ["endBody", locale === "zh-CN" ? "结束 · 姿态" : "End · Body"],
-                    ["endHands", locale === "zh-CN" ? "结束 · 手部" : "End · Hands"],
-                    ["endGaze", locale === "zh-CN" ? "结束 · 视线" : "End · Gaze"],
-                    ["endScreenDirection", locale === "zh-CN" ? "结束 · 画面方向" : "End · Screen direction"],
-                    ["endProps", locale === "zh-CN" ? "结束 · 道具状态" : "End · Props"],
+                    [
+                      "startBody",
+                      locale === "zh-CN" ? "开始 · 姿态" : "Start · Body",
+                    ],
+                    [
+                      "startHands",
+                      locale === "zh-CN" ? "开始 · 手部" : "Start · Hands",
+                    ],
+                    [
+                      "startGaze",
+                      locale === "zh-CN" ? "开始 · 视线" : "Start · Gaze",
+                    ],
+                    [
+                      "startScreenDirection",
+                      locale === "zh-CN"
+                        ? "开始 · 画面方向"
+                        : "Start · Screen direction",
+                    ],
+                    [
+                      "startProps",
+                      locale === "zh-CN" ? "开始 · 道具状态" : "Start · Props",
+                    ],
+                    [
+                      "endBody",
+                      locale === "zh-CN" ? "结束 · 姿态" : "End · Body",
+                    ],
+                    [
+                      "endHands",
+                      locale === "zh-CN" ? "结束 · 手部" : "End · Hands",
+                    ],
+                    [
+                      "endGaze",
+                      locale === "zh-CN" ? "结束 · 视线" : "End · Gaze",
+                    ],
+                    [
+                      "endScreenDirection",
+                      locale === "zh-CN"
+                        ? "结束 · 画面方向"
+                        : "End · Screen direction",
+                    ],
+                    [
+                      "endProps",
+                      locale === "zh-CN" ? "结束 · 道具状态" : "End · Props",
+                    ],
                   ] as const
                 ).map(([key, label]) => (
                   <Field key={key} label={label}>
@@ -400,7 +468,11 @@ export function PanelEditorDialog({
                 ))}
                 <Field
                   className="sm:col-span-2"
-                  label={locale === "zh-CN" ? "关键动作节拍（JSON）" : "Key motion beats (JSON)"}
+                  label={
+                    locale === "zh-CN"
+                      ? "关键动作节拍（JSON）"
+                      : "Key motion beats (JSON)"
+                  }
                 >
                   <Textarea
                     className="h-32 resize-y overflow-y-auto font-mono text-xs field-sizing-fixed"
@@ -423,16 +495,34 @@ export function PanelEditorDialog({
                       ? "境界与功法约束、技能特效和动作音效时间点"
                       : "Realm and technique constraints with timed VFX and action sound"
                   }
-                  title={locale === "zh-CN" ? "世界观与动作特效" : "World and action effects"}
+                  title={
+                    locale === "zh-CN"
+                      ? "世界观与动作特效"
+                      : "World and action effects"
+                  }
                 />
               </AccordionTrigger>
               <AccordionContent className="grid gap-3 px-1 sm:grid-cols-2">
                 {(
                   [
-                    ["worldRealm", locale === "zh-CN" ? "当前境界" : "Current realm"],
-                    ["worldTechnique", locale === "zh-CN" ? "功法 / 招式" : "Technique / skill"],
-                    ["worldPowerRule", locale === "zh-CN" ? "威力与限制" : "Power rule and limit"],
-                    ["environmentScale", locale === "zh-CN" ? "场景尺度" : "Environment scale"],
+                    [
+                      "worldRealm",
+                      locale === "zh-CN" ? "当前境界" : "Current realm",
+                    ],
+                    [
+                      "worldTechnique",
+                      locale === "zh-CN" ? "功法 / 招式" : "Technique / skill",
+                    ],
+                    [
+                      "worldPowerRule",
+                      locale === "zh-CN"
+                        ? "威力与限制"
+                        : "Power rule and limit",
+                    ],
+                    [
+                      "environmentScale",
+                      locale === "zh-CN" ? "场景尺度" : "Environment scale",
+                    ],
                   ] as const
                 ).map(([key, label]) => (
                   <Field key={key} label={label}>
@@ -448,7 +538,9 @@ export function PanelEditorDialog({
                 ))}
                 <Field
                   className="sm:col-span-2"
-                  label={locale === "zh-CN" ? "设定依据" : "World-rule evidence"}
+                  label={
+                    locale === "zh-CN" ? "设定依据" : "World-rule evidence"
+                  }
                 >
                   <Textarea
                     className="h-20 resize-y overflow-y-auto field-sizing-fixed"
@@ -462,7 +554,11 @@ export function PanelEditorDialog({
                 </Field>
                 <Field
                   className="sm:col-span-2"
-                  label={locale === "zh-CN" ? "VFX 时间点（JSON）" : "Timed VFX cues (JSON)"}
+                  label={
+                    locale === "zh-CN"
+                      ? "VFX 时间点（JSON）"
+                      : "Timed VFX cues (JSON)"
+                  }
                 >
                   <Textarea
                     className="h-36 resize-y overflow-y-auto font-mono text-xs field-sizing-fixed"
@@ -476,7 +572,11 @@ export function PanelEditorDialog({
                 </Field>
                 <Field
                   className="sm:col-span-2"
-                  label={locale === "zh-CN" ? "SFX / Foley 时间点（JSON）" : "Timed SFX / Foley cues (JSON)"}
+                  label={
+                    locale === "zh-CN"
+                      ? "SFX / Foley 时间点（JSON）"
+                      : "Timed SFX / Foley cues (JSON)"
+                  }
                 >
                   <Textarea
                     className="h-36 resize-y overflow-y-auto font-mono text-xs field-sizing-fixed"
@@ -701,9 +801,11 @@ function parseMotionBeats(
 ) {
   try {
     const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) && parsed.every(
-      (item) => Boolean(item) && typeof item === "object" && !Array.isArray(item),
-    )
+    return Array.isArray(parsed) &&
+      parsed.every(
+        (item) =>
+          Boolean(item) && typeof item === "object" && !Array.isArray(item),
+      )
       ? (parsed as Array<Record<string, unknown>>)
       : fallback;
   } catch {
@@ -736,5 +838,12 @@ function stringArray(value: unknown) {
 }
 
 function parseList(value: string) {
-  return [...new Set(value.split(/[,，、\n]/).map((item) => item.trim()).filter(Boolean))];
+  return [
+    ...new Set(
+      value
+        .split(/[,，、\n]/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ];
 }

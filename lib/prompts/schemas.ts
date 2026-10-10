@@ -121,17 +121,19 @@ export const locationPropAnalysisSchema = z
 
 export const clipSegmentationSchema = z
   .object({
-    clips: z.array(
-      z
-        .object({
-          endUnitId: z.string().regex(/^U\d{4,}$/),
-          summary: text,
-          location: z.string().trim().nullable(),
-          characters: stringList,
-          props: stringList,
-        })
-        .strict(),
-    ).min(1),
+    clips: z
+      .array(
+        z
+          .object({
+            endUnitId: z.string().regex(/^U\d{4,}$/),
+            summary: text,
+            location: z.string().trim().nullable(),
+            characters: stringList,
+            props: stringList,
+          })
+          .strict(),
+      )
+      .min(1),
   })
   .strict();
 
@@ -281,7 +283,10 @@ export const screenplayConversionSchema = z
         z
           .object({
             beatId: z.string().regex(/^B\d{2,}$/),
-            sceneNumbers: z.array(z.number().int().nonnegative()).min(1).max(20),
+            sceneNumbers: z
+              .array(z.number().int().nonnegative())
+              .min(1)
+              .max(20),
           })
           .strict(),
       )
@@ -303,23 +308,52 @@ export const screenplayConversionSchema = z
       )
       .max(500)
       .optional(),
-    scenes: z.array(
-      z
-        .object({
-          sceneNumber: z.number().int().nonnegative(),
-          heading: z
-            .object({
-              intExt: z.enum(["INT", "EXT"]),
-              location: text,
-              time: text,
-            })
-            .strict(),
-          description: z.string(),
-          characters: stringList,
-          content: z.array(screenplayContentSchema).min(1),
-        })
-        .strict(),
-    ).min(1).max(200),
+    scenes: z
+      .array(
+        z
+          .object({
+            sceneNumber: z.number().int().nonnegative(),
+            heading: z
+              .object({
+                intExt: z.enum(["INT", "EXT"]),
+                location: text,
+                time: text,
+              })
+              .strict(),
+            description: z.string(),
+            characters: stringList,
+            content: z.array(screenplayContentSchema).min(1),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(200),
+  })
+  .strict();
+
+const productionAssetNames = z.array(z.string().trim().min(1)).max(500);
+export const productionScriptOrganizationSchema = z
+  .object({
+    assets: z
+      .object({
+        characters: productionAssetNames,
+        locations: productionAssetNames,
+        props: productionAssetNames,
+      })
+      .strict(),
+    scenes: z
+      .array(
+        z
+          .object({
+            endUnitId: z.string().regex(/^U\d{4,}$/),
+            summary: z.string().trim().min(1),
+            props: productionAssetNames,
+            scene: screenplayAssemblySceneSchema.shape.scene,
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(200),
   })
   .strict();
 
@@ -620,41 +654,45 @@ export const storyboardRefinementSchema = z
 
 export const voiceAnalysisSchema = z
   .object({
-    lines: z.array(
-      z
-        .object({
-          speaker: text,
-          content: exactText,
-          delivery: z
-            .enum(["dialogue", "inner_monologue", "voiceover"])
-            .default("dialogue"),
-          emotionPrompt: optionalText,
-          emotionStrength: z.number().min(0).max(1),
-          matchedPanelIndex: z.number().int().nonnegative().nullable(),
-        })
-        .strict(),
-    ).max(500),
+    lines: z
+      .array(
+        z
+          .object({
+            speaker: text,
+            content: exactText,
+            delivery: z
+              .enum(["dialogue", "inner_monologue", "voiceover"])
+              .default("dialogue"),
+            emotionPrompt: optionalText,
+            emotionStrength: z.number().min(0).max(1),
+            matchedPanelIndex: z.number().int().nonnegative().nullable(),
+          })
+          .strict(),
+      )
+      .max(500),
   })
   .strict();
 
 export const continuityReviewSchema = z
   .object({
     passed: z.boolean(),
-    issues: z.array(
-      z
-        .object({
-          code: text,
-          severity: z.enum(["error", "warning"]),
-          panelIndex: z.number().int().nonnegative().nullable(),
-          entityType: z
-            .enum(["character", "location", "prop", "camera", "timeline"])
-            .nullable(),
-          entityName: optionalText,
-          message: text,
-          suggestedFix: optionalText,
-        })
-        .strict(),
-    ).max(500),
+    issues: z
+      .array(
+        z
+          .object({
+            code: text,
+            severity: z.enum(["error", "warning"]),
+            panelIndex: z.number().int().nonnegative().nullable(),
+            entityType: z
+              .enum(["character", "location", "prop", "camera", "timeline"])
+              .nullable(),
+            entityName: optionalText,
+            message: text,
+            suggestedFix: optionalText,
+          })
+          .strict(),
+      )
+      .max(500),
   })
   .strict()
   .superRefine((value, context) => {
@@ -762,13 +800,24 @@ export const studioWorkflowAgentSchema = z
         "revise_screenplay",
         "retry_media_task",
         "retry_workflow",
+        "update_canvas_prompt",
+        "read_project_object",
+        "start_script_organization",
+        "start_storyboard_generation",
+        "start_voice_analysis",
+        "start_voice_design",
+        "start_episode_adaptation",
+        "start_asset_visual_design",
       ])
       .nullable(),
     targetId: z.string().trim().min(1).nullable(),
+    canvasPrompt: z.string().trim().min(1).max(30000).nullable(),
   })
   .strict();
 
 export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
+  [PROMPT_IDS.PRODUCTION_SCRIPT_ORGANIZATION]:
+    productionScriptOrganizationSchema,
   [PROMPT_IDS.STORY_CHARACTER_ANALYSIS]: characterAnalysisSchema,
   [PROMPT_IDS.STORY_LOCATION_PROP_ANALYSIS]: locationPropAnalysisSchema,
   [PROMPT_IDS.STORY_CLIP_SEGMENTATION]: clipSegmentationSchema,
@@ -786,8 +835,10 @@ export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
   [PROMPT_IDS.STORY_CONTINUITY_REVIEW]: continuityReviewSchema,
   [PROMPT_IDS.ASSET_VISUAL_EXTRACTION]: visualAssetExtractionSchema,
   [PROMPT_IDS.ASSET_VISUAL_DESIGN]: assetVisualDesignSchema,
-  [PROMPT_IDS.STORYBOARD_MEDIA_PROMPT_DESIGN]: storyboardMediaPromptDesignSchema,
-  [PROMPT_IDS.CHARACTER_REFERENCE_DESCRIPTION]: characterReferenceDescriptionSchema,
+  [PROMPT_IDS.STORYBOARD_MEDIA_PROMPT_DESIGN]:
+    storyboardMediaPromptDesignSchema,
+  [PROMPT_IDS.CHARACTER_REFERENCE_DESCRIPTION]:
+    characterReferenceDescriptionSchema,
   [PROMPT_IDS.EPISODE_SPLIT]: episodeSplitSchema,
   [PROMPT_IDS.EPISODE_ADAPTATION]: episodeAdaptationSchema,
   [PROMPT_IDS.STUDIO_WORKFLOW_AGENT]: studioWorkflowAgentSchema,

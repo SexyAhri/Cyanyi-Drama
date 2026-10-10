@@ -1,6 +1,10 @@
 import { prisma } from "@/lib/server/prisma";
 
-export type SelectableAssetType = "character" | "location" | "prop" | "storyboard_panel";
+export type SelectableAssetType =
+  | "character"
+  | "location"
+  | "prop"
+  | "storyboard_panel";
 export type StoryboardAssetKind = "image" | "video";
 
 export async function selectProjectAsset(input: {
@@ -16,7 +20,10 @@ export async function selectProjectAsset(input: {
       where: {
         id: input.targetId,
         imageAssetId: { not: null },
-        character: { projectId: input.projectId, project: { userId: input.userId } },
+        character: {
+          projectId: input.projectId,
+          project: { userId: input.userId },
+        },
       },
       select: { id: true, characterId: true, imageAssetId: true },
     });
@@ -70,6 +77,17 @@ export async function selectProjectAsset(input: {
     if (!panel) return null;
     let assetId =
       assetKind === "video" ? panel.videoAssetId : panel.imageAssetId;
+    let selectedSegments: Array<{
+      taskId: string;
+      assetId: string;
+      index: number;
+      start: number;
+      end: number;
+      duration: number;
+      prompt: string;
+      model: string;
+      mode: string;
+    }> = [];
     if (input.assetId) {
       const candidate = await prisma.mediaAsset.findFirst({
         where: {
@@ -78,14 +96,78 @@ export async function selectProjectAsset(input: {
           task: {
             userId: input.userId,
             projectId: input.projectId,
-            targetType: "storyboard_panel",
-            targetId: panel.id,
+            status: "succeeded",
           },
         },
-        select: { id: true },
+        select: { id: true, task: { select: { id: true, payload: true } } },
       });
       if (!candidate) return null;
       assetId = candidate.id;
+      const payload = asRecord(candidate.task.payload);
+      const request = asRecord(payload.request);
+      if (
+        assetKind === "video" &&
+        request.canvasDeferredSelection === true &&
+        typeof request.canvasGenerationId === "string" &&
+        Number(request.videoSegmentCount) > 1
+      ) {
+        const tasks = await prisma.mediaTask.findMany({
+          where: {
+            userId: input.userId,
+            projectId: input.projectId,
+            kind: "video",
+            payload: {
+              path: ["request", "canvasGenerationId"],
+              equals: request.canvasGenerationId,
+            },
+          },
+          select: {
+            id: true,
+            status: true,
+            model: true,
+            payload: true,
+            assets: {
+              where: { kind: "video" },
+              select: { id: true },
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        });
+        if (
+          tasks.length !== Number(request.videoSegmentCount) ||
+          tasks.some(
+            (task) => task.status !== "succeeded" || !task.assets.length,
+          )
+        )
+          return null;
+        selectedSegments = tasks
+          .map((task) => {
+            const segment = asRecord(asRecord(task.payload).request);
+            return {
+              taskId: task.id,
+              assetId: task.assets[0].id,
+              index: Number(segment.videoSegmentIndex),
+              start: Number(segment.videoSegmentStartSeconds),
+              end: Number(segment.videoSegmentEndSeconds),
+              duration: parseFloat(String(segment.duration)),
+              prompt: String(segment.prompt ?? ""),
+              model: task.model,
+              mode: String(segment.videoMode ?? "reference"),
+            };
+          })
+          .sort((a, b) => a.index - b.index);
+        if (
+          selectedSegments.some(
+            (segment, index) =>
+              segment.index !== index ||
+              ![segment.start, segment.end, segment.duration].every(
+                Number.isFinite,
+              ),
+          )
+        )
+          return null;
+        assetId = selectedSegments[0].assetId;
+      }
     }
     if (!assetId) return null;
     const selectedAssetId = assetId;
@@ -95,12 +177,27 @@ export async function selectProjectAsset(input: {
         await tx.storyboardVideoSegment.deleteMany({
           where: { panelId: panel.id },
         });
+      if (selectedSegments.length)
+        await tx.storyboardVideoSegment.createMany({
+          data: selectedSegments.map((segment) => ({
+            id: `${panel.id}_video_segment_${segment.index}`,
+            panelId: panel.id,
+            videoAssetId: segment.assetId,
+            segmentIndex: segment.index,
+            startSeconds: segment.start,
+            endSeconds: segment.end,
+            durationSeconds: segment.duration,
+            prompt: segment.prompt,
+            model: segment.model,
+            mode: segment.mode,
+          })),
+        });
       await tx.storyboardPanel.update({
         where: { id: panel.id },
         data:
           assetKind === "video"
-            ? { videoAssetId: selectedAssetId }
-            : { imageAssetId: selectedAssetId },
+            ? { videoAssetId: selectedAssetId, lipSyncAssetId: null }
+            : { imageAssetId: selectedAssetId, lipSyncAssetId: null },
       });
       await tx.assetReference.deleteMany({
         where: {
@@ -178,7 +275,10 @@ export async function selectProjectAsset(input: {
     where: {
       id: input.targetId,
       imageAssetId: { not: null },
-      location: { projectId: input.projectId, project: { userId: input.userId } },
+      location: {
+        projectId: input.projectId,
+        project: { userId: input.userId },
+      },
     },
     select: { id: true, locationId: true, imageAssetId: true },
   });
@@ -219,4 +319,10 @@ export async function selectProjectAsset(input: {
     });
   });
   return { entityType: "location_image", entityId: image.id };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }

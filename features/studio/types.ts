@@ -56,6 +56,7 @@ export type WorkflowRunSummary = {
   projectId: string;
   episodeId?: string;
   workflowType: string;
+  execution?: "ai" | "local";
   targetType?: string;
   targetId?: string;
   displayName?: string;
@@ -323,6 +324,9 @@ export type StudioStoryboardPanel = StoryboardPanelRecord;
 export type StudioStoryboardData = {
   storyboard: StoryboardRecord | null;
   continuityIssues: StoryboardContinuityIssue[];
+  progress?:
+    | import("@/lib/novel/storyboard-progress").StoryboardProgress
+    | null;
 };
 
 export type StudioStageId =
@@ -356,6 +360,7 @@ export type StudioSelectionContext = {
   id: string;
   kind:
     | "character"
+    | "canvas_node"
     | "clip"
     | "deliverable"
     | "location"
@@ -368,6 +373,8 @@ export type StudioSelectionContext = {
 };
 
 export type StudioAgentContext = {
+  view?: "workflow" | "canvas";
+  canvasNodeId?: string;
   episodeId?: string;
   selection?: StudioSelectionContext;
   stageId: StudioStageId;

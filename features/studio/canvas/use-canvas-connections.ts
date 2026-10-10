@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type PointerEvent, type RefObject } from "react";
 import type { CanvasDocument } from "./types";
+import { CARD_WIDTH, PORT_Y } from "./canvas-view-model";
 
 export function useCanvasConnections(
   container: RefObject<HTMLDivElement | null>,
@@ -32,7 +33,7 @@ export function useCanvasConnections(
     const node = document.current.nodes.find(item => item.id === from);
     if (!node) return;
     sourceRef.current = from; setSource(from); setTarget(undefined);
-    setCursor({ x: node.x + 340, y: node.y + 28 });
+    setCursor({ x: node.x + CARD_WIDTH, y: node.y + PORT_Y });
     if (event) {
       gesture.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
       event.currentTarget.setPointerCapture(event.pointerId);

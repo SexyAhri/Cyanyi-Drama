@@ -3,6 +3,7 @@ import type {
   AgentMessage,
   AgentToolCall,
 } from "@/lib/agent/types";
+import { createHash } from "node:crypto";
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { controlMediaTask } from "@/lib/media/task-actions";
@@ -15,6 +16,14 @@ import {
 import { decryptSecret, encryptSecret } from "@/lib/server/crypto";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { prisma } from "@/lib/server/prisma";
+import {
+  canvasDocumentSchema,
+  compileCanvasInput,
+  canvasConnectionError,
+  canvasEdgePurpose,
+  type CanvasDocument,
+  type CanvasCard,
+} from "./canvas-document";
 import { PROMPT_IDS, renderPrompt } from "@/lib/prompts";
 import { studioWorkflowAgentSchema } from "@/lib/prompts/schemas";
 import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
@@ -24,6 +33,14 @@ import {
   type WorkflowAction,
 } from "@/lib/workflow/actions";
 import { getWorkflowRun, listWorkflowRuns } from "@/lib/workflow/store";
+import { loadAgentAssetContext } from "./agent-asset-context";
+import { loadAgentProjectContext } from "./agent-project-context";
+import {
+  STUDIO_PRODUCTION_OPERATIONS,
+  isProductionOperation,
+  startStudioProductionAction,
+  type StudioProductionOperation,
+} from "./agent-production-actions";
 
 const APPROVAL_TTL_MS = 15 * 60 * 1000;
 const STAGE_IDS = [
@@ -45,6 +62,8 @@ export type StudioAgentSelection = {
 };
 
 export type StudioAgentContext = {
+  view?: "workflow" | "canvas";
+  canvasNodeId?: string;
   episodeId?: string;
   selection?: StudioAgentSelection;
   stageId: StudioAgentStageId;
@@ -57,13 +76,16 @@ export type StudioAgentModelSelection = {
 };
 
 type StudioAgentOperation =
+  | "read_project_object"
+  | StudioProductionOperation
   | "cancel_media_task"
   | "cancel_workflow"
   | "pause_workflow"
   | "resume_workflow"
   | "revise_screenplay"
   | "retry_media_task"
-  | "retry_workflow";
+  | "retry_workflow"
+  | "update_canvas_prompt";
 
 type ApprovalPayload = {
   expiresAt: number;
@@ -77,11 +99,28 @@ type ApprovalPayload = {
   channelId?: string;
   failureContext?: unknown;
   model?: string;
+  assetKind?: "character" | "location" | "prop";
+  targetLabel?: string;
   request?: string;
   version: 1;
+  canvasDraft?: {
+    episodeId: string;
+    revision: number;
+    kind: "image" | "video";
+    before: string;
+    after: string;
+    inputSignature?: string;
+  };
 };
 
 type AgentState = Awaited<ReturnType<typeof loadAgentState>>;
+type StudioAgentDecision = {
+  reply: string;
+  operation: StudioAgentOperation | null;
+  targetId: string | null;
+  canvasPrompt?: string | null;
+  modelSelection?: StudioAgentModelSelection;
+};
 
 export async function runStudioAgent(input: {
   content: string;
@@ -132,9 +171,44 @@ async function* runStudioAgentEvents(
     target.failureCategory === "semantic"
       ? target.failureContext
       : undefined;
+  const canvasTarget =
+    decision.operation === "update_canvas_prompt"
+      ? canvasPromptTargets(state).find((node) => node.id === target.id)
+      : undefined;
+  const canvasDraft = canvasTarget
+    ? {
+        episodeId: canvasTarget.episodeId,
+        revision: canvasTarget.revision,
+        kind:
+          canvasTarget.outputKind ??
+          (canvasTarget.kind === "video"
+            ? ("video" as const)
+            : ("image" as const)),
+        before:
+          (canvasTarget.outputKind ??
+            (canvasTarget.kind === "video" ? "video" : "image")) === "video"
+            ? (canvasTarget.videoText ?? canvasTarget.text)
+            : canvasTarget.text,
+        after:
+          "canvasPrompt" in decision &&
+          typeof decision.canvasPrompt === "string"
+            ? decision.canvasPrompt
+            : "",
+        inputSignature: canvasTarget.inputSignature,
+      }
+    : undefined;
+  if (decision.operation === "update_canvas_prompt" && !canvasDraft?.after) {
+    yield messageEvent(
+      input.locale === "en"
+        ? "No prompt draft was supplied. Please specify the changes."
+        : "没有可写入的提示词草稿，请说明需要修改的内容。",
+    );
+    return;
+  }
   const approvalId = encryptSecret(
     JSON.stringify({
-      ...(decision.operation === "revise_screenplay"
+      ...(decision.operation === "revise_screenplay" ||
+      isProductionOperation(decision.operation)
         ? {
             channelId: decision.modelSelection?.channelId,
             failureContext: screenplayFailureContext,
@@ -148,9 +222,19 @@ async function* runStudioAgentEvents(
       operation: decision.operation,
       projectId: input.projectId,
       targetId: target.id,
+      targetLabel:
+        "name" in target && typeof target.name === "string"
+          ? target.name
+          : "title" in target && typeof target.title === "string"
+            ? target.title
+            : undefined,
+      ...(decision.operation === "start_asset_visual_design" && "kind" in target
+        ? { assetKind: target.kind as "character" | "location" | "prop" }
+        : {}),
       toolCallId,
       userId: input.userId,
       version: 1,
+      ...(canvasDraft ? { canvasDraft } : {}),
     } satisfies ApprovalPayload),
   );
   const toolCall: AgentToolCall = {
@@ -165,19 +249,50 @@ async function* runStudioAgentEvents(
       },
       target: {
         id: target.id,
-        status: target.status,
+        status: "status" in target ? target.status : "draft",
         traceId: "traceId" in target ? target.traceId : undefined,
-        type:
-          decision.operation === "revise_screenplay"
-            ? "screenplay_clip"
-            : decision.operation.includes("workflow")
-              ? "workflow"
-              : "media_task",
+        type: isProductionOperation(decision.operation)
+          ? decision.operation === "start_asset_visual_design"
+            ? "asset"
+            : "episode"
+          : decision.operation === "update_canvas_prompt"
+            ? "canvas_node"
+            : decision.operation === "revise_screenplay"
+              ? "screenplay_clip"
+              : decision.operation.includes("workflow")
+                ? "workflow"
+                : "media_task",
       },
+      ...(isProductionOperation(decision.operation)
+        ? {
+            production: {
+              target: "name" in target ? target.name : target.id,
+              operation: operationLabel(decision.operation),
+              model: decision.modelSelection?.model,
+              note:
+                decision.operation === "start_episode_adaptation"
+                  ? "生成忠实改编候选稿，保留原文"
+                  : decision.operation === "start_script_organization"
+                    ? "整理当前生产稿，将重新保存场次与资产关联"
+                    : decision.operation === "start_storyboard_generation"
+                      ? "根据结构化剧本生成分镜；重跑会更新现有分镜"
+                      : decision.operation === "start_asset_visual_design"
+                        ? "生成并保存资产视觉设定；已有设定会更新"
+                        : "分析并保存台词或配音设计；重跑会更新现有结果",
+            },
+          }
+        : {}),
       ...(decision.operation === "revise_screenplay"
         ? {
             failureContext: screenplayFailureContext ?? null,
             request: input.content.trim().slice(0, 8_000),
+          }
+        : {}),
+      ...(canvasDraft
+        ? {
+            before: canvasDraft.before,
+            after: canvasDraft.after,
+            revision: canvasDraft.revision,
           }
         : {}),
     },
@@ -252,9 +367,13 @@ async function* resolveStudioAgentApprovalEvents(
       result,
     };
     yield messageEvent(
-      approval.locale === "en"
-        ? "The approved action completed. Workspace data has been refreshed."
-        : "已完成批准的操作，工作台数据已刷新。",
+      isProductionOperation(approval.operation)
+        ? approval.locale === "en"
+          ? `The workflow for ${approval.targetLabel ?? "the selected target"} has been submitted. Follow its progress in Tasks.`
+          : `已提交「${approval.targetLabel ?? "所选目标"}」的${operationLabel(approval.operation)}任务，可在任务栏查看进度。`
+        : approval.locale === "en"
+          ? "The approved action completed. Workspace data has been refreshed."
+          : "已完成批准的操作，工作台数据已刷新。",
     );
   } catch (error) {
     yield {
@@ -271,6 +390,19 @@ export function getStudioAgentIntent(
 ): StudioAgentOperation | null {
   const normalized = content.trim().toLowerCase();
   if (!normalized) return null;
+  if (/开始|启动|执行|生成|start|generate|run/i.test(normalized)) {
+    if (/场次.*整理|整理.*场次|资产.*整理|organize.*script/i.test(normalized))
+      return "start_script_organization";
+    if (/分镜|storyboard/i.test(normalized))
+      return "start_storyboard_generation";
+    if (/台词.*分析|分析.*台词|dialogue.*analysis/i.test(normalized))
+      return "start_voice_analysis";
+    if (/配音.*设计|设计.*配音|voice.*design/i.test(normalized))
+      return "start_voice_design";
+    if (/视觉.*设定|视觉.*设计|visual.*design/i.test(normalized))
+      return "start_asset_visual_design";
+    if (/改编|adapt/i.test(normalized)) return "start_episode_adaptation";
+  }
   const mediaTarget = /任务|媒体|task|media/.test(normalized);
   const workflowTarget = /工作流|运行|workflow|\brun\b/.test(normalized);
   const screenplayTarget = /剧本|脚本|screenplay|script/.test(normalized);
@@ -303,6 +435,7 @@ export class StudioAgentError extends Error {
 }
 
 async function loadAgentState(input: {
+  content?: string;
   context: StudioAgentContext;
   projectId: string;
   userId: string;
@@ -314,6 +447,23 @@ async function loadAgentState(input: {
     select: {
       id: true,
       name: true,
+      config: {
+        select: {
+          artStyle: true,
+          visualEra: true,
+          visualEraCustom: true,
+          videoRatio: true,
+          videoResolution: true,
+          episodeTargetDurationSeconds: true,
+          workflowMode: true,
+          analysisModel: true,
+          characterModel: true,
+          locationModel: true,
+          storyboardModel: true,
+          videoModel: true,
+          audioModel: true,
+        },
+      },
       episodes: {
         orderBy: { episodeNumber: "asc" },
         select: { id: true, name: true },
@@ -327,35 +477,45 @@ async function loadAgentState(input: {
   if (input.context.episodeId && !episode)
     throw new StudioAgentError("剧集不存在", 404);
 
-  const [workflows, tasks, clips] = await Promise.all([
-    listWorkflowRuns(input.userId, input.projectId, 100),
-    createDatabaseMediaTaskStore(input.userId).list({
-      projectId: input.projectId,
-      ...(episode ? { episodeId: episode.id } : {}),
-      limit: 100,
-    }),
-    prisma.storyClip.findMany({
-      where: {
+  const [workflows, tasks, clips, assetContext, projectContext] =
+    await Promise.all([
+      listWorkflowRuns(input.userId, input.projectId, 100),
+      createDatabaseMediaTaskStore(input.userId).list({
         projectId: input.projectId,
-        ...(episode ? { episodeId: episode.id } : {}),
-      },
-      orderBy: { clipIndex: "asc" },
-      take: 200,
-      select: {
-        clipIndex: true,
-        episodeId: true,
-        id: true,
-        screenplay: true,
-        status: true,
-        summary: true,
-      },
-    }),
-  ]);
-  const relevantWorkflows = workflows.filter(
-    (workflow) =>
-      (!episode || workflow.episodeId === episode.id) &&
-      workflowMatchesStage(workflow.workflowType, input.context.stageId),
-  );
+        limit: 100,
+      }),
+      prisma.storyClip.findMany({
+        where: {
+          projectId: input.projectId,
+          project: { userId: input.userId },
+        },
+        orderBy: { clipIndex: "asc" },
+        take: 200,
+        select: {
+          clipIndex: true,
+          episodeId: true,
+          id: true,
+          screenplay: true,
+          status: true,
+          summary: true,
+        },
+      }),
+      loadAgentAssetContext({
+        userId: input.userId,
+        projectId: input.projectId,
+        selection: input.context.selection,
+        artStyle: project.config?.artStyle,
+      }),
+      loadAgentProjectContext({
+        userId: input.userId,
+        projectId: input.projectId,
+        episodeId: episode?.id,
+        selectionId: input.context.selection?.id,
+        request: input.content ?? "",
+        artStyle: project.config?.artStyle,
+      }),
+    ]);
+  const relevantWorkflows = workflows;
   const screenplayArtifacts = relevantWorkflows.length
     ? await prisma.workflowArtifact.findMany({
         where: {
@@ -371,7 +531,80 @@ async function loadAgentState(input: {
         },
       })
     : [];
+  const canvasRow =
+    episode && input.context.view === "canvas"
+      ? await prisma.creativeCanvas.findUnique({
+          where: { episodeId: episode.id },
+        })
+      : null;
+  const canvasDocument = canvasDocumentSchema.safeParse(canvasRow?.document);
+  const canvasNode = canvasDocument.success
+    ? canvasDocument.data.nodes.find(
+        (node) => node.id === input.context.canvasNodeId,
+      )
+    : undefined;
+  const selectedAsset = canvasNode?.assetId
+    ? await prisma.mediaAsset.findFirst({
+        where: {
+          id: canvasNode.assetId,
+          task: { userId: input.userId, projectId: input.projectId },
+        },
+        select: {
+          kind: true,
+          url: true,
+          storageKey: true,
+          task: { select: { status: true } },
+        },
+      })
+    : null;
+  const canvasContext =
+    canvasNode && canvasDocument.success
+      ? {
+          revision: canvasRow!.revision,
+          selectedNode: canvasNode,
+          role: ["character", "location", "prop"].includes(canvasNode.kind)
+            ? "reference_asset"
+            : ["panel", "image", "video"].includes(canvasNode.kind)
+              ? "generation"
+              : "content",
+          selectedMedia: {
+            selected: Boolean(canvasNode.assetId),
+            found: Boolean(selectedAsset),
+            kind: selectedAsset?.kind ?? null,
+            ready: Boolean(
+              selectedAsset &&
+                selectedAsset.task.status === "succeeded" &&
+                (selectedAsset.url || selectedAsset.storageKey),
+            ),
+          },
+          usedBy: canvasDocument.data.edges
+            .filter((edge) => edge.from === canvasNode.id)
+            .flatMap((edge) => {
+              const target = canvasDocument.data.nodes.find(
+                (node) => node.id === edge.to,
+              );
+              return target
+                ? [
+                    {
+                      title: target.title,
+                      kind: target.kind,
+                      purpose: canvasEdgePurpose(edge, canvasNode),
+                    },
+                  ]
+                : [];
+            }),
+          inputs: compileCanvasInput(
+            canvasDocument.data,
+            canvasNode,
+            canvasNode.outputKind ??
+              (canvasNode.kind === "video" ? "video" : "image"),
+          ).inputs,
+        }
+      : null;
   return {
+    projectContext,
+    asset: assetContext,
+    canvas: canvasContext,
     clips: clips.map((clip) => {
       const failureContext =
         clip.status === "screenplay_failed"
@@ -390,11 +623,63 @@ async function loadAgentState(input: {
     context: input.context,
     episode,
     project,
-    tasks: tasks.filter((task) =>
-      taskMatchesStage(task, input.context.stageId),
-    ),
+    tasks,
     workflows: relevantWorkflows,
   };
+}
+
+function canvasPromptTargets(state: AgentState) {
+  return state.projectContext.episodes.flatMap((episode) =>
+    episode.canvas
+      ? episode.canvas.nodes
+          .filter((node) => ["panel", "image", "video"].includes(node.kind))
+          .map((node) => ({
+            ...node,
+            episodeId: episode.id,
+            episodeName: episode.name,
+            revision: episode.canvas!.revision,
+            inputSignature: canvasPromptInputSignature(episode.canvas!, node),
+          }))
+      : [],
+  );
+}
+
+function canvasPromptInputSignature(
+  document: Pick<CanvasDocument, "nodes" | "edges">,
+  node: CanvasCard,
+) {
+  const kind = node.outputKind ?? (node.kind === "video" ? "video" : "image");
+  const inputs = document.edges
+    .filter((edge) => edge.to === node.id)
+    .map((edge) => {
+      const source = document.nodes.find((item) => item.id === edge.from);
+      if (!source) return JSON.stringify({ from: edge.from, missing: true });
+      const purpose = canvasEdgePurpose(edge, source);
+      return JSON.stringify({
+        from: source.id,
+        purpose,
+        kind: source.kind,
+        ...(purpose === "context"
+          ? { title: source.title, text: source.text }
+          : {
+              assetId: source.assetId ?? null,
+              panelId: source.panelId ?? null,
+              entityId: source.entityId ?? null,
+            }),
+      });
+    })
+    .sort();
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        kind,
+        nodeKind: node.kind,
+        panelId: node.panelId ?? null,
+        modelId: node.modelId ?? null,
+        inputs,
+      }),
+    )
+    .digest("hex");
 }
 
 function findOperationTarget(
@@ -403,10 +688,41 @@ function findOperationTarget(
   requestedTargetId?: string,
 ) {
   const selectionId = state.context.selection?.id;
+  if (operation === "read_project_object") {
+    return [
+      ...state.projectContext.episodeIndex,
+      ...state.projectContext.assets,
+      ...state.projectContext.objectIndex,
+      ...state.projectContext.deliverables,
+      ...state.projectContext.media,
+      ...state.projectContext.manuscripts,
+    ].find((item) => item.id === requestedTargetId);
+  }
+  if (isProductionOperation(operation)) {
+    if (operation === "start_asset_visual_design") {
+      const id = requestedTargetId ?? selectionId;
+      return state.projectContext.assets.find((asset) => asset.id === id);
+    }
+    const id = requestedTargetId ?? state.episode?.id;
+    return state.projectContext.episodeIndex.find(
+      (episode) =>
+        episode.id === id &&
+        episode.hasScript &&
+        (operation !== "start_storyboard_generation" ||
+          episode.hasStructuredScript) &&
+        (operation !== "start_voice_design" || episode.voiceLineCount > 0),
+    );
+  }
+  if (operation === "update_canvas_prompt") {
+    const id =
+      requestedTargetId ?? state.canvas?.selectedNode.id ?? selectionId;
+    return canvasPromptTargets(state).find((node) => node.id === id);
+  }
   if (operation === "revise_screenplay") {
-    if (state.context.stageId !== "writing") return undefined;
     return selectScreenplayRevisionClip(
-      state.clips,
+      requestedTargetId
+        ? state.clips
+        : state.clips.filter((clip) => clip.episodeId === state.episode?.id),
       selectionId,
       requestedTargetId,
     );
@@ -456,29 +772,63 @@ async function decideStudioAgentAction(
     userId: string;
   },
   state: AgentState,
-) {
+): Promise<StudioAgentDecision> {
   const provider = await resolveStudioAgentProvider(input, state);
   if (!provider) return deterministicStudioAgentDecision(input, state);
-  const candidates = buildOperationCandidates(state);
-  const prompt = renderPrompt({
-    id: PROMPT_IDS.STUDIO_WORKFLOW_AGENT,
-    locale: input.locale === "en" ? "en" : "zh",
-    variables: {
-      state_json: JSON.stringify(buildModelState(state)),
-      operation_candidates_json: JSON.stringify(candidates),
-      user_request: input.content.trim(),
-    },
-  });
-  const result = await requestOpenAiStructured({
-    baseUrl: provider.baseUrl,
-    apiKeys: provider.apiKeys,
-    model: provider.model,
-    prompt,
-    schema: studioWorkflowAgentSchema,
-    structuredOutputMode: provider.structuredOutputMode,
-    temperature: 0.1,
-    ...provider.requestOptions,
-  });
+  const retrievedIds: string[] = [];
+  let result: Awaited<
+    ReturnType<
+      typeof requestOpenAiStructured<
+        ReturnType<typeof studioWorkflowAgentSchema.parse>
+      >
+    >
+  >;
+  for (let retrieval = 0; ; retrieval++) {
+    const candidates = buildOperationCandidates(state);
+    candidates.read_project_object = candidates.read_project_object.filter(
+      (item) => !retrievedIds.includes(item.id),
+    );
+    if (retrieval >= 3) candidates.read_project_object = [];
+    const prompt = renderPrompt({
+      id: PROMPT_IDS.STUDIO_WORKFLOW_AGENT,
+      locale: input.locale === "en" ? "en" : "zh",
+      variables: {
+        state_json: JSON.stringify(buildModelState(state, input.content)),
+        operation_candidates_json: JSON.stringify(candidates),
+        user_request: input.content.trim(),
+      },
+    });
+    result = await requestOpenAiStructured({
+      baseUrl: provider.baseUrl,
+      apiKeys: provider.apiKeys,
+      model: provider.model,
+      prompt,
+      schema: studioWorkflowAgentSchema,
+      structuredOutputMode: provider.structuredOutputMode,
+      temperature: 0.1,
+      ...provider.requestOptions,
+    });
+    if (result.data.operation !== "read_project_object") break;
+    const targetId = result.data.targetId;
+    if (
+      !targetId ||
+      retrieval >= 3 ||
+      retrievedIds.includes(targetId) ||
+      !findOperationTarget(state, "read_project_object", targetId)
+    ) {
+      return { reply: result.data.reply, operation: null, targetId: null };
+    }
+    retrievedIds.push(targetId);
+    state.projectContext = await loadAgentProjectContext({
+      userId: input.userId,
+      projectId: state.project.id,
+      episodeId: state.episode?.id,
+      selectionId: state.context.selection?.id,
+      request: input.content,
+      artStyle: state.project.config?.artStyle,
+      detailIds: retrievedIds,
+    });
+  }
   const decision = {
     ...result.data,
     modelSelection: {
@@ -576,7 +926,10 @@ function deterministicStudioAgentDecision(
   state: AgentState,
 ) {
   const operation = getStudioAgentIntent(input.content);
-  if (operation === "revise_screenplay")
+  if (
+    operation === "revise_screenplay" ||
+    (operation && isProductionOperation(operation))
+  )
     return {
       reply:
         input.locale === "en"
@@ -599,8 +952,11 @@ function deterministicStudioAgentDecision(
   };
 }
 
-function buildOperationCandidates(state: AgentState) {
-  return Object.fromEntries(
+type StudioOperationCandidate = { id: string; [key: string]: unknown };
+function buildOperationCandidates(
+  state: AgentState,
+): Record<string, StudioOperationCandidate[]> {
+  return Object.fromEntries<StudioOperationCandidate[]>(
     (
       [
         "cancel_media_task",
@@ -610,49 +966,167 @@ function buildOperationCandidates(state: AgentState) {
         "revise_screenplay",
         "retry_media_task",
         "retry_workflow",
+        "update_canvas_prompt",
+        "read_project_object",
+        ...STUDIO_PRODUCTION_OPERATIONS,
       ] as StudioAgentOperation[]
     ).map((operation) => [
       operation,
-      operation === "revise_screenplay"
-        ? state.clips
-            .filter((clip) => findOperationTarget(state, operation, clip.id))
-            .map((clip) => ({
-              clipIndex: clip.clipIndex,
-              failureCategory: clip.failureCategory,
-              failureContext: clip.failureContext ?? null,
-              hasScreenplay: Boolean(clip.screenplay),
-              id: clip.id,
-              status: clip.status,
-              summary: clip.summary,
-            }))
-        : operation.includes("media_task")
-          ? state.tasks
-              .filter((task) => findOperationTarget(state, operation, task.id))
-              .map((task) => ({
-                id: task.id,
-                status: task.status,
-                targetId: task.targetId ?? null,
-                targetType: task.targetType ?? null,
-                traceId: task.traceId,
+      operation === "read_project_object"
+        ? [
+            ...state.projectContext.episodeIndex.map((item) => ({
+              id: item.id,
+              name: item.name,
+              kind: "episode",
+            })),
+            ...state.projectContext.assets.map((item) => ({
+              id: item.id,
+              name: item.name,
+              kind: item.kind,
+            })),
+            ...state.projectContext.objectIndex,
+            ...state.projectContext.deliverables.map((item) => ({
+              id: item.id,
+              name: item.title,
+              kind: "deliverable",
+            })),
+            ...state.projectContext.media.map((item) => ({
+              id: item.id,
+              name: `${item.kind} 素材`,
+              kind: "media",
+            })),
+            ...state.projectContext.manuscripts.map((item) => ({
+              id: item.id,
+              name: item.title,
+              kind: "manuscript",
+            })),
+          ]
+        : isProductionOperation(operation)
+          ? (operation === "start_asset_visual_design"
+              ? state.projectContext.assets
+              : state.projectContext.episodeIndex
+            )
+              .filter((item) => findOperationTarget(state, operation, item.id))
+              .map((item) => ({
+                id: item.id,
+                name: item.name,
+                ...("kind" in item
+                  ? { kind: item.kind }
+                  : { number: item.number }),
               }))
-          : state.workflows
-              .filter((workflow) =>
-                findOperationTarget(state, operation, workflow.id),
-              )
-              .map((workflow) => ({
-                id: workflow.id,
-                status: workflow.status,
-                traceId: workflow.traceId,
-                workflowType: workflow.workflowType,
-              })),
+          : operation === "update_canvas_prompt"
+            ? canvasPromptTargets(state).map((node) => ({
+                id: node.id,
+                title: node.title,
+                episode: node.episodeName,
+                revision: node.revision,
+                text: node.text,
+                videoText: node.videoText,
+                outputKind: node.outputKind,
+                promptVersions: node.promptVersions ?? [],
+              }))
+            : operation === "revise_screenplay"
+              ? state.clips
+                  .filter((clip) =>
+                    findOperationTarget(state, operation, clip.id),
+                  )
+                  .map((clip) => ({
+                    clipIndex: clip.clipIndex,
+                    failureCategory: clip.failureCategory,
+                    failureContext: clip.failureContext ?? null,
+                    hasScreenplay: Boolean(clip.screenplay),
+                    id: clip.id,
+                    status: clip.status,
+                    summary: clip.summary,
+                  }))
+              : operation.includes("media_task")
+                ? state.tasks
+                    .filter((task) =>
+                      findOperationTarget(state, operation, task.id),
+                    )
+                    .map((task) => ({
+                      id: task.id,
+                      status: task.status,
+                      targetId: task.targetId ?? null,
+                      targetType: task.targetType ?? null,
+                      traceId: task.traceId,
+                    }))
+                : state.workflows
+                    .filter((workflow) =>
+                      findOperationTarget(state, operation, workflow.id),
+                    )
+                    .map((workflow) => ({
+                      id: workflow.id,
+                      status: workflow.status,
+                      traceId: workflow.traceId,
+                      workflowType: workflow.workflowType,
+                    })),
     ]),
   );
 }
 
-function buildModelState(state: AgentState) {
+function buildModelState(state: AgentState, request: string) {
+  const node = state.canvas?.selectedNode;
+  const focused =
+    Boolean(node || state.asset) &&
+    !/(整集|整个|项目|其他剧集|上一集|下一集|全部|所有|全局|制作进度|阶段进度|失败任务|工作流|all (?:tasks|shots|nodes)|whole (?:episode|project)|production (?:status|progress)|workflow)/i.test(
+      request,
+    );
+  const targetIds = new Set(
+    [
+      node?.id,
+      node?.panelId,
+      node?.entityId,
+      state.context.selection?.id,
+    ].filter(Boolean),
+  );
   return {
-    context: state.context,
-    clips: state.clips.map((clip) => ({
+    scope: focused ? "selection" : "episode",
+    projectData: state.projectContext,
+    executionCoverage: {
+      recentWorkflowLimit: 100,
+      recentMediaTaskLimit: 100,
+      clipLimit: 200,
+    },
+    asset: state.asset,
+    canvas: state.canvas
+      ? {
+          selectedNode: {
+            title: state.canvas.selectedNode.title,
+            kind: state.canvas.selectedNode.kind,
+            text: state.canvas.selectedNode.text,
+            videoText: state.canvas.selectedNode.videoText,
+            outputKind: state.canvas.selectedNode.outputKind,
+            promptVersions: state.canvas.selectedNode.promptVersions,
+          },
+          role: state.canvas.role,
+          selectedMedia: state.canvas.selectedMedia,
+          usedBy: state.canvas.usedBy,
+          productionDefaultsMayApply: Boolean(node?.panelId),
+          inputs: state.canvas.inputs.map((item) => ({
+            title: item.source.title,
+            kind: item.source.kind,
+            purpose: item.purpose,
+            problem:
+              canvasConnectionError(
+                item.source,
+                state.canvas!.selectedNode,
+                item.purpose,
+              ) || null,
+          })),
+        }
+      : null,
+    context: {
+      view: state.context.view,
+      stageId: state.context.stageId,
+      selection: state.context.selection
+        ? {
+            label: state.context.selection.label,
+            kind: state.context.selection.kind,
+          }
+        : null,
+    },
+    clips: (focused ? [] : state.clips).map((clip) => ({
       clipIndex: clip.clipIndex,
       failureCategory: clip.failureCategory,
       failureContext: clip.failureContext ?? null,
@@ -662,18 +1136,24 @@ function buildModelState(state: AgentState) {
       summary: clip.summary,
     })),
     episode: state.episode ?? null,
-    project: { id: state.project.id, name: state.project.name },
-    tasks: state.tasks.map((task) => ({
-      id: task.id,
-      error: task.error ?? null,
-      kind: task.kind,
-      status: task.status,
-      targetId: task.targetId ?? null,
-      targetType: task.targetType ?? null,
-      traceId: task.traceId,
-      updatedAt: task.updatedAt,
-    })),
-    workflows: state.workflows.map((workflow) => ({
+    project: {
+      id: state.project.id,
+      name: state.project.name,
+      settings: state.project.config,
+    },
+    tasks: state.tasks
+      .filter((task) => !focused || targetIds.has(task.targetId))
+      .map((task) => ({
+        id: task.id,
+        error: task.error ?? null,
+        kind: task.kind,
+        status: task.status,
+        targetId: task.targetId ?? null,
+        targetType: task.targetType ?? null,
+        traceId: task.traceId,
+        updatedAt: task.updatedAt,
+      })),
+    workflows: (focused ? [] : state.workflows).map((workflow) => ({
       id: workflow.id,
       error: workflow.error ?? null,
       status: workflow.status,
@@ -769,6 +1249,113 @@ function stringValue(value: unknown) {
 }
 
 async function executeOperation(approval: ApprovalPayload) {
+  if (approval.operation === "read_project_object")
+    throw new StudioAgentError("读取项目资料无需审批，请重新发送问题");
+  if (isProductionOperation(approval.operation)) {
+    if (!approval.channelId || !approval.model)
+      throw new StudioAgentError("请选择可用的导演分析模型");
+    return startStudioProductionAction({
+      operation: approval.operation,
+      userId: approval.userId,
+      projectId: approval.projectId,
+      targetId: approval.targetId,
+      channelId: approval.channelId,
+      model: approval.model,
+      locale: approval.locale === "en" ? "en" : "zh",
+      assetKind: approval.assetKind,
+    });
+  }
+  if (approval.operation === "update_canvas_prompt") {
+    const draft = approval.canvasDraft;
+    if (!draft) throw new StudioAgentError("画布草稿上下文缺失");
+    const owned = await prisma.episode.count({
+      where: {
+        id: draft.episodeId,
+        projectId: approval.projectId,
+        project: { userId: approval.userId },
+      },
+    });
+    if (!owned) throw new StudioAgentError("剧集不存在", 404);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const canvas = await prisma.creativeCanvas.findUnique({
+        where: { episodeId: draft.episodeId },
+      });
+      if (!canvas)
+        throw new StudioAgentError("画布已删除，无法写入提示词", 404);
+      const document = canvasDocumentSchema.parse(canvas.document);
+      const node = document.nodes.find((node) => node.id === approval.targetId);
+      if (!node)
+        throw new StudioAgentError("目标节点已删除，请重新选择节点", 404);
+      const kind =
+        node.outputKind ?? (node.kind === "video" ? "video" : "image");
+      if (
+        kind !== draft.kind ||
+        !["panel", "image", "video"].includes(node.kind)
+      )
+        throw new StudioAgentError(
+          "目标节点的生成类型已改变，请让助手按当前类型重新修改",
+          409,
+        );
+      const currentPrompt =
+        kind === "video" ? (node.videoText ?? node.text) : node.text;
+      if (currentPrompt !== draft.before)
+        throw new StudioAgentError(
+          "该节点的提示词已被修改，为保留最新内容未覆盖；请让助手基于当前提示词重新修改",
+          409,
+        );
+      if (draft.inputSignature) {
+        if (canvasPromptInputSignature(document, node) !== draft.inputSignature)
+          throw new StudioAgentError(
+            "该节点的引用素材、连线用途、模型或关联镜头已变更，请让助手按当前输入重新修改",
+            409,
+          );
+      } else if (canvas.revision !== draft.revision) {
+        throw new StudioAgentError(
+          "这条旧修改建议缺少节点校验信息，请重新提出修改",
+          409,
+        );
+      }
+      const next = canvasDocumentSchema.parse({
+        ...document,
+        nodes: document.nodes.map((item) =>
+          item.id === node.id
+            ? {
+                ...item,
+                ...(draft.kind === "video"
+                  ? { videoText: draft.after }
+                  : { text: draft.after }),
+                promptVersions: [
+                  ...(item.promptVersions ?? []),
+                  {
+                    id: createId("prompt"),
+                    kind: draft.kind,
+                    prompt: currentPrompt,
+                    createdAt: new Date().toISOString(),
+                  },
+                ].slice(-12),
+              }
+            : item,
+        ),
+      });
+      const result = await prisma.creativeCanvas.updateMany({
+        where: { episodeId: draft.episodeId, revision: canvas.revision },
+        data: { document: next, revision: { increment: 1 } },
+      });
+      if (!result.count) continue;
+      return {
+        action: approval.operation,
+        nodeId: node.id,
+        revision: canvas.revision + 1,
+        before: currentPrompt,
+        after: draft.after,
+        nextStep: "在画布中审核后确认生成",
+      };
+    }
+    throw new StudioAgentError(
+      "画布正在连续保存，本次修改未写入；请保存完成后重新提出修改",
+      409,
+    );
+  }
   if (approval.operation === "revise_screenplay") {
     if (!approval.channelId || !approval.model || !approval.request)
       throw new StudioAgentError("AGENT_SCREENPLAY_REVISION_CONTEXT_MISSING");
@@ -841,6 +1428,43 @@ function readApproval(value: string): ApprovalPayload {
 }
 
 function buildContextSummary(state: AgentState, locale: StudioAgentLocale) {
+  if (state.asset) {
+    const asset = state.asset;
+    return locale === "en"
+      ? `${asset.name}'s saved asset prompt is available${asset.visualProfile ? " with its visual specification" : ""}. ${asset.selectedImageReady ? "The reference image is selected." : "No available reference image is selected."}\n\nChoose an analysis model to review the prompt and receive specific suggestions.`
+      : `已读取「${asset.name}」的生图提示词${asset.visualProfile ? "和视觉设定" : ""}。${asset.selectedImageReady ? "参考图已选好。" : "还没有选定可用参考图，这不影响检查提示词。"}\n\n选择导演分析模型后，可以直接检查这些内容并获得具体修改建议。`;
+  }
+  if (state.canvas?.role === "reference_asset") {
+    const { selectedNode, selectedMedia, usedBy } = state.canvas;
+    const ready = selectedMedia.ready && selectedMedia.kind === "image";
+    const names = usedBy
+      .slice(0, 3)
+      .map((item) => item.title)
+      .join(locale === "en" ? ", " : "、");
+    if (locale === "en")
+      return [
+        ready
+          ? `${selectedNode.title}'s reference image is ready.`
+          : `${selectedNode.title} needs an available reference image.`,
+        usedBy.length
+          ? `Used by: ${names}${usedBy.length > 3 ? ` and ${usedBy.length - 3} more nodes` : ""}.`
+          : "No canvas node uses this asset yet. This is not an error.",
+        ready
+          ? "Next: connect the asset to a shot that should use it."
+          : "Next: choose a completed image version in the asset editor.",
+      ].join("\n\n");
+    return [
+      ready
+        ? `「${selectedNode.title}」的参考图已就绪。`
+        : `「${selectedNode.title}」还需要选择一张可用参考图。`,
+      usedBy.length
+        ? `目前被${names}${usedBy.length > 3 ? `等 ${usedBy.length} 个节点` : ""}引用。`
+        : "目前还没有画布节点引用它，尚未使用不代表出错。",
+      ready
+        ? "下一步：把它连到需要使用该资产的镜头，选择对应的参考用途。"
+        : "下一步：在资产编辑里选择一个已完成的图片版本。",
+    ].join("\n\n");
+  }
   const running = state.tasks.filter((task) =>
     ["queued", "running"].includes(task.status),
   ).length;
@@ -850,6 +1474,22 @@ function buildContextSummary(state: AgentState, locale: StudioAgentLocale) {
   ).length;
   const workflow = state.workflows[0];
   const selection = state.context.selection?.label;
+  const statusNames: Record<string, string> = {
+    succeeded: "已完成",
+    failed: "失败",
+    blocked: "待处理",
+    running: "进行中",
+    queued: "排队中",
+    paused: "已暂停",
+    canceled: "已取消",
+    canceling: "取消中",
+  };
+  const workflowName =
+    workflow?.workflowType === "story-to-script"
+      ? "剧本整理"
+      : workflow?.workflowType === "script-to-storyboard"
+        ? "分镜制作"
+        : "制作流程";
   if (locale === "en") {
     return [
       `${state.project.name}${state.episode ? ` / ${state.episode.name}` : ""} is on ${stageLabel(state.context.stageId, locale)}.`,
@@ -870,7 +1510,7 @@ function buildContextSummary(state: AgentState, locale: StudioAgentLocale) {
     selection ? `当前选择：${selection}。` : "当前没有选中具体实体。",
     `本阶段共有 ${state.tasks.length} 个媒体任务：${running} 个进行中、${completed} 个已完成、${failed} 个失败。`,
     workflow
-      ? `最近工作流 ${workflow.workflowType} 的状态为 ${workflow.status}。`
+      ? `${workflowName}：${statusNames[workflow.status] ?? "状态待确认"}。`
       : "本阶段没有工作流运行记录。",
     failed
       ? "建议先处理失败任务再继续下游制作。"
@@ -891,6 +1531,13 @@ function noActionableTarget(
 
 function operationLabel(operation: StudioAgentOperation) {
   const labels: Record<StudioAgentOperation, string> = {
+    read_project_object: "读取项目资料",
+    start_script_organization: "AI 场次与资产整理",
+    start_storyboard_generation: "分镜生成",
+    start_voice_analysis: "台词分析",
+    start_voice_design: "配音表演设计",
+    start_episode_adaptation: "忠实剧本改编",
+    start_asset_visual_design: "资产视觉设计",
     cancel_media_task: "取消媒体任务",
     cancel_workflow: "取消工作流",
     pause_workflow: "暂停工作流",
@@ -898,6 +1545,7 @@ function operationLabel(operation: StudioAgentOperation) {
     revise_screenplay: "修改剧本",
     retry_media_task: "重试媒体任务",
     retry_workflow: "重试工作流",
+    update_canvas_prompt: "修改画布提示词草稿",
   };
   return labels[operation];
 }

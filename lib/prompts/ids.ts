@@ -1,4 +1,5 @@
 export const PROMPT_IDS = {
+  PRODUCTION_SCRIPT_ORGANIZATION: "production_script_organization",
   STORY_CHARACTER_ANALYSIS: "story_character_analysis",
   STORY_LOCATION_PROP_ANALYSIS: "story_location_prop_analysis",
   STORY_CLIP_SEGMENTATION: "story_clip_segmentation",

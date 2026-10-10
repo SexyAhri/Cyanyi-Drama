@@ -11,7 +11,7 @@ const templates = new Map<string, WorkflowTemplate>([
     "story-to-script",
     {
       type: "story-to-script",
-      version: 2,
+      version: 3,
       steps: [
         {
           key: "organize_production_script",
@@ -21,6 +21,9 @@ const templates = new Map<string, WorkflowTemplate>([
             "production-script.scenes",
             "clips.split",
             "screenplay.clip",
+            "production-script.organization",
+            "production-script.organization.raw",
+            "prompt.trace",
           ],
           retryable: true,
           maxAttempts: 3,
@@ -32,14 +35,14 @@ const templates = new Map<string, WorkflowTemplate>([
     "script-to-storyboard",
     {
       type: "script-to-storyboard",
-      version: 2,
+      version: 3,
       steps: [
         {
           key: "build_scene_storyboard",
           type: "build_scene_storyboard",
-          artifactTypes: ["storyboard.scenes"],
-          retryable: false,
-          maxAttempts: 1,
+          artifactTypes: ["storyboard.scenes", "storyboard.director.scene"],
+          retryable: true,
+          maxAttempts: 3,
         },
       ],
     },

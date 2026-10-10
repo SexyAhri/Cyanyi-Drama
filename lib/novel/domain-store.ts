@@ -145,6 +145,7 @@ export async function saveStoryboard(
   projectId: string,
   episodeId: string,
   input: {
+    expectedVersion?: number | null;
     status?: string;
     sourceHash?: string | null;
     preserveImagePrompts?: boolean;
@@ -196,9 +197,17 @@ export async function saveStoryboard(
   )
     return null;
   const row = await prisma.$transaction(async (tx) => {
+    if (input.expectedVersion !== undefined && input.expectedVersion !== null) {
+      const locked = await tx.storyboard.updateMany({
+        where: { episodeId, projectId, version: input.expectedVersion },
+        data: { version: { increment: 0 } },
+      });
+      if (!locked.count)
+        throw new Error("分镜已在其他页面更新，请重新加载后再保存");
+    }
     const clipIds = Array.from(
       new Set(
-        input.panels.flatMap((panel) => panel.clipId ? [panel.clipId] : []),
+        input.panels.flatMap((panel) => (panel.clipId ? [panel.clipId] : [])),
       ),
     );
     if (
@@ -207,18 +216,24 @@ export async function saveStoryboard(
           (panel.clipId == null) !== (panel.clipPanelIndex == null) ||
           (panel.clipPanelIndex !== undefined &&
             panel.clipPanelIndex !== null &&
-            (!Number.isInteger(panel.clipPanelIndex) || panel.clipPanelIndex < 0)),
+            (!Number.isInteger(panel.clipPanelIndex) ||
+              panel.clipPanelIndex < 0)),
       )
     )
       throw new Error("STORYBOARD_PANEL_CLIP_IDENTITY_INVALID");
     if (
       clipIds.length &&
-      await tx.storyClip.count({
+      (await tx.storyClip.count({
         where: { id: { in: clipIds }, episodeId, projectId },
-      }) !== clipIds.length
+      })) !== clipIds.length
     )
       throw new Error("STORYBOARD_PANEL_CLIP_NOT_FOUND");
-    const storyboard = await tx.storyboard.upsert({
+    const storyboard = input.expectedVersion === null ? await tx.storyboard.create({
+      data: {
+        id: randomUUID(), projectId, episodeId,
+        status: input.status ?? "draft", sourceHash: input.sourceHash ?? null,
+      },
+    }) : await tx.storyboard.upsert({
       where: { episodeId },
       create: {
         id: randomUUID(),
@@ -265,7 +280,9 @@ export async function saveStoryboard(
       );
       await tx.storyboardPanel.updateMany({
         where: { storyboardId: storyboard.id },
-        data: { panelIndex: { increment: largestIndex + input.panels.length + 1 } },
+        data: {
+          panelIndex: { increment: largestIndex + input.panels.length + 1 },
+        },
       });
     }
     const retainedIds: string[] = [];
@@ -300,7 +317,10 @@ export async function saveStoryboard(
       );
       const dialogueChanged = Boolean(
         existingPanel &&
-          (!sameText(panel.speakingCharacter, existingPanel.speakingCharacter) ||
+          (!sameText(
+            panel.speakingCharacter,
+            existingPanel.speakingCharacter,
+          ) ||
             !sameText(panel.lipSyncText, existingPanel.lipSyncText)),
       );
       retainedIds.push(id);
@@ -347,8 +367,8 @@ export async function saveStoryboard(
         durationSeconds: finiteNumber(panel.durationSeconds),
         subtitleText: panel.subtitleText?.trim() || null,
         speakingCharacter: panel.speakingCharacter?.trim() || null,
-        lipSyncText: panel.lipSyncText?.trim() || null,
-        voiceoverText: panel.voiceoverText?.trim() || null,
+        lipSyncText: panel.lipSyncText?.trim() ? panel.lipSyncText : null,
+        voiceoverText: panel.voiceoverText?.trim() ? panel.voiceoverText : null,
         startStateJson: stringifyObject(panel.startState),
         endStateJson: stringifyObject(panel.endState),
         motionBeatsJson: stringifyObjectArray(panel.motionBeats),
@@ -360,7 +380,7 @@ export async function saveStoryboard(
         photographyRules: panel.photographyRules?.trim() || null,
         firstLastFramePrompt:
           panel.firstLastFramePrompt === undefined
-            ? existingPanel?.firstLastFramePrompt ?? null
+            ? (existingPanel?.firstLastFramePrompt ?? null)
             : panel.firstLastFramePrompt?.trim() || null,
         linkedToNextPanel: panel.linkedToNextPanel ?? false,
         sourceEvidenceJson: stringifyArray(panel.sourceEvidence),
@@ -605,7 +625,7 @@ function promptDesignJson(
   existing: string | null | undefined,
   preserveExisting: boolean,
 ) {
-  if (value === undefined) return preserveExisting ? existing ?? null : null;
+  if (value === undefined) return preserveExisting ? (existing ?? null) : null;
   if (value === null) return null;
   return JSON.stringify({
     designNotes: cleanPromptDesignList(value.designNotes),
