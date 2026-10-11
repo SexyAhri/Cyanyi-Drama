@@ -16,6 +16,7 @@ import {
 import type { CanvasDocument } from "./types";
 import type { StudioLocale } from "../types";
 import { kindLabel } from "./canvas-view-model";
+import { groupCanvasCards } from "./canvas-categories";
 
 export function CanvasOutline({
   document,
@@ -31,56 +32,13 @@ export function CanvasOutline({
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const t = (zh: string, en: string) => (locale === "en" ? en : zh);
-  const grouped = new Set(
-    document.branchGroups?.flatMap((group) => group.nodeIds) ?? [],
-  );
-  const neighbors = new Map(
-    document.nodes.map((node) => [node.id, new Set<string>()]),
-  );
-  for (const edge of document.edges) {
-    if (!neighbors.has(edge.from) || !neighbors.has(edge.to)) continue;
-    neighbors.get(edge.from)!.add(edge.to);
-    neighbors.get(edge.to)!.add(edge.from);
-  }
-  const chains: { id: string; label: string; nodes: typeof document.nodes }[] =
-    [];
-  for (const node of document.nodes) {
-    if (grouped.has(node.id) || !neighbors.get(node.id)?.size) continue;
-    const ids = new Set([node.id]);
-    const queue = [node.id];
-    for (let i = 0; i < queue.length; i++) {
-      for (const id of neighbors.get(queue[i]) ?? []) {
-        if (ids.has(id)) continue;
-        ids.add(id);
-        queue.push(id);
-      }
-    }
-    ids.forEach((id) => grouped.add(id));
-    const nodes = document.nodes
-      .filter((item) => ids.has(item.id))
-      .sort((a, b) => a.x - b.x || a.y - b.y);
-    const root =
-      nodes.find(
-        (item) =>
-          !document.edges.some(
-            (edge) => edge.to === item.id && ids.has(edge.from),
-          ),
-      ) ?? nodes[0];
-    chains.push({ id: `chain-${root.id}`, label: root.title, nodes });
-  }
-  const sections = [
-    ...(document.branchGroups ?? []).map((group) => ({
-      id: group.id,
-      label: group.label,
-      nodes: document.nodes.filter((node) => group.nodeIds.includes(node.id)),
-    })),
-    ...chains,
-    {
-      id: "other",
-      label: t("独立内容", "Unconnected content"),
-      nodes: document.nodes.filter((node) => !grouped.has(node.id)),
-    },
-  ].filter((section) => section.nodes.length);
+  const sections = groupCanvasCards(document.nodes, locale);
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const matches = (node: typeof document.nodes[number], label: string) =>
+    `${label} ${node.title} ${kindLabel(node.kind, locale)} ${document.edges
+      .filter(edge => edge.to === node.id)
+      .map(edge => document.nodes.find(source => source.id === edge.from)?.title ?? "")
+      .join(" ")}`.toLocaleLowerCase().includes(normalizedQuery);
   const icons = {
     panel: Clapperboard,
     text: FileText,
@@ -97,7 +55,7 @@ export function CanvasOutline({
       className="hidden w-52 shrink-0 flex-col border-r bg-background lg:flex xl:w-60"
     >
       <header className="flex h-12 shrink-0 items-center justify-between px-4 text-sm font-medium">
-        {t("节点", "Nodes")}
+        {t("节点目录", "Node outline")}
         <span className="text-xs font-normal text-muted-foreground">
           {document.nodes.length}
         </span>
@@ -112,13 +70,9 @@ export function CanvasOutline({
           className="h-8 min-w-0 flex-1 bg-transparent text-xs outline-none"
         />
       </label>
-      <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+      <nav className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto px-2 pb-4">
         {sections.map((section) => {
-          const nodes = section.nodes.filter((node) =>
-            `${node.title} ${kindLabel(node.kind, locale)}`
-              .toLowerCase()
-              .includes(query.toLowerCase()),
-          );
+          const nodes = section.nodes.filter(node => matches(node, section.label));
           if (!nodes.length) return null;
           const closed = !query && collapsed.has(section.id);
           return (
@@ -159,7 +113,7 @@ export function CanvasOutline({
                       <Icon className="size-3.5 shrink-0 text-muted-foreground" />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate">{node.title}</span>
-                        {document.edges.some((edge) => edge.to === node.id) && (
+                        {["image", "video", "audio"].includes(node.kind) && document.edges.some((edge) => edge.to === node.id) && (
                           <span className="mt-1 block truncate text-[10px] text-muted-foreground">
                             ←{" "}
                             {document.edges
@@ -190,11 +144,7 @@ export function CanvasOutline({
           </p>
         )}
         {query &&
-          !document.nodes.some((node) =>
-            `${node.title} ${kindLabel(node.kind, locale)}`
-              .toLowerCase()
-              .includes(query.toLowerCase()),
-          ) && (
+          !sections.some(section => section.nodes.some(node => matches(node, section.label))) && (
             <p className="px-3 py-6 text-xs text-muted-foreground">
               {t("没有匹配的节点", "No matching nodes")}
             </p>

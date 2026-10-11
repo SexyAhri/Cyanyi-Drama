@@ -1,4 +1,5 @@
 import type { MediaTask } from "@/lib/media/task-contract";
+import { cachedStudioRequest, invalidateStudioCache, writeStudioCache } from "./request-cache";
 import {
   parseAssetVisualProfile,
   type AssetVisualProfile,
@@ -76,7 +77,7 @@ export async function deleteStudioProject(projectId: string) {
 
 export async function loadWorkspaceSnapshot(
   projectId: string,
-  options?: { signal?: AbortSignal; touch?: boolean },
+  options?: { signal?: AbortSignal; touch?: boolean; fresh?: boolean },
 ): Promise<WorkspaceSnapshot> {
   const encodedProjectId = encodeURIComponent(projectId);
   const touch = options?.touch ? "1" : "0";
@@ -86,7 +87,7 @@ export async function loadWorkspaceSnapshot(
     : timeoutSignal;
   return request<WorkspaceSnapshot>(
     `/api/projects/${encodedProjectId}/data?touch=${touch}`,
-    { signal },
+    { signal, ...(options?.fresh ? { cache: "no-store" as const } : {}) },
   );
 }
 
@@ -174,7 +175,7 @@ export async function loadStudioModels(signal?: AbortSignal) {
     }>;
   }>("/api/channels", { signal });
 
-  return result.channels.flatMap((channel) =>
+  const models = result.channels.flatMap((channel) =>
     channel.models.flatMap((model): StudioModelOption[] =>
       model.selected
         ? [
@@ -193,6 +194,8 @@ export async function loadStudioModels(signal?: AbortSignal) {
         : [],
     ),
   );
+  writeStudioCache("/studio/model-options", models, 60_000);
+  return models;
 }
 
 export async function loadStudioProductionData(
@@ -318,12 +321,14 @@ export async function loadStudioAssetCatalog(
         { signal },
       ),
     ]);
-  return {
+  const catalog: ProjectAssetCatalog = {
     assets,
     characters: characterResult.characters,
     locations: locationResult.locations,
     props: propResult.props,
   };
+  writeStudioCache(`/api/projects/${encodedProjectId}/asset-catalog`, catalog);
+  return catalog;
 }
 
 export async function loadStudioProjectAssets(
@@ -1410,6 +1415,16 @@ export async function loadStudioTrace(traceId: string, signal?: AbortSignal) {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  if (!init?.method || init.method === "GET") {
+    const { signal, ...sharedInit } = init ?? {};
+    return cachedStudioRequest(url, () => requestUncached<T>(url, sharedInit), signal, init?.cache === "no-store");
+  }
+  const result = await requestUncached<T>(url, init);
+  invalidateStudioCache(url, init.method === "DELETE");
+  return result;
+}
+
+async function requestUncached<T>(url: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
     response = await fetch(url, {
@@ -1426,6 +1441,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     unknown
   > | null;
   if (!response.ok) {
+    if ([401, 403].includes(response.status) || (response.status === 404 && /\/data(?:\?|$)/.test(url)))
+      invalidateStudioCache(response.status === 401 ? undefined : url, true);
     const serverMessage =
       typeof body?.message === "string" ? body.message.trim() : "";
     throw new StudioApiError(

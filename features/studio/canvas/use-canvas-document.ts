@@ -2,6 +2,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CanvasDocument } from "./types";
 import { mergeCanvasPresentation } from "./canvas-merge";
+import { cachedStudioRequest, peekStudioCache, writeStudioCache } from "../request-cache";
+type SavedCanvas = { document: CanvasDocument | null; revision: number; message?: string };
+async function readCanvas(url: string, signal?: AbortSignal, fresh = false) {
+  return cachedStudioRequest<SavedCanvas>(url, async () => {
+    const response = await fetch(url);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message ?? "加载失败");
+    return data;
+  }, signal, fresh);
+}
 
 const empty: CanvasDocument = {
   nodes: [],
@@ -9,14 +19,14 @@ const empty: CanvasDocument = {
   viewport: { x: 40, y: 40, k: 0.8 },
 };
 export function useCanvasDocument(url: string) {
-  const [document, setDocument] = useState<CanvasDocument>(empty);
+  const [document, setDocument] = useState<CanvasDocument>(() => peekStudioCache<SavedCanvas>(url)?.document ?? empty);
   const current = useRef(document);
-  const revision = useRef(0);
+  const revision = useRef(peekStudioCache<SavedCanvas>(url)?.revision ?? 0);
   const saved = useRef(document);
   const past = useRef<CanvasDocument[]>([]);
   const future = useRef<CanvasDocument[]>([]);
   const [history, setHistory] = useState({ canUndo: false, canRedo: false });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !peekStudioCache(url));
   const [error, setError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -26,11 +36,18 @@ export function useCanvasDocument(url: string) {
   useEffect(() => {
     mounted.current = true;
     const abort = new AbortController();
-    void fetch(url, { signal: abort.signal })
-      .then(async (response) => {
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.message ?? "加载失败");
+    const cached = peekStudioCache<SavedCanvas>(url);
+    current.current = cached?.document ?? empty;
+    saved.current = current.current;
+    revision.current = cached?.revision ?? 0;
+    setDocument(current.current);
+    setLoading(!cached);
+    setError("");
+    const captured = current.current;
+    void readCanvas(url, abort.signal)
+      .then((data) => {
         if (abort.signal.aborted) return;
+        if (current.current !== captured || savingPromise.current) return;
         current.current = data.document ?? empty;
         saved.current = current.current;
         revision.current = data.revision;
@@ -42,7 +59,7 @@ export function useCanvasDocument(url: string) {
       })
       .catch((error) => {
         if (!abort.signal.aborted) {
-          setError(error.message);
+          if (!cached) setError(error.message);
           setLoading(false);
         }
       });
@@ -114,6 +131,7 @@ export function useCanvasDocument(url: string) {
           if (!response.ok) throw new Error(data.message ?? "保存失败");
           revision.current = data.revision;
           saved.current = captured;
+          writeStudioCache(url, { document: captured, revision: data.revision });
           if (mounted.current) setDirty(current.current !== captured);
           return current.current === captured;
         }
@@ -134,10 +152,8 @@ export function useCanvasDocument(url: string) {
     if (savingPromise.current || current.current !== saved.current) return;
     const captured = current.current;
     try {
-      const response = await fetch(url);
-      const data = await response.json();
+      const data = await readCanvas(url, undefined, true);
       if (
-        !response.ok ||
         !mounted.current ||
         savingPromise.current ||
         current.current !== captured

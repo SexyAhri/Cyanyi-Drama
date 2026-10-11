@@ -49,6 +49,9 @@ import {
 } from "./canvas-toolbar";
 import { PanelEditorDialog } from "../storyboard/panel-editor-dialog";
 import { getStudioModelName } from "../components/model-select";
+import { peekStudioCache } from "../request-cache";
+import { useStudioCacheRevision } from "../hooks/use-studio-cache-revision";
+import { getTaskOutputRevision, getAssetCatalogWorkflowRevision } from "../stage-state";
 import { useCanvasConnections } from "./use-canvas-connections";
 import { useCanvasDocument } from "./use-canvas-document";
 import {
@@ -125,10 +128,13 @@ export function CanvasWorkspace({
 }) {
   const url = `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/canvas`;
   const state = useCanvasDocument(url);
+  const cacheRevision = useStudioCacheRevision();
+  const assetRevision = `${getTaskOutputRevision(snapshot.tasks)}|${getAssetCatalogWorkflowRevision(snapshot.workflows)}`;
+  const lastAssetRevision = useRef<string | undefined>(undefined);
   const { document, current, replace } = state;
   const arrowId = `canvas-arrow-${useId().replace(/:/g, "")}`;
-  const [catalog, setCatalog] = useState<ProjectAssetCatalog>();
-  const [storyboard, setStoryboard] = useState<StudioStoryboardData>();
+  const [catalog, setCatalog] = useState<ProjectAssetCatalog | undefined>(() => peekStudioCache<ProjectAssetCatalog>(`/api/projects/${encodeURIComponent(projectId)}/asset-catalog`));
+  const [storyboard, setStoryboard] = useState<StudioStoryboardData | undefined>(() => peekStudioCache<StudioStoryboardData>(`${url.replace(/\/canvas$/, "")}/storyboard`));
   const panels = storyboard?.storyboard?.panels ?? EMPTY_PANELS;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [edgeId, setEdgeId] = useState<string>();
@@ -588,15 +594,17 @@ export function CanvasWorkspace({
   }, [registerBeforeLeave, state.save]);
   useEffect(() => {
     const abort = new AbortController();
+    const outputChanged = lastAssetRevision.current !== undefined && lastAssetRevision.current !== assetRevision;
+    lastAssetRevision.current = assetRevision;
+    const needsSync = outputChanged || !peekStudioCache(`/api/projects/${encodeURIComponent(projectId)}/asset-catalog`);
     void Promise.allSettled([
-      fetch(url, { method: "POST", signal: abort.signal })
+      (needsSync ? fetch(url, { method: "POST", signal: abort.signal })
         .then(async (response) => {
           if (!response.ok && response.status !== 404) {
             const data = await response.json();
             throw new Error(data.message ?? "画布素材同步失败");
           }
-          return loadStudioAssetCatalog(projectId, abort.signal);
-        }),
+        }) : Promise.resolve()).then(() => loadStudioAssetCatalog(projectId, abort.signal)),
       loadStudioStoryboard(projectId, episodeId, abort.signal),
     ]).then((results) => {
       if (abort.signal.aborted) return;
@@ -613,10 +621,10 @@ export function CanvasWorkspace({
         toast.error(
           shots.reason instanceof Error ? shots.reason.message : "分镜加载失败",
         );
-      if (!busyRef.current) void state.refresh();
+      if (outputChanged && !busyRef.current) void state.refresh();
     });
     return () => abort.abort();
-  }, [projectId, episodeId, snapshot.tasks]);
+  }, [projectId, episodeId, assetRevision, cacheRevision, url]);
 
   const currentEpisodeGraph = useCallback(() => {
     if (!catalog || !panels.length) return undefined;
@@ -644,7 +652,7 @@ export function CanvasWorkspace({
 
   useEffect(() => {
     if (state.loading || !storyboard || layoutInitialized.current) return;
-    if (!catalog && !current.current.nodes.length && panels.length) return;
+    if (!catalog && panels.length) return;
     layoutInitialized.current = true;
     const hasEpisodeGraph = current.current.edges.some((edge) =>
       ["causality", "shot_sequence", "story_asset", "episode_bridge", "shot_video"].includes(
@@ -663,6 +671,7 @@ export function CanvasWorkspace({
         const currentEdgeIds = new Set(current.current.edges.map((edge) => edge.id));
         const graphEdgeIds = new Set(graph.edges.map((edge) => edge.id));
         const structureChanged =
+          current.current.episodeLayoutVersion !== 1 ||
           graph.nodes.some((node) => node.episodeLayer !== current.current.nodes.find((item) => item.id === node.id)?.episodeLayer) ||
           currentNodeIds.size !== graphNodeIds.size ||
           [...graphNodeIds].some((id) => !currentNodeIds.has(id)) ||
@@ -1411,7 +1420,7 @@ export function CanvasWorkspace({
     outlineOpen,
     libraryOpen: library,
     canAssembleEpisodeGraph: panels.length > 0,
-    branches: document.layoutMode === "branches",
+    freeLayout: document.layoutMode === "free",
     onTool: setTool,
     onCreate: create,
     onOutline: () => setOutlineOpen(!outlineOpen),
@@ -1420,7 +1429,6 @@ export function CanvasWorkspace({
     onUndo: () => state.undo(),
     onRedo: () => state.undo(true),
     onDuplicate: duplicate,
-    onArrange: showBranches,
     onFree: () =>
       replace({
         ...current.current,
@@ -1590,7 +1598,9 @@ export function CanvasWorkspace({
                   ((edge.purpose === "story_asset" &&
                     ((Boolean(to.panelId) && from.y >= to.y + CARD_HEIGHT) ||
                       to.episodeLayer === "asset_image")) ||
-                    edge.purpose === "shot_video");
+                    edge.purpose === "shot_video" ||
+                    (from.kind === "panel" && to.episodeLayer === "shot_video") ||
+                    (["character", "location", "prop"].includes(from.kind) && to.episodeLayer === "asset_image"));
                 const branch = verticalEpisodeEdge
                   ? (() => {
                       const downToImage = to.episodeLayer === "asset_image";
@@ -1653,13 +1663,13 @@ export function CanvasWorkspace({
                       strokeWidth={18}
                       className="cursor-pointer"
                     />
-                    {(edgeId === edge.id ||
+                    {(edgeId === edge.id || (!verticalEpisodeEdge &&
                       !(
                         document.layoutMode === "episode" &&
                         ["causality", "shot_sequence", "story_asset"].includes(
                           edge.purpose ?? "",
                         )
-                      )) && (
+                      ))) && (
                       <text
                         x={branch.labelX}
                         y={branch.labelY}
@@ -1736,8 +1746,8 @@ export function CanvasWorkspace({
               <CanvasNode
                 key={node.id}
                 node={node}
-                summary={canvasCardSummary(node, catalog, panels, locale)}
-                durationSeconds={panels.find(panel => panel.id === node.panelId)?.durationSeconds}
+                summary={canvasCardSummary(node, catalog, panels, locale, document)}
+                durationSeconds={panels.find(panel => panel.id === (node.panelId ?? document.nodes.find(source => source.kind === "panel" && document.edges.some(edge => edge.from === source.id && edge.to === node.id))?.panelId))?.durationSeconds}
                 usageCount={["character", "location", "prop"].includes(node.kind)
                   ? panels.filter(panel => node.kind === "character" ? panel.characters.includes(node.title) : node.kind === "location" ? panel.locationName === node.title : panel.props.includes(node.title)).length
                   : undefined}

@@ -439,7 +439,7 @@ export function ScriptSetupDialog({
                     {t("设定会带入导演助手对话", "Settings will be added to the Director Assistant chat")}
                   </p>
                   <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
-                    {t("确认后可在输入框补充创意，生成时使用对话框当前选择的模型。", "After applying, add any story ideas in the composer. Generation uses the model selected there.")}
+                    {t("未选择的设定由 AI 拟定，实际采用的设定会显示在故事大纲中。确认后可在输入框补充创意。", "AI decides unspecified settings and shows its decisions in the story outline. Add any story ideas after applying.")}
                   </p>
                 </div>
               </div>
@@ -625,7 +625,7 @@ function SettingPopover({
           <SettingTile
             icon={icon}
             title={title}
-            summary={summary.join(en ? ", " : "、") || (en ? "Auto" : "自动")}
+            summary={summary.join(en ? ", " : "、") || (en ? "AI decides" : "由 AI 拟定")}
             active={summary.length > 0}
           />
         }

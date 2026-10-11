@@ -53,6 +53,7 @@ function getChoices(
 
 function NativeSelect({
   className,
+  style,
   size = "default",
   children,
   value,
@@ -77,11 +78,7 @@ function NativeSelect({
   const selected = choices.find((choice) => choice.value === selectedValue);
   const field = React.useRef<HTMLSelectElement | null>(null);
   return (
-    <div
-      className={cn("min-w-0 w-full", className)}
-      data-slot="native-select-wrapper"
-      data-size={size}
-    >
+    <>
       <Select
         disabled={disabled}
         required={required}
@@ -103,8 +100,9 @@ function NativeSelect({
           aria-describedby={ariaDescribedBy}
           aria-invalid={ariaInvalid}
           title={title}
+          style={style}
           size={size}
-          className="h-full min-h-8 min-w-0 w-full max-w-full bg-background text-xs shadow-none focus-visible:ring-2 focus-visible:ring-ring/30"
+          className={cn("min-w-0 w-full max-w-full text-xs", className)}
         >
           <SelectValue>
             <span className="min-w-0 flex-1 truncate">{selected?.label}</span>
@@ -113,14 +111,14 @@ function NativeSelect({
         <SelectContent
           align="start"
           alignItemWithTrigger={false}
-          className="max-h-[min(20rem,var(--available-height))] min-w-0 max-w-[calc(100vw-1rem)] rounded-xl border border-border p-1 shadow-lg ring-0"
+          className="min-w-0"
         >
           {choices.map((choice) => (
             <SelectItem
               key={choice.value}
               value={choice.value}
               disabled={choice.disabled}
-              className="min-w-0 cursor-pointer rounded-lg py-2 pl-2.5 pr-8 text-xs leading-5 data-highlighted:bg-accent data-highlighted:text-accent-foreground"
+              className="min-w-0 text-xs leading-5"
             >
               <span className="min-w-0 flex-1 whitespace-normal break-words">
                 {choice.label}
@@ -140,7 +138,7 @@ function NativeSelect({
       >
         {children}
       </select>
-    </div>
+    </>
   );
 }
 

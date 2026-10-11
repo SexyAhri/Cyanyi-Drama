@@ -378,6 +378,7 @@ export function arrangeEpisodeCausalGraph(
   return {
     ...document,
     layoutMode: "episode",
+    episodeLayoutVersion: 1,
     branchGroups: [],
     nodes: document.nodes.map((node) => ({
       ...node,

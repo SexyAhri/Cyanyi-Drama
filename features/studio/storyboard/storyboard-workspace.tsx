@@ -20,6 +20,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { peekStudioCache } from "../request-cache";
+import { useStudioCacheRevision } from "../hooks/use-studio-cache-revision";
 
 import {
   controlStudioWorkflow,
@@ -81,9 +83,11 @@ export function StoryboardWorkspace({
   snapshot: WorkspaceSnapshot;
 }) {
   const copy = getStudioCopy(locale);
-  const [data, setData] = useState<StudioStoryboardData | null>(null);
+  const cacheRevision = useStudioCacheRevision();
+  const cacheUrl = `/api/projects/${encodeURIComponent(snapshot.project.id)}/episodes/${encodeURIComponent(episode.id)}/storyboard`;
+  const [data, setData] = useState<StudioStoryboardData | null>(() => peekStudioCache<StudioStoryboardData>(cacheUrl) ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => !peekStudioCache(cacheUrl));
   const [isActing, setIsActing] = useState(false);
   const [selectedPanelId, setSelectedPanelId] = useState("");
   const [showSaved, setShowSaved] = useState(false);
@@ -126,10 +130,12 @@ export function StoryboardWorkspace({
 
   useEffect(() => {
     const controller = new AbortController();
-    setIsLoading(true);
+    const cached = peekStudioCache<StudioStoryboardData>(cacheUrl);
+    if (cached) setData(cached);
+    setIsLoading(!cached);
     void load(controller.signal);
     return () => controller.abort();
-  }, [load, workflowRevision]);
+  }, [load, workflowRevision, cacheUrl, cacheRevision]);
   const progressActive = ["queued", "running", "canceling"].includes(
     data?.progress?.status ?? workflow?.status ?? "",
   );

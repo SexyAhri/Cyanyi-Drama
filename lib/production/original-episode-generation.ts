@@ -159,6 +159,7 @@ export async function generateOriginalEpisode(
             project_context: serializeBudgetedContext(
               {
                 series: {
+                  resolvedSetup: story.resolvedSetup,
                   title: story.title,
                   synopsis: story.synopsis,
                   worldRules: story.worldRules,

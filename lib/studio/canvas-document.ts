@@ -15,6 +15,7 @@ export const canvasPurposeSchema = z.enum([
 ]);
 export const canvasDocumentSchema = z.object({
   layoutMode: z.enum(["branches", "episode", "free"]).optional(),
+  episodeLayoutVersion: z.number().int().positive().optional(),
   branchGroups: z
     .array(
       z.object({

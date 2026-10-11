@@ -39,7 +39,7 @@ export type CanvasToolbarProps = {
   outlineOpen: boolean;
   libraryOpen: boolean;
   canAssembleEpisodeGraph?: boolean;
-  branches: boolean;
+  freeLayout: boolean;
   onTool: (tool: "select" | "pan") => void;
   onCreate: (kind: "text" | "image" | "video") => void;
   onOutline: () => void;
@@ -48,7 +48,6 @@ export type CanvasToolbarProps = {
   onUndo: () => void;
   onRedo: () => void;
   onDuplicate: () => void;
-  onArrange: () => void;
   onFree: () => void;
   onFit: () => void;
   onExport: () => void;
@@ -126,16 +125,9 @@ export function CanvasHeader(props: CanvasToolbarProps) {
       )}
       <div className="ml-auto flex items-center gap-1">
         <Tool
-          icon={GitBranch}
-          label={t("整理分支", "Arrange branches")}
-          active={props.branches}
-          disabled={props.busy || props.nodeCount < 2}
-          onClick={props.onArrange}
-        />
-        <Tool
           icon={ArrowUpRight}
           label={t("自由布局", "Free layout")}
-          active={!props.branches}
+          active={props.freeLayout}
           disabled={props.busy}
           onClick={props.onFree}
         />

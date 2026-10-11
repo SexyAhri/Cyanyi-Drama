@@ -30,6 +30,7 @@ import {
   StoryPackageEpisodeBatchSchema,
   StoryPackageFirstEpisodeGenerationSchema,
   StoryPackagePlanSchema,
+  ResolvedStorySetupSchema,
   StoryPackageSchema,
   type StoryPackage,
 } from "./story-package-contract";
@@ -187,12 +188,27 @@ export async function generateAndSaveStoryPackage(input: {
         input.locale === "en"
           ? "Generating the series premise, rules, and volume arcs…"
           : "正在生成故事主线、世界规则与分卷大纲…",
-      task: buildPlanTask(input.locale, setup.episodeCount),
-      schema: StoryPackagePlanSchema,
-      validate: (value) =>
-        validateStoryPackagePlan(value, setup.episodeCount),
+      task: buildPlanTask(input.locale, setup.episodeCount) + "\n" + (input.locale === "en"
+        ? "Resolve audience, characters, eras and hooks in resolvedSetup. For every nonempty userSetup selection, retain its exact strings in the matching array; for empty selections, explicitly decide concrete directions from the premise. These resolved settings govern all subsequent assets and scripts."
+        : "在 resolvedSetup 中明确最终采用的 audience（目标受众）、characters（角色方向）、eras（时代背景）、hooks（核心看点）。用户已选择的每一项必须以原文保留在对应数组中；未选择的项目依据梗概拟定具体方向，不得填写自动、未指定或由 AI 拟定。故事主线、人物、资产和后续剧本必须统一遵循这些设定。"),
+      schema: StoryPackagePlanSchema.extend({ resolvedSetup: ResolvedStorySetupSchema }),
+      validate: (value) => {
+        const issues = validateStoryPackagePlan(value, setup.episodeCount);
+        for (const key of ["audience", "characters", "eras", "hooks"] as const) {
+          for (const selected of setup[key]) {
+            if (!value.resolvedSetup[key].includes(selected)) issues.push({
+              path: `resolvedSetup.${key}`, code: "user_setting_missing",
+              message: `Retain the user-selected setting exactly: ${selected}`,
+            });
+          }
+        }
+        return issues;
+      },
       preview: (value) => renderStoryPackagePlan(value, input.locale),
     });
+
+    // Keep the resolved decisions in every later phase and the saved setup.
+    Object.assign(setup, plan.resolvedSetup);
 
     const episodeOutlines: StoryPackage["episodeOutlines"] = [];
     const hooks: StoryPackage["hooks"] = [];
@@ -412,14 +428,14 @@ function createOutputProgressReporter(
 function buildPlanTask(locale: "zh" | "en", episodeCount: number) {
   if (locale === "en")
     return [
-      "PHASE: series premise and volume plan. Return only these fields: title, logline, coreAppeal, emotionalCurve, synopsis, backgroundSetting, format, worldRules, volumes, creativeProhibitions, whyWatch.",
+      "PHASE: series premise and volume plan. Return only these fields: resolvedSetup, title, logline, coreAppeal, emotionalCurve, synopsis, backgroundSetting, format, worldRules, volumes, creativeProhibitions, whyWatch.",
       "Create at least two distinct core appeals, an emotionalCurve from opening emotion through the ending, a concrete backgroundSetting, at least three world rules with consequences, and at least three specific creative prohibitions. worldRules must be an array of objects with string fields rule and consequence; do not return plain strings.",
       `Set format.episodeCount to ${episodeCount}. Use the project configuration for duration, aspect ratio, and visual style.`,
       `Create exactly ${Math.ceil(episodeCount / 10)} volumes, grouping up to 10 episodes each. Ranges must cover episodes 1-${episodeCount} without gaps or overlap and use only start-end notation such as 1-10. For each volume give a causal synopsis, phaseGoal (from what state to what state), informationRelease, distinctiveness from other volumes, climax, and ending hook that advances the series question.`,
       `whyWatch must be an object with earlyEpisodes (an array of objects containing integer episodeNumber, string moment, and string questionRaised; include episodes 1-${Math.min(3, episodeCount)}) and nonInterchangeabilityReason (a string explaining why those episodes cannot be swapped). Build a coherent escalating story from the supplied premise. Do not generate character/asset dossiers, episode outlines, hooks, foreshadowing, reversals, or episode scripts in this phase.`,
     ].join("\n");
   return [
-    "阶段：全剧主线与分卷规划。只输出字段：title、logline、coreAppeal、emotionalCurve、synopsis、backgroundSetting、format、worldRules、volumes、creativeProhibitions、whyWatch。",
+    "阶段：全剧主线与分卷规划。只输出字段：resolvedSetup、title、logline、coreAppeal、emotionalCurve、synopsis、backgroundSetting、format、worldRules、volumes、creativeProhibitions、whyWatch。",
     "coreAppeal 至少 2 条且彼此有区别；emotionalCurve 描写开篇到结尾的情绪变化；backgroundSetting 具体交代世界与故事背景；worldRules 至少 3 条，必须是对象数组，每项严格包含字符串字段 rule 和 consequence，不要返回字符串数组；creativeProhibitions 至少 3 条且针对本故事。",
     `format.episodeCount 必须是 ${episodeCount}。集长、画幅、画风采用项目配置。`,
     `分卷必须恰好 ${Math.ceil(episodeCount / 10)} 卷，每卷最多 10 集。范围连续覆盖第 1-${episodeCount} 集，不重叠、不遗漏，只用起始集-结束集格式，例如 1-10。每卷写清因果梗概、phaseGoal（从什么状态到什么状态）、informationRelease（本段释放的信息）、distinctiveness（与其他段的区别）、阶段高潮和推进全剧问题的卷尾钩子。`,

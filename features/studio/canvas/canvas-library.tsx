@@ -12,11 +12,13 @@ import type {
   StudioStoryboardPanel,
 } from "../types";
 import type { CanvasCard } from "./types";
+import { groupCanvasCards } from "./canvas-categories";
 import {
   kindLabel,
   panelCard,
   nodeMedia,
   canvasAssetCards,
+  linkedCanvasAsset,
 } from "./canvas-view-model";
 
 export function CanvasLibrary({
@@ -35,9 +37,17 @@ export function CanvasLibrary({
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const t = (zh: string, en: string) => (locale === "en" ? en : zh);
+  const entities = canvasAssetCards(catalog);
+  const assetOwners = new Map(entities.flatMap(card => {
+    const entity = linkedCanvasAsset(card, catalog);
+    return [...(entity?.candidates ?? [])].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).flatMap((candidate, index) => candidate.assetId
+      ? [[candidate.assetId, { name: card.title, selected: candidate.selected, version: index + 1 }] as const]
+      : []);
+  }));
+  const baselineIds = new Set([...assetOwners].filter(([, owner]) => owner.selected).map(([id]) => id));
   const cards: CanvasCard[] = [
     ...panels.map(panelCard),
-    ...canvasAssetCards(catalog),
+    ...entities,
     ...(catalog?.assets ?? [])
       .filter(
         (asset) =>
@@ -45,28 +55,37 @@ export function CanvasLibrary({
           asset.taskStatus === "succeeded" &&
           ["image", "video", "audio"].includes(asset.kind),
       )
-      .map((asset) => ({
-        id: `asset-${asset.id}`,
-        kind: asset.kind as "image" | "video" | "audio",
-        title:
-          typeof asset.metadata.title === "string"
-            ? asset.metadata.title
-            : `${kindLabel(asset.kind as "image", locale)} · ${asset.createdAt.slice(5, 16).replace("T", " ")}`,
-        text: "",
-        assetId: asset.id,
-        entityId:
-          asset.sourceTargetType === "voice_line"
+      .map((asset) => {
+        const owner = assetOwners.get(asset.id);
+        const sourceEntity = entities.find(card => asset.references.some(ref => ref.entityId === card.entityId));
+        const sourcePanel = panels.find(panel => asset.sourceTargetId === panel.id || asset.references.some(ref => ref.entityId === panel.id));
+        const sourceName = owner?.name ?? sourceEntity?.title ?? (sourcePanel ? t(`镜头 ${sourcePanel.panelIndex + 1}`, `Shot ${sourcePanel.panelIndex + 1}`) : undefined);
+        return {
+          id: `asset-${asset.id}`,
+          kind: asset.kind as "image" | "video" | "audio",
+          title: sourceName
+            ? `${sourceName} · ${kindLabel(asset.kind as "image", locale)}${owner ? t(` · 版本 ${owner.version}`, ` · Version ${owner.version}`) : ""}`
+            : typeof asset.metadata.title === "string"
+              ? asset.metadata.title
+              : `${kindLabel(asset.kind as "image", locale)} · ${asset.createdAt.slice(5, 16).replace("T", " ")}`,
+          text: "",
+          assetId: asset.id,
+          entityId: asset.sourceTargetType === "voice_line"
             ? (asset.sourceTargetId ?? undefined)
             : undefined,
-        x: 0,
-        y: 0,
-      })),
+          x: 0,
+          y: 0,
+        };
+      }),
   ];
   const visible = cards.filter(
     (card) =>
       (filter === "all" || card.kind === filter) &&
-      card.title.toLowerCase().includes(search.toLowerCase()),
+      // The entity card already shows its adopted image in the All view.
+      !(filter === "all" && card.assetId && baselineIds.has(card.assetId)) &&
+      `${card.title} ${kindLabel(card.kind, locale)}`.toLowerCase().includes(search.trim().toLowerCase()),
   );
+  const sections = groupCanvasCards(visible, locale);
   return (
     <aside
       aria-label={t("项目素材库", "Project library")}
@@ -97,34 +116,34 @@ export function CanvasLibrary({
         </label>
         <NativeSelect
           aria-label={t("素材类型", "Asset type")}
-          className="h-8 w-full rounded border bg-background px-2 text-xs"
+          size="default"
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
         >
           <NativeSelectOption value="all">
             {t("全部", "All")}
           </NativeSelectOption>
-          {(
-            [
-              "panel",
-              "character",
-              "location",
-              "prop",
-              "image",
-              "video",
-              "audio",
-            ] as const
-          ).map((kind) => (
-            <NativeSelectOption key={kind} value={kind}>
-              {kindLabel(kind, locale)}
+          {groupCanvasCards(cards, locale).map((section) => (
+            <NativeSelectOption key={section.id} value={section.id}>
+              {section.label} ({section.nodes.length})
             </NativeSelectOption>
           ))}
         </NativeSelect>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
-        <div className="grid grid-cols-2 gap-2">
-          {visible.map((card) => {
+      <div className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto p-2">
+        {sections.map(section => (
+          <section key={section.id} className="mb-4">
+            <h3 className="mb-2 flex items-center justify-between px-1 text-xs font-medium text-muted-foreground">
+              <span>{section.label}</span><span>{section.nodes.length}</span>
+            </h3>
+            <div className="grid grid-cols-2 gap-2">
+          {section.nodes.map((card) => {
             const asset = nodeMedia(card, catalog, panels);
+            const entity = linkedCanvasAsset(card, catalog);
+            const owner = card.assetId ? assetOwners.get(card.assetId) : undefined;
+            const subtitle = entity ? (entity.candidates.some(candidate => candidate.selected && candidate.url)
+              ? t("已采用基准", "Baseline adopted") : t("待生成基准", "Baseline needed"))
+              : owner?.selected ? t("基准图", "Baseline image") : kindLabel(card.kind, locale);
             return (
               <button
                 key={card.id}
@@ -146,17 +165,19 @@ export function CanvasLibrary({
                   )}
                 </div>
                 <span className="block min-w-0 p-2">
-                  <span className="block truncate text-xs font-medium">
+                  <span className="block break-words text-xs font-medium leading-5">
                     {card.title}
                   </span>
                   <span className="text-[10px] text-muted-foreground">
-                    {kindLabel(card.kind, locale)}
+                    {subtitle}
                   </span>
                 </span>
               </button>
             );
           })}
-        </div>
+            </div>
+          </section>
+        ))}
         {!visible.length && (
           <p className="p-4 text-xs leading-6 text-muted-foreground">
             {t(

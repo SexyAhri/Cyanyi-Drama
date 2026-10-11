@@ -193,26 +193,41 @@ function inheritedCanvasAsset(node: CanvasCard, catalog?: ProjectAssetCatalog) {
 }
 
 export function isReusableCanvasBranch(node: CanvasCard, document: CanvasDocument, catalog: ProjectAssetCatalog | undefined, tasks: MediaTask[]) {
-  const entity = inheritedCanvasAsset(node, catalog);
-  if (!entity || node.assetId || node.modelId || node.promptVersions?.length || node.text !== entity.generationPrompt) return false;
-  if (tasks.some(task => task.targetType === "canvas_node" && task.targetId === node.id) || catalog?.assets.some(asset => asset.sourceTargetId === node.id)) return false;
+  if (node.kind !== "image" || !catalog) return false;
   const incoming = document.edges.filter(edge => edge.to === node.id);
   const parent = document.nodes.find(source => source.id === incoming[0]?.from);
   if (incoming.length !== 1 || !parent || node.title !== `${parent.title} · 图片`.slice(0, 300) || document.edges.some(edge => edge.from === node.id)) return false;
+  // Legacy generated branches can duplicate the baseline already shown on the asset.
+  // Fold only a single adopted result with no pending work or prompt edits.
+  const parentEntity = linkedCanvasAsset(parent, catalog);
+  const baseline = parentEntity?.candidates.find(candidate => candidate.selected && candidate.url);
+  const ownOutputs = nodeCandidates(node, catalog).filter(asset => asset.sourceTargetId === node.id || asset.id === node.assetId);
+  const recordedVersion = node.promptVersions?.length === 1 ? node.promptVersions[0] : undefined;
+  const unchangedGeneratedPrompt = recordedVersion?.kind === "image" && recordedVersion.prompt === node.text && recordedVersion.createdAt <= (ownOutputs[0]?.createdAt ?? "");
+  if (node.episodeLayer === "asset_image" && baseline && ownOutputs.length === 1 && ownOutputs[0].id === baseline.assetId && (!node.promptVersions?.length || unchangedGeneratedPrompt) &&
+      !tasks.some(task => task.targetId === node.id && ["queued", "running", "failed"].includes(task.status))) {
+    const completedTask = tasks.find(task => task.targetId === node.id && task.status === "succeeded" && task.output?.some(output => output.id === baseline.assetId));
+    const generatedPrompt = completedTask?.request.prompt;
+    if (unchangedGeneratedPrompt || node.text === parentEntity?.generationPrompt || (typeof generatedPrompt === "string" && node.text === generatedPrompt)) return true;
+  }
+  const entity = inheritedCanvasAsset(node, catalog);
+  if (!entity || node.assetId || node.modelId || node.promptVersions?.length || node.text !== entity.generationPrompt) return false;
+  if (tasks.some(task => task.targetType === "canvas_node" && task.targetId === node.id) || catalog?.assets.some(asset => asset.sourceTargetId === node.id)) return false;
   return entity.candidates.some(candidate => candidate.selected && candidate.url);
 }
 
-export function canvasCardSummary(node: CanvasCard, catalog: ProjectAssetCatalog | undefined, panels: StudioStoryboardPanel[], locale: StudioLocale) {
-  const panel = panels.find(item => item.id === node.panelId);
+export function canvasCardSummary(node: CanvasCard, catalog: ProjectAssetCatalog | undefined, panels: StudioStoryboardPanel[], locale: StudioLocale, document?: CanvasDocument) {
+  const parent = document?.nodes.find(source => document.edges.some(edge => edge.from === source.id && edge.to === node.id) && (source.kind === "panel" || ["character", "location", "prop"].includes(source.kind)));
+  const panel = panels.find(item => item.id === (node.panelId ?? parent?.panelId));
   if (panel && node.kind === "video" && node.episodeLayer === "shot_video")
-    return [panel.locationName, panel.shotType, panel.cameraMove,
+    return [panel.locationName, panel.shotType?.slice(0, 24), panel.cameraMove ? `${panel.cameraMove.slice(0, 48)}${panel.cameraMove.length > 48 ? "…" : ""}` : undefined,
       locale === "en" ? "Video result for this shot. Select to edit the full prompt." : "本镜头的视频结果，点击编辑完整提示词。"].filter(Boolean).join(" · ");
   if (panel && node.kind === "panel")
     return [panel.description, panel.lipSyncText ? `${panel.speakingCharacter ?? ""}：${panel.lipSyncText}` : panel.voiceoverText].filter(Boolean).join("\n");
   const entity = linkedCanvasAsset(node, catalog);
   if (entity)
     return entity.visualProfile?.spec.shapeAndStructure || entity.description || entity.name;
-  const inherited = inheritedCanvasAsset(node, catalog);
+  const inherited = inheritedCanvasAsset(node, catalog) ?? (parent && linkedCanvasAsset(parent, catalog));
   if (inherited)
     return locale === "en" ? `Image candidates for ${inherited.name}. Select to review or create a new version.` : `${inherited.name}的参考图候选。点击查看或生成新版本。`;
 }

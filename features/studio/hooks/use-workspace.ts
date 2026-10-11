@@ -2,13 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { createStudioEpisode, loadWorkspaceSnapshot } from "../api";
+import { createStudioEpisode, loadWorkspaceSnapshot, StudioApiError } from "../api";
 import type { WorkspaceSnapshot } from "../types";
+import { invalidateStudioCache, peekStudioCache, writeStudioCache } from "../request-cache";
+import { getTaskOutputRevision, getAssetCatalogWorkflowRevision } from "../stage-state";
 
 export function useWorkspace(projectId: string) {
-  const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
+  const cacheUrl = `/api/projects/${encodeURIComponent(projectId)}/data`;
+  const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(() => peekStudioCache<WorkspaceSnapshot>(cacheUrl) ?? null);
+  const latest = useRef(snapshot);
   const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => !peekStudioCache(cacheUrl));
   const [isRefreshing, setIsRefreshing] = useState(false);
   const inFlightRef = useRef<{
     projectId: string;
@@ -24,18 +28,34 @@ export function useWorkspace(projectId: string) {
 
       const promise = (async () => {
         if (options?.background) setIsRefreshing(true);
-        else setIsLoading(true);
+        else setIsLoading(!peekStudioCache(cacheUrl));
         setError(null);
         try {
           const result = await loadWorkspaceSnapshot(projectId, {
             signal: options?.signal,
             touch: !options?.background,
+            fresh: options?.background,
           });
-          if (!options?.signal?.aborted) setSnapshot(result);
+          if (!options?.signal?.aborted) {
+            const previous = latest.current;
+            if (previous?.project.id === projectId &&
+              (getTaskOutputRevision(previous.tasks) !== getTaskOutputRevision(result.tasks) ||
+                getAssetCatalogWorkflowRevision(previous.workflows) !== getAssetCatalogWorkflowRevision(result.workflows) ||
+                previous.project.updatedAt !== result.project.updatedAt)) {
+              invalidateStudioCache(`/api/projects/${encodeURIComponent(projectId)}`);
+              writeStudioCache(cacheUrl, result);
+            }
+            latest.current = result;
+            setSnapshot(result);
+          }
           return result;
         } catch (requestError) {
           if (!options?.signal?.aborted) {
-            setError(
+            if (requestError instanceof StudioApiError && [401, 403, 404].includes(requestError.status)) {
+              latest.current = null;
+              setSnapshot(null);
+            }
+            if (!latest.current || latest.current.project.id !== projectId) setError(
               requestError instanceof Error ? requestError.message : "请求失败",
             );
           }
@@ -53,16 +73,28 @@ export function useWorkspace(projectId: string) {
       });
       return promise;
     },
-    [projectId],
+    [projectId, cacheUrl],
   );
 
   useEffect(() => {
     const controller = new AbortController();
+    const cached = peekStudioCache<WorkspaceSnapshot>(cacheUrl) ?? null;
+    latest.current = cached;
+    setSnapshot(cached);
+    setIsLoading(!cached);
     void load({ signal: controller.signal });
     return () => controller.abort();
-  }, [load]);
+  }, [load, cacheUrl]);
 
   const runtimeActive = snapshot ? hasActiveRuntime(snapshot) : false;
+  useEffect(() => {
+    if (runtimeActive) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load({ background: true });
+    };
+    window.addEventListener("focus", onVisible);
+    return () => window.removeEventListener("focus", onVisible);
+  }, [load, runtimeActive]);
   useEffect(() => {
     if (!runtimeActive) return;
     let disposed = false;
@@ -97,7 +129,10 @@ export function useWorkspace(projectId: string) {
     [load, projectId],
   );
 
-  const refresh = useCallback(() => load({ background: true }), [load]);
+  const refresh = useCallback(() => {
+    invalidateStudioCache(`/api/projects/${encodeURIComponent(projectId)}`);
+    return load({ background: true });
+  }, [load, projectId]);
 
   return {
     createEpisode,
@@ -105,7 +140,7 @@ export function useWorkspace(projectId: string) {
     isLoading,
     isRefreshing,
     refresh,
-    snapshot,
+    snapshot: snapshot?.project.id === projectId ? snapshot : null,
   };
 }
 

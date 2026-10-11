@@ -25,6 +25,8 @@ import {
 } from "@/components/ui/tooltip";
 import type { MediaTask } from "@/lib/media/task-contract";
 import { cn } from "@/lib/utils";
+import { peekStudioCache } from "../request-cache";
+import { useStudioCacheRevision } from "../hooks/use-studio-cache-revision";
 
 import {
   deleteStudioMediaAsset,
@@ -81,9 +83,11 @@ export function AssetsWorkspace({
   snapshot: WorkspaceSnapshot;
 }) {
   const copy = getStudioCopy(locale);
-  const [catalog, setCatalog] = useState<ProjectAssetCatalog | null>(null);
+  const cacheRevision = useStudioCacheRevision();
+  const cacheUrl = `/api/projects/${encodeURIComponent(snapshot.project.id)}/asset-catalog`;
+  const [catalog, setCatalog] = useState<ProjectAssetCatalog | null>(() => peekStudioCache<ProjectAssetCatalog>(cacheUrl) ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => !peekStudioCache(cacheUrl));
   const [tab, setTab] = useState<AssetTab>("character");
   const [selectedEntityId, setSelectedEntityId] = useState("");
   const [checkedEntityIds, setCheckedEntityIds] = useState<string[]>([]);
@@ -133,7 +137,7 @@ export function AssetsWorkspace({
     const controller = new AbortController();
     void load(controller.signal);
     return () => controller.abort();
-  }, [load, revision, workflowRevision]);
+  }, [load, revision, workflowRevision, cacheRevision]);
 
   const entities = useMemo(
     () =>

@@ -4,14 +4,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { loadStudioModels } from "../api";
 import type { StudioModelOption } from "../types";
+import { peekStudioCache } from "../request-cache";
 
 export function useStudioModels() {
-  const [models, setModels] = useState<StudioModelOption[]>([]);
+  const [models, setModels] = useState<StudioModelOption[]>(() => peekStudioCache<StudioModelOption[]>("/studio/model-options") ?? []);
   const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => !peekStudioCache("/studio/model-options"));
 
   const load = useCallback(async (signal?: AbortSignal) => {
-    setIsLoading(true);
+    setIsLoading(!peekStudioCache("/studio/model-options"));
     setError(null);
     try {
       const result = await loadStudioModels(signal);

@@ -194,7 +194,7 @@ export function CanvasInspector({
                       assetId: undefined,
                     })
                   }
-                  className="h-8 w-20 shrink-0 rounded border bg-background px-2"
+                  className="w-20 shrink-0"
                 >
                   <NativeSelectOption value="image">
                     {t("图片", "Image")}
@@ -208,7 +208,7 @@ export function CanvasInspector({
                   aria-label={t("生成模型", "Model")}
                   value={node.modelId || models[0]?.id || ""}
                   onChange={(event) => onPatch({ modelId: event.target.value })}
-                  className="h-8 min-w-0 flex-1 rounded border bg-background px-2"
+                  className="min-w-0 flex-1"
                 >
                   <NativeSelectOption value="" disabled>
                     {t("选择模型", "Select model")}
@@ -341,7 +341,7 @@ export function CanvasInspector({
                   onChange={(event) =>
                     onPatch({ panelId: event.target.value || undefined })
                   }
-                  className="h-8 min-w-0 w-full max-w-full truncate rounded border bg-background px-2"
+                  className="min-w-0 w-full max-w-full"
                 >
                   <NativeSelectOption value="">
                     {t("独立创作", "Independent creation")}
@@ -367,7 +367,7 @@ export function CanvasInspector({
                   onChange={(event) =>
                     onPatch({ assetId: event.target.value || undefined })
                   }
-                  className="h-8 min-w-0 w-full max-w-full truncate rounded border bg-background px-2"
+                  className="min-w-0 w-full max-w-full"
                 >
                   <NativeSelectOption value="">
                     {versionDefault}

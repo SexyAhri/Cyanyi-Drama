@@ -58,6 +58,7 @@ import {
   startStudioEpisodePreproduction,
 } from "../api";
 import { CanvasWorkspace } from "../canvas/canvas-workspace";
+import { setStudioCacheScope } from "../request-cache";
 
 export function WorkspacePage({
   projectId,
@@ -66,6 +67,7 @@ export function WorkspacePage({
   projectId: string;
   user: AuthUser;
 }) {
+  setStudioCacheScope(user.id);
   const { locale, toggleLocale } = useStudioLocale();
   const wideLayout = useStudioWideLayout();
   const copy = getStudioCopy(locale);
@@ -316,7 +318,7 @@ export function WorkspacePage({
     );
   }
 
-  if (!snapshot || error) {
+  if (!snapshot) {
     return (
       <div className="flex h-dvh items-center justify-center bg-background p-4">
         <Empty className="max-w-lg border">

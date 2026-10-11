@@ -143,6 +143,24 @@ export function StoryPackageReviewDialog({
           </TabsContent>
           <TabsContent className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 data-hidden:hidden" value="outline">
             <div className="mx-auto max-w-4xl space-y-5">
+              {storyPackage.resolvedSetup && (
+                <section>
+                  <SectionTitle>{t("实际采用的创作设定", "Resolved creative settings")}</SectionTitle>
+                  <div className="mt-2 grid gap-3 rounded-xl border bg-muted/20 p-4 sm:grid-cols-2">
+                    {([
+                      [t("目标受众", "Audience"), storyPackage.resolvedSetup.audience],
+                      [t("角色设定", "Character direction"), storyPackage.resolvedSetup.characters],
+                      [t("时代背景", "Era"), storyPackage.resolvedSetup.eras],
+                      [t("核心看点", "Core hooks"), storyPackage.resolvedSetup.hooks],
+                    ] as const).map(([label, values]) => (
+                      <div key={label} className="min-w-0 text-sm leading-6">
+                        <p className="font-medium">{label}</p>
+                        <p className="break-words text-muted-foreground">{values.join(en ? ", " : "、")}</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
               <section>
                 <SectionTitle>{t("一句话故事", "Logline")}</SectionTitle>
                 <p className="mt-2 rounded-xl border bg-muted/20 p-4 text-sm leading-7">{storyPackage.logline}</p>

@@ -447,7 +447,7 @@ export function AgentPanel({
                 );
                 if (target) onSelectContext(target);
               }}
-              className="h-9 w-full min-w-0 rounded-lg border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-9 w-full min-w-0"
             >
               <NativeSelectOption value="" disabled>
                 {selections.length ? text.pickTarget : text.noTargets}

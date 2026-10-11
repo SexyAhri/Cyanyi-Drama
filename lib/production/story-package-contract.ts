@@ -18,7 +18,19 @@ const referenceSlots = z.array(
   }),
 );
 
+const resolvedSetting = text.refine(
+  value => !/^(自动|未指定|由\s*AI\s*拟定|auto|AI decides)$/i.test(value),
+  "Specify a concrete creative setting instead of an automatic placeholder",
+);
+export const ResolvedStorySetupSchema = z.object({
+  audience: z.array(resolvedSetting).min(1),
+  characters: z.array(resolvedSetting).min(1),
+  eras: z.array(resolvedSetting).min(1),
+  hooks: z.array(resolvedSetting).min(1),
+});
+
 export const StoryPackageSchema = z.object({
+  resolvedSetup: ResolvedStorySetupSchema.optional(),
   title: text,
   logline: text,
   coreAppeal: z.array(text).min(2),
@@ -202,6 +214,7 @@ export const StoryPackageSchema = z.object({
 });
 
 export const StoryPackagePlanSchema = StoryPackageSchema.pick({
+  resolvedSetup: true,
   title: true,
   logline: true,
   coreAppeal: true,
