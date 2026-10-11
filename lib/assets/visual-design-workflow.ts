@@ -12,6 +12,7 @@ export async function createAssetVisualDesignWorkflow(input: {
   channelId: string;
   model: string;
   locale: "en" | "zh";
+  completeMissing?: boolean;
 }) {
   const workflowInput = {
     channelId: input.channelId,
@@ -19,6 +20,7 @@ export async function createAssetVisualDesignWorkflow(input: {
     targetType: input.targetType,
     targetId: input.targetId,
     locale: input.locale,
+    ...(input.completeMissing ? { completeMissing: true } : {}),
   };
   const runtimeSettings = await loadUserRuntimeSettings(input.userId);
   const result = await createOrReuseWorkflowRun({

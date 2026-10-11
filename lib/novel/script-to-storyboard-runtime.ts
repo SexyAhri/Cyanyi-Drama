@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
+import { reconcileEpisodeVoiceLines } from "@/lib/voice/reconcile";
+import { createHash } from "node:crypto";
 
 import { screenplayConversionSchema } from "@/lib/prompts/schemas";
 import { estimateSpeechDurationSeconds } from "@/lib/prompts/validators";
@@ -162,6 +163,7 @@ export async function buildEpisodeStoryboard(
     ? director.panels.map((panel) => ({
         ...panel,
         worldContext: {
+          ...panel.worldContext,
           productionSpec: context.productionSpec,
           visualRules: context.visualRules,
           shotIntent: {
@@ -436,48 +438,7 @@ async function syncScreenplayVoiceLines(
   panels: StoryboardVoicePanel[],
 ) {
   const lines = buildScreenplayVoiceLines(clips, panels);
-  const existing = await prisma.voiceLine.findMany({
-    where: { episodeId },
-    orderBy: { lineIndex: "asc" },
-    select: {
-      id: true,
-      speaker: true,
-      content: true,
-      delivery: true,
-      matchedPanelId: true,
-    },
-  });
-  const sameContract =
-    existing.length === lines.length &&
-    existing.every(
-      (line, index) =>
-        line.speaker === lines[index].speaker &&
-        line.content === lines[index].content &&
-        line.delivery === lines[index].delivery,
-    );
-
-  await prisma.$transaction(async (tx) => {
-    if (sameContract) {
-      for (const [index, line] of existing.entries()) {
-        if (line.matchedPanelId === lines[index].matchedPanelId) continue;
-        await tx.voiceLine.update({
-          where: { id: line.id },
-          data: { matchedPanelId: lines[index].matchedPanelId },
-        });
-      }
-      return;
-    }
-    await tx.voiceLine.deleteMany({ where: { episodeId } });
-    if (!lines.length) return;
-    await tx.voiceLine.createMany({
-      data: lines.map((line) => ({
-        id: randomUUID(),
-        episodeId,
-        ...line,
-        status: "draft",
-      })),
-    });
-  });
+  await reconcileEpisodeVoiceLines(episodeId, lines);
   return lines.length;
 }
 

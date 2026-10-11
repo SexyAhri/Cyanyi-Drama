@@ -21,6 +21,7 @@ export const PROMPT_IDS = {
   CHARACTER_REFERENCE_DESCRIPTION: "character_reference_description",
   EPISODE_SPLIT: "episode_split",
   EPISODE_ADAPTATION: "episode_adaptation",
+  STORY_PACKAGE_GENERATION: "story_package_generation",
   STUDIO_WORKFLOW_AGENT: "studio_workflow_agent",
 } as const;
 

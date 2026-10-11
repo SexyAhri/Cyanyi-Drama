@@ -150,6 +150,22 @@ export function mergeAgentEvent(
         }),
       );
 
+    case "tool.progress":
+      return updateToolCall(
+        messages,
+        event.messageId,
+        event.toolCallId,
+        (toolCall) => ({
+          ...toolCall,
+          progressStatus: event.status ?? toolCall.progressStatus,
+          progressText: event.resetText
+            ? event.delta ?? ""
+            : `${toolCall.progressText ?? ""}${event.delta ?? ""}`,
+          progressCharacters:
+            event.totalCharacters ?? toolCall.progressCharacters ?? 0,
+        }),
+      );
+
     case "tool.done":
       return updateToolCall(
         updateMessage(messages, event.messageId, (message) => ({ ...message, metadata: { ...message.metadata, finishedAt: new Date().toISOString() } })),

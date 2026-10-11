@@ -408,14 +408,48 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       ],
     }),
   },
+  [PROMPT_IDS.STORY_PACKAGE_GENERATION]: {
+    pathStem: "domain/story_package_generation",
+    version: 4,
+    variables: ["project_context", "episode_count", "generation_task"],
+    agent: defineAgent({
+      id: "short_drama_story_architect",
+      responsibility:
+        "Create a coherent, production-ready series package through small validated generation phases.",
+      prohibited: [
+        "copying sample story worlds",
+        "unmotivated plot twists",
+        "unbounded prop abilities",
+        "contradictory character continuity",
+        "claiming reference images exist when they are only slots",
+        "outputting hidden reasoning",
+      ],
+      successCriteria: [
+        "return every field required by the current phase schema",
+        "series details remain consistent with project setup and earlier phases",
+        "episode outlines cover the requested series count across sequential batches",
+        "image and video prompts follow the current phase requirements",
+      ],
+      qualityGates: [
+        "series continuity",
+        "asset capability limits and costs",
+        "image prompt consistency",
+        "timed video prompt continuity",
+      ],
+      stopRules: [
+        "Stop after returning the complete structured output for the current phase",
+      ],
+    }),
+  },
   [PROMPT_IDS.ASSET_VISUAL_DESIGN]: {
     pathStem: "domain/asset_visual_design",
-    version: 5,
+    version: 6,
     variables: [
       "asset_kind",
       "asset_name",
       "asset_requirements",
       "story_facts_json",
+      "previous_visual_design_json",
       "source_evidence_json",
       "story_world_context_json",
       "story_world_directive",
@@ -543,7 +577,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STUDIO_WORKFLOW_AGENT]: {
     pathStem: "domain/studio_workflow_agent",
-    version: 1,
+    version: 2,
     variables: ["state_json", "operation_candidates_json", "user_request"],
     agent: defineAgent({
       id: "studio_workflow_coordinator",
@@ -572,6 +606,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
         "start_voice_design",
         "start_episode_adaptation",
         "start_asset_visual_design",
+        "start_story_package_generation",
       ],
       contextPolicy: { scope: "project", trust: "untrusted" },
       evidencePolicy: { required: true, mode: "input_references" },

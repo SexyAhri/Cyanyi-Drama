@@ -7,9 +7,14 @@ export const canvasPurposeSchema = z.enum([
   "first_frame",
   "last_frame",
   "dialogue",
+  "causality",
+  "shot_sequence",
+  "story_asset",
+  "episode_bridge",
+  "shot_video",
 ]);
 export const canvasDocumentSchema = z.object({
-  layoutMode: z.enum(["branches", "free"]).optional(),
+  layoutMode: z.enum(["branches", "episode", "free"]).optional(),
   branchGroups: z
     .array(
       z.object({
@@ -44,6 +49,8 @@ export const canvasDocumentSchema = z.object({
         panelId: z.string().max(100).optional(),
         assetId: z.string().max(100).optional(),
         entityId: z.string().max(100).optional(),
+        sourceEpisodeId: z.string().max(100).optional(),
+        episodeLayer: z.enum(["shot_video", "asset_image"]).optional(),
         outputKind: z.enum(["image", "video"]).optional(),
         modelId: z.string().max(300).optional(),
         panelPromptBase: z
@@ -107,6 +114,22 @@ export function canvasConnectionError(
   purpose: CanvasPurpose,
 ) {
   if (from.id === to.id) return "不能连接节点自身";
+  if (purpose === "causality")
+    return from.panelId && to.panelId ? "" : "剧情因果线只能连接本集镜头";
+  if (purpose === "shot_sequence")
+    return from.kind === "panel" && to.kind === "panel" && from.panelId && to.panelId ? "" : "镜头顺序线只能连接本集镜头";
+  if (purpose === "episode_bridge")
+    return from.sourceEpisodeId && to.panelId ? "" : "跨集承接线需要从上一集结尾连到本集镜头";
+  if (purpose === "shot_video")
+    return from.kind === "panel" && to.kind === "video" && from.panelId && (!to.panelId || from.panelId === to.panelId)
+      ? ""
+      : "镜头视频线需要连接同一镜头与其视频节点";
+  if (purpose === "story_asset")
+    return ["character", "location", "prop"].includes(from.kind) &&
+      Boolean(from.entityId) &&
+      (Boolean(to.panelId) || to.kind === "image")
+      ? ""
+      : "资产关联线需要连接角色、场景或道具与本集镜头或图片节点";
   if (!["panel", "image", "video"].includes(to.kind))
     return "请连接到图片、视频或镜头节点";
   if (purpose === "context")

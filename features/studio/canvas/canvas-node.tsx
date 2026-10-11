@@ -10,7 +10,11 @@ import {
   MapPin,
   Package,
   Plus,
+  LoaderCircle,
+  Maximize2,
 } from "lucide-react";
+import { useState } from "react";
+import { MediaPreviewDialog } from "@/components/ui/media-preview-dialog";
 import type { MediaTask } from "@/lib/media/task-contract";
 import type { ProjectMediaAsset, StudioLocale } from "../types";
 import type { CanvasCard } from "./types";
@@ -36,6 +40,9 @@ export function CanvasNode({
   onBranch,
   busy,
   linkedPrompt,
+  summary,
+  durationSeconds,
+  usageCount,
   inputs,
 }: {
   node: CanvasCard;
@@ -52,8 +59,12 @@ export function CanvasNode({
   onBranch: (kind: "image" | "video") => void;
   busy: boolean;
   linkedPrompt?: string;
+  summary?: string;
+  durationSeconds?: number | null;
+  usageCount?: number;
   inputs: string[];
 }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
   const Icon = {
     text: FileText,
     panel: Clapperboard,
@@ -73,7 +84,9 @@ export function CanvasNode({
         canceled: locale === "en" ? "Canceled" : "已取消",
       }[task.status]
     : media?.url
-      ? locale === "en"
+      ? node.kind === "image" && node.id.startsWith("episode-asset-image-") && media.sourceTargetId !== node.id
+        ? locale === "en" ? "Using project image" : "复用项目素材"
+        : locale === "en"
         ? "Ready"
         : "已有素材"
       : ["image", "video", "panel"].includes(node.kind)
@@ -81,8 +94,7 @@ export function CanvasNode({
           ? "Draft"
           : "待生成"
         : kindLabel(node.kind, locale);
-  const previewText =
-    node.kind === "video" ? node.videoText : linkedPrompt || node.text;
+  const previewText = summary || (node.kind === "video" ? node.videoText : linkedPrompt || node.text);
   return (
     <section
       data-node-id={node.id}
@@ -213,16 +225,32 @@ export function CanvasNode({
               data-canvas-no-zoom
             />
           ) : (
-            <img
-              alt={node.title}
-              src={media.url}
-              draggable={false}
-              loading="lazy"
-              className="h-full w-full object-contain"
-            />
+            <button
+              type="button"
+              className="group/preview relative flex h-full w-full cursor-zoom-in items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+              aria-label={locale === "en" ? `Preview ${node.title}` : `预览${node.title}`}
+              title={locale === "en" ? "Click to preview" : "点击预览图片"}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                setPreviewOpen(true);
+              }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                alt={node.title}
+                src={media.url}
+                draggable={false}
+                loading="lazy"
+                className="h-full w-full object-contain"
+              />
+              <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 text-white opacity-0 transition group-hover/preview:bg-black/20 group-hover/preview:opacity-100">
+                <Maximize2 className="size-5 drop-shadow" />
+              </span>
+            </button>
           )
         ) : previewText ? (
-          <p className="line-clamp-6 w-full whitespace-pre-wrap px-4 text-sm leading-6 text-muted-foreground">
+          <p className="line-clamp-4 w-full whitespace-pre-wrap px-4 text-sm leading-6 text-muted-foreground">
             {previewText}
           </p>
         ) : (
@@ -239,6 +267,29 @@ export function CanvasNode({
             </p>
           </div>
         )}
+        {(task?.status === "queued" || task?.status === "running") && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background/80 px-4 text-center backdrop-blur-[2px]">
+            <LoaderCircle className="size-7 animate-spin text-primary" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-foreground">{status}</p>
+              <p className="line-clamp-2 text-xs text-muted-foreground">
+                {task.progressMessage || node.title}
+              </p>
+            </div>
+            <div
+              className="h-1.5 w-3/4 overflow-hidden rounded-full bg-muted"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={task.progress}
+            >
+              <div
+                className="h-full rounded-full bg-primary transition-[width] duration-500"
+                style={{ width: `${Math.max(task.progress, 5)}%` }}
+              />
+            </div>
+          </div>
+        )}
         {inputs.length > 0 && (
           <div
             className="absolute bottom-2 left-2 right-2 truncate rounded-md bg-background/90 px-2 py-1 text-[11px] text-muted-foreground"
@@ -249,6 +300,17 @@ export function CanvasNode({
           </div>
         )}
       </div>
+      {media?.kind === "image" && media.url && (
+        <MediaPreviewDialog
+          alt={node.title}
+          description={node.title}
+          kind="image"
+          onOpenChange={setPreviewOpen}
+          open={previewOpen}
+          title={node.title}
+          url={media.url}
+        />
+      )}
       <div
         className="flex h-10 items-center justify-between gap-2 border-t px-3 text-xs text-muted-foreground"
         title={task?.error?.message}
@@ -260,8 +322,10 @@ export function CanvasNode({
         >
           {status}
         </span>
-        {node.panelId && (
-          <span>{locale === "en" ? "Linked shot" : "关联镜头"}</span>
+        {usageCount != null ? (
+          <span>{locale === "en" ? `Used in ${usageCount} shots` : `${usageCount} 个镜头使用`}</span>
+        ) : node.panelId && (
+          <span>{durationSeconds != null ? `${durationSeconds}s` : locale === "en" ? "Linked shot" : "关联镜头"}</span>
         )}
       </div>
     </section>

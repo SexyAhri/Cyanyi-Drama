@@ -8,13 +8,14 @@ import {
   type EpisodeSplitDraft,
 } from "@/lib/episodes/split";
 import { extractManuscriptMetadata } from "@/lib/episodes/manuscript-metadata";
+import { startManuscriptAnalysis } from "@/lib/episodes/manuscript-analysis";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import {
   createOrReuseWorkflowRun,
-  getWorkflowRun,
 } from "@/lib/workflow/store";
+import { prisma } from "@/lib/server/prisma";
 
 type Context = { params: Promise<{ projectId: string }> };
 
@@ -41,6 +42,16 @@ export async function POST(request: Request, context: Context) {
         manuscriptId,
         episodes,
       });
+      let analysisWorkflowId: string | undefined, analysisError: string | undefined;
+      if (body.createDossier === true) {
+        try {
+          const channelId = stringValue(body.channelId), model = stringValue(body.model);
+          if (!channelId || !model) throw new Error("请选择原著资料分析模型");
+          const analysis = await startManuscriptAnalysis({ userId: user.id, projectId, manuscriptId,
+            channelId, model, locale: body.locale === "en" ? "en" : "zh" });
+          analysisWorkflowId = analysis.workflowId;
+        } catch (error) { analysisError = error instanceof Error ? error.message : "原著资料任务提交失败"; }
+      }
       return attachSessionCookie(
         Response.json({
           method: splitMethod(body.method),
@@ -50,6 +61,7 @@ export async function POST(request: Request, context: Context) {
           episodes: withoutEpisodeContent(episodes),
           persisted,
           trace: null,
+          analysisWorkflowId, analysisError,
         }),
         sessionId,
       );
@@ -76,8 +88,6 @@ export async function POST(request: Request, context: Context) {
     const markers = detectEpisodeMarkers(content);
     let method: "markers" | "ai";
     let episodes: EpisodeSplitDraft[];
-    let trace;
-    let workflowId: string | undefined;
     if (mode !== "ai" && markers.hasMarkers) {
       method = "markers";
       episodes = markers.episodes;
@@ -97,9 +107,8 @@ export async function POST(request: Request, context: Context) {
         model,
         locale: body.locale === "en" ? "en" : "zh",
       });
-      episodes = result.episodes;
-      trace = result.trace;
-      workflowId = result.workflowId;
+      return attachSessionCookie(Response.json({ method: "ai", markerType: null, confidence: null,
+        manuscript, episodes: [], persisted: null, pending: true, workflowId: result.workflowId }, { status: 202 }), sessionId);
     }
     const persisted =
       body.persist === true
@@ -118,8 +127,7 @@ export async function POST(request: Request, context: Context) {
         manuscript,
         episodes: withoutEpisodeContent(episodes),
         persisted,
-        trace: trace ?? null,
-        workflowId,
+        trace: null,
       }),
       sessionId,
     );
@@ -142,11 +150,16 @@ async function runAiSplitWorkflow(input: {
   locale: "en" | "zh";
 }) {
   const workflowInput = {
+    planVersion: 2,
     manuscriptId: input.manuscriptId,
     channelId: input.channelId,
     model: input.model,
     locale: input.locale,
   };
+  const completed = await prisma.workflowRun.findFirst({ where: { userId: input.userId, projectId: input.projectId,
+    workflowType: "episode-split-planning", targetId: input.manuscriptId, status: "succeeded",
+    input: { equals: workflowInput } }, orderBy: { createdAt: "desc" }, select: { id: true } });
+  if (completed) return { workflowId: completed.id };
   const runtimeSettings = await loadUserRuntimeSettings(input.userId);
   const result = await createOrReuseWorkflowRun({
     id: `workflow_${crypto.randomUUID()}`,
@@ -181,42 +194,13 @@ async function runAiSplitWorkflow(input: {
         projectId: input.projectId,
         maxAttempts: 1,
       });
-    while (true) {
-      const workflow = await getWorkflowRun(input.userId, result.workflow.id);
-      if (!workflow) throw new Error("WORKFLOW_RUN_NOT_FOUND");
-      if (workflow.status === "succeeded") {
-        if (!isEpisodeSplitOutput(workflow.output))
-          throw new Error("WORKFLOW_EPISODE_SPLIT_OUTPUT_MISSING");
-        return { ...workflow.output, workflowId: result.workflow.id };
-      }
-      if (["failed", "blocked", "canceled"].includes(workflow.status))
-        throw new Error(workflowErrorMessage(workflow.error));
-      await new Promise((resolve) => setTimeout(resolve, 750));
-    }
+    return { workflowId: result.workflow.id };
   } catch (error) {
     throw new EpisodeSplitError(
       error instanceof Error ? error.message : "AI 分集失败",
       502,
     );
   }
-}
-
-function isEpisodeSplitOutput(value: unknown): value is {
-  episodes: EpisodeSplitDraft[];
-  trace: Record<string, unknown>;
-} {
-  return (
-    Boolean(value) &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Array.isArray((value as { episodes?: unknown }).episodes)
-  );
-}
-
-function workflowErrorMessage(error: Record<string, unknown> | undefined) {
-  return typeof error?.message === "string" && error.message.trim()
-    ? error.message
-    : "WORKFLOW_EPISODE_SPLIT_FAILED";
 }
 
 function episodeDrafts(value: unknown): EpisodeSplitDraft[] {

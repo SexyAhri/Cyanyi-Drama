@@ -52,6 +52,8 @@ import {
 } from "./delivery-view-model";
 import { PostMasterPanel } from "./post-master-panel";
 import { RenderDialog } from "./render-dialog";
+import { syncTimelineSources } from "@/lib/production/timeline-source-sync";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { TimelineEditor } from "./timeline-editor";
 
 const copy = {
@@ -160,6 +162,7 @@ export function DeliveryWorkspace({
   const projectId = snapshot.project.id;
   const [data, setData] = useState<DeliveryData | null>(null);
   const [timeline, setTimeline] = useState<EditorTimeline | null>(null);
+  const [rebuildOpen, setRebuildOpen] = useState(false);
   const [savedTimeline, setSavedTimeline] = useState("");
   const [selectedTrackId, setSelectedTrackId] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -240,6 +243,14 @@ export function DeliveryWorkspace({
     .filter((task) => task.targetType === "editor_render")
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
   const dirty = Boolean(timeline) && JSON.stringify(timeline) !== savedTimeline;
+  const sourceSync = timeline && data?.storyboard.storyboard
+    ? syncTimelineSources(timeline, data.storyboard.storyboard.panels) : null;
+  const sourcesChanged = Boolean(sourceSync?.changedIds.length || sourceSync?.incompatibleIds.length);
+  function refreshTimelineMedia() {
+    if (!sourceSync) return;
+    setTimeline(sourceSync.timeline);
+    toast.success(locale === "en" ? "Media references updated; save the timeline to apply." : "已更新素材引用并保留剪辑，请保存时间线。");
+  }
   const subtitles = useMemo(
     () =>
       timeline && data
@@ -272,6 +283,7 @@ export function DeliveryWorkspace({
   async function buildTimeline() {
     await act(async () => {
       const result = await buildStudioTimeline(projectId, episode.id);
+      setRebuildOpen(false);
       setTimeline(result.editorProject.timeline);
       setSavedTimeline(JSON.stringify(result.editorProject.timeline));
     }, text.built);
@@ -363,8 +375,8 @@ export function DeliveryWorkspace({
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
-            disabled={busy}
-            onClick={() => void buildTimeline()}
+            disabled={busy || dirty}
+            onClick={() => timeline ? setRebuildOpen(true) : void buildTimeline()}
             size="sm"
             variant="outline"
           >
@@ -385,7 +397,7 @@ export function DeliveryWorkspace({
             defaultRatio={snapshot.project.config.videoRatio}
             defaultResolution={snapshot.project.config.videoResolution}
             disabled={
-              busy || !timeline?.tracks.length || dirty || !videoModels.length
+              busy || !timeline?.tracks.length || dirty || sourcesChanged || !videoModels.length
             }
             locale={locale}
             models={videoModels}
@@ -393,6 +405,20 @@ export function DeliveryWorkspace({
           />
         </div>
       </header>
+
+      {sourcesChanged && <section className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border bg-muted/30 p-3">
+        <p className="min-w-0 flex-1 text-xs leading-6">
+          {locale === "en" ? "Adopted shot media changed. Refresh references before rendering; edit order and timing are preserved." : "镜头采用的素材已变化。更新引用后再导出，现有剪辑顺序、时长和裁剪会保留。"}
+          {Boolean(sourceSync?.incompatibleIds.length) && <span className="block text-destructive">{locale === "en" ? "Some tracks were removed or resegmented. Rebuild or edit those tracks before rendering." : "部分镜头已删除或分段已变化，请重新编排这些镜头或重建时间线后再导出。"}</span>}
+        </p>
+        <Button size="sm" variant="outline" disabled={busy || !sourceSync?.changedIds.length} onClick={refreshTimelineMedia}>{locale === "en" ? "Refresh adopted media" : "更新已采用素材"}</Button>
+      </section>}
+      <Dialog open={rebuildOpen} onOpenChange={setRebuildOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{text.rebuild}</DialogTitle><DialogDescription>{locale === "en" ? "Rebuilding replaces shot order, timing and trims. To keep your edit, use Refresh adopted media instead." : "重建会替换镜头顺序、时长和裁剪设置。保留现有剪辑请使用“更新已采用素材”。"}</DialogDescription></DialogHeader>
+          <DialogFooter><Button variant="outline" onClick={() => setRebuildOpen(false)}>{locale === "en" ? "Cancel" : "取消"}</Button><Button disabled={busy} onClick={() => void buildTimeline()}>{text.rebuild}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {error ? (
         <div className="flex items-center justify-between gap-3 border-b py-3">

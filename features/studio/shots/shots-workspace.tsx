@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
+import { StoryboardReviewNotice } from "../components/storyboard-review-notice";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -295,6 +296,7 @@ export function ShotsWorkspace({
     await saveStudioStoryboard(projectId, episode.id, {
       status: storyboardData.storyboard.status,
       sourceHash: storyboardData.storyboard.sourceHash,
+      expectedVersion: storyboardData.storyboard.version,
       panels: nextPanels,
     });
     await refreshAll();
@@ -452,11 +454,13 @@ export function ShotsWorkspace({
           </div>
         ) : null}
       </header>
+      {storyboardData.storyboard?.status === "director_review_required" && <StoryboardReviewNotice projectId={projectId} episodeId={episode.id} locale={locale} />}
+
 
       {!panels.length ? (
         <div className="flex min-h-96 flex-col items-center justify-center gap-3 border-b text-center text-muted-foreground">
           <Clapperboard className="size-6" />
-          <p className="max-w-md text-sm leading-6">{copy.noStoryboard}</p>
+          <p className="max-w-md text-sm leading-6">{locale === "en" ? "No shot list is available yet. Complete and confirm the storyboard before producing images and videos." : "本集尚无镜头列表，请先在分镜页完成并确认镜头设计，再制作图片和视频。"}</p>
         </div>
       ) : (
         <Tabs

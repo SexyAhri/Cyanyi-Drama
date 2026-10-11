@@ -31,6 +31,11 @@ const PLACEMENT_STEPS = [
 type WorkflowAction = "cancel" | "retry" | "pause" | "resume";
 
 export function WritingFlowPanel({
+  hasProductionScript,
+  hasStructuredScript,
+  isPackageSource,
+  onReusePackage,
+  canReusePackage,
   analysisModelId,
   models,
   onAnalysisModelChange,
@@ -42,6 +47,11 @@ export function WritingFlowPanel({
   onStartPlacement,
   placementWorkflow,
 }: {
+  hasProductionScript: boolean;
+  hasStructuredScript: boolean;
+  isPackageSource: boolean;
+  onReusePackage: () => void;
+  canReusePackage: boolean;
   analysisModelId: string;
   models: StudioModelOption[];
   onAnalysisModelChange: (value: string) => void;
@@ -73,19 +83,31 @@ export function WritingFlowPanel({
         <div className="mt-4 space-y-5">
           <WorkflowBlock
             locale={locale}
-            plannedSteps={ADAPTATION_STEPS}
-            title={copy.adaptationFlow}
+            plannedSteps={adaptationWorkflow?.workflowType === "original-episode-generation"
+              ? [{ key: "generate_original_episode", type: "generate_original_episode", execution: "ai" }]
+              : ADAPTATION_STEPS}
+            completed={hasProductionScript}
+            title={isPackageSource ? (locale === "en" ? "Adopted original screenplay" : "原创制作剧本已采用") : copy.adaptationFlow}
             workflow={adaptationWorkflow}
           />
           <WorkflowBlock
             locale={locale}
             plannedSteps={PLACEMENT_STEPS}
+            completed={hasStructuredScript}
             title={copy.placementFlow}
             workflow={placementWorkflow}
           />
         </div>
 
         <div className="mt-5 space-y-2 border-t pt-5">
+          {hasProductionScript && <p className="text-xs leading-5 text-muted-foreground">
+            {locale === "en" ? "Continue with the active screenplay. Rewriting is optional." : "直接使用当前制作剧本，无需再次改编。"}
+          </p>}
+          {isPackageSource && !hasStructuredScript && !workflowActive ? (
+            <Button className="w-full" disabled={isActing || !canReusePackage} onClick={onReusePackage}>
+              {locale === "en" ? "Sync existing package material" : "同步已有场次、提示词与台词"}
+            </Button>
+          ) : null}
           <ModelSelect
             models={models}
             value={analysisModelId}
@@ -101,6 +123,7 @@ export function WritingFlowPanel({
           {!workflowActive ? (
             <Button
               className="w-full"
+              variant={hasStructuredScript || isPackageSource ? "outline" : "default"}
               disabled={isActing || !canStartPlacement}
               onClick={onStartPlacement}
               type="button"
@@ -112,7 +135,7 @@ export function WritingFlowPanel({
               ) : (
                 <Play className="size-4" />
               )}
-              {placementWorkflow ? copy.rerunAnalysis : copy.startAnalysis}
+              {hasStructuredScript ? (locale === "en" ? "Reorganize screenplay (optional)" : "重新整理剧本（可选）") : isPackageSource ? (locale === "en" ? "AI reorganization (optional)" : "AI 重新整理（可选）") : copy.startAnalysis}
             </Button>
           ) : null}
           <WorkflowActions
@@ -131,11 +154,13 @@ export function WritingFlowPanel({
 }
 
 function WorkflowBlock({
+  completed = false,
   locale,
   plannedSteps,
   title,
   workflow,
 }: {
+  completed?: boolean;
   locale: StudioLocale;
   plannedSteps: readonly {
     key: string;
@@ -169,13 +194,17 @@ function WorkflowBlock({
         <StatusIndicator
           locale={locale}
           status={
-            workflow
+            workflow && ["queued", "running", "paused", "canceling"].includes(workflow.status)
               ? runtimeStatusToStageStatus(workflow.status)
-              : "not_started"
+              : completed ? "completed" : "not_started"
           }
         />
       </div>
-      <div className="mt-2 divide-y border-y">
+      {completed && !workflow?.steps.some(step => ["queued", "running", "paused"].includes(step.status)) ? (
+        <p className="mt-2 text-xs leading-5 text-muted-foreground">
+          {locale === "en" ? "Existing production material is ready to reuse." : "已有制作内容，直接复用，无需再次生成。"}
+        </p>
+      ) : <div className="mt-2 divide-y border-y">
         {steps.map((step) => (
           <div className="flex min-w-0 items-center gap-2 py-2.5" key={step.id}>
             <span className="w-5 shrink-0 font-mono text-[10px] text-muted-foreground">
@@ -185,15 +214,15 @@ function WorkflowBlock({
               {workflowStepLabel(locale, step.type || step.key)}
             </span>
             <Badge className="px-1.5 text-[10px]" variant="outline">
-              {step.execution === "ai" ? copy.aiExecution : copy.localExecution}
+              {completed && !workflow ? (locale === "en" ? "Reused" : "已复用") : step.execution === "ai" ? copy.aiExecution : copy.localExecution}
             </Badge>
             <StatusIndicator
               locale={locale}
-              status={runtimeStatusToStageStatus(step.status)}
+              status={completed && !workflow ? "completed" : runtimeStatusToStageStatus(step.status)}
             />
           </div>
         ))}
-      </div>
+      </div>}
       {workflow ? (
         <p className="mt-2 text-right text-[11px] text-muted-foreground">
           {formatStudioDate(locale, workflow.updatedAt)}
@@ -205,7 +234,7 @@ function WorkflowBlock({
 
 function isAiStep(workflowType: string) {
   return (
-    workflowType === "episode-adaptation" || workflowType === "story-to-script"
+    workflowType === "episode-adaptation" || workflowType === "story-to-script" || workflowType === "episode-preproduction"
   );
 }
 

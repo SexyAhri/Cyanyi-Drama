@@ -1,4 +1,4 @@
-import { requestOpenAiText } from "@/lib/llm/openai-structured";
+import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import { decryptSecret } from "@/lib/server/crypto";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
@@ -7,19 +7,19 @@ import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { getProjectArtStyleDirective } from "@/lib/projects/art-style";
 import { ProjectAssetError } from "./project-store";
-import type {
-  AssetVisualProfile,
-  AssetVisualProfileSpec,
+import {
+  AssetVisualProfileSpecSchema,
+  parseAssetVisualProfile,
+  type AssetVisualProfile,
+  type AssetVisualProfileSpec,
 } from "./visual-profile";
 import {
+  findVisualProfileStoryWorldConflicts,
   getStoryWorldDirective,
   loadProjectAssetStoryWorldContext,
   storyWorldContextForPrompt,
 } from "./story-world";
-import {
-  normalizeAssetVisualProfileSpec,
-  parseAssetVisualDesignText,
-} from "./visual-design-parser";
+import { normalizeAssetVisualProfileSpec } from "./visual-design-parser";
 
 export {
   normalizeAssetVisualProfileSpec,
@@ -36,8 +36,16 @@ export async function generateProjectAssetVisualProfile(input: {
   channelId: string;
   model: string;
   locale?: PromptLocale;
+  completeMissing?: boolean;
 }) {
   const context = await loadVisualDesignContext(input);
+  const complete = AssetVisualProfileSpecSchema.safeParse(context.previousVisualDesign);
+  if (input.completeMissing && complete.success) {
+    return {
+      target: { id: input.targetId, type: input.targetType, name: context.name },
+      profile: { version: 1, source: "model", updatedAt: new Date().toISOString(), spec: complete.data, projectArtStyle: context.artStyle } as AssetVisualProfile,
+    };
+  }
   const storyWorld = await loadProjectAssetStoryWorldContext({
     userId: input.userId,
     projectId: input.projectId,
@@ -56,6 +64,11 @@ export async function generateProjectAssetVisualProfile(input: {
         input.locale,
       ),
       story_facts_json: JSON.stringify(context.facts, null, 2),
+      previous_visual_design_json: JSON.stringify(
+        context.previousVisualDesign,
+        null,
+        2,
+      ),
       source_evidence_json: JSON.stringify(
         storyWorld.relatedSourceEvidence,
         null,
@@ -76,12 +89,57 @@ export async function generateProjectAssetVisualProfile(input: {
       ),
     },
   });
-  const result = await requestOpenAiText({
+  let result = await requestOpenAiStructured({
     ...provider,
     prompt,
+    schema: AssetVisualProfileSpecSchema,
+    maxCorrectionAttempts: 2,
     temperature: 0.35,
   });
-  const spec = parseAssetVisualDesignText(result.text);
+  let spec = result.data;
+  const initialConflicts = findVisualProfileStoryWorldConflicts(
+    spec,
+    storyWorld,
+  );
+  if (initialConflicts.length) {
+    const correctionPrompt = {
+      ...prompt,
+      text: [
+        prompt.text,
+        "The previous candidate violated the project's story-era constraints. Correct the complete visual specification using the same source facts and constraints. Do not preserve incompatible previous choices.",
+        `Conflicts to correct: ${initialConflicts.join(", ")}`,
+        "Previous candidate:",
+        result.outputText,
+      ].join("\n\n"),
+    };
+    result = await requestOpenAiStructured({
+      ...provider,
+      prompt: correctionPrompt,
+      schema: AssetVisualProfileSpecSchema,
+      maxCorrectionAttempts: 2,
+      temperature: 0.2,
+    });
+    spec = result.data;
+    const remainingConflicts = findVisualProfileStoryWorldConflicts(
+      spec,
+      storyWorld,
+    );
+    if (remainingConflicts.length) {
+      throw new ProjectAssetError(
+        input.locale === "en"
+          ? "The generated design still conflicts with the project's story era. The existing design was kept. Check the project visual era and try again."
+          : `生成结果仍与项目故事时代冲突（${remainingConflicts.join("、")}），未覆盖原设定。请检查项目视觉时代后重试。`,
+        422,
+      );
+    }
+  }
+  if (input.completeMissing && context.previousVisualDesign) {
+    const previous = context.previousVisualDesign;
+    spec = Object.fromEntries(Object.entries(spec).map(([key, value]) => {
+      const existing = previous[key as keyof AssetVisualProfileSpec];
+      return [key, typeof existing === "string" ? existing.trim() || value : Array.isArray(existing) && existing.length ? existing : value];
+    })) as AssetVisualProfileSpec;
+  }
   const profile = await persistVisualProfile({
     ...input,
     source: "model",
@@ -91,6 +149,9 @@ export async function generateProjectAssetVisualProfile(input: {
     promptTrace: {
       ...result.trace,
       rawOutput: result.outputText,
+      ...(initialConflicts.length
+        ? { storyEraCorrection: initialConflicts }
+        : {}),
     },
   });
   return {
@@ -146,6 +207,7 @@ async function loadVisualDesignContext(input: {
         aliases: true,
         introduction: true,
         profileJson: true,
+        visualProfileJson: true,
       },
     });
     if (!entity) throw new ProjectAssetError("角色不存在", 404);
@@ -157,23 +219,32 @@ async function loadVisualDesignContext(input: {
         aliases: parseValue(entity.aliases),
         profile: parseValue(entity.profileJson),
       },
+      previousVisualDesign:
+        parseAssetVisualProfile(parseValue(entity.visualProfileJson))?.spec ?? null,
     };
   }
   if (input.targetType === "location") {
     const entity = await prisma.novelLocation.findFirst({
       where: { id: input.targetId, projectId: input.projectId },
-      select: { name: true, summary: true },
+      select: { name: true, summary: true, visualProfileJson: true },
     });
     if (!entity) throw new ProjectAssetError("场景不存在", 404);
     return {
       name: entity.name,
       artStyle: project.config?.artStyle,
       facts: { summary: entity.summary },
+      previousVisualDesign:
+        parseAssetVisualProfile(parseValue(entity.visualProfileJson))?.spec ?? null,
     };
   }
   const entity = await prisma.novelProp.findFirst({
     where: { id: input.targetId, projectId: input.projectId },
-    select: { name: true, summary: true, metadataJson: true },
+    select: {
+      name: true,
+      summary: true,
+      metadataJson: true,
+      visualProfileJson: true,
+    },
   });
   if (!entity) throw new ProjectAssetError("道具不存在", 404);
   return {
@@ -183,6 +254,8 @@ async function loadVisualDesignContext(input: {
       summary: entity.summary,
       metadata: parseValue(entity.metadataJson),
     },
+    previousVisualDesign:
+      parseAssetVisualProfile(parseValue(entity.visualProfileJson))?.spec ?? null,
   };
 }
 

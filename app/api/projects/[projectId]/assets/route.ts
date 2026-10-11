@@ -4,7 +4,7 @@ import { prisma } from "@/lib/server/prisma";
 
 type Context = { params: Promise<{ projectId: string }> };
 
-export async function GET(_request: Request, context: Context) {
+export async function GET(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { projectId } = await context.params;
   const ownsProject = await prisma.project.count({
@@ -17,7 +17,9 @@ export async function GET(_request: Request, context: Context) {
     );
   }
 
+  const cursor = new URL(request.url).searchParams.get("cursor");
   const rows = await prisma.mediaAsset.findMany({
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     where: { task: { userId: user.id, projectId } },
     select: {
       id: true,
@@ -33,10 +35,10 @@ export async function GET(_request: Request, context: Context) {
         select: { status: true, targetId: true, targetType: true },
       },
     },
-    orderBy: { createdAt: "desc" },
-    take: 500,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: 501,
   });
-  const assets = rows.map((row) => ({
+  const assets = rows.slice(0, 500).map((row) => ({
       id: row.id,
       kind: row.kind,
       mimeType: row.mimeType,
@@ -49,7 +51,7 @@ export async function GET(_request: Request, context: Context) {
       createdAt: row.createdAt.toISOString(),
     }));
 
-  return attachSessionCookie(Response.json({ assets }), sessionId);
+  return attachSessionCookie(Response.json({ assets, nextCursor: rows.length > 500 ? rows[499].id : null }), sessionId);
 }
 
 function parseObject(value: string | null) {

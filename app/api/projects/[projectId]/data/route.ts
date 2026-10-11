@@ -1,3 +1,4 @@
+import { loadProductionReadiness } from "@/lib/studio/production-readiness";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { createDatabaseMediaTaskStore } from "@/lib/media/task-store";
 import { getProject, listEpisodes } from "@/lib/projects/queries";
@@ -11,17 +12,21 @@ export async function GET(request: Request, context: RouteContext) {
   const { projectId } = await context.params;
   const touch = new URL(request.url).searchParams.get("touch") === "1";
   const mediaTaskStore = createDatabaseMediaTaskStore(user.id);
-  const [project, episodes, workflows, tasks] = await Promise.all([
+  const [project, episodes, workflows, recentTasks, queuedTasks, runningTasks] = await Promise.all([
     getProject(user.id, projectId, { touch }),
     listEpisodes(user.id, projectId),
     listWorkflowRunSummaries(user.id, projectId, 100),
     mediaTaskStore.list({ projectId, limit: 100 }),
+    mediaTaskStore.list({ projectId, status: "queued", limit: 10000 }),
+    mediaTaskStore.list({ projectId, status: "running", limit: 10000 }),
   ]);
   if (!project || !episodes)
     return attachSessionCookie(
       Response.json({ message: "项目不存在" }, { status: 404 }),
       sessionId,
     );
+  const tasks = [...new Map([...recentTasks, ...queuedTasks, ...runningTasks].map(task => [task.id, task])).values()];
+  const readiness = await loadProductionReadiness(user.id, projectId);
   const operationTargets = await resolveOperationTargets(projectId, [
     ...workflows.map((workflow) => ({
       targetId: workflow.targetId,
@@ -35,6 +40,7 @@ export async function GET(request: Request, context: RouteContext) {
   return attachSessionCookie(
     Response.json({
       project: { ...project, episodes },
+      readiness,
       workflows: workflows.map((workflow) => ({
         ...workflow,
         ...operationTargets.get(

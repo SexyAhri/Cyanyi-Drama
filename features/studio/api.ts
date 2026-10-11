@@ -32,6 +32,7 @@ import type {
   VoicePresetRecord,
   WorkflowRunSummary,
   WorkspaceSnapshot,
+  StoryPackageGenerationResult,
 } from "./types";
 import type { StoryboardPromptPreview } from "@/lib/media/project-asset-tasks";
 import type {
@@ -252,6 +253,7 @@ export async function splitStudioNovel(
   input: {
     content?: string;
     manuscriptId?: string;
+    createDossier?: boolean;
     sourceFileName?: string;
     title?: string;
     author?: string;
@@ -266,15 +268,33 @@ export async function splitStudioNovel(
     locale: "en" | "zh";
     persist: boolean;
   },
+  options?: { signal?: AbortSignal; onProgress?: (message: string) => void },
 ) {
-  return request<EpisodeSplitResult>(
+  const result = await request<EpisodeSplitResult>(
     `/api/projects/${encodeURIComponent(projectId)}/episodes/split`,
     {
       body: JSON.stringify(input),
       headers: { "Content-Type": "application/json" },
       method: "POST",
+      signal: options?.signal,
     },
   );
+  if (!result.pending || !result.workflowId) return result;
+  while (true) {
+    if (options?.signal?.aborted) throw new Error("预览已关闭，分集任务仍在后台执行，可在任务中查看");
+    const { workflow } = await request<{ workflow: WorkflowRunSummary & {
+      output?: { episodes?: EpisodeSplitResult["episodes"] };
+      events?: Array<{ message?: string }>;
+    } }>(`/api/workflows/${encodeURIComponent(result.workflowId)}`, { signal: options?.signal });
+    options?.onProgress?.(workflow.events?.at(-1)?.message ?? `分集任务：${workflow.status}`);
+    if (workflow.status === "succeeded") {
+      if (!workflow.output?.episodes) throw new Error("分集任务没有返回边界");
+      return { ...result, pending: false, episodes: workflow.output.episodes };
+    }
+    if (["failed", "blocked", "canceled", "paused"].includes(workflow.status))
+      throw new Error(`${typeof workflow.error?.message === "string" ? workflow.error.message : `分集任务：${workflow.status}`}；可在任务中重试或继续`);
+    await new Promise<void>(resolve => setTimeout(resolve, 2000));
+  }
 }
 
 export async function loadStudioAssetCatalog(
@@ -310,11 +330,16 @@ export async function loadStudioProjectAssets(
   projectId: string,
   signal?: AbortSignal,
 ) {
-  const result = await request<{ assets: ProjectMediaAsset[] }>(
-    `/api/projects/${encodeURIComponent(projectId)}/assets`,
-    { signal },
-  );
-  return result.assets;
+  const assets: ProjectMediaAsset[] = [];
+  let cursor: string | null = null;
+  do {
+    const result: { assets: ProjectMediaAsset[]; nextCursor?: string | null } = await request(
+      `/api/projects/${encodeURIComponent(projectId)}/assets${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, { signal },
+    );
+    assets.push(...result.assets);
+    cursor = result.nextCursor ?? null;
+  } while (cursor);
+  return [...new Map(assets.map(asset => [asset.id, asset])).values()];
 }
 
 export async function loadStudioDeliverables(
@@ -349,6 +374,41 @@ export async function createStudioDeliverable(
       method: "POST",
     },
   );
+}
+
+export async function generateStudioStoryPackage(
+  projectId: string,
+  input: {
+    channelId: string;
+    model: string;
+    locale: "zh" | "en";
+    setup: {
+      storyIdea: string;
+      genres: string[];
+      audience: string[];
+      characters: string[];
+      eras: string[];
+      hooks: string[];
+      artStyle: string;
+      episodeCount: number;
+      structure: string;
+    };
+  },
+  onProgress?: (progress: { delta?: string; status?: string }) => void,
+): Promise<StoryPackageGenerationResult> {
+  const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/story-package/generate`, {
+    method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" }, body: JSON.stringify(input),
+  });
+  if (!response.ok || !response.body) {
+    const error = await response.json().catch(() => null);
+    throw new StudioApiError(error?.message ?? "策划包生成失败", response.status);
+  }
+  for await (const event of readJsonLineStream(response.body)) {
+    if (event.type === "progress") onProgress?.({ delta: typeof event.delta === "string" ? event.delta : undefined, status: typeof event.status === "string" ? event.status : undefined });
+    if (event.type === "failed") throw new Error(String(event.message ?? "策划包生成失败"));
+    if (event.type === "completed") return event.result as StoryPackageGenerationResult;
+  }
+  throw new Error("生成连接已中断，请刷新项目检查是否已保存策划包");
 }
 
 export async function transitionStudioDeliverable(
@@ -698,6 +758,7 @@ export async function generateStudioAssetVisualProfilesBatch(
   projectId: string,
   input: {
     channelId: string;
+    completeMissing?: boolean;
     model: string;
     locale: "en" | "zh";
     items: Array<{
@@ -1091,7 +1152,7 @@ export async function analyzeStudioVoiceLines(
   episodeId: string,
   input: { channelId: string; model: string; locale: "en" | "zh" },
 ) {
-  return request<{ voiceLines: VoiceLineRecord[] }>(
+  return request<{ submitted: boolean; workflowId: string; reused: boolean }>(
     `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/voice-analyze`,
     {
       body: JSON.stringify(input),
@@ -1104,11 +1165,10 @@ export async function analyzeStudioVoiceLines(
 export async function designStudioVoicePerformance(
   projectId: string,
   episodeId: string,
-  input: { channelId: string; model: string; locale: "en" | "zh" },
+  input: { channelId: string; model: string; locale: "en" | "zh"; options?: { fillMissingVoiceDesign?: boolean } },
 ) {
   return request<{
-    voiceLines: VoiceLineRecord[];
-    promptTrace: Record<string, unknown>;
+    submitted: boolean; workflowId: string; reused: boolean;
   }>(
     `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/voice-design`,
     {
@@ -1391,4 +1451,11 @@ function isRuntimeLocaleCompatible(message: string) {
 function getRuntimeStudioLocale() {
   if (typeof document === "undefined") return "zh-CN";
   return document.documentElement.lang === "en" ? "en" : "zh-CN";
+}
+
+export async function startStudioEpisodePreproduction(projectId: string, episodeId: string, input: { channelId: string; model: string; locale: "en" | "zh" }) {
+  return request<{ submitted: boolean; workflowId: string; reused: boolean }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/preproduction`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) },
+  );
 }

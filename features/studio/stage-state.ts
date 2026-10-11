@@ -28,7 +28,9 @@ const ASSET_CATALOG_WORKFLOW_TYPES = new Set([
 
 const WRITING_WORKFLOW_TYPES = new Set([
   "episode-adaptation",
+  "original-episode-generation",
   "story-to-script",
+  "episode-preproduction",
 ]);
 
 export function getWorkflowContentRevision(workflow?: WorkflowRunSummary) {
@@ -44,9 +46,10 @@ export function getWorkflowContentRevision(workflow?: WorkflowRunSummary) {
 }
 
 export function getWritingWorkflowRuns(workflows: WorkflowRunSummary[]) {
+  const phase = getWorkflowForStage(workflows, "writing");
   return {
-    adaptation: latestWorkflow(workflows, "episode-adaptation"),
-    production: latestWorkflow(workflows, "story-to-script"),
+    adaptation: workflows.find(workflow => ["episode-adaptation", "original-episode-generation"].includes(workflow.workflowType)),
+    production: phase?.workflowType === "episode-preproduction" ? phase : latestWorkflow(workflows, "story-to-script"),
   };
 }
 
@@ -92,13 +95,13 @@ export function getStudioStageStates(
     (run) => !episodeId || run.episodeId === episodeId,
   );
   const tasks = snapshot.tasks.filter(
-    (task) => !episodeId || task.episodeId === episodeId,
+    (task) => !episodeId || !task.episodeId || task.episodeId === episodeId,
   );
-  const writingWorkflow = currentWritingWorkflow(workflows);
-  const productionWorkflow = latestWorkflow(workflows, "story-to-script");
-  const storyboardWorkflow = latestWorkflow(workflows, "script-to-storyboard");
+  const writingWorkflow = getWorkflowForStage(workflows, "writing");
+  const productionWorkflow = getWritingWorkflowRuns(workflows).production;
+  const storyboardWorkflow = getWorkflowForStage(workflows, "storyboard");
   const assetTasks = tasks.filter((task) =>
-    ["character", "location", "prop"].includes(task.targetType ?? ""),
+    ["character", "character_appearance", "location", "location_image", "prop"].includes(task.targetType ?? ""),
   );
   const writingStatus = writingStageStatus({
     current: writingWorkflow,
@@ -137,11 +140,7 @@ export function getStudioStageStates(
     shotStatus === "completed" ? "ready" : "blocked",
     Boolean(episode),
   );
-  const audioWorkflow = workflows.find((workflow) =>
-    ["voice-analysis", "voice-performance-design"].includes(
-      workflow.workflowType,
-    ),
-  );
+  const audioWorkflow = getWorkflowForStage(workflows, "audio");
   const displayedAudioStatus =
     audioWorkflow &&
     ["queued", "running", "canceling", "paused", "failed", "blocked"].includes(
@@ -150,7 +149,7 @@ export function getStudioStageStates(
       ? runtimeStatusToStageStatus(audioWorkflow.status)
       : audioStatus;
 
-  return [
+  const stages = [
     withWorkflow("writing", writingStatus, writingWorkflow),
     withTasks("assets", assetStatus, assetTasks),
     withWorkflow("storyboard", storyboardStatus, storyboardWorkflow),
@@ -161,6 +160,27 @@ export function getStudioStageStates(
     },
     withTasks("delivery", deliveryStatus, delivery),
   ];
+  const records = episodeId ? snapshot.readiness?.episodes[episodeId] : undefined;
+  if (!records || !snapshot.readiness) return stages;
+  const assets = snapshot.readiness.assets;
+  const complete: Record<StudioStageId, boolean> = {
+    writing: records.structuredScript,
+    assets: assets.total > 0 && assets.adopted === assets.total,
+    storyboard: records.storyboardApproved,
+    shots: records.panels > 0 && records.adoptedVideos === records.panels,
+    audio: records.storyboardApproved && (records.voiceLines === 0 || records.generatedVoices === records.voiceLines),
+    delivery: records.rendered,
+  };
+  const ready: Record<StudioStageId, boolean> = {
+    writing: Boolean(episode?.novelText), assets: records.structuredScript || assets.total > 0,
+    storyboard: records.structuredScript, shots: records.storyboardApproved,
+    audio: records.storyboardApproved, delivery: records.panels > 0 && records.adoptedVideos === records.panels,
+  };
+  return stages.map(stage => ({ ...stage,
+    status: stage.status === "running" || stage.status === "paused" ? stage.status :
+      complete[stage.id] ? "completed" : stage.status === "failed" ? "failed" :
+      ready[stage.id] ? "ready" : "blocked",
+  }));
 }
 
 export function getTasksForStage(
@@ -169,7 +189,7 @@ export function getTasksForStage(
 ) {
   if (stageId === "assets") {
     return tasks.filter((task) =>
-      ["character", "location", "prop"].includes(task.targetType ?? ""),
+      ["character", "character_appearance", "location", "location_image", "prop"].includes(task.targetType ?? ""),
     );
   }
   if (stageId === "shots") {
@@ -190,7 +210,7 @@ export function getTasksForStage(
 
 function isShotTask(task: WorkspaceSnapshot["tasks"][number]) {
   return (
-    (["vfx_element", "vfx_composite"].includes(task.targetType ?? "") &&
+    (["canvas_node", "vfx_element", "vfx_composite"].includes(task.targetType ?? "") &&
       (task.kind === "image" || task.kind === "video")) ||
     (task.targetType === "storyboard_panel" &&
       (task.kind === "image" || task.kind === "video"))
@@ -201,6 +221,20 @@ export function getWorkflowForStage(
   workflows: WorkflowRunSummary[],
   stageId: StudioStageId,
 ) {
+  const stepKeys: Partial<Record<StudioStageId, string[]>> = {
+    writing: ["organize_production_script"], storyboard: ["build_scene_storyboard"],
+    audio: ["analyze_episode_voice", "design_voice_performance"],
+  };
+  const combined = latestWorkflow(workflows, "episode-preproduction");
+  const phase = combined?.steps.filter(step => stepKeys[stageId]?.includes(step.key));
+  if (combined && phase?.length) {
+    const directTypes: Partial<Record<StudioStageId, string[]>> = { writing: ["story-to-script", "episode-adaptation", "original-episode-generation"], storyboard: ["script-to-storyboard"], audio: ["voice-analysis", "voice-performance-design"] };
+    const newer = workflows.some(run => directTypes[stageId]?.includes(run.workflowType) && run.createdAt > combined.createdAt);
+    if (!newer) {
+      const current = phase.find(step => step.status !== "succeeded") ?? phase[phase.length - 1];
+      return { ...combined, status: current.status === "pending" ? "not_started" : current.status, steps: phase };
+    }
+  }
   if (stageId === "writing") {
     return currentWritingWorkflow(workflows);
   }

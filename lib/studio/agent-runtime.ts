@@ -1,3 +1,4 @@
+import type { StudioProductionOptions } from "./production-input";
 import type {
   AgentEvent,
   AgentMessage,
@@ -35,6 +36,7 @@ import {
 import { getWorkflowRun, listWorkflowRuns } from "@/lib/workflow/store";
 import { loadAgentAssetContext } from "./agent-asset-context";
 import { loadAgentProjectContext } from "./agent-project-context";
+import { serializeBudgetedContext } from "./context-budget";
 import {
   STUDIO_PRODUCTION_OPERATIONS,
   isProductionOperation,
@@ -102,6 +104,7 @@ type ApprovalPayload = {
   assetKind?: "character" | "location" | "prop";
   targetLabel?: string;
   request?: string;
+  productionOptions?: StudioProductionOptions;
   version: 1;
   canvasDraft?: {
     episodeId: string;
@@ -123,6 +126,8 @@ type StudioAgentDecision = {
 };
 
 export async function runStudioAgent(input: {
+  productionOptions?: StudioProductionOptions;
+  conversation?: Array<{ role: "user" | "assistant"; content: string }>;
   content: string;
   context: StudioAgentContext;
   locale: StudioAgentLocale;
@@ -136,7 +141,9 @@ export async function runStudioAgent(input: {
 
 async function* runStudioAgentEvents(
   input: {
-    content: string;
+    productionOptions?: StudioProductionOptions;
+  conversation?: Array<{ role: "user" | "assistant"; content: string }>;
+  content: string;
     context: StudioAgentContext;
     locale: StudioAgentLocale;
     modelSelection?: StudioAgentModelSelection;
@@ -214,6 +221,7 @@ async function* runStudioAgentEvents(
             failureContext: screenplayFailureContext,
             model: decision.modelSelection?.model,
             request: input.content.trim().slice(0, 8_000),
+            productionOptions: input.productionOptions,
           }
         : {}),
       expiresAt: Date.now() + APPROVAL_TTL_MS,
@@ -252,9 +260,13 @@ async function* runStudioAgentEvents(
         status: "status" in target ? target.status : "draft",
         traceId: "traceId" in target ? target.traceId : undefined,
         type: isProductionOperation(decision.operation)
-          ? decision.operation === "start_asset_visual_design"
-            ? "asset"
-            : "episode"
+          ? decision.operation === "start_story_package_generation"
+            ? "project"
+            : decision.operation === "start_asset_visual_design"
+              ? "asset"
+              : decision.operation === "start_manuscript_analysis"
+                ? "manuscript"
+                : "episode"
           : decision.operation === "update_canvas_prompt"
             ? "canvas_node"
             : decision.operation === "revise_screenplay"
@@ -270,15 +282,21 @@ async function* runStudioAgentEvents(
               operation: operationLabel(decision.operation),
               model: decision.modelSelection?.model,
               note:
-                decision.operation === "start_episode_adaptation"
-                  ? "生成忠实改编候选稿，保留原文"
-                  : decision.operation === "start_script_organization"
-                    ? "整理当前生产稿，将重新保存场次与资产关联"
-                    : decision.operation === "start_storyboard_generation"
-                      ? "根据结构化剧本生成分镜；重跑会更新现有分镜"
-                      : decision.operation === "start_asset_visual_design"
-                        ? "生成并保存资产视觉设定；已有设定会更新"
-                        : "分析并保存台词或配音设计；重跑会更新现有结果",
+                decision.operation === "start_manuscript_analysis"
+                  ? "分段提取原著资料并保存进度，草稿需要审核，不改写原文"
+                  : decision.operation === "start_original_episode_generation"
+                  ? "依据已采用策划与前集结尾续写；空白集同步制作草案，已有正文保存候选版本"
+                  : decision.operation === "start_episode_adaptation"
+                  ? "生成改编候选稿，保留原文"
+                  : decision.operation === "start_story_package_generation"
+                    ? "从零创作并保存完整策划包，包含第一集正文"
+                    : decision.operation === "start_script_organization"
+                      ? "整理当前生产稿，将重新保存场次与资产关联"
+                      : decision.operation === "start_storyboard_generation"
+                        ? "根据结构化剧本生成分镜；重跑会更新现有分镜"
+                        : decision.operation === "start_asset_visual_design"
+                          ? "生成并保存资产视觉设定；已有设定会更新"
+                          : decision.operation === "start_episode_preproduction" ? "补齐本集缺失的整理、分镜与配音设计；已有结果保留，导演审核有问题时阻塞" : "分析并保存台词或配音设计；重跑会更新现有结果",
             },
           }
         : {}),
@@ -359,7 +377,17 @@ async function* resolveStudioAgentApprovalEvents(
     toolCallId: approval.toolCallId,
   };
   try {
-    const result = await executeOperation(approval);
+    const progressQueue = createAsyncQueue<AgentEvent>();
+    const execution = executeOperation(approval, (progress) => {
+      progressQueue.push({
+        type: "tool.progress",
+        messageId: approval.messageId,
+        toolCallId: approval.toolCallId,
+        ...progress,
+      });
+    }).finally(() => progressQueue.close());
+    for await (const event of progressQueue) yield event;
+    const result = await execution;
     yield {
       type: "tool.done",
       messageId: approval.messageId,
@@ -369,8 +397,12 @@ async function* resolveStudioAgentApprovalEvents(
     yield messageEvent(
       isProductionOperation(approval.operation)
         ? approval.locale === "en"
-          ? `The workflow for ${approval.targetLabel ?? "the selected target"} has been submitted. Follow its progress in Tasks.`
-          : `已提交「${approval.targetLabel ?? "所选目标"}」的${operationLabel(approval.operation)}任务，可在任务栏查看进度。`
+          ? approval.operation === "start_story_package_generation"
+            ? `The complete story package for ${approval.targetLabel ?? "the project"} has been generated and saved in development deliverables.`
+            : `The workflow for ${approval.targetLabel ?? "the selected target"} has been submitted. Follow its progress in Tasks.`
+          : approval.operation === "start_story_package_generation"
+            ? `「${approval.targetLabel ?? "项目"}」的完整策划包已生成并保存到开发部交付物中。`
+            : `已提交「${approval.targetLabel ?? "所选目标"}」的${operationLabel(approval.operation)}任务，可在任务栏查看进度。`
         : approval.locale === "en"
           ? "The approved action completed. Workspace data has been refreshed."
           : "已完成批准的操作，工作台数据已刷新。",
@@ -390,7 +422,20 @@ export function getStudioAgentIntent(
 ): StudioAgentOperation | null {
   const normalized = content.trim().toLowerCase();
   if (!normalized) return null;
-  if (/开始|启动|执行|生成|start|generate|run/i.test(normalized)) {
+  if (/续写|continue.*episode|write.*episode/i.test(normalized)) return "start_original_episode_generation";
+  if (/原著.*资料|小说.*资料|source.*dossier|manuscript.*analy/i.test(normalized) &&
+      /建立|提取|分析|生成|整理|build|extract|analy|generate/i.test(normalized)) return "start_manuscript_analysis";
+  if (
+    /开始|启动|执行|生成|写|创作|编写|start|generate|write|create|run/i.test(
+      normalized,
+    )
+  ) {
+    if (
+      /策划包|全剧策划|从零|原创|不需要原稿|不要原稿|没有原稿|直接写|完整故事|write.*from scratch|no manuscript|story package|original (?:story|series|drama)/i.test(
+        normalized,
+      )
+    )
+      return "start_story_package_generation";
     if (/场次.*整理|整理.*场次|资产.*整理|organize.*script/i.test(normalized))
       return "start_script_organization";
     if (/分镜|storyboard/i.test(normalized))
@@ -401,6 +446,7 @@ export function getStudioAgentIntent(
       return "start_voice_design";
     if (/视觉.*设定|视觉.*设计|visual.*design/i.test(normalized))
       return "start_asset_visual_design";
+    if (/前期制作|preproduction/i.test(normalized)) return "start_episode_preproduction";
     if (/改编|adapt/i.test(normalized)) return "start_episode_adaptation";
   }
   const mediaTarget = /任务|媒体|task|media/.test(normalized);
@@ -488,6 +534,7 @@ async function loadAgentState(input: {
         where: {
           projectId: input.projectId,
           project: { userId: input.userId },
+          ...(episode ? { episodeId: episode.id } : {}),
         },
         orderBy: { clipIndex: "asc" },
         take: 200,
@@ -573,8 +620,8 @@ async function loadAgentState(input: {
             kind: selectedAsset?.kind ?? null,
             ready: Boolean(
               selectedAsset &&
-                selectedAsset.task.status === "succeeded" &&
-                (selectedAsset.url || selectedAsset.storageKey),
+              selectedAsset.task.status === "succeeded" &&
+              (selectedAsset.url || selectedAsset.storageKey),
             ),
           },
           usedBy: canvasDocument.data.edges
@@ -688,6 +735,11 @@ function findOperationTarget(
   requestedTargetId?: string,
 ) {
   const selectionId = state.context.selection?.id;
+  if (operation === "start_manuscript_analysis") {
+    const manuscripts = state.projectContext.manuscripts;
+    return requestedTargetId ? manuscripts.find(item => item.id === requestedTargetId) :
+      manuscripts.find(item => item.id === selectionId) ?? (manuscripts.length === 1 ? manuscripts[0] : undefined);
+  }
   if (operation === "read_project_object") {
     return [
       ...state.projectContext.episodeIndex,
@@ -699,6 +751,14 @@ function findOperationTarget(
     ].find((item) => item.id === requestedTargetId);
   }
   if (isProductionOperation(operation)) {
+    if (operation === "start_original_episode_generation") {
+      const id = requestedTargetId ?? state.episode?.id;
+      return state.projectContext.episodeIndex.find(item => item.id === id && item.canContinueOriginal);
+    }
+    if (operation === "start_story_package_generation")
+      return !requestedTargetId || requestedTargetId === state.project.id
+        ? state.project
+        : undefined;
     if (operation === "start_asset_visual_design") {
       const id = requestedTargetId ?? selectionId;
       return state.projectContext.assets.find((asset) => asset.id === id);
@@ -766,7 +826,9 @@ export function selectScreenplayRevisionClip<
 
 async function decideStudioAgentAction(
   input: {
-    content: string;
+    productionOptions?: StudioProductionOptions;
+  conversation?: Array<{ role: "user" | "assistant"; content: string }>;
+  content: string;
     locale: StudioAgentLocale;
     modelSelection?: StudioAgentModelSelection;
     userId: string;
@@ -793,8 +855,8 @@ async function decideStudioAgentAction(
       id: PROMPT_IDS.STUDIO_WORKFLOW_AGENT,
       locale: input.locale === "en" ? "en" : "zh",
       variables: {
-        state_json: JSON.stringify(buildModelState(state, input.content)),
-        operation_candidates_json: JSON.stringify(candidates),
+        state_json: serializeBudgetedContext({ ...buildModelState(state, input.content), conversation: input.conversation ?? [], productionOptions: input.productionOptions }),
+        operation_candidates_json: serializeBudgetedContext(candidates, 12_000),
         user_request: input.content.trim(),
       },
     });
@@ -933,8 +995,12 @@ function deterministicStudioAgentDecision(
     return {
       reply:
         input.locale === "en"
-          ? "Select a configured Agent model before requesting a screenplay revision."
-          : "请先选择可用的 Agent 模型，再提交剧本修改。",
+          ? operation === "start_story_package_generation"
+            ? "Select a configured Agent model before generating the complete story package."
+            : "Select a configured Agent model before requesting a screenplay revision."
+          : operation === "start_story_package_generation"
+            ? "请先选择可用的导演分析模型，再生成完整策划包。"
+            : "请先选择可用的导演分析模型，再提交剧本修改。",
       operation: null,
       targetId: null,
     };
@@ -1002,18 +1068,28 @@ function buildOperationCandidates(
             })),
           ]
         : isProductionOperation(operation)
-          ? (operation === "start_asset_visual_design"
-              ? state.projectContext.assets
-              : state.projectContext.episodeIndex
-            )
-              .filter((item) => findOperationTarget(state, operation, item.id))
-              .map((item) => ({
-                id: item.id,
-                name: item.name,
-                ...("kind" in item
-                  ? { kind: item.kind }
-                  : { number: item.number }),
-              }))
+          ? operation === "start_manuscript_analysis" ? state.projectContext.manuscripts.map(item => ({ id: item.id, name: item.title, kind: "manuscript" })) : operation === "start_story_package_generation"
+            ? [
+                {
+                  id: state.project.id,
+                  name: state.project.name,
+                  kind: "project",
+                },
+              ]
+            : (operation === "start_asset_visual_design"
+                ? state.projectContext.assets
+                : state.projectContext.episodeIndex
+              )
+                .filter((item) =>
+                  findOperationTarget(state, operation, item.id),
+                )
+                .map((item) => ({
+                  id: item.id,
+                  name: item.name,
+                  ...("kind" in item
+                    ? { kind: item.kind }
+                    : { number: item.number }),
+                }))
           : operation === "update_canvas_prompt"
             ? canvasPromptTargets(state).map((node) => ({
                 id: node.id,
@@ -1248,7 +1324,15 @@ function stringValue(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-async function executeOperation(approval: ApprovalPayload) {
+async function executeOperation(
+  approval: ApprovalPayload,
+  onProgress?: (progress: {
+    delta?: string;
+    resetText?: boolean;
+    status?: string;
+    totalCharacters?: number;
+  }) => void,
+) {
   if (approval.operation === "read_project_object")
     throw new StudioAgentError("读取项目资料无需审批，请重新发送问题");
   if (isProductionOperation(approval.operation)) {
@@ -1262,6 +1346,9 @@ async function executeOperation(approval: ApprovalPayload) {
       channelId: approval.channelId,
       model: approval.model,
       locale: approval.locale === "en" ? "en" : "zh",
+      request: approval.request,
+      options: approval.productionOptions,
+      onProgress,
       assetKind: approval.assetKind,
     });
   }
@@ -1538,6 +1625,10 @@ function operationLabel(operation: StudioAgentOperation) {
     start_voice_design: "配音表演设计",
     start_episode_adaptation: "忠实剧本改编",
     start_asset_visual_design: "资产视觉设计",
+    start_story_package_generation: "完整策划包生成",
+    start_episode_preproduction: "本集前期制作",
+    start_manuscript_analysis: "建立原著改编资料",
+    start_original_episode_generation: "续写原创本集正文",
     cancel_media_task: "取消媒体任务",
     cancel_workflow: "取消工作流",
     pause_workflow: "暂停工作流",
@@ -1548,35 +1639,6 @@ function operationLabel(operation: StudioAgentOperation) {
     update_canvas_prompt: "修改画布提示词草稿",
   };
   return labels[operation];
-}
-
-function taskMatchesStage(
-  task: { kind: string; targetType?: string },
-  stageId: StudioAgentStageId,
-) {
-  if (stageId === "assets")
-    return ["character", "location", "prop"].includes(task.targetType ?? "");
-  if (stageId === "shots")
-    return (
-      task.targetType === "storyboard_panel" &&
-      ["image", "video"].includes(task.kind)
-    );
-  if (stageId === "audio")
-    return ["episode_audio", "lip_sync", "voice_line"].includes(
-      task.targetType ?? "",
-    );
-  if (stageId === "delivery") return task.targetType === "editor_render";
-  return false;
-}
-
-function workflowMatchesStage(
-  workflowType: string,
-  stageId: StudioAgentStageId,
-) {
-  return (
-    (stageId === "writing" && workflowType === "story-to-script") ||
-    (stageId === "storyboard" && workflowType === "script-to-storyboard")
-  );
 }
 
 function stageLabel(stageId: StudioAgentStageId, locale: StudioAgentLocale) {
@@ -1605,4 +1667,45 @@ function messageEvent(content: string): AgentEvent {
 
 function createId(prefix: string) {
   return `${prefix}_${crypto.randomUUID()}`;
+}
+
+function createAsyncQueue<T>() {
+  const values: T[] = [];
+  let closed = false;
+  let resolveNext: ((result: IteratorResult<T>) => void) | undefined;
+
+  return {
+    push(value: T) {
+      if (closed) return;
+      if (resolveNext) {
+        const resolve = resolveNext;
+        resolveNext = undefined;
+        resolve({ done: false, value });
+      } else {
+        values.push(value);
+      }
+    },
+    close() {
+      closed = true;
+      if (resolveNext) {
+        const resolve = resolveNext;
+        resolveNext = undefined;
+        resolve({ done: true, value: undefined });
+      }
+    },
+    async *[Symbol.asyncIterator](): AsyncIterableIterator<T> {
+      while (true) {
+        if (values.length) {
+          yield values.shift()!;
+          continue;
+        }
+        if (closed) return;
+        const next = await new Promise<IteratorResult<T>>((resolve) => {
+          resolveNext = resolve;
+        });
+        if (next.done) return;
+        yield next.value;
+      }
+    },
+  };
 }

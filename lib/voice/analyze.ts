@@ -1,3 +1,4 @@
+import { reconcileEpisodeVoiceLines } from "./reconcile";
 import { decryptSecret } from "@/lib/server/crypto";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { prisma } from "@/lib/server/prisma";
@@ -199,27 +200,7 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
         : (panelIds.get(line.matchedPanelIndex) ?? null),
   }));
 
-  await prisma.$transaction(async (tx) => {
-    await tx.voiceLine.deleteMany({
-      where: { episodeId: input.episodeId },
-    });
-    if (lines.length) {
-      await tx.voiceLine.createMany({
-        data: lines.map((line, index) => ({
-          id: crypto.randomUUID(),
-          episodeId: input.episodeId,
-          lineIndex: index,
-          speaker: line.speaker,
-          content: line.content,
-          delivery: line.delivery,
-          emotionPrompt: line.emotionPrompt,
-          emotionStrength: line.emotionStrength,
-          matchedPanelId: line.matchedPanelId,
-          status: "draft",
-        })),
-      });
-    }
-  });
+  await reconcileEpisodeVoiceLines(input.episodeId, lines);
   const voiceLines = await prisma.voiceLine.findMany({
     where: { episodeId: input.episodeId },
     orderBy: { lineIndex: "asc" },

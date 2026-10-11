@@ -1,8 +1,7 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { getStoryboard, saveStoryboard } from "@/lib/novel/domain-store";
 import type { StoryboardPromptDesignDetails } from "@/lib/novel/domain-types";
-import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
-import { createOrReuseWorkflowRun } from "@/lib/workflow/store";
+import { submitEpisodeProductionRequest } from "@/lib/studio/production-http";
 import { loadStoryboardProgress } from "@/lib/novel/storyboard-progress";
 
 type Context = { params: Promise<{ projectId: string; episodeId: string }> };
@@ -24,59 +23,8 @@ export async function GET(_request: Request, context: Context) {
   );
 }
 
-export async function POST(request: Request, context: Context) {
-  const { user, sessionId } = await ensureAnonymousUser();
-  const { projectId, episodeId } = await context.params;
-  const body = await readObject(request);
-  const locale = body.locale === "en" ? "en" : "zh";
-  const channelId =
-    typeof body.channelId === "string" ? body.channelId.trim() : undefined;
-  const model = typeof body.model === "string" ? body.model.trim() : undefined;
-  if (Boolean(channelId) !== Boolean(model))
-    return attachSessionCookie(
-      Response.json({ message: "请选择完整的导演模型与渠道" }, { status: 400 }),
-      sessionId,
-    );
-  const result = await createOrReuseWorkflowRun({
-    id: `workflow_${crypto.randomUUID()}`,
-    userId: user.id,
-    projectId,
-    episodeId,
-    workflowType: "script-to-storyboard",
-    targetType: "episode",
-    targetId: episodeId,
-    input: { locale, channelId, model },
-    steps: [
-      {
-        key: "build_scene_storyboard",
-        type: "build_scene_storyboard",
-        artifactTypes: ["storyboard.scenes", "storyboard.director.scene"],
-        input: { locale, channelId, model },
-        retryable: true,
-        maxAttempts: 3,
-      },
-    ],
-    maxAttempts: 3,
-  });
-  if (!result)
-    return attachSessionCookie(
-      Response.json({ message: "项目或剧集不存在" }, { status: 404 }),
-      sessionId,
-    );
-  if (!result.reused)
-    await enqueueWorkflowJob({
-      runId: result.workflow.id,
-      userId: user.id,
-      projectId,
-      maxAttempts: 1,
-    });
-  return attachSessionCookie(
-    Response.json(
-      { workflow: result.workflow, reused: result.reused },
-      { status: result.reused ? 200 : 202 },
-    ),
-    sessionId,
-  );
+export function POST(request: Request, context: Context) {
+  return submitEpisodeProductionRequest(request, context, "start_storyboard_generation");
 }
 
 export async function PUT(request: Request, context: Context) {

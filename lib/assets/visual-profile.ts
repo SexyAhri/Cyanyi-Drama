@@ -1,16 +1,29 @@
+import { z } from "zod";
+
 import { parseAssetVisualDesignText } from "./visual-design-parser";
 
-export type AssetVisualProfileSpec = {
-  visualIdentity: string;
-  shapeAndStructure: string;
-  surfaceAndStyling: string;
-  colorPalette: string;
-  lightingAndPresentation: string;
-  signatureDetails: string[];
-  consistencyRules: string[];
-  negativePrompt: string;
-  inferenceNotes: string[];
-};
+const visualText = z.string().trim().min(1);
+
+/** Complete contract shared by Director Assistant and episode continuation. */
+export const AssetVisualProfileSpecSchema = z.object({
+  visualIdentity: visualText,
+  shapeAndStructure: visualText,
+  surfaceAndStyling: visualText,
+  colorPalette: visualText,
+  lightingAndPresentation: visualText,
+  signatureDetails: z.array(visualText).min(1),
+  consistencyRules: z.array(visualText).min(1),
+  negativePrompt: visualText,
+  inferenceNotes: z.array(visualText).min(1),
+});
+
+export type AssetVisualProfileSpec = z.infer<
+  typeof AssetVisualProfileSpecSchema
+>;
+
+export function isAssetVisualProfileComplete(profile: AssetVisualProfile | undefined) {
+  return AssetVisualProfileSpecSchema.safeParse(profile?.spec).success;
+}
 
 export type AssetStoryWorldLock = {
   mode?: "source" | "premodern" | "contemporary" | "custom";

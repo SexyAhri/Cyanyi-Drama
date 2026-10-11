@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { PROMPT_IDS, type PromptId } from "./ids";
+import { StoryPackageSchema } from "@/lib/production/story-package-contract";
 import {
   ACTION_DESIGN_KINDS,
   ACTION_PHASES,
@@ -808,6 +809,10 @@ export const studioWorkflowAgentSchema = z
         "start_voice_design",
         "start_episode_adaptation",
         "start_asset_visual_design",
+        "start_story_package_generation",
+        "start_manuscript_analysis",
+        "start_original_episode_generation",
+        "start_episode_preproduction",
       ])
       .nullable(),
     targetId: z.string().trim().min(1).nullable(),
@@ -841,5 +846,6 @@ export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
     characterReferenceDescriptionSchema,
   [PROMPT_IDS.EPISODE_SPLIT]: episodeSplitSchema,
   [PROMPT_IDS.EPISODE_ADAPTATION]: episodeAdaptationSchema,
+  [PROMPT_IDS.STORY_PACKAGE_GENERATION]: StoryPackageSchema,
   [PROMPT_IDS.STUDIO_WORKFLOW_AGENT]: studioWorkflowAgentSchema,
 };

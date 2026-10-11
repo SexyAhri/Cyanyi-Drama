@@ -3,7 +3,7 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from "@/components/ui/native-select";
-import { X, ArrowUpRight, Trash2 } from "lucide-react";
+import { X, ArrowUpRight, Trash2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PanelEditorDialog } from "../storyboard/panel-editor-dialog";
 import type {
@@ -22,6 +22,7 @@ import {
   purposeLabel,
   linkedCanvasAsset,
   nodeMedia,
+  canvasBaselineTargets,
 } from "./canvas-view-model";
 import type {
   ProjectAssetCatalog,
@@ -47,6 +48,7 @@ export function CanvasInspector({
   onOpenPanel,
   onSavePanel,
   onApplyMedia,
+  onSetBaseline,
   onOpenAssets,
   onLipSync,
   onBranch,
@@ -68,6 +70,7 @@ export function CanvasInspector({
   onOpenPanel: (panelId: string) => void;
   onSavePanel: (panel: StudioStoryboardPanel) => Promise<void>;
   onApplyMedia: () => void;
+  onSetBaseline: (entityId: string) => void;
   onOpenAssets: (kind: "assets" | "audio") => void;
   onLipSync: () => void;
   onBranch: (kind: "image" | "video") => void;
@@ -83,6 +86,8 @@ export function CanvasInspector({
   const candidates = node ? nodeCandidates(node, catalog) : [];
   const linkedAsset = node ? linkedCanvasAsset(node, catalog) : undefined;
   const media = node ? nodeMedia(node, catalog, panels) : undefined;
+  const inheritedMedia = node?.kind === "image" && node.id.startsWith("episode-asset-image-") && media?.url && media.sourceTargetId !== node.id;
+  const baselineTargets = node ? canvasBaselineTargets(node, document, catalog, panels) : [];
   const versionDefault = linkedAsset
     ? t("项目当前采用版本", "Current project version")
     : t("当前镜头 / 最新结果", "Current shot / latest result");
@@ -150,6 +155,10 @@ export function CanvasInspector({
                     "first_frame",
                     "last_frame",
                     "dialogue",
+                    "causality",
+                    "shot_sequence",
+                    "story_asset",
+                    "episode_bridge",
                   ] as const
                 ).map((purpose) => (
                   <NativeSelectOption key={purpose} value={purpose}>
@@ -374,6 +383,25 @@ export function CanvasInspector({
                 </NativeSelect>
               </label>
             )}
+            {inheritedMedia ? (
+              <p className="leading-5 text-muted-foreground">
+                {t("已复用项目资产图，无需为本集重复生成。需要新版本时可重新生成。", "Using the project asset image. Generate again only if you need a new version.")}
+              </p>
+            ) : null}
+            {baselineTargets.map(({ entity, candidate }) => (
+              <Button
+                key={`${entity.kind}-${entity.id}`}
+                size="sm"
+                variant="outline"
+                disabled={busy || candidate.selected}
+                onClick={() => onSetBaseline(entity.id)}
+              >
+                <Check className="size-3.5" />
+                {candidate.selected
+                  ? t(`${entity.name} · 当前基准`, `${entity.name} · Current baseline`)
+                  : t(`设为${entity.name}的基准`, `Set as ${entity.name} baseline`)}
+              </Button>
+            ))}
             {node.panelId && node.assetId && (
               <Button
                 size="sm"
@@ -528,7 +556,7 @@ export function CanvasInspector({
             disabled={busy || !models.length}
             onClick={onReview}
           >
-            {t("审核并生成", "Review and generate")}
+            {inheritedMedia ? t("重新生成新版本", "Generate a new version") : t("审核并生成", "Review and generate")}
           </Button>
         )}
       </footer>

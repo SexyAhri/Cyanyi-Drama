@@ -268,6 +268,16 @@ export function sanitizeLocalMessageMetadata(
     return undefined;
   }
 
+  const productionOptions =
+    metadata.productionOptions &&
+    typeof metadata.productionOptions === "object" &&
+    !Array.isArray(metadata.productionOptions)
+      ? metadata.productionOptions
+      : null;
+  const preservedMetadata = productionOptions
+    ? { productionOptions }
+    : {};
+
   const composer =
     "composer" in metadata &&
     metadata.composer &&
@@ -276,7 +286,7 @@ export function sanitizeLocalMessageMetadata(
       : null;
 
   if (!composer) {
-    return undefined;
+    return productionOptions ? preservedMetadata : undefined;
   }
 
   const referenceImages = Array.isArray(composer.referenceImages)
@@ -302,6 +312,7 @@ export function sanitizeLocalMessageMetadata(
       : null;
 
   return {
+    ...preservedMetadata,
     composer: {
       mode: typeof composer.mode === "string" ? composer.mode : "chat",
       imageModel:

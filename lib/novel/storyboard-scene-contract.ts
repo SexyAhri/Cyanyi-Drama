@@ -3,6 +3,7 @@ import { screenplayConversionSchema } from "@/lib/prompts/schemas";
 import { estimateSpeechDurationSeconds } from "@/lib/prompts/validators";
 import { MAX_STORYBOARD_SHOT_SECONDS } from "./storyboard-dialogue-timing";
 import { lockSilentVideoPerformance } from "@/lib/media/director-prompt-locks";
+import { PanelProductionDesignSchema, validatePanelProductionDesign } from "@/lib/production/panel-production-design";
 
 export type DirectorScene = ReturnType<typeof buildDirectorScenes>[number];
 export function buildDirectorScenes(
@@ -87,12 +88,18 @@ export const directorShotsSchema = z.object({
           .nullable(),
         image_prompt: z.string().min(1),
         video_prompt: z.string().min(1),
+        productionDesign: PanelProductionDesignSchema.optional(),
       }),
     )
     .min(1)
     .max(200),
 });
 export type DirectorShot = z.infer<typeof directorShotsSchema>["shots"][number];
+export const directorShotsGenerationSchema = z.object({
+  shots: z.array(directorShotsSchema.shape.shots.element.extend({
+    productionDesign: PanelProductionDesignSchema,
+  })).min(1).max(200),
+});
 
 export function validateDirectorShots(
   scene: DirectorScene,
@@ -110,6 +117,14 @@ export function validateDirectorShots(
   let lastSourceIndex = -1;
   for (const [index, shot] of shots.entries()) {
     const label = `shots.${index}`;
+    if (shot.productionDesign) {
+      errors.push(...validatePanelProductionDesign(shot.productionDesign, shot.duration_seconds, shot.characters)
+        .map(message => `${label}: ${message}`));
+      if (shot.productionDesign.startState.body !== shot.start_state ||
+          JSON.stringify(shot.productionDesign.motionBeats) !== JSON.stringify(shot.motion_beats.map(beat => ({
+            startSecond: beat.start_second, endSecond: beat.end_second, action: beat.action, camera: beat.camera,
+          })))) errors.push(`${label}: productionDesign must agree with start_state and motion_beats`);
+    }
     const sources = shot.source_unit_ids.map((id) =>
       scene.units.find((unit) => unit.id === id),
     );
@@ -128,10 +143,30 @@ export function validateDirectorShots(
       shot.characters.some((name) => !scene.characters.includes(name))
     )
       errors.push(`${label}: unknown asset or character`);
+    if (new Set(shot.asset_names).size !== shot.asset_names.length)
+      errors.push(`${label}: duplicate asset_names`);
     if (shot.characters.some((name) => !shot.asset_names.includes(name)))
       errors.push(
         `${label}: visible character must be included in asset_names`,
       );
+    if (!shot.asset_names.includes(scene.heading.location))
+      errors.push(`${label}: scene location must be included in asset_names`);
+    const shotVisualText = [
+      shot.scene_description,
+      shot.action_description,
+      shot.start_state,
+      shot.end_state,
+      ...shot.motion_beats.map((beat) => beat.action),
+      shot.image_prompt,
+      shot.video_prompt,
+    ].join("\n");
+    for (const prop of scene.props) {
+      if (
+        shotVisualText.includes(prop) &&
+        !shot.asset_names.includes(prop)
+      )
+        errors.push(`${label}: referenced prop ${prop} must be included in asset_names`);
+    }
     let beatEnd = 0;
     for (const beat of shot.motion_beats) {
       if (
@@ -249,7 +284,7 @@ export function directorScenePanels(
       speakingCharacter,
       lipSyncText: speakingCharacter ? shot.speech!.text : null,
       voiceoverText,
-      startState: { body: shot.start_state },
+      startState: shot.productionDesign?.startState ?? { body: shot.start_state },
       endState: { body: shot.end_state },
       motionBeats: shot.motion_beats.map((beat) => ({
         startSecond: beat.start_second,
@@ -264,22 +299,23 @@ export function directorScenePanels(
         sourceSpeech: speech
           ? { contentIndex: speech.contentIndex, sourceId: speech.id }
           : null,
-        characters: shot.characters.map((name) => ({
+        characters: shot.productionDesign?.acting ?? shot.characters.map((name) => ({
           name,
           emotion: "",
           expression: "",
           action: shot.action_description,
         })),
       },
-      photographyRules: JSON.stringify({
+      photographyRules: JSON.stringify(shot.productionDesign?.photography ?? {
         camera: shot.camera_move,
         composition: shot.shot_type,
         cameraPosition: shot.scene_description,
       }),
       phase: "scene",
       status: "ready",
+      worldContext: shot.productionDesign?.worldContext,
       linkedToNextPanel: localIndex < shots.length - 1,
-      vfxCues: scene.units.flatMap((unit) =>
+      vfxCues: shot.productionDesign?.vfxCues ?? scene.units.flatMap((unit) =>
         (unit.actionDesign?.vfxPlan ?? [])
           .filter((cue) => cueShot(unit.id, cue.phase) === localIndex)
           .map((cue) => ({
@@ -288,7 +324,7 @@ export function directorScenePanels(
             evidence: [unit.text],
           })),
       ),
-      sfxCues: scene.units.flatMap((unit) =>
+      sfxCues: shot.productionDesign?.sfxCues ?? scene.units.flatMap((unit) =>
         (unit.actionDesign?.sfxPlan ?? [])
           .filter((cue) => cueShot(unit.id, cue.phase) === localIndex)
           .map((cue) => ({

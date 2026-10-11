@@ -30,12 +30,16 @@ export type AdaptationRequest = {
 };
 
 export function AdaptationDialog({
+  hasProductionScript = false,
+  originalContinuation = false,
   defaultModelId,
   disabled,
   locale,
   models,
   onStart,
 }: {
+  hasProductionScript?: boolean;
+  originalContinuation?: boolean;
   defaultModelId: string;
   disabled?: boolean;
   locale: StudioLocale;
@@ -43,6 +47,7 @@ export function AdaptationDialog({
   onStart: (input: AdaptationRequest) => void;
 }) {
   const copy = getStudioCopy(locale);
+  const actionLabel = originalContinuation ? (locale === "en" ? "Write this original episode" : "续写本集正文") : hasProductionScript ? (locale === "en" ? "Rewrite screenplay (optional)" : "改写剧本（可选）") : copy.createAdaptation;
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<AdaptationMode>("polish");
   const [modelId, setModelId] = useState(defaultModelId);
@@ -79,15 +84,15 @@ export function AdaptationDialog({
         }
       >
         <WandSparkles className="size-4" />
-        {copy.createAdaptation}
+        {actionLabel}
       </DialogTrigger>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{copy.createAdaptation}</DialogTitle>
-          <DialogDescription>{copy.adaptationDialogDescription}</DialogDescription>
+          <DialogTitle>{actionLabel}</DialogTitle>
+          <DialogDescription>{originalContinuation ? (locale === "en" ? "Use the adopted series plan, this episode's outline, and the previous ending. Empty episodes receive script and production drafts; existing work stays as a separate version." : "沿用已采用的全剧规划、本集大纲和前集结尾。空集会接入正文与制作草稿；已有正文时保存为候选版本。") : hasProductionScript ? (locale === "en" ? "Create another script version. Existing production remains active until you adopt the new version." : "生成一个新的剧本版本。确认采用新版本后才会替换当前制作稿，已有剧本可以直接继续制作。") : copy.adaptationDialogDescription}</DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
-          <Tabs
+          {!originalContinuation ? <Tabs
             onValueChange={(value) => setMode(value as AdaptationMode)}
             value={mode}
           >
@@ -97,7 +102,7 @@ export function AdaptationDialog({
               <TabsTrigger value="drama">{copy.adaptationDrama}</TabsTrigger>
               <TabsTrigger value="custom">{copy.adaptationCustom}</TabsTrigger>
             </TabsList>
-          </Tabs>
+          </Tabs> : null}
           <label className="grid gap-1.5 text-sm font-medium">
             {copy.analysisModel}
             <ModelSelect
@@ -134,7 +139,7 @@ export function AdaptationDialog({
             type="button"
           >
             <WandSparkles className="size-4" />
-            {copy.createAdaptation}
+            {actionLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

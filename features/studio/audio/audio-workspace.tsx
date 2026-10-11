@@ -15,6 +15,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { StoryboardReviewNotice } from "../components/storyboard-review-notice";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -233,7 +234,7 @@ export function AudioWorkspace({
   const text = copy[locale];
   const projectId = snapshot.project.id;
   const audioWorkflowRevision = snapshot.workflows
-    .filter((workflow) => workflow.episodeId === episode.id && ["voice-analysis", "voice-performance-design"].includes(workflow.workflowType))
+    .filter((workflow) => workflow.episodeId === episode.id && ["voice-analysis", "voice-performance-design", "episode-preproduction"].includes(workflow.workflowType))
     .map(getWorkflowContentRevision).join("|");
   const [data, setData] = useState<AudioData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -379,6 +380,7 @@ export function AudioWorkspace({
   }
 
   async function analyze() {
+    if (lines.length && !window.confirm(locale === "en" ? "Reanalyze existing dialogue? Changed lines may lose their audio selection." : "已有台词。确定重新分析？变动的台词需要重新制作声音。")) return;
     const model = analysisModels.find((item) => item.id === analysisModelId);
     if (!model) return;
     await run(
@@ -394,6 +396,7 @@ export function AudioWorkspace({
   }
 
   async function designVoices() {
+    if (lines.length && lines.every(line => line.voiceProfilePrompt && line.emotionPrompt) && !window.confirm(locale === "en" ? "Redesign existing voice performances?" : "已有配音设计。确定重新设计台词表演？")) return;
     const model = analysisModels.find((item) => item.id === analysisModelId);
     if (!model || !lines.length) return;
     await run(
@@ -402,8 +405,9 @@ export function AudioWorkspace({
           channelId: model.channelId,
           model: model.modelId,
           locale: locale === "en" ? "en" : "zh",
+          options: { fillMissingVoiceDesign: lines.some(line => !line.voiceProfilePrompt || !line.emotionPrompt) },
         }),
-      text.designed,
+      text.submitted,
       "design",
     );
   }
@@ -527,10 +531,10 @@ export function AudioWorkspace({
             ) : (
               <Sparkles className="size-4" />
             )}
-            {text.aiDialogueTools}
+            {lines.length ? text.reanalyze : text.analyze}
           </Button>
           <Button
-            disabled={busy || !analysisModelId || !lines.length}
+            disabled={busy || !analysisModelId || !lines.length || data?.storyboard.storyboard?.status === "director_review_required"}
             onClick={() => void designVoices()}
             size="sm"
             variant={
@@ -555,6 +559,8 @@ export function AudioWorkspace({
           <VoicePresetDialog locale={locale} onCreate={createPreset} />
         </div>
       </header>
+      {data?.storyboard.storyboard?.status === "director_review_required" && <StoryboardReviewNotice projectId={projectId} episodeId={episode.id} locale={locale} />}
+
 
       {error ? (
         <div className="flex items-center justify-between gap-3 border-b py-3">

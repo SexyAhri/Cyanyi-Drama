@@ -107,8 +107,7 @@ export async function selectProjectAsset(input: {
       const request = asRecord(payload.request);
       if (
         assetKind === "video" &&
-        request.canvasDeferredSelection === true &&
-        typeof request.canvasGenerationId === "string" &&
+        (typeof request.generationId === "string" || typeof request.canvasGenerationId === "string") &&
         Number(request.videoSegmentCount) > 1
       ) {
         const tasks = await prisma.mediaTask.findMany({
@@ -116,9 +115,11 @@ export async function selectProjectAsset(input: {
             userId: input.userId,
             projectId: input.projectId,
             kind: "video",
+            targetType: "storyboard_panel",
+            targetId: panel.id,
             payload: {
-              path: ["request", "canvasGenerationId"],
-              equals: request.canvasGenerationId,
+              path: ["request", typeof request.generationId === "string" ? "generationId" : "canvasGenerationId"],
+              equals: String(request.generationId ?? request.canvasGenerationId),
             },
           },
           select: {
@@ -182,6 +183,7 @@ export async function selectProjectAsset(input: {
           data: selectedSegments.map((segment) => ({
             id: `${panel.id}_video_segment_${segment.index}`,
             panelId: panel.id,
+            taskId: segment.taskId,
             videoAssetId: segment.assetId,
             segmentIndex: segment.index,
             startSeconds: segment.start,

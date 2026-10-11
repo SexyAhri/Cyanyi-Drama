@@ -1,5 +1,5 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
-import { isProjectArtStyleId } from "@/lib/projects/art-style";
+import { isProjectArtStyleValue } from "@/lib/projects/art-style";
 import { isEpisodeTargetDurationSeconds } from "@/lib/episodes/production-plan";
 import { prisma } from "@/lib/server/prisma";
 import { getProject } from "@/lib/projects/queries";
@@ -35,7 +35,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       data[field] = body[field];
       continue;
     }
-    if (field === "artStyle" && !isProjectArtStyleId(body[field]))
+    if (field === "artStyle" && !isProjectArtStyleValue(body[field]))
       return attachSessionCookie(
         Response.json({ message: "不支持的项目画风" }, { status: 400 }),
         sessionId,

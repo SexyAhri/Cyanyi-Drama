@@ -1,3 +1,4 @@
+import { getProjectArtStyleDirective } from "@/lib/projects/art-style";
 import { z } from "zod";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { prisma } from "@/lib/server/prisma";
@@ -39,7 +40,7 @@ export async function POST(request: Request, context: Context) {
   const input = parsed.data;
   const episode = await prisma.episode.findFirst({
     where: { id: episodeId, projectId, project: { userId: user.id } },
-    select: { id: true },
+    select: { id: true, project: { select: { config: { select: { artStyle: true } } } } },
   });
   if (!episode) return reply({ message: "剧集不存在" }, 404);
   const canvas = await prisma.creativeCanvas.findUnique({
@@ -203,11 +204,35 @@ export async function POST(request: Request, context: Context) {
       )
         return reply({ message: "首尾帧模式需要同时连接首帧和尾帧" }, 400);
     }
+    const standalonePrompt = [getProjectArtStyleDirective(episode.project.config?.artStyle ?? "realistic", "zh"), compiled.prompt].filter(Boolean).join("\n\n");
     if (input.preview)
       return reply({
-        prompt: compiled.prompt,
+        prompt: standalonePrompt,
         references: compiled.references,
       });
+    const canvasAssetTargets =
+      input.kind === "image"
+        ? [
+            ...new Map(
+              document.data.edges
+                .filter((edge) => edge.to === node.id)
+                .flatMap((edge) => {
+                  const source = document.data.nodes.find(
+                    (item) => item.id === edge.from,
+                  );
+                  return source &&
+                    ["character", "location", "prop"].includes(source.kind) &&
+                    source.entityId
+                    ? [[`${source.kind}:${source.entityId}`, {
+                        entityType: source.kind,
+                        entityId: source.entityId,
+                      }] as const]
+                    : [];
+                })
+                .slice(0, 32),
+            ).values(),
+          ]
+        : [];
     const task = createMediaTask({
       id: `media_task_${crypto.randomUUID()}`,
       idempotencyKey: key,
@@ -221,7 +246,7 @@ export async function POST(request: Request, context: Context) {
       protocol: channel.protocol,
       model: input.model,
       request: {
-        prompt: compiled.prompt,
+        prompt: standalonePrompt,
         canvasRevision: canvas.revision,
         canvasPromptVersionId: node.promptVersions?.at(-1)?.id,
         ratio:
@@ -248,6 +273,7 @@ export async function POST(request: Request, context: Context) {
         ...(compiled.referenceImages.length
           ? { referenceImages: compiled.referenceImages }
           : {}),
+        ...(canvasAssetTargets.length ? { canvasAssetTargets } : {}),
       },
     });
     await store.create(task);

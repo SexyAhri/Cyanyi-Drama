@@ -286,6 +286,7 @@ export async function createStoryboardPanelImageTask(input: {
     model: input.model,
     request: {
       prompt: compiledPrompt,
+      deferredSelection: true,
       ...(input.canvasNodeId ? {canvasNodeId:input.canvasNodeId,canvasDeferredSelection:true,canvasGenerationId:input.idempotencyKey} : {}),
       ...(input.iteration ? { generationIteration: input.iteration } : {}),
       ratio:
@@ -521,6 +522,7 @@ export async function createStoryboardPanelVideoTask(input: {
     0,
     limits.maxReferenceImages,
   );
+  const generationId = input.idempotencyKey ?? randomUUID();
   const tasks = segments.map((segment) => {
     const segmentId = storyboardVideoSegmentId(panel.id, segment.index);
     return createMediaTask({
@@ -538,6 +540,8 @@ export async function createStoryboardPanelVideoTask(input: {
       model: input.model,
       request: {
         prompt: segment.prompt,
+        deferredSelection: true,
+        generationId,
         ...(input.canvasNodeId ? {canvasNodeId:input.canvasNodeId,canvasDeferredSelection:true,canvasGenerationId:input.idempotencyKey} : {}),
         ...(input.iteration ? { generationIteration: input.iteration } : {}),
         ratio:
@@ -563,52 +567,6 @@ export async function createStoryboardPanelVideoTask(input: {
   });
   const store = createDatabaseMediaTaskStore(input.userId);
   for (const task of tasks) await store.create(task);
-  if (!input.canvasNodeId) await prisma.$transaction([
-    ...segments.map((segment, index) =>
-      prisma.storyboardVideoSegment.upsert({
-        where: {
-          panelId_segmentIndex: {
-            panelId: panel.id,
-            segmentIndex: segment.index,
-          },
-        },
-        create: {
-          id: storyboardVideoSegmentId(panel.id, segment.index),
-          panelId: panel.id,
-          taskId: tasks[index].id,
-          segmentIndex: segment.index,
-          startSeconds: segment.startSeconds,
-          endSeconds: segment.endSeconds,
-          durationSeconds: segment.durationSeconds,
-          prompt: segment.prompt,
-          action: segment.action || null,
-          model: input.model,
-          mode: input.mode ?? "reference",
-        },
-        update: {
-          taskId: tasks[index].id,
-          startSeconds: segment.startSeconds,
-          endSeconds: segment.endSeconds,
-          durationSeconds: segment.durationSeconds,
-          prompt: segment.prompt,
-          action: segment.action || null,
-          model: input.model,
-          mode: input.mode ?? "reference",
-          videoAssetId: null,
-        },
-      }),
-    ),
-    prisma.storyboardVideoSegment.deleteMany({
-      where: {
-        panelId: panel.id,
-        segmentIndex: { gte: segments.length },
-      },
-    }),
-    prisma.storyboardPanel.update({
-      where: { id: panel.id },
-      data: { videoAssetId: null, lipSyncAssetId: null },
-    }),
-  ]);
   const queued = [];
   for (const task of tasks)
     queued.push(await enqueueProjectTask(input.userId, task));

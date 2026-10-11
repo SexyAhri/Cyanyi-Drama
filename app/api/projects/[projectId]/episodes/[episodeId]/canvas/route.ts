@@ -1,3 +1,4 @@
+import { reconcileCanvasAssetImages } from "@/lib/media/canvas-asset-links";
 import { z } from "zod";
 import { prisma } from "@/lib/server/prisma";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
@@ -76,4 +77,18 @@ export async function PUT(request: Request, context: Context) {
       409,
     );
   return reply({ revision: revision + 1 });
+}
+
+export async function POST(_request: Request, context: Context) {
+  const { user, sessionId } = await ensureAnonymousUser();
+  const { projectId, episodeId } = await context.params;
+  const canvas = await prisma.creativeCanvas.findFirst({
+    where: { episodeId, episode: { projectId, project: { userId: user.id } } },
+  });
+  const reply = (body: object, status = 200) => attachSessionCookie(Response.json(body, { status }), sessionId);
+  if (!canvas) return reply({ message: "画布不存在" }, 404);
+  const parsed = canvasDocumentSchema.safeParse(canvas.document);
+  if (!parsed.success) return reply({ message: "画布数据无效" }, 400);
+  await reconcileCanvasAssetImages(parsed.data, user.id, projectId, episodeId);
+  return reply({ synced: true });
 }

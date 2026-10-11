@@ -1,3 +1,5 @@
+import { linkCanvasGeneratedImage } from "@/lib/media/canvas-asset-links";
+import { assertEpisodeTimelineCurrent } from "@/lib/production/timeline-source-state";
 import { decryptSecret } from "@/lib/server/crypto";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { Prisma } from "@prisma/client";
@@ -52,8 +54,10 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
   const payload = task.payload as { request?: TaskRequest };
   const request = payload.request ?? {};
   const resolvedRequest = await resolveStoredReferenceImages(request, userId);
+  const providerRequest = { ...resolvedRequest };
+  delete (providerRequest as Record<string, unknown>).canvasAssetTargets;
   const outboundRequest = sanitizeMediaProviderRequest(
-    resolvedRequest,
+    providerRequest,
     task.kind === "video" ? "video" : task.kind === "audio" ? "audio" : "image",
   ).request;
   const operation =
@@ -207,6 +211,10 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
     },
   });
   await linkGeneratedAsset(task, userId, output[0], request);
+  if (task.targetType === "canvas_node" && task.kind === "image" && task.projectId) {
+    for (const asset of output.slice(1))
+      await linkCanvasGeneratedImage(task, userId, task.projectId, asset, request);
+  }
   await prisma.mediaTaskEvent.create({
     data: {
       taskId: task.id,
@@ -541,6 +549,7 @@ async function renderEpisodeTimeline(
 ): Promise<MediaAsset[]> {
   if (!episodeId || !projectId)
     throw new Error("TIMELINE_RENDER_EPISODE_REQUIRED");
+  await assertEpisodeTimelineCurrent(userId, projectId, episodeId);
 
   const [storyboard, editorProject, voiceLines, episodeAudioTracks] =
     await Promise.all([
@@ -886,6 +895,10 @@ async function linkGeneratedAsset(
   }
   const projectId = task.projectId;
   if (!projectId) return;
+  if (task.targetType === "canvas_node" && task.kind === "image") {
+    await linkCanvasGeneratedImage(task, userId, projectId, asset, request);
+    return;
+  }
   if (task.targetType === "character_appearance") {
     const appearance = await prisma.characterAppearance.findFirst({
       where: {
@@ -991,13 +1004,14 @@ async function linkGeneratedAsset(
         });
     });
   } else if (task.targetType === "storyboard_panel") {
-    if ((request as Record<string, unknown>).canvasDeferredSelection === true) return;
+    if ((request as Record<string, unknown>).canvasDeferredSelection === true || (request as Record<string, unknown>).deferredSelection === true) return;
     const segmentId = stringField(request, "videoSegmentId");
     const segmentIndex = numberField(request, "videoSegmentIndex");
     if (task.kind === "video" && segmentId) {
       const updated = await prisma.storyboardVideoSegment.updateMany({
         where: {
           id: segmentId,
+          taskId: task.id,
           panelId: task.targetId,
           panel: {
             storyboard: {
@@ -1071,6 +1085,7 @@ async function linkGeneratedAsset(
     await prisma.editorProject.updateMany({
       where: {
         episodeId: task.episodeId ?? "",
+        renderTaskId: task.id,
         episode: { projectId, project: { userId } },
       },
       data: {
@@ -1118,6 +1133,7 @@ async function linkGeneratedAsset(
     })
     .catch(() => undefined);
 }
+
 
 export async function generateImage(
   baseUrl: string,

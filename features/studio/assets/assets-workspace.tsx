@@ -1,4 +1,5 @@
 "use client";
+import { isAssetVisualProfileComplete } from "@/lib/assets/visual-profile";
 
 import {
   Boxes,
@@ -162,7 +163,7 @@ export function AssetsWorkspace({
             label: selectedEntity.name,
             metadata: {
               candidates: selectedEntity.candidates.length,
-              visualProfileReady: Boolean(selectedEntity.visualProfile),
+              visualProfileReady: isAssetVisualProfileComplete(selectedEntity.visualProfile),
             },
           }
         : undefined,
@@ -307,7 +308,7 @@ export function AssetsWorkspace({
                     trigger={
                       <Button size="sm" variant="outline">
                         <Sparkles className="size-4" />
-                        {copy.batchVisualDesign} · {checkedEntities.length}
+                        {locale === "en" ? "Fill missing visual designs" : "补齐缺失视觉设定"} · {checkedEntities.filter(entity => !isAssetVisualProfileComplete(entity.visualProfile)).length}
                       </Button>
                     }
                   />
@@ -552,6 +553,10 @@ function DomainAssetView({
         <div className="max-h-72 overflow-y-auto p-1.5 xl:max-h-none xl:flex-1">
           {entities.map((entity) => {
             const task = latestEntityTask(entity, tasks);
+            const hasCandidate = entity.candidates.some((candidate) => candidate.url);
+            const status = task && ["queued", "running", "failed", "canceled"].includes(task.status)
+              ? runtimeStatusToStageStatus(task.status)
+              : hasCandidate ? "completed" : undefined;
             return (
               <div
                 className={cn(
@@ -580,16 +585,16 @@ function DomainAssetView({
                     {entity.name}
                   </span>
                   <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-                    {entity.visualProfile ? copy.visualReady : copy.notDesigned}
+                    {isAssetVisualProfileComplete(entity.visualProfile) ? copy.visualReady : entity.visualProfile ? (locale === "en" ? "Incomplete design" : "设定待补齐") : copy.notDesigned}
                     {" · "}
                     {entity.candidates.length} {copy.candidates}
                   </span>
                 </button>
-                {task ? (
+                {status ? (
                   <StatusIndicator
                     compact
                     locale={locale}
-                    status={runtimeStatusToStageStatus(task.status)}
+                    status={status}
                   />
                 ) : null}
               </div>

@@ -11,6 +11,8 @@ import {
 } from "@/lib/assets/visual-extraction";
 import { adaptEpisodeSource } from "@/lib/episodes/adaptation";
 import { splitEpisodesWithAi } from "@/lib/episodes/split";
+import { analyzeManuscript } from "@/lib/episodes/manuscript-analysis";
+import { generateOriginalEpisode } from "@/lib/production/original-episode-generation";
 import { designStoryboardMediaPrompt } from "@/lib/media/storyboard-prompt-design";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import {
@@ -212,6 +214,9 @@ async function processClaimedWorkflowJob(
         }),
       loadRunArtifact: (artifactType, refId) =>
         loadRunArtifact({ runId, artifactType, refId }),
+      reportProgress: async message => { await prisma.workflowEvent.create({ data: {
+        runId, stepId: step.id, type: "progress", status: "running", message,
+      } }); },
     });
     await assertWorkflowRunActive({ runId, workerId });
     const outputJson = toInputJson(output);
@@ -406,12 +411,15 @@ export function classifyWorkflowFailureCode(message: string) {
 async function runStep(
   userId: string,
   run: {
+    id: string;
     projectId: string;
+    workflowType: string;
     episodeId: string | null;
     input: Prisma.JsonValue | null;
   },
   step: { stepType: string; input: Prisma.JsonValue | null },
   runtime: {
+    reportProgress?: (message: string) => Promise<void>;
     attempt: number;
     assertActive: () => Promise<void>;
     persistArtifact: (
@@ -429,6 +437,22 @@ async function runStep(
     ) => Promise<unknown | null>;
   },
 ) {
+  if (step.stepType === "generate_original_episode") {
+    const input = mergedStepInput(run.input, step.input);
+    const channelId = getString(input.channelId), model = getString(input.model);
+    if (!run.episodeId || !channelId || !model) throw new Error("WORKFLOW_ORIGINAL_EPISODE_INPUT_REQUIRED");
+    return generateOriginalEpisode({ userId, projectId: run.projectId, episodeId: run.episodeId,
+      channelId, model, locale: getString(input.locale) === "en" ? "en" : "zh",
+      workflowId: run.id, instructions: getString(input.instructions) }, runtime);
+  }
+  if (step.stepType === "analyze_manuscript") {
+    const input = mergedStepInput(run.input, step.input);
+    const manuscriptId = getString(input.manuscriptId), sourceHash = getString(input.sourceHash);
+    const channelId = getString(input.channelId), model = getString(input.model);
+    if (!manuscriptId || !sourceHash || !channelId || !model) throw new Error("WORKFLOW_MANUSCRIPT_INPUT_REQUIRED");
+    return analyzeManuscript({ userId, projectId: run.projectId, manuscriptId, sourceHash,
+      channelId, model, locale: getString(input.locale) === "en" ? "en" : "zh" }, runtime);
+  }
   if (step.stepType === "design_asset_visual") {
     const input = mergedStepInput(run.input, step.input);
     const channelId = getString(input.channelId);
@@ -449,6 +473,7 @@ async function runStep(
       model,
       targetId,
       targetType,
+      completeMissing: input.completeMissing === true,
       locale: getString(input.locale) === "en" ? "en" : "zh",
     });
     await runtime.persistArtifact("asset.visual-profile", targetId, result);
@@ -586,6 +611,7 @@ async function runStep(
       mode: mode as "faithful" | "polish" | "drama" | "custom",
       instructions: getString(input.instructions),
       locale: getString(input.locale) === "en" ? "en" : "zh",
+      hooks: runtime,
     });
     await runtime.persistArtifact("adaptation.source", source.id, { source });
     if (source.promptTrace)
@@ -622,6 +648,7 @@ async function runStep(
       channelId,
       model,
       locale: getString(input.locale) === "en" ? "en" : "zh",
+      hooks: runtime,
     });
     const episodes = result.episodes.map((episode) => ({
       ...episode,
@@ -779,6 +806,16 @@ async function runStep(
   }
   if (step.stepType === "design_voice_performance") {
     if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
+    const storyboard = await prisma.storyboard.findUnique({
+      where: { episodeId: run.episodeId },
+      select: { status: true },
+    });
+    if (storyboard?.status === "director_review_required")
+      throw new Error("请先在分镜工作台确认导演审核，再恢复配音设计任务");
+    if (run.workflowType === "episode-preproduction" && !(await prisma.voiceLine.count({ where: { episodeId: run.episodeId } }))) {
+      await runtime.persistArtifact("voice.performance-design", run.episodeId, { voiceLines: [], skipped: true, reason: "本集没有需要配音的台词" });
+      return { voiceLines: [], skipped: true };
+    }
     const input = mergedStepInput(run.input, step.input);
     const channelId = getString(input.channelId);
     const model = getString(input.model);
@@ -791,6 +828,7 @@ async function runStep(
       channelId,
       model,
       locale: getString(input.locale) === "en" ? "en" : "zh",
+      fillMissing: input.fillMissingVoiceDesign === true,
     });
     await runtime.persistArtifact("voice.performance-design", run.episodeId, {
       voiceLines: result.voiceLines,

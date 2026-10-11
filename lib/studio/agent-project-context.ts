@@ -3,10 +3,11 @@ import {
   listNovelLocations,
 } from "@/lib/novel/domain-store";
 import { listProductionProps } from "@/lib/production/domain-store";
-import { parseAssetVisualProfile } from "@/lib/assets/visual-profile";
+import { parseAssetVisualProfile, isAssetVisualProfileComplete } from "@/lib/assets/visual-profile";
 import { buildAssetGenerationPrompt } from "@/lib/assets/generation-prompt";
 import { prisma } from "@/lib/server/prisma";
 import { canvasDocumentSchema } from "./canvas-document";
+import { Prisma } from "@prisma/client";
 
 function readJson(value: string | null) {
   try {
@@ -29,6 +30,14 @@ export async function loadAgentProjectContext(input: {
     projectId: input.projectId,
     project: { userId: input.userId },
   };
+  const episodeIndexRows = await prisma.episode.findMany({ where: owned,
+    orderBy: { episodeNumber: "asc" }, take: 500, select: { id: true, name: true, episodeNumber: true,
+      activeSourceKind: true, _count: { select: { clips: true, voiceLines: true } },
+      clips: { where: { screenplay: null }, take: 1, select: { id: true } },
+      storyboard: { select: { _count: { select: { panels: true } } } } } });
+  const detailIds = input.detailIds ?? [];
+  const matchingIds = episodeIndexRows.filter(item => item.id === input.episodeId || detailIds.includes(item.id) ||
+    input.request.includes(item.name) || input.request.includes(`第${item.episodeNumber}集`)).map(item => item.id);
   const [
     episodes,
     characters,
@@ -40,23 +49,28 @@ export async function loadAgentProjectContext(input: {
     manuscripts,
   ] = await Promise.all([
     prisma.episode.findMany({
-      where: owned,
+      where: { ...owned, OR: [
+        { id: { in: [...matchingIds, ...(input.episodeId ? [input.episodeId] : [])] } },
+        { sourceVersions: { some: { id: { in: detailIds } } } },
+        { storyboard: { panels: { some: { id: { in: detailIds } } } } },
+        { voiceLines: { some: { id: { in: detailIds } } } },
+      ] },
+      take: 8,
       orderBy: { episodeNumber: "asc" },
       select: {
         id: true,
         name: true,
         episodeNumber: true,
-        novelText: true,
         activeSourceKind: true,
-        clips: { select: { screenplay: true } },
+        clips: { take: 200, select: { status: true } },
         sourceVersions: {
           orderBy: { createdAt: "desc" },
+          take: 20,
           select: {
             id: true,
             kind: true,
             version: true,
             title: true,
-            content: true,
           },
         },
         storyboard: {
@@ -64,6 +78,7 @@ export async function loadAgentProjectContext(input: {
             version: true,
             status: true,
             panels: {
+              take: 100,
               orderBy: { panelIndex: "asc" },
               select: {
                 id: true,
@@ -90,6 +105,7 @@ export async function loadAgentProjectContext(input: {
           },
         },
         voiceLines: {
+          take: 100,
           orderBy: { lineIndex: "asc" },
           select: {
             id: true,
@@ -143,7 +159,6 @@ export async function loadAgentProjectContext(input: {
         deliverableType: true,
         status: true,
         version: true,
-        payload: true,
       },
     }),
     prisma.mediaAsset.findMany({
@@ -170,6 +185,7 @@ export async function loadAgentProjectContext(input: {
     }),
     prisma.manuscript.findMany({
       where: owned,
+      take: 50,
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
@@ -178,10 +194,36 @@ export async function loadAgentProjectContext(input: {
         synopsis: true,
         sourceFileName: true,
         charCount: true,
-        sourceText: true,
       },
     }),
   ]);
+  const sourcePresence = episodeIndexRows.length ? await prisma.$queryRaw<Array<{ id: string; present: boolean }>>(Prisma.sql`
+    SELECT id, COALESCE(length(trim(novel_text)) > 0, false) AS present FROM episodes
+    WHERE id IN (${Prisma.join(episodeIndexRows.map(item => item.id))})`) : [];
+  const originalPlans = await prisma.$queryRaw<Array<{ id: string; title: string; episodeIds: string[]; outlines: unknown }>>(Prisma.sql`
+    SELECT id, title, payload->'adoption'->'episodeIds' AS "episodeIds", payload->'storyPackage'->'episodeOutlines' AS outlines
+    FROM production_deliverables WHERE project_id = ${input.projectId} AND user_id = ${input.userId}
+      AND status IN ('approved', 'locked') AND superseded_at IS NULL AND payload->>'packageFormat' = 'cyanyi-story-package-v1'
+      AND payload->'adoption' IS NOT NULL ORDER BY updated_at DESC LIMIT 5`);
+  const requestedDeliverables = deliverables.filter(item => detailIds.includes(item.id) || input.request.includes(item.title) ||
+    /世界观|制作规范|world|bible/i.test(input.request)).slice(0, 8).map(item => item.id);
+  const deliverablePayloads = requestedDeliverables.length ? await prisma.$queryRaw<Array<{ id: string; payload: unknown }>>(Prisma.sql`
+    SELECT id, CASE WHEN payload->>'packageFormat' = 'cyanyi-manuscript-dossier-v1'
+      THEN jsonb_build_object('packageFormat', payload->'packageFormat', 'summary', payload->'summary',
+        'manuscriptId', payload->'manuscriptId', 'sourceHash', payload->'sourceHash') ELSE payload END AS payload
+    FROM production_deliverables WHERE id IN (${Prisma.join(requestedDeliverables)})`) : [];
+  const episodeTexts = episodes.length ? await prisma.$queryRaw<Array<{ id: string; text: string | null; length: number }>>(Prisma.sql`
+    SELECT id, substring(novel_text from 1 for 12000) AS text, char_length(novel_text)::int AS length
+    FROM episodes WHERE id IN (${Prisma.join(episodes.map(item => item.id))})`) : [];
+  const requestedSourceIds = episodes.flatMap(item => item.sourceVersions.filter((source, index) =>
+    detailIds.includes(source.id) || (index < 3 && /原文|稿件|版本|source|version/i.test(input.request))).map(source => source.id));
+  const sourceTexts = requestedSourceIds.length ? await prisma.$queryRaw<Array<{ id: string; text: string; length: number }>>(Prisma.sql`
+    SELECT id, substring(content from 1 for 12000) AS text, char_length(content)::int AS length
+    FROM episode_source_versions WHERE id IN (${Prisma.join(requestedSourceIds)})`) : [];
+  const requestedManuscripts = manuscripts.filter(item => detailIds.includes(item.id) || input.request.includes(item.title)).map(item => item.id);
+  const manuscriptTexts = requestedManuscripts.length ? await prisma.$queryRaw<Array<{ id: string; text: string; length: number }>>(Prisma.sql`
+    SELECT id, substring(source_text from 1 for 12000) AS text, char_length(source_text)::int AS length
+    FROM manuscripts WHERE id IN (${Prisma.join(requestedManuscripts)})`) : [];
   const assets = [
     ...(characters ?? []).map((item) => ({
       id: item.id,
@@ -254,31 +296,32 @@ export async function loadAgentProjectContext(input: {
       source: "saved_project_data",
       mediaLimit: 200,
       deliverableLimit: 100,
-      detailTextLimit: 30000,
+      detailTextLimit: 12000,
+      episodeIndexLimit: 500,
+      episodeDetailLimit: 8,
       otherAssetsHaveSummaries: true,
     },
-    episodeIndex: episodes.map((item) => ({
+    originalPlans,
+    episodeIndex: episodeIndexRows.map((item) => ({
       id: item.id,
       name: item.name,
       number: item.episodeNumber,
-      hasScript: Boolean(item.novelText?.trim()),
-      hasStructuredScript: Boolean(
-        item.clips.length && item.clips.every((clip) => clip.screenplay),
-      ),
+      hasScript: sourcePresence.find(row => row.id === item.id)?.present ?? false,
+      hasStructuredScript: item._count.clips > 0 && item.clips.length === 0,
       sourceKind: item.activeSourceKind,
-      shotCount: item.storyboard?.panels.length ?? 0,
-      voiceLineCount: item.voiceLines.length,
-      canvasNodeCount:
-        canvasDocumentSchema.safeParse(item.canvas?.document).data?.nodes
-          .length ?? 0,
+      canContinueOriginal: item.episodeNumber > 1 && originalPlans.some(plan => plan.episodeIds?.includes(item.id)) &&
+        Boolean(episodeIndexRows.some(previous => previous.episodeNumber === item.episodeNumber - 1 && sourcePresence.find(row => row.id === previous.id)?.present)),
+      shotCount: item.storyboard?._count.panels ?? 0,
+      voiceLineCount: item._count.voiceLines,
+      canvasNodeCount: 0,
     })),
-    manuscripts: manuscripts.map(({ sourceText, ...item }) => ({
+    manuscripts: manuscripts.map(item => ({
       ...item,
       ...(input.detailIds?.includes(item.id) ||
       input.request.includes(item.title)
         ? {
-            text: sourceText.slice(0, 30000),
-            truncated: sourceText.length > 30000,
+            text: manuscriptTexts.find(row => row.id === item.id)?.text ?? "",
+            truncated: item.charCount > 12000,
           }
         : {}),
     })),
@@ -301,6 +344,7 @@ export async function loadAgentProjectContext(input: {
         ...(detailed
           ? {
               visualSpec: profile?.spec ?? null,
+              visualProfileReady: isAssetVisualProfileComplete(profile),
               generationPrompt: buildAssetGenerationPrompt({
                 ...item,
                 visualProfile: profile,
@@ -317,8 +361,8 @@ export async function loadAgentProjectContext(input: {
         name: item.name,
         number: item.episodeNumber,
         sourceKind: item.activeSourceKind,
-        script: item.novelText?.slice(0, 30000) ?? null,
-        scriptTruncated: (item.novelText?.length ?? 0) > 30000,
+        script: episodeTexts.find(row => row.id === item.id)?.text ?? null,
+        scriptTruncated: (episodeTexts.find(row => row.id === item.id)?.length ?? 0) > 12000,
         sourceVersions: item.sourceVersions.map((source) => ({
           id: source.id,
           kind: source.kind,
@@ -329,8 +373,8 @@ export async function loadAgentProjectContext(input: {
             ((source.title && input.request.includes(source.title)) ||
               /原文|稿件|版本|source|version/i.test(input.request)))
             ? {
-                text: source.content.slice(0, 30000),
-                truncated: source.content.length > 30000,
+                text: sourceTexts.find(row => row.id === source.id)?.text ?? "",
+                truncated: (sourceTexts.find(row => row.id === source.id)?.length ?? 0) > 12000,
               }
             : {}),
         })),
@@ -385,12 +429,12 @@ export async function loadAgentProjectContext(input: {
       ];
     }),
     voicePresets: presets,
-    deliverables: deliverables.map(({ payload, ...item }) => ({
+    deliverables: deliverables.map(item => ({
       ...item,
       ...(input.detailIds?.includes(item.id) ||
       input.request.includes(item.title) ||
       /世界观|制作规范|world|bible/i.test(input.request)
-        ? { payload }
+        ? { payload: deliverablePayloads.find(row => row.id === item.id)?.payload ?? null }
         : {}),
     })),
     media,

@@ -39,7 +39,11 @@ import {
   getStudioStageStates,
   STUDIO_STAGE_IDS,
 } from "../stage-state";
-import type { StudioSelectionContext, StudioStageId } from "../types";
+import type {
+  ProductionDeliverableCatalog,
+  StudioSelectionContext,
+  StudioStageId,
+} from "../types";
 import { StudioInspector } from "../inspector/studio-inspector";
 import { operationErrorMessage } from "../inspector/inspector-view-model";
 import { EpisodeSidebar } from "./episode-sidebar";
@@ -48,7 +52,11 @@ import { DirectorWorkflowBar } from "./director-workflow-bar";
 import { StageOverview } from "./stage-overview";
 import { WorkspaceTopbar } from "./workspace-topbar";
 import { WritingWorkspace } from "../writing/writing-workspace";
-import { updateStudioProjectConfig } from "../api";
+import {
+  loadStudioDeliverables,
+  updateStudioProjectConfig,
+  startStudioEpisodePreproduction,
+} from "../api";
 import { CanvasWorkspace } from "../canvas/canvas-workspace";
 
 export function WorkspacePage({
@@ -67,6 +75,8 @@ export function WorkspacePage({
   const [episodesOpen, setEpisodesOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  const [deliverables, setDeliverables] =
+    useState<ProductionDeliverableCatalog | null>(null);
   const [canvasSelections, setCanvasSelections] = useState<
     StudioSelectionContext[]
   >([]);
@@ -78,6 +88,9 @@ export function WorkspacePage({
   );
   const [selection, setSelection] = useState<StudioSelectionContext>();
   const [analysisModelId, setAnalysisModelId] = useState("");
+  const [startingPreparation, setStartingPreparation] = useState(false);
+  const [packageSync, setPackageSync] = useState<{ key: string; error?: string }>({ key: "" });
+  const [packageSyncRevision, setPackageSyncRevision] = useState(0);
   const previousWorkflowSteps = useRef<Map<string, string> | null>(null);
   const beforeCanvasLeave = useRef<(() => Promise<boolean>) | undefined>(
     undefined,
@@ -91,6 +104,29 @@ export function WorkspacePage({
   } = useStudioModels();
   const { createEpisode, error, isLoading, isRefreshing, refresh, snapshot } =
     useWorkspace(projectId);
+
+  const dossierRevision = snapshot?.workflows.filter(run => run.workflowType === "manuscript-analysis" && run.status === "succeeded")
+    .map(run => `${run.id}:${run.updatedAt}`).join("|") ?? "";
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadStudioDeliverables(projectId, controller.signal)
+      .then((catalog) => {
+        if (!controller.signal.aborted) setDeliverables(catalog);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setDeliverables(null);
+      });
+    return () => controller.abort();
+  }, [projectId, dossierRevision]);
+
+  async function refreshStudioData() {
+    const [result, catalog] = await Promise.all([
+      refresh(),
+      loadStudioDeliverables(projectId).catch(() => null),
+    ]);
+    if (catalog) setDeliverables(catalog);
+    return result;
+  }
 
   const requestedEpisodeId = searchParams.get("episode") ?? undefined;
   const canvasOpen = searchParams.get("view") === "canvas";
@@ -111,6 +147,30 @@ export function WorkspacePage({
   const selectedEpisode = snapshot
     ? getSelectedEpisode(snapshot.project.episodes, requestedEpisodeId)
     : undefined;
+  const packageEpisodeId = selectedEpisode?.activeSourceKind === "adapted"
+    ? selectedEpisode.id : undefined;
+  const packageSourceId = selectedEpisode?.activeSourceId;
+  const packageSyncKey = `${projectId}:${packageEpisodeId ?? ""}:${packageSourceId ?? ""}:${packageSyncRevision}`;
+  const packageSyncPending = Boolean(packageEpisodeId && packageSync.key !== packageSyncKey);
+  useEffect(() => {
+    if (!packageEpisodeId) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(packageEpisodeId)}/reuse-package`, {
+          method: "POST", signal: controller.signal,
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || "同步策划内容失败");
+        await refresh();
+        if (!controller.signal.aborted) setPackageSync({ key: packageSyncKey });
+      } catch (error) {
+        if (!controller.signal.aborted) setPackageSync({ key: packageSyncKey,
+          error: error instanceof Error ? error.message : "同步策划内容失败" });
+      }
+    })();
+    return () => controller.abort();
+  }, [packageEpisodeId, packageSyncKey, projectId, refresh]);
   const stages = snapshot
     ? getStudioStageStates(snapshot, selectedEpisode?.id)
     : [];
@@ -278,6 +338,30 @@ export function WorkspacePage({
     );
   }
 
+  const selectedReadiness = selectedEpisode ? snapshot.readiness?.episodes[selectedEpisode.id] : undefined;
+  const preparationNeedsReview = Boolean(selectedReadiness?.storyboard && !selectedReadiness.storyboardApproved);
+  async function prepareEpisode() {
+    if (preparationNeedsReview) {
+      await changeCanvasView(false);
+      await updateSelection({ stageId: "storyboard" });
+      return;
+    }
+    const model = analysisModels.find(item => item.id === analysisModelId);
+    if (!selectedEpisode || !model || startingPreparation) return;
+    setStartingPreparation(true);
+    try {
+      await startStudioEpisodePreproduction(projectId, selectedEpisode.id, {
+        channelId: model.channelId, model: model.modelId, locale: locale === "en" ? "en" : "zh",
+      });
+      toast.success(locale === "en" ? "Preproduction submitted. Review findings in the storyboard workspace before continuing." : "前期制作已提交。若有导演审核问题，请在分镜工作台确认后继续。");
+      await refreshStudioData();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : copy.actionFailed);
+      await refreshStudioData();
+    }
+    finally { setStartingPreparation(false); }
+  }
+
   const sidebar = (
     <EpisodeSidebar
       createEpisode={createEpisode}
@@ -288,12 +372,13 @@ export function WorkspacePage({
         setEpisodesOpen(false);
       }}
       onSelect={(episodeId) => {
-        updateSelection({ episodeId });
+        updateSelection({ episodeId, stageId: "writing" });
         setEpisodesOpen(false);
       }}
-      onRefresh={() => refresh()}
+      onRefresh={refreshStudioData}
       selectedEpisodeId={selectedEpisode?.id}
       snapshot={snapshot}
+      deliverables={deliverables}
     />
   );
 
@@ -321,13 +406,6 @@ export function WorkspacePage({
           onSelect={(stageId) => updateSelection({ stageId })}
           stages={stages}
         />
-        {!canvasOpen && (
-          <DirectorWorkflowBar
-            stage={activeStage}
-            locale={locale}
-            onSelect={(stageId) => updateSelection({ stageId })}
-          />
-        )}
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-1.5">
           <Button
             size="sm"
@@ -343,6 +421,11 @@ export function WorkspacePage({
             onClick={() => void changeCanvasView(true)}
           >
             无限画布
+          </Button>
+          <Button size="sm" variant="outline" disabled={startingPreparation || !selectedEpisode?.novelText || (!preparationNeedsReview && !analysisModelId)}
+            onClick={() => void prepareEpisode()}>
+            {startingPreparation && <LoaderCircle className="size-3.5 animate-spin" />}
+            {preparationNeedsReview ? (locale === "en" ? "Review existing storyboard" : "检查已有分镜草案") : (locale === "en" ? "Continue preproduction" : "继续本集前期制作")}
           </Button>
           {!canvasOpen && selection?.kind === "panel" && (
             <Button
@@ -364,6 +447,7 @@ export function WorkspacePage({
           >
             导演助手与任务
           </Button>
+          {!canvasOpen && <DirectorWorkflowBar stage={activeStage} locale={locale} onSelect={(stageId) => updateSelection({ stageId })} compact />}
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -384,7 +468,19 @@ export function WorkspacePage({
                   : "min-h-0 min-w-0 flex-1 overflow-y-auto"
             }
           >
-            {canvasOpen && selectedEpisode ? (
+            {packageSync.error && packageSync.key === packageSyncKey && (
+              <div role="alert" className="flex flex-wrap items-center gap-3 border-b px-5 py-3 text-sm">
+                <p className="min-w-0 flex-1 text-destructive">{packageSync.error}</p>
+                <Button size="sm" variant="outline" onClick={() => setPackageSyncRevision(value => value + 1)}>{copy.retry}</Button>
+                <Button size="sm" variant="outline" onClick={() => setActivityOpen(true)}>{locale === "en" ? "View tasks" : "查看制作任务"}</Button>
+              </div>
+            )}
+            {packageSyncPending ? (
+              <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-muted-foreground" role="status">
+                <LoaderCircle className="size-4 animate-spin" />
+                {locale === "en" ? "Connecting existing package material…" : "正在接入已有场次、分镜提示词与台词…"}
+              </div>
+            ) : canvasOpen && selectedEpisode ? (
               <CanvasWorkspace
                 key={selectedEpisode.id}
                 projectId={projectId}
@@ -412,6 +508,11 @@ export function WorkspacePage({
               />
             ) : selectedStage?.id === "writing" && selectedEpisode ? (
               <WritingWorkspace
+                canContinueOriginal={selectedEpisode.episodeNumber > 1 && Boolean(deliverables?.deliverables.some(row => {
+                  const adoption = row.payload.adoption as { episodeIds?: string[] } | undefined;
+                  return row.payload.packageFormat === "cyanyi-story-package-v1" && ["approved", "locked"].includes(row.status) &&
+                    adoption?.episodeIds?.includes(selectedEpisode.id);
+                }))}
                 analysisModelId={analysisModelId}
                 onAnalysisModelChange={changeAnalysisModel}
                 episode={selectedEpisode}
@@ -521,7 +622,7 @@ export function WorkspacePage({
                 locale={locale}
                 models={analysisModels}
                 onAnalysisModelChange={changeAnalysisModel}
-                onRefresh={() => refresh()}
+                onRefresh={refreshStudioData}
                 snapshot={snapshot}
                 selections={canvasOpen ? canvasSelections : undefined}
                 onEditContext={

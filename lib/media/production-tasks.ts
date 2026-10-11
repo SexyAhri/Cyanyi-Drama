@@ -1,3 +1,4 @@
+import { assertEpisodeTimelineCurrent } from "@/lib/production/timeline-source-state";
 import { randomUUID } from "node:crypto";
 
 import { prisma } from "@/lib/server/prisma";
@@ -76,6 +77,10 @@ export async function createProductionTask(input: {
     },
   });
   if (!ownsEpisode) throw new ProductionTaskError("项目或剧集不存在", 404);
+  if (input.targetType === "editor_render") {
+    try { await assertEpisodeTimelineCurrent(input.userId, input.projectId, input.episodeId); }
+    catch (error) { throw new ProductionTaskError(error instanceof Error ? error.message : "时间线素材已变化", 409); }
+  }
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,

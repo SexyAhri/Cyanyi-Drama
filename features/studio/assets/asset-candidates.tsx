@@ -238,27 +238,20 @@ function Candidate({
         />
         <div className="ml-auto flex items-center gap-0.5">
           {candidate.url && candidate.assetId && !candidate.selected ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label={copy.setAsSelected}
-                    disabled={isSelecting}
-                    onClick={() => onSelect(candidate)}
-                    size="icon-sm"
-                    type="button"
-                    variant="ghost"
-                  />
-                }
-              >
-                {isSelecting ? (
-                  <LoaderCircle className="size-3.5 animate-spin" />
-                ) : (
-                  <Check className="size-3.5" />
-                )}
-              </TooltipTrigger>
-              <TooltipContent>{copy.setAsSelected}</TooltipContent>
-            </Tooltip>
+            <Button
+              disabled={isSelecting}
+              onClick={() => onSelect(candidate)}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              {isSelecting ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : (
+                <Check className="size-3.5" />
+              )}
+              {copy.setAsSelected}
+            </Button>
           ) : null}
           {candidate.url ? (
             <Tooltip>

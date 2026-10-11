@@ -42,6 +42,7 @@ export async function POST(request: Request, context: Context) {
       model,
       locale,
       ...item,
+      completeMissing: body.completeMissing === true,
     });
     if (!result)
       return attachSessionCookie(

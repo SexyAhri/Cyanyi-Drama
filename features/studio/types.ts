@@ -1,3 +1,4 @@
+import type { ProductionReadiness } from "@/lib/studio/production-readiness";
 import type { MediaTask } from "@/lib/media/task-contract";
 import type {
   NovelCharacterRecord,
@@ -12,6 +13,7 @@ import type {
   ManuscriptRecord,
   ProjectRecord,
 } from "@/lib/projects/types";
+import type { StoryPackage } from "@/lib/production/story-package-contract";
 
 export type StudioLocale = "en" | "zh-CN";
 
@@ -69,6 +71,7 @@ export type WorkflowRunSummary = {
 };
 
 export type WorkspaceSnapshot = {
+  readiness?: ProductionReadiness;
   project: ProjectWithEpisodes;
   tasks: StudioMediaTask[];
   workflows: WorkflowRunSummary[];
@@ -227,6 +230,10 @@ export type EpisodeSplitDraft = {
 };
 
 export type EpisodeSplitResult = {
+  workflowId?: string;
+  pending?: boolean;
+  analysisWorkflowId?: string;
+  analysisError?: string;
   method: "markers" | "ai";
   markerType: string | null;
   confidence: "high" | "medium" | "low" | null;
@@ -317,6 +324,11 @@ export type ProductionDeliverableRecord = {
 export type ProductionDeliverableCatalog = {
   departments: ProductionDepartmentDefinition[];
   deliverables: ProductionDeliverableRecord[];
+};
+
+export type StoryPackageGenerationResult = {
+  deliverable: Pick<ProductionDeliverableRecord, "id" | "title" | "version" | "status">;
+  storyPackage: StoryPackage;
 };
 
 export type StudioStoryboardPanel = StoryboardPanelRecord;

@@ -30,11 +30,15 @@ export type CanvasToolbarProps = {
   dirty: boolean;
   saveError: string;
   nodeCount: number;
+  reusableBranchCount: number;
+  showReusableBranches: boolean;
+  onToggleReusableBranches: () => void;
   selectedCount: number;
   canUndo: boolean;
   canRedo: boolean;
   outlineOpen: boolean;
   libraryOpen: boolean;
+  canAssembleEpisodeGraph?: boolean;
   branches: boolean;
   onTool: (tool: "select" | "pan") => void;
   onCreate: (kind: "text" | "image" | "video") => void;
@@ -50,6 +54,7 @@ export type CanvasToolbarProps = {
   onExport: () => void;
   onSave: () => void;
   onReview: () => void;
+  onAssembleEpisodeGraph?: () => void;
 };
 function Tool({
   icon: Icon,
@@ -97,10 +102,28 @@ export function CanvasHeader(props: CanvasToolbarProps) {
         <Layers className="mr-1 size-4" />
         {t("资产库", "Assets")}
       </Button>
+      {props.onAssembleEpisodeGraph && (
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={props.busy || !props.canAssembleEpisodeGraph}
+          onClick={props.onAssembleEpisodeGraph}
+        >
+          <GitBranch className="mr-1 size-4" />
+          {t("整理整集画布", "Build episode canvas")}
+        </Button>
+      )}
       <span className="hidden text-xs text-muted-foreground sm:block">
         {props.nodeCount}
         {t(" 个节点", " nodes")}
       </span>
+      {props.reusableBranchCount > 0 && (
+        <Button size="sm" variant={props.showReusableBranches ? "secondary" : "ghost"}
+          aria-pressed={props.showReusableBranches} disabled={props.busy} onClick={props.onToggleReusableBranches}>
+          {props.showReusableBranches ? t("折叠复用分支", "Hide reused branches") : t("展开复用分支", "Show reused branches")}
+          <span className="text-xs text-muted-foreground">{props.reusableBranchCount}</span>
+        </Button>
+      )}
       <div className="ml-auto flex items-center gap-1">
         <Tool
           icon={GitBranch}

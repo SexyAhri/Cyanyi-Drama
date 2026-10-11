@@ -39,7 +39,11 @@ import {
   type ShellUser,
 } from "../shell";
 import { defaultSuggestions } from "./chat-defaults";
-import { canEditComposerAfterMediaToolComplete } from "./chat-utils";
+import {
+  canEditComposerAfterMediaToolComplete,
+  removeMessageGroup,
+  trimMessagesForRegeneration,
+} from "./chat-utils";
 import { PromptStarter } from "./prompt-starter";
 import { useChatThreads } from "./use-chat-threads";
 
@@ -733,48 +737,4 @@ function findPreviousUserMessage(messages: AgentMessage[], messageId: string) {
   }
 
   return null;
-}
-
-function trimMessagesForRegeneration(
-  messages: AgentMessage[],
-  userMessageId: string,
-) {
-  const userIndex = messages.findIndex((message) => message.id === userMessageId);
-
-  if (userIndex < 0) {
-    return messages;
-  }
-
-  return messages.slice(0, userIndex);
-}
-
-function removeMessageGroup(messages: AgentMessage[], messageId: string) {
-  const targetIndex = messages.findIndex((message) => message.id === messageId);
-
-  if (targetIndex < 0) {
-    return messages;
-  }
-
-  const targetMessage = messages[targetIndex];
-
-  if (targetMessage?.role === "user") {
-    const nextUserIndex = messages.findIndex(
-      (message, index) => index > targetIndex && message.role === "user",
-    );
-    const endIndex = nextUserIndex >= 0 ? nextUserIndex : messages.length;
-
-    return [...messages.slice(0, targetIndex), ...messages.slice(endIndex)];
-  }
-
-  let startIndex = targetIndex;
-  while (startIndex > 0 && messages[startIndex - 1]?.role === "tool") {
-    startIndex -= 1;
-  }
-
-  let endIndex = targetIndex + 1;
-  while (endIndex < messages.length && messages[endIndex]?.role === "tool") {
-    endIndex += 1;
-  }
-
-  return [...messages.slice(0, startIndex), ...messages.slice(endIndex)];
 }

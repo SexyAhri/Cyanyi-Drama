@@ -21,6 +21,14 @@ export async function resolveCanvasGeneration(input: {
     role: "reference_image" | "first_frame" | "last_frame";
   }> = [];
   for (const item of compiled.inputs) {
+    if (
+      item.purpose === "causality" ||
+      item.purpose === "shot_sequence" ||
+      item.purpose === "story_asset" ||
+      item.purpose === "episode_bridge" ||
+      item.purpose === "shot_video"
+    )
+      continue;
     const problem = canvasConnectionError(
       item.source,
       input.node,

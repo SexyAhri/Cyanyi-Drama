@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const requestOpenAiText = vi.hoisted(() => vi.fn());
+const requestOpenAiStructured = vi.hoisted(() => vi.fn());
 const projectFindFirst = vi.hoisted(() => vi.fn());
 const characterFindFirst = vi.hoisted(() => vi.fn());
 const characterUpdateMany = vi.hoisted(() => vi.fn());
@@ -8,7 +8,7 @@ const channelFindFirst = vi.hoisted(() => vi.fn());
 const providerModelFindFirst = vi.hoisted(() => vi.fn());
 const episodeFindMany = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/llm/openai-structured", () => ({ requestOpenAiText }));
+vi.mock("@/lib/llm/openai-structured", () => ({ requestOpenAiStructured }));
 vi.mock("@/lib/server/crypto", () => ({
   decryptSecret: () => '["test-key"]',
 }));
@@ -95,8 +95,8 @@ beforeEach(() => {
       sourceVersions: [],
     },
   ]);
-  requestOpenAiText.mockResolvedValue({
-    text: JSON.stringify(spec),
+  requestOpenAiStructured.mockResolvedValue({
+    data: spec,
     outputText: JSON.stringify(spec),
     trace: { promptId: "asset_visual_design", version: 1 },
   });
@@ -114,7 +114,7 @@ describe("asset visual design", () => {
       locale: "zh",
     });
 
-    const request = requestOpenAiText.mock.calls[0][0];
+    const request = requestOpenAiStructured.mock.calls[0][0];
     expect(request.prompt.text).toContain('"realm": "Core Formation"');
     expect(request.prompt.text).toContain("ink animation");
     expect(request.prompt.text).toContain("最高优先级");
@@ -147,8 +147,8 @@ describe("asset visual design", () => {
       shapeAndStructure: "Middle-aged man with a modern crew cut",
       surfaceAndStyling: "White dress shirt, business suit, and slacks",
     };
-    requestOpenAiText.mockResolvedValueOnce({
-      text: JSON.stringify(modernSpec),
+    requestOpenAiStructured.mockResolvedValueOnce({
+      data: modernSpec,
       outputText: JSON.stringify(modernSpec),
       trace: {
         promptId: "asset_visual_design",
@@ -191,7 +191,7 @@ describe("asset visual design", () => {
       projectArtStyle: "ink animation",
       spec,
     });
-    expect(requestOpenAiText).not.toHaveBeenCalled();
+    expect(requestOpenAiStructured).not.toHaveBeenCalled();
   });
 
   it("allows a human revision that differs from local story-world heuristics", async () => {
@@ -209,7 +209,7 @@ describe("asset visual design", () => {
     });
 
     expect(result.spec).toEqual(manualSpec);
-    expect(requestOpenAiText).not.toHaveBeenCalled();
+    expect(requestOpenAiStructured).not.toHaveBeenCalled();
     expect(characterUpdateMany).toHaveBeenCalledTimes(1);
   });
 

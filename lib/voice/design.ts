@@ -37,6 +37,7 @@ export async function designEpisodeVoicePerformance(input: {
   channelId: string;
   model: string;
   locale?: PromptLocale;
+  fillMissing?: boolean;
 }) {
   const episode = await prisma.episode.findFirst({
     where: {
@@ -62,6 +63,8 @@ export async function designEpisodeVoicePerformance(input: {
           matchedPanelId: true,
           voicePresetId: true,
           voiceProfilePrompt: true,
+          emotionPrompt: true,
+          emotionStrength: true,
         },
       }),
       prisma.novelCharacter.findMany({
@@ -112,6 +115,10 @@ export async function designEpisodeVoicePerformance(input: {
     })),
     ...projectVoiceIdentities.values(),
   ]);
+  const targetLines = input.fillMissing
+    ? voiceLines.filter(line => !line.voiceProfilePrompt?.trim() || !line.emotionPrompt?.trim()) : voiceLines;
+  if (!targetLines.length) return { voiceLines: await listVoiceLines(input.userId, input.projectId, input.episodeId),
+    promptTrace: { skipped: true, reason: "已有配音设计", rawOutput: "" } };
   const prompt = renderPrompt({
     id: PROMPT_IDS.STORY_VOICE_PERFORMANCE_DESIGN,
     locale: input.locale,
@@ -145,7 +152,7 @@ export async function designEpisodeVoicePerformance(input: {
         2,
       ),
       voice_lines_json: JSON.stringify(
-        voiceLines.map((line) => ({
+        targetLines.map((line) => ({
           lineId: line.id,
           lineIndex: line.lineIndex,
           speaker: line.speaker,
@@ -177,8 +184,8 @@ export async function designEpisodeVoicePerformance(input: {
       temperature: 0.35,
       validate: (design) =>
         validateVoicePerformanceDesign(design, {
-          lineIds: voiceLines.map((line) => line.id),
-          speakers: [...new Set(voiceLines.map((line) => line.speaker))],
+          lineIds: targetLines.map((line) => line.id),
+          speakers: [...new Set(targetLines.map((line) => line.speaker))],
         }),
     });
   } catch (error) {
@@ -214,6 +221,8 @@ export async function designEpisodeVoicePerformance(input: {
         matchedPanelId: true,
         voicePresetId: true,
         voiceProfilePrompt: true,
+        emotionPrompt: true,
+        emotionStrength: true,
       },
     });
     if (!sameVoiceLineContract(voiceLines, current))
@@ -222,20 +231,20 @@ export async function designEpisodeVoicePerformance(input: {
         409,
       );
     await Promise.all(
-      current.map((line) => {
+      current.filter(line => designByLineId.has(line.id)).map((line) => {
         const lineDesign = designByLineId.get(line.id)!;
         const established = establishedVoiceIdentities.get(line.speaker);
         return tx.voiceLine.update({
           where: { id: line.id },
           data: {
             voiceProfilePrompt:
-              line.voiceProfilePrompt ??
+              (line.voiceProfilePrompt?.trim() || null) ??
               established?.voiceProfilePrompt ??
               profileBySpeaker.get(line.speaker)!,
             voicePresetId:
               line.voicePresetId ?? established?.voicePresetId ?? null,
-            emotionPrompt: lineDesign.emotionPrompt,
-            emotionStrength: lineDesign.emotionStrength,
+            emotionPrompt: input.fillMissing && line.emotionPrompt?.trim() ? line.emotionPrompt : lineDesign.emotionPrompt,
+            emotionStrength: input.fillMissing && line.emotionPrompt?.trim() ? line.emotionStrength : lineDesign.emotionStrength,
           },
         });
       }),

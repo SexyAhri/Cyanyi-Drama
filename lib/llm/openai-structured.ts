@@ -95,6 +95,7 @@ export async function requestOpenAiStructured<T>(input: {
   timeoutMs?: number;
   stream?: boolean;
   maxTransportAttempts?: number;
+  maxCorrectionAttempts?: number;
   onOutputStart?: () => void;
   onTextDelta?: (delta: string) => void;
 }) {
@@ -112,7 +113,10 @@ export async function requestOpenAiStructured<T>(input: {
     systemPrompt: input.prompt.systemText,
     validate: input.validate,
     normalizeRaw: input.normalizeRaw,
-    maxCorrectionAttempts: 0,
+    maxCorrectionAttempts: Math.max(
+      0,
+      Math.min(2, Math.floor(input.maxCorrectionAttempts ?? 0)),
+    ),
     request: async (messages) => {
       let lastError: unknown;
       const maxApiKeyAttempts = 1;

@@ -11,11 +11,13 @@ import { PROMPT_IDS } from "@/lib/prompts";
 import type { RenderedPrompt } from "@/lib/prompts/types";
 import {
   directorShotsSchema,
+  directorShotsGenerationSchema,
   directorScenePanels,
   validateDirectorShots,
   type DirectorScene,
   type DirectorShot,
 } from "./storyboard-scene-contract";
+import { PANEL_PRODUCTION_DESIGN_INSTRUCTIONS } from "@/lib/production/panel-production-design";
 
 const reviewSchema = z.object({
   approved: z.boolean(),
@@ -70,11 +72,14 @@ Cover every source unit in source_unit_ids, preserving plot order and exact spee
 speech is null or {source_id,text}: at most one original dialogue/voiceover fragment per shot.
 Concatenating fragments for each spoken unit must reproduce its text exactly, including whitespace and punctuation.
 Long lines must be split into exact substrings so speech fits duration_seconds (1-15 seconds).
-characters lists visible characters; asset_names uses only scene characters, props and location.
+characters lists visible characters; asset_names uses only scene characters, props and location. Include the scene location in every shot's asset_names, and include every prop explicitly visible or named in that shot's visual description, action, image prompt, or video prompt. Do not list off-screen props.
 Use start_state, end_state and ordered motion_beats to describe continuous performance and camera.
 image_prompt is a static first frame; video_prompt animates from it, ending at end_state.
 Video is silent; speech is synthesized separately. Only the dialogue speaker moves lips; voiceover never makes visible actors speak.
-Output {shots:[{title,shot_type,duration_seconds,source_unit_ids,characters,asset_names,scene_description,action_description,camera_move,start_state,end_state,motion_beats:[{start_second,end_second,action,camera}],speech,image_prompt,video_prompt}]}.
+${PANEL_PRODUCTION_DESIGN_INSTRUCTIONS}
+productionDesign.startState.body must equal start_state; productionDesign.motionBeats must match motion_beats exactly after converting the snake_case time keys to camelCase.
+Output {shots:[{title,shot_type,duration_seconds,source_unit_ids,characters,asset_names,scene_description,action_description,camera_move,start_state,end_state,motion_beats:[{start_second,end_second,action,camera}],speech,image_prompt,video_prompt,productionDesign}]}.
+Required JSON Schema: ${JSON.stringify(z.toJSONSchema(directorShotsGenerationSchema))}
 Review output uses scene_ids and zero-based shot_indices to locate findings. Do not use prose-only locations.`;
   const templates = [
     "storyboard-generation",
@@ -174,7 +179,10 @@ Review output uses scene_ids and zero-based shot_indices to locate findings. Do 
         contract,
         input.locale,
       ),
-      schema: directorShotsSchema,
+      schema: directorShotsGenerationSchema,
+      validate: data => validateDirectorShots(input.scenes[index], data.shots).map(message => ({
+        code: "director_shot_invalid", path: "shots", message,
+      })),
     });
     await input.assertActive();
     traces.push(response.trace);

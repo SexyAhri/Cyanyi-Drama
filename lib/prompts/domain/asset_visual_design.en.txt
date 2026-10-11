@@ -7,6 +7,8 @@ Project art style: {{project_style}}
 Story world and era hard constraint: {{story_world_directive}}
 Story facts JSON:
 {{story_facts_json}}
+Current visual design (comparison only, not a source of facts):
+{{previous_visual_design_json}}
 Related source evidence JSON:
 {{source_evidence_json}}
 Project narrative context JSON:
@@ -16,22 +18,14 @@ The project art style is the highest-priority, project-wide hard constraint. Do 
 
 Art style and the selected visual adaptation world are independent constraints. Art style controls linework, rendering, material depiction, color treatment, and lighting. The project-selected visual era/adaptation world controls wardrobe cuts, hair arrangement, footwear, architecture, furnishings, craft, props, and technology. When the project follows the source, infer era from narrative context. When the project explicitly selects premodern Eastern, contemporary adaptation, or a custom world, that selection takes visual priority and may change the source era's visual shell, but it must not change identities, relationships, abilities, events, or outcomes. Never interpret labels such as Chinese animation, Japanese anime, or live-action realism as an era.
 
-Story facts and related source evidence jointly define the factual boundary; source evidence and the approved world bible win on conflict. Preserve every supplied story fact. You may professionally infer appearance, wardrobe, material, palette, and presentation choices that the source does not specify, but you must not add plot, identity, relationships, abilities, or biography. Record inferred choices in inferenceNotes instead of presenting them as source canon. The result must support a standard reference image and serve as a continuity constraint in every downstream shot. Do not design a transient action or story moment.
+When provided, the project story package's world rules, character/location/prop dossiers, and creative prohibitions define the adaptation (its approval status is included in project context). Approved or locked versions are confirmed constraints; draft or in-review versions are the current proposal. Do not undo an explicit adaptation decision to imitate the source's original visual era. Preserve source facts about identity, relationships, abilities, and events unless the package contains a user-approved adaptation. Approved manuscript notes apply only to the matching current source version, and related source evidence covers only the excerpts supplied; never claim to have read omitted full text. Story facts, the project package, approved manuscript notes, and source excerpts jointly bound this design. You may professionally infer appearance, wardrobe, material, palette, and presentation choices that the source does not specify, but you must not add plot, identity, relationships, abilities, or biography. Record inferred choices in inferenceNotes instead of presenting them as source canon. The result must support a standard reference image and serve as a continuity constraint in every downstream shot. Do not design a transient action or story moment.
+
+If a current visual design is supplied, it is only a previous draft, not story canon or a package rule. During redesign, retain compatible strengths where useful; correct any conflict with the project package, source facts, or selected visual era instead of preserving an incorrect old choice.
 
 Every inference must be compatible with the project-selected visual adaptation world. Only when the project follows the source and the text establishes an ancient, cultivation, xianxia, wuxia, or other premodern world, or when the project explicitly selects a premodern Eastern world, use era-compatible layered robes, hair arrangements, footwear, accessories, architecture, materials, and craft, and exclude modern business clothing, contemporary interiors, infrastructure, technology, and vehicles. Do not apply those modern-element exclusions when the project selects a contemporary adaptation or a custom modern world. The negativePrompt must explicitly exclude elements that conflict with the currently selected adaptation world.
 
 For a character, specify facial impression, hair, body proportions, layered wardrobe and materials, footwear, accessories, and stable identifiers. For a location, specify spatial structure, scale, architectural or natural materials, foreground/midground/background, primary light sources, and repeatable anchors. For a prop, specify silhouette, proportions, materials, surface finish, colors, ornament, and stable identifiers.
 
-Return one complete, usable visual specification. Prefer the following natural-text labels. They are local placement hints, not a hard schema. Let the content determine list length, do not repeat information to satisfy a count, and do not use a code block:
+Create a complete nine-field visual specification using the required JSON fields below. Each field must contain concrete production details.
 
-Visual identity: the asset's immediately recognizable visual identity
-Shape and structure: concrete form, proportion, space, or construction
-Surface and styling: wardrobe, materials, surface treatment, and styling language
-Color palette: primary, secondary, and accent colors and their relationship
-Lighting and presentation: lighting, background, and standard reference presentation
-Signature details: stable visible identifying details
-Consistency rules: rules downstream images and videos should preserve
-Negative prompt: appearance drift, incorrect elements, and presentation problems to exclude
-Inference notes: non-canonical visual choices inferred from type, era, or project style
-
-If the labels do not fit your response, prioritize a complete readable visual specification. The system preserves the raw output and places it permissively without requesting regeneration for missing fields or list counts.
+All nine fields above are required. Provide concrete, production-ready content; each list field must contain at least one item. Return only one JSON object with exactly these keys: visualIdentity, shapeAndStructure, surfaceAndStyling, colorPalette, lightingAndPresentation, signatureDetails, consistencyRules, negativePrompt, and inferenceNotes. The text fields are strings; signatureDetails, consistencyRules, and inferenceNotes are arrays of strings. Do not omit fields, combine fields, use placeholders such as "TBD" or "none," or put the entire response under visualIdentity. The system validates and corrects incomplete output and will not overwrite an existing design if the result remains incomplete.

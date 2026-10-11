@@ -207,6 +207,7 @@ export function StoryboardWorkspace({
   }
 
   async function startWorkflow() {
+    if (panels.length && !window.confirm(locale === "en" ? "Replace the current storyboard with a new AI shot plan? Review it and select media again afterward." : "已有分镜和提示词。确定用 AI 重新拆镜？分镜将更新，已有素材需要重新核对采用。")) return;
     const model = models.find((item) => item.id === analysisModelId);
     if (!model) {
       toast.error(
@@ -276,6 +277,7 @@ export function StoryboardWorkspace({
       const result = await saveStudioStoryboard(projectId, episode.id, {
         status,
         sourceHash: data.storyboard.sourceHash,
+        expectedVersion: data.storyboard.version,
         panels: nextPanels,
       });
       setData((current) =>
@@ -329,12 +331,12 @@ export function StoryboardWorkspace({
             <h1 className="break-keep text-xl font-semibold">
               {copy.storyboardWorkspace}
             </h1>
-            {workflow ? (
-              <StatusIndicator
-                locale={locale}
-                status={runtimeStatusToStageStatus(workflow.status)}
-              />
-            ) : null}
+            {workflow && ["queued", "running", "paused", "canceling"].includes(workflow.status) ? (
+              <StatusIndicator locale={locale} status={runtimeStatusToStageStatus(workflow.status)} />
+            ) : panels.length > 0 ? (
+              <Badge variant="outline">{data?.storyboard?.status === "ready"
+                ? (locale === "en" ? "Confirmed" : "已确认") : (locale === "en" ? "Draft awaiting review" : "草案待确认")}</Badge>
+            ) : <StatusIndicator locale={locale} status="not_started" />}
           </div>
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -363,7 +365,7 @@ export function StoryboardWorkspace({
           />
           <WorkflowButtons
             disabled={isActing || !analysisModelId}
-            hasWorkflow={Boolean(workflow)}
+            hasWorkflow={panels.length > 0}
             locale={locale}
             onAction={controlWorkflow}
             onStart={startWorkflow}
@@ -381,7 +383,7 @@ export function StoryboardWorkspace({
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b py-3 text-sm">
           <p className="text-destructive">
             {locale === "zh-CN"
-              ? "导演审核仍有未解决问题。请检查分镜，确认后才能生成媒体；审核记录在任务产物中。"
+              ? "已有分镜草案与提示词，请检查场次时长、镜头拆分和连续性。确认后直接制作媒体；也可选用 AI 重新拆镜。"
               : "Director review requires attention. Inspect the shots before confirming them for media generation."}
           </p>
           <Button
@@ -422,7 +424,7 @@ export function StoryboardWorkspace({
         ) : !panels.length ? (
           <div className="flex min-h-96 flex-col items-center justify-center gap-3 border-b text-center text-muted-foreground">
             <Clapperboard className="size-6" />
-            <p className="max-w-md text-sm leading-6">{copy.noStoryboard}</p>
+            <p className="max-w-md text-sm leading-6">{locale === "en" ? "No storyboard material is available for this episode. Adopt an original package or organize the screenplay first." : "本集尚无分镜内容。原创剧本采用后会接入已有场景与提示词；只有大纲的剧集需先完成正文。"}</p>
           </div>
         ) : (
           <div className="grid min-h-152 border-b lg:grid-cols-[15rem_minmax(0,1fr)] xl:min-h-0 xl:flex-1 xl:overflow-hidden">
@@ -1207,7 +1209,7 @@ function WorkflowButtons({
     );
   }
   return (
-    <Button disabled={disabled} onClick={onStart} size="sm">
+    <Button disabled={disabled} onClick={onStart} size="sm" variant={hasWorkflow ? "outline" : "default"}>
       {disabled ? (
         <LoaderCircle className="size-4 animate-spin" />
       ) : hasWorkflow ? (
@@ -1215,7 +1217,7 @@ function WorkflowButtons({
       ) : (
         <Play className="size-4" />
       )}
-      {hasWorkflow ? copy.rerunStoryboard : copy.startStoryboard}
+      {hasWorkflow ? (locale === "en" ? "AI replan (optional)" : "AI 重新拆镜（可选）") : copy.startStoryboard}
     </Button>
   );
 }

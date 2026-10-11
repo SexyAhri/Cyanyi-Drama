@@ -90,6 +90,7 @@ const copy = {
     arguments: "参数",
     description: "工具调用",
     error: "错误",
+    liveOutput: "实时生成内容",
     name: "名称",
     result: "结果",
     running: "工具正在执行。",
@@ -108,6 +109,7 @@ const copy = {
     arguments: "Arguments",
     description: "Tool call",
     error: "Error",
+    liveOutput: "Live output",
     name: "Name",
     result: "Result",
     running: "Tool is running.",
@@ -137,6 +139,8 @@ export function ToolCard({
   onUseAsReferenceImage,
 }: ToolCardProps) {
   const registryItem = registry[toolCall.name];
+  const hideInternalDetails =
+    hideProcessDetails || registryItem?.hideProcessDetails === true;
   const text = copy[locale];
   const title = registryItem?.label ?? toolCall.name;
   const description = registryItem?.description ?? text.description;
@@ -149,7 +153,7 @@ export function ToolCard({
   if (isMediaTool) {
     return (
       <MediaToolCard
-        hideProcessDetails={hideProcessDetails}
+        hideProcessDetails={hideInternalDetails}
         createdAt={createdAt}
         onUseAsReferenceImage={onUseAsReferenceImage}
         toolCall={toolCall}
@@ -191,20 +195,23 @@ export function ToolCard({
       </CardHeader>
 
       <CardContent className="space-y-3">
-        <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-          <div>
-            <span className="font-medium text-foreground">{text.toolId}</span>
-            <p className="mt-1 truncate font-mono">{toolCall.id}</p>
-          </div>
-          <div>
-            <span className="font-medium text-foreground">{text.name}</span>
-            <p className="mt-1 truncate font-mono">{toolCall.name}</p>
-          </div>
-        </div>
+        {!hideInternalDetails ? (
+          <>
+            <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+              <div>
+                <span className="font-medium text-foreground">{text.toolId}</span>
+                <p className="mt-1 truncate font-mono">{toolCall.id}</p>
+              </div>
+              <div>
+                <span className="font-medium text-foreground">{text.name}</span>
+                <p className="mt-1 truncate font-mono">{toolCall.name}</p>
+              </div>
+            </div>
+            <Separator />
+          </>
+        ) : null}
 
-        <Separator />
-
-        {registryItem?.showArgs !== false ? (
+        {!hideInternalDetails && registryItem?.showArgs !== false ? (
           <ToolDataSection
             defaultOpen
             label={text.arguments}
@@ -249,10 +256,39 @@ export function ToolCard({
         ) : null}
 
         {toolCall.status === "running" ? (
-          <div className="flex items-center gap-2 rounded-md bg-muted/50 p-3 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" />
-            {text.running}
-          </div>
+          <>
+            <div className="flex items-center gap-2 rounded-md bg-muted/50 p-3 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+              {toolCall.progressStatus ?? text.running}
+            </div>
+            {toolCall.progressText ? (
+              <ToolDataSection
+                defaultOpen
+                label={registryItem?.progressLabel ?? text.liveOutput}
+                value={
+                  registryItem?.renderProgress?.({
+                    text: toolCall.progressText,
+                    status: toolCall.progressStatus,
+                    totalCharacters: toolCall.progressCharacters ?? 0,
+                  }) ?? <JsonBlock value={toolCall.progressText} />
+                }
+              />
+            ) : null}
+          </>
+        ) : null}
+
+        {toolCall.status !== "running" && toolCall.progressText ? (
+          <ToolDataSection
+            defaultOpen
+            label={registryItem?.progressLabel ?? text.liveOutput}
+            value={
+              registryItem?.renderProgress?.({
+                text: toolCall.progressText,
+                status: toolCall.progressStatus,
+                totalCharacters: toolCall.progressCharacters ?? 0,
+              }) ?? <JsonBlock value={toolCall.progressText} />
+            }
+          />
         ) : null}
 
         {toolCall.approvalId && toolCall.status === "pending" ? (

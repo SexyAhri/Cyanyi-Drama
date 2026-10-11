@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
 
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -16,10 +18,8 @@ import {
 import type { ShellCopy } from "./chat-shell-i18n";
 import type { ShellSettings } from "./shell-settings";
 import type { ModelOption } from "./chat-shell-types";
-import {
-  PROJECT_ART_STYLES,
-  type ProjectArtStyleId,
-} from "@/lib/projects/art-style";
+import { getProjectArtStyleLabel } from "@/lib/projects/art-style";
+import { ProjectArtStylePicker } from "@/components/projects/project-art-style-picker";
 
 type PreferencesSettingsPanelProps = {
   copy: ShellCopy;
@@ -69,20 +69,6 @@ const ratioOptions: SelectOption[] = [
   "4:5",
   "21:9",
 ].map((value) => ({ label: value, value }));
-
-const artStyleLabels: Record<ProjectArtStyleId, keyof ShellCopy> = {
-  "chinese-comic": "settingsArtStyleChineseComic",
-  "chinese-ink": "settingsArtStyleChineseInk",
-  "american-comic": "settingsArtStyleAmericanComic",
-  "japanese-anime": "settingsArtStyleJapaneseAnime",
-  "stylized-3d": "settingsArtStyleStylized3d",
-  realistic: "settingsArtStyleRealistic",
-};
-
-const artStyleOptions = PROJECT_ART_STYLES.map(({ id }) => ({
-  label: artStyleLabels[id],
-  value: id,
-}));
 
 const ttsRateOptions: Array<{ label: keyof ShellCopy; value: string }> = [
   { label: "settingsTtsRateNormal", value: "+0%" },
@@ -140,15 +126,25 @@ export function PreferencesSettingsPanel({
             options={ratioOptions}
             value={settings.videoRatio}
           />
-          <SelectField
-            label={copy.settingsArtStyle}
-            onChange={(value) => update({ artStyle: value })}
-            options={artStyleOptions.map(({ label, value }) => ({
-              label: copy[label] as string,
-              value,
-            }))}
-            value={settings.artStyle}
-          />
+          <div className="grid min-w-0 gap-1.5">
+            <Label className="truncate text-xs">{copy.settingsArtStyle}</Label>
+            <ProjectArtStylePicker
+              locale={copy.locale}
+              onChange={(value) => update({ artStyle: value })}
+              trigger={
+                <Button
+                  className="h-9 w-full justify-between gap-2 px-3 text-sm"
+                  variant="outline"
+                >
+                  <span className="truncate">
+                    {getProjectArtStyleLabel(settings.artStyle, copy.locale)}
+                  </span>
+                  <ChevronDown className="size-4 shrink-0 opacity-50" />
+                </Button>
+              }
+              value={settings.artStyle}
+            />
+          </div>
           {showProjectVisualWorld ? (
             <SelectField
               label={copy.settingsVisualEra}

@@ -136,6 +136,7 @@ export function ShotPromptDesignDialog({
   }
 
   async function design() {
+    if (prompt.trim() && !window.confirm(locale === "en" ? "Redesign the existing prompt? Review and save the result to apply it." : "已有提示词。确定重新设计？新结果需要确认保存才会生效。")) return;
     const model = analysisModels.find((item) => item.id === modelId);
     if (!model) return;
     setIsDesigning(true);
@@ -226,7 +227,9 @@ export function ShotPromptDesignDialog({
               )}
               {isDesigning
                 ? copy.designing
-                : kind === "image"
+                : prompt.trim()
+                  ? (locale === "en" ? "Redesign (optional)" : "重新设计（可选）")
+                  : kind === "image"
                   ? copy.designImage
                   : copy.designVideo}
             </Button>

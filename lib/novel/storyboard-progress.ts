@@ -59,13 +59,15 @@ export async function loadStoryboardProgress(
       userId,
       projectId,
       episodeId,
-      workflowType: "script-to-storyboard",
+      workflowType: { in: ["script-to-storyboard", "episode-preproduction"] },
+      steps: { some: { stepKey: "build_scene_storyboard" } },
       project: { userId },
     },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
       status: true,
+      steps: { where: { stepKey: "build_scene_storyboard" }, select: { status: true } },
       startedAt: true,
       createdAt: true,
       artifacts: {
@@ -83,7 +85,8 @@ export async function loadStoryboardProgress(
       },
     },
   });
-  if (!run || run.status === "succeeded") return null;
+  if (!run || run.status === "succeeded" || run.steps[0]?.status === "succeeded") return null;
+  const phaseStatus = ["paused", "canceled", "canceling"].includes(run.status) ? run.status : run.steps[0]?.status ?? run.status;
   const metadata = run.artifacts.find(
     (artifact) => artifact.artifactType === "storyboard.director.progress",
   );
@@ -164,7 +167,7 @@ export async function loadStoryboardProgress(
       .at(-1) ?? run.createdAt.toISOString();
   return {
     runId: run.id,
-    status: run.status,
+    status: phaseStatus,
     phase: info?.phase ?? "generating",
     startedAt: (run.startedAt ?? run.createdAt).toISOString(),
     updatedAt,

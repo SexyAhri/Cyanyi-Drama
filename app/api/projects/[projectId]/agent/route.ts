@@ -1,3 +1,4 @@
+import { studioProductionOptionsSchema } from "@/lib/studio/production-input";
 import { createAgentEventStreamResponse } from "@/lib/agent/stream";
 import {
   resolveStudioAgentApproval,
@@ -8,6 +9,8 @@ import {
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 
 type Context = { params: Promise<{ projectId: string }> };
+
+export const maxDuration = 300;
 
 export async function POST(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
@@ -28,6 +31,8 @@ export async function POST(request: Request, context: Context) {
             content: typeof body.content === "string" ? body.content : "",
             context: readStudioContext(body),
             modelSelection: readStudioAgentModel(metadata),
+            productionOptions: studioProductionOptionsSchema.safeParse(metadata.productionOptions).data,
+            conversation: readConversation(metadata.conversation),
             locale:
               body.locale === "en" || metadata.locale === "en" ? "en" : "zh-CN",
             projectId,
@@ -78,4 +83,9 @@ async function readObject(request: Request) {
   } catch {
     return {};
   }
+}
+
+function readConversation(value: unknown): Array<{role: "user" | "assistant"; content: string}> {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-12).flatMap(item => isRecord(item) && (item.role === "user" || item.role === "assistant") && typeof item.content === "string" ? [{ role: item.role as "user" | "assistant", content: item.content.slice(0, 4000) }] : []);
 }

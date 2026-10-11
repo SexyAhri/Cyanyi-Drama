@@ -90,6 +90,10 @@ export function SplitNovelDialog({
   const [confirmed, setConfirmed] = useState(false);
   const [mode, setMode] = useState<SplitMode>("auto");
   const [modelId, setModelId] = useState("");
+  const [createDossier, setCreateDossier] = useState(true);
+  const [splitStatus, setSplitStatus] = useState("");
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const previewAbort = useRef<AbortController | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [preview, setPreview] = useState<EpisodeSplitResult | null>(null);
   const [episodes, setEpisodes] = useState<EpisodeSplitDraft[]>([]);
@@ -137,6 +141,7 @@ export function SplitNovelDialog({
   }
 
   function handleOpenChange(next: boolean) {
+    if (!next) previewAbort.current?.abort();
     setOpen(next);
     if (!next && !isSubmitting) reset();
   }
@@ -189,6 +194,9 @@ export function SplitNovelDialog({
   }
 
   async function handlePreview() {
+    const controller = new AbortController();
+    previewAbort.current = controller;
+    setSplitStatus("");
     const model = models.find((item) => item.id === modelId);
     if (
       selectedContent.length < 100 ||
@@ -196,6 +204,7 @@ export function SplitNovelDialog({
       (mode === "ai" && !model)
     )
       return;
+    setIsPreviewing(true);
     setIsSubmitting(true);
     try {
       const result = await splitStudioNovel(projectId, {
@@ -209,7 +218,7 @@ export function SplitNovelDialog({
         model: mode !== "markers" ? model?.modelId : undefined,
         locale: locale === "en" ? "en" : "zh",
         persist: false,
-      });
+      }, { signal: controller.signal, onProgress: setSplitStatus });
       setPreview(result);
       setEpisodes(result.episodes);
       setTitle(result.manuscript.title);
@@ -218,9 +227,10 @@ export function SplitNovelDialog({
       setConfirmed(false);
       setPage(0);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : copy.actionFailed);
+      if (!controller.signal.aborted) toast.error(error instanceof Error ? error.message : copy.actionFailed);
     } finally {
       setIsSubmitting(false);
+      setIsPreviewing(false);
     }
   }
 
@@ -228,6 +238,7 @@ export function SplitNovelDialog({
     if (!preview || !confirmed || !episodes.length) return;
     setIsSubmitting(true);
     try {
+      const model = models.find(item => item.id === modelId);
       const result = await splitStudioNovel(projectId, {
         manuscriptId: preview.manuscript.id,
         title,
@@ -240,9 +251,14 @@ export function SplitNovelDialog({
         episodes: episodes.map((episode) => ({ ...episode, content: "" })),
         locale: locale === "en" ? "en" : "zh",
         persist: true,
+        createDossier,
+        channelId: model?.channelId,
+        model: model?.modelId,
       });
       const count = result.persisted?.length ?? result.episodes.length;
       toast.success(copy.splitSuccess.replace("{count}", String(count)));
+      if (result.analysisError) toast.warning(`小说已导入，但原著资料任务未提交：${result.analysisError}`);
+      else if (result.analysisWorkflowId) toast.success(locale === "en" ? "Source analysis queued. See Tasks for progress." : "原著资料任务已提交，可在任务中查看分段进度。");
       setOpen(false);
       reset();
       await onCompleted();
@@ -440,7 +456,7 @@ export function SplitNovelDialog({
                     </SelectContent>
                   </Select>
                 </label>
-                {mode !== "markers" ? (
+                {mode !== "markers" || createDossier ? (
                   <label className="grid gap-1.5 text-sm font-medium">
                     {copy.analysisModel}
                     <ModelSelect
@@ -607,9 +623,18 @@ export function SplitNovelDialog({
           )}
         </div>
 
+        <div className="shrink-0 border-t px-5 py-3">
+          {isSubmitting && splitStatus ? <p role="status" className="mb-2 whitespace-pre-wrap wrap-break-word text-xs text-muted-foreground">{splitStatus}</p> : null}
+          <label className="flex items-start gap-2 text-sm">
+            <Checkbox checked={createDossier} disabled={isSubmitting} onCheckedChange={setCreateDossier} />
+            <span>{locale === "en" ? "Build source adaptation dossier after import (uses the selected text model)" : "导入后建立原著改编资料（使用所选文本模型）"}</span>
+          </label>
+          <p className="mt-1 pl-6 text-xs text-muted-foreground">{locale === "en" ? "Extract in chunks, save checkpoints, and review the draft in the left navigation. Episode adaptation starts separately." : "分段提取并保存进度，草稿显示在左侧资料栏目；不会自动改编所有剧集。"}</p>
+          {preview && createDossier ? <ModelSelect disabled={isSubmitting} models={models} onChange={setModelId} placeholder={copy.analysisModel} value={modelId} /> : null}
+        </div>
         <DialogFooter className="rounded-b-lg">
           <Button
-            disabled={isSubmitting}
+            disabled={isSubmitting && !isPreviewing}
             onClick={() => handleOpenChange(false)}
             type="button"
             variant="outline"
@@ -640,6 +665,7 @@ export function SplitNovelDialog({
               disabled={
                 isSubmitting ||
                 !confirmed ||
+                (createDossier && !modelId) ||
                 !episodes.length ||
                 episodes.some((episode) => !episode.title.trim())
               }

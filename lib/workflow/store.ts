@@ -16,7 +16,7 @@ import {
 
 const include = {
   steps: { orderBy: { stepIndex: "asc" as const } },
-  events: { orderBy: { createdAt: "asc" as const }, take: 200 },
+  events: { orderBy: { createdAt: "desc" as const }, take: 200 },
   checkpoints: { orderBy: { createdAt: "asc" as const }, take: 200 },
   stepAttempts: { orderBy: { createdAt: "asc" as const }, take: 200 },
 } as const;
@@ -238,12 +238,14 @@ export async function listWorkflowRunSummaries(
   projectId: string,
   limit = 50,
 ) {
-  const rows = await prisma.workflowRun.findMany({
-    where: { userId, projectId },
-    orderBy: { createdAt: "desc" },
-    take: Math.min(Math.max(limit, 1), 100),
-    select: summarySelect,
-  });
+  const [recent, active] = await Promise.all([
+    prisma.workflowRun.findMany({ where: { userId, projectId }, orderBy: { createdAt: "desc" },
+      take: Math.min(Math.max(limit, 1), 100), select: summarySelect }),
+    prisma.workflowRun.findMany({ where: { userId, projectId, status: { in: ACTIVE_WORKFLOW_STATUSES } },
+      orderBy: { createdAt: "desc" }, select: summarySelect }),
+  ]);
+  const rows = [...new Map([...recent, ...active].map(row => [row.id, row])).values()]
+    .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
   return rows.map(toRunSummary);
 }
 
@@ -688,7 +690,7 @@ function toRun(row: Row) {
       startedAt: step.startedAt?.toISOString(),
       completedAt: step.completedAt?.toISOString(),
     })),
-    events: row.events.map((event) => ({
+    events: [...row.events].reverse().map((event) => ({
       id: event.id,
       stepId: event.stepId ?? undefined,
       type: event.type,

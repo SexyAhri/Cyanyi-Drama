@@ -227,6 +227,9 @@ const copy = {
     visualInferenceRecord: "推断记录",
     generateVisualDesign: "AI 设计",
     regenerateVisualDesign: "重新设计",
+    visualDesignRegenerateTitle: "按当前故事设定重新设计？",
+    visualDesignRegenerateDescription:
+      "将按当前策划包、项目画风和视觉时代重新生成；草稿/审核中版本作为当前方案参考，已审核/锁定版本按确认约束执行。生成也会结合资产资料与小说来源（如有）。\n\n上传小说时，只使用当前版本的已审核原著资料和相关原文片段，不会把整本小说交给模型。新设定会替换当前视觉设定，并用于后续图片与分镜提示词；已有图片和剧本文字会保留。",
     editVisualDesign: "编辑设定",
     saveVisualDesign: "保存设定",
     visualDesignGenerated: "视觉设定已生成并保存",
@@ -562,6 +565,9 @@ const copy = {
     visualInferenceRecord: "Inference record",
     generateVisualDesign: "Design with AI",
     regenerateVisualDesign: "Regenerate design",
+    visualDesignRegenerateTitle: "Redesign from the current story context?",
+    visualDesignRegenerateDescription:
+      "The redesign follows the current story package, project art style, and visual era. Draft or in-review packages are treated as the current proposal; approved or locked packages are confirmed constraints. Asset facts and available manuscript sources are also considered.\n\nFor an uploaded novel, only the approved dossier for its current version and relevant excerpts are used; the full novel is not sent to the model. The new profile replaces the current one and guides later image and storyboard prompts. Existing images and screenplay text remain.",
     editVisualDesign: "Edit design",
     saveVisualDesign: "Save design",
     visualDesignGenerated: "Visual design generated and saved",

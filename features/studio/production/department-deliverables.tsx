@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MediaPreviewDialog } from "@/components/ui/media-preview-dialog";
+import type { StoryPackage } from "@/lib/production/story-package-contract";
 import { cn } from "@/lib/utils";
 
 import {
@@ -46,6 +47,7 @@ import {
   DeliverableRejectDialog,
   getDeliverableTemplate,
 } from "./deliverable-dialogs";
+import { StoryPackageReviewDialog } from "../inspector/story-package-review-dialog";
 
 export function DepartmentDeliverablesWorkspace({
   defaultType,
@@ -366,12 +368,22 @@ function DeliverableDetail({
     deliverable.deliverableType,
   );
   const nextGate = getNextPendingGate(deliverable);
+  const storyPackage = readStoryPackage(deliverable.payload);
   const summary =
     typeof deliverable.payload.summary === "string"
       ? deliverable.payload.summary
-      : "";
-  const directives = payloadLines(deliverable.payload.directives);
-  const constraints = payloadLines(deliverable.payload.constraints);
+      : storyPackage?.synopsis ?? "";
+  const directives =
+    payloadLines(deliverable.payload.directives).length > 0
+      ? payloadLines(deliverable.payload.directives)
+      : (storyPackage?.worldRules.map(
+          (item) => `${item.rule} → ${item.consequence}`,
+        ) ?? []);
+  const constraints =
+    payloadLines(deliverable.payload.constraints).length > 0
+      ? payloadLines(deliverable.payload.constraints)
+      : (storyPackage?.creativeProhibitions ?? []);
+  const [storyPackageOpen, setStoryPackageOpen] = useState(false);
   const [previewAsset, setPreviewAsset] =
     useState<ProjectMediaAsset | null>(null);
   const sourceIds = new Set(
@@ -430,6 +442,24 @@ function DeliverableDetail({
         />
         <Metric label={copy.cost} value={deliverable.cost} />
       </div>
+
+      {storyPackage ? (
+        <section className="flex min-w-0 flex-col gap-3 border-b py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">
+              {locale === "en" ? "Complete story package" : "完整剧本策划包"}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              {storyPackage.format.episodeCount}{locale === "en" ? " episodes" : " 集"}
+              {" · "}{storyPackage.characters.length}{locale === "en" ? " characters" : " 个角色"}
+              {" · "}{storyPackage.firstEpisode.scenes.length}{locale === "en" ? " Episode 1 scenes" : " 场第 1 集正文"}
+            </p>
+          </div>
+          <Button className="shrink-0 self-start sm:self-auto" onClick={() => setStoryPackageOpen(true)} size="sm" type="button" variant="outline">
+            {locale === "en" ? "Open package" : "查看完整策划包"}
+          </Button>
+        </section>
+      ) : null}
 
       <section className="grid gap-4 border-b py-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-start">
         <div>
@@ -546,8 +576,31 @@ function DeliverableDetail({
           url={previewAsset.url}
         />
       ) : null}
+      {storyPackage ? (
+        <StoryPackageReviewDialog
+          deliverableTitle={deliverable.title}
+          locale={locale}
+          onOpenChange={setStoryPackageOpen}
+          open={storyPackageOpen}
+          status={deliverable.status}
+          storyPackage={storyPackage}
+          version={deliverable.version}
+        />
+      ) : null}
     </article>
   );
+}
+
+function readStoryPackage(payload: Record<string, unknown>): StoryPackage | null {
+  const value = payload.storyPackage;
+  if (
+    payload.packageFormat !== "cyanyi-story-package-v1" ||
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  )
+    return null;
+  return value as StoryPackage;
 }
 
 function DeliverableActions({

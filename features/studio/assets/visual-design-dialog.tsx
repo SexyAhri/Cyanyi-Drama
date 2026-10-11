@@ -6,6 +6,16 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -48,6 +58,7 @@ export function VisualDesignDialog({
   const copy = getStudioCopy(locale);
   const artStyleLabel = getProjectArtStyleLabel(artStyle, locale);
   const [open, setOpen] = useState(false);
+  const [confirmRegenerationOpen, setConfirmRegenerationOpen] = useState(false);
   const [modelId, setModelId] = useState("");
   const [spec, setSpec] = useState<AssetVisualProfileSpec>(() => emptySpec());
   const [isGenerating, setIsGenerating] = useState(false);
@@ -70,6 +81,14 @@ export function VisualDesignDialog({
   }
 
   async function generate() {
+    if (entity.visualProfile) {
+      setConfirmRegenerationOpen(true);
+      return;
+    }
+    await runGeneration();
+  }
+
+  async function runGeneration() {
     const model = models.find((item) => item.id === modelId);
     if (!model) return;
     setIsGenerating(true);
@@ -301,6 +320,32 @@ export function VisualDesignDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+      <AlertDialog
+        onOpenChange={setConfirmRegenerationOpen}
+        open={confirmRegenerationOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {copy.visualDesignRegenerateTitle}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="whitespace-pre-line">
+              {copy.visualDesignRegenerateDescription}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{copy.cancel}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmRegenerationOpen(false);
+                void runGeneration();
+              }}
+            >
+              {copy.regenerateVisualDesign}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

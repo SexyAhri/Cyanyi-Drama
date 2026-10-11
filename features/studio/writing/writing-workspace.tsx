@@ -61,6 +61,7 @@ type AdaptationDraft = {
 
 export function WritingWorkspace({
   analysisModelId,
+  canContinueOriginal = false,
   episode,
   locale,
   models,
@@ -70,6 +71,7 @@ export function WritingWorkspace({
   snapshot,
 }: {
   analysisModelId: string;
+  canContinueOriginal?: boolean;
   episode: WorkspaceSnapshot["project"]["episodes"][number];
   locale: StudioLocale;
   models: StudioModelOption[];
@@ -114,6 +116,19 @@ export function WritingWorkspace({
   const placementWorkflowRevision =
     getWorkflowContentRevision(placementWorkflow);
   const isDirty = novelText !== savedText;
+  async function startOriginal(input: AdaptationRequest) {
+    setIsActing(true);
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(snapshot.project.id)}/episodes/${encodeURIComponent(episode.id)}/original`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message ?? "续写任务提交失败");
+      toast.success(locale === "en" ? "Original episode writing queued. See Tasks for progress." : "本集续写已提交，可在任务中查看进度。");
+      await onRefresh();
+    } catch (error) { toast.error(error instanceof Error ? error.message : "续写任务提交失败"); }
+    finally { setIsActing(false); }
+  }
 
   useEffect(() => {
     const nextText = episode.novelText ?? "";
@@ -181,6 +196,7 @@ export function WritingWorkspace({
     copy.loadFailed,
     episode.id,
     placementWorkflowRevision,
+    writingWorkflowRevision,
     snapshot.project.id,
   ]);
 
@@ -213,6 +229,28 @@ export function WritingWorkspace({
         : undefined,
     );
   }, [onContextChange, selectedClip]);
+
+  const activeProductionSource = sourceCatalog?.sources.find(source => source.id === sourceCatalog.activeSourceId);
+  const isPackageSource = Boolean(activeProductionSource?.instructions?.startsWith("策划包 "));
+  const hasStructuredScript = clips.length > 0 && clips.every(clip => Boolean(clip.screenplay));
+  async function reusePackage() {
+    setIsActing(true);
+    try {
+      const response = await fetch(`/api/projects/${snapshot.project.id}/episodes/${episode.id}/reuse-package`, { method: "POST" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message);
+      const production = await loadStudioProductionData(snapshot.project.id, episode.id);
+      setClips(production.clips);
+      if (!result.synced && !production.clips.length) {
+        toast.info(locale === "en" ? "The active script or downstream work has changed. Existing work was preserved; organize the current script if needed." : "当前制作稿或下游记录已变化，已保留现有工作；请按当前剧本整理场次。");
+      } else {
+        toast.success(locale === "en" ? "Existing package material is available; review the storyboard draft." : "已有制作内容已保留或同步，请在分镜页检查并确认草案。");
+      }
+      await onRefresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : copy.actionFailed);
+    } finally { setIsActing(false); }
+  }
 
   const sourceKind = tab === "adapted" ? "adapted" : "original";
   const sourceVersions = (sourceCatalog?.sources ?? []).filter(
@@ -337,6 +375,7 @@ export function WritingWorkspace({
   }
 
   async function startWorkflow() {
+    if (hasStructuredScript && !window.confirm(locale === "en" ? "Reorganize the existing screenplay? This updates structured scenes; downstream production must be reviewed." : "已有结构化剧本。确定重新整理？场次结构会更新，下游分镜需要重新核对。")) return;
     if (!savedText.trim() || isDirty) return;
     const model = models.find((item) => item.id === analysisModelId);
     if (!model) {
@@ -440,16 +479,19 @@ export function WritingWorkspace({
                 </Button>
               ) : null}
               <AdaptationDialog
+                originalContinuation={canContinueOriginal}
+                hasProductionScript={Boolean(savedText.trim()) && episode.activeSourceKind === "adapted"}
                 defaultModelId={analysisModelId}
                 disabled={
                   isSaving ||
+                  isActing ||
                   workflowActive ||
                   adaptationDraft?.status === "running" ||
-                  !sourceCatalog?.sources.length
+                  (!sourceCatalog?.sources.length && !canContinueOriginal)
                 }
                 locale={locale}
                 models={models}
-                onStart={startAdaptation}
+                onStart={canContinueOriginal ? input => void startOriginal(input) : startAdaptation}
               />
             </>
           ) : null}
@@ -558,6 +600,11 @@ export function WritingWorkspace({
         </Tabs>
 
         <WritingFlowPanel
+          hasProductionScript={Boolean(savedText.trim()) && episode.activeSourceKind === "adapted"}
+          hasStructuredScript={hasStructuredScript}
+          isPackageSource={isPackageSource}
+          onReusePackage={() => void reusePackage()}
+          canReusePackage={!isDirty && !isLoadingClips}
           analysisModelId={analysisModelId}
           models={models}
           onAnalysisModelChange={onAnalysisModelChange}

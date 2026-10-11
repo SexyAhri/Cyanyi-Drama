@@ -97,12 +97,14 @@ export function useWorkspace(projectId: string) {
     [load, projectId],
   );
 
+  const refresh = useCallback(() => load({ background: true }), [load]);
+
   return {
     createEpisode,
     error,
     isLoading,
     isRefreshing,
-    refresh: () => load({ background: true }),
+    refresh,
     snapshot,
   };
 }

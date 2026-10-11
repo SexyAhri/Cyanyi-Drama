@@ -11,6 +11,8 @@ import { prisma } from "@/lib/server/prisma";
 import { EpisodeSourceError } from "./errors";
 import { DEFAULT_EPISODE_TARGET_SECONDS } from "./production-plan";
 import { resolveEpisodeTextProvider } from "./provider";
+import { SOURCE_CHUNK_CHARS, type SourceTaskHooks } from "./long-source";
+import { condenseAdaptationSource } from "./source-notes";
 
 export type EpisodeAdaptationMode =
   | "faithful"
@@ -57,6 +59,7 @@ export async function adaptEpisodeSource(input: {
   instructions?: string;
   locale?: PromptLocale;
   onProgress?: (progress: EpisodeAdaptationProgress) => void;
+  hooks?: SourceTaskHooks;
 }) {
   const episode = await ensureEpisodeSourceVersions(input);
   const original = await prisma.episodeSourceVersion.findFirst({
@@ -72,6 +75,21 @@ export async function adaptEpisodeSource(input: {
     );
 
   const provider = await resolveEpisodeTextProvider(input);
+  const saved = await input.hooks?.loadArtifact("adaptation.completed", original.id) as { sourceId?: string } | null;
+  if (saved?.sourceId) {
+    const source = await prisma.episodeSourceVersion.findFirst({ where: { id: saved.sourceId, episodeId: input.episodeId } });
+    if (source) return toSourceRecord(source);
+  }
+  await input.hooks?.assertActive();
+  const condensed = original.content.length > SOURCE_CHUNK_CHARS;
+  const sourceText = condensed ? await condenseAdaptationSource({ ...input, source: original.content, onProgress: undefined }) : original.content;
+  const dossier = original.manuscriptId ? await prisma.$queryRaw<Array<{ id: string; summary: Prisma.JsonValue }>>(Prisma.sql`
+    SELECT id, payload->'summary' AS summary FROM production_deliverables
+    WHERE project_id = ${input.projectId} AND user_id = ${input.userId} AND scope_id = ${original.manuscriptId}
+      AND status IN ('approved', 'locked') AND superseded_at IS NULL
+      AND payload->>'packageFormat' = 'cyanyi-manuscript-dossier-v1'
+      AND payload->>'sourceHash' = ${original.manuscript?.sourceHash ?? ""}
+    ORDER BY version DESC LIMIT 1`) : [];
   const targetDurationSeconds =
     episode.project.config?.episodeTargetDurationSeconds ??
     DEFAULT_EPISODE_TARGET_SECONDS;
@@ -85,12 +103,14 @@ export async function adaptEpisodeSource(input: {
       id: PROMPT_IDS.EPISODE_ADAPTATION,
       locale: input.locale,
       variables: {
-        source_text: original.content,
+        source_text: sourceText,
         target_duration_seconds: String(targetDurationSeconds),
         manuscript_context: JSON.stringify({
           title: original.manuscript?.title ?? "",
           author: original.manuscript?.author ?? "",
           synopsis: original.manuscript?.synopsis ?? "",
+          approvedSourceNotes: dossier[0]?.summary ?? null,
+          policy: "全书资料用于人物和世界规则一致性；后续事件不得提前写入本集。当前集原文优先。",
         }),
         project_context: JSON.stringify({
           name: episode.project.name,
@@ -107,7 +127,8 @@ export async function adaptEpisodeSource(input: {
         }),
         episode_continuity_context: JSON.stringify(continuityContext),
         adaptation_mode: input.mode,
-        custom_instructions: input.instructions?.trim() ?? "",
+        custom_instructions: [input.instructions?.trim() ?? "", condensed ?
+          "本集原文较长，source_text 为按原文顺序提取的依据笔记，并非全文。只能使用笔记中有依据的事实；允许围绕目标时长取舍事件，但不得编造补足细节或声称逐字覆盖全文。" : ""].join("\n"),
       },
     }),
     temperature: 0.2,
@@ -124,6 +145,7 @@ export async function adaptEpisodeSource(input: {
   });
 
   input.onProgress?.({ type: "phase", phase: "saving" });
+  await input.hooks?.assertActive();
   const adaptation = parseAdaptationText(result.text);
 
   const latest = await prisma.episodeSourceVersion.findFirst({
@@ -157,6 +179,7 @@ export async function adaptEpisodeSource(input: {
       sourceEndIndex: original.sourceEndIndex,
     },
   });
+  await input.hooks?.persistArtifact("adaptation.completed", original.id, { sourceId: source.id, condensed });
   return toSourceRecord(source);
 }
 

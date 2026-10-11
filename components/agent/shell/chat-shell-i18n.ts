@@ -1,6 +1,7 @@
 import type { AgentLocale } from "./chat-shell-types";
 
 export type ShellCopy = {
+  locale: AgentLocale;
   accountLabel: string;
   apiKey: string;
   archivedChats: string;
@@ -188,6 +189,7 @@ export type ShellCopy = {
 
 export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
   en: {
+    locale: "en",
     accountLabel: "Cyanyi Drama",
     apiKey: "API Key",
     archivedChats: "Archived chats",
@@ -394,6 +396,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     workspace: "Workspace",
   },
   "zh-CN": {
+    locale: "zh-CN",
     accountLabel: "Cyanyi Drama",
     apiKey: "API Key",
     archivedChats: "归档会话",
@@ -561,7 +564,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsVideoRatio: "视频比例",
     settingsEpisodeTargetDuration: "单集目标时长",
     settingsEpisodeTargetDurationHint: "默认约 2 分钟，可在 60–180 秒内调整。",
-    settingsArtStyle: "艺术风格",
+    settingsArtStyle: "画风",
     settingsArtStyleAmericanComic: "美式漫画",
     settingsArtStyleChineseComic: "国漫影视动画",
     settingsArtStyleChineseInk: "中国水墨动画",

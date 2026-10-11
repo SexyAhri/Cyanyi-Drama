@@ -3,8 +3,8 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from "@/components/ui/native-select";
-import { useEffect, useId, useRef, useState, type PointerEvent } from "react";
-import { GitBranch } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent } from "react";
+import { GitBranch, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +18,7 @@ import {
   loadStudioStoryboard,
   saveStudioStoryboard,
   selectStudioPanelMedia,
+  selectStudioAsset,
   loadStudioProductionData,
   generateStudioLipSync,
 } from "../api";
@@ -47,10 +48,13 @@ import {
   type CanvasToolbarProps,
 } from "./canvas-toolbar";
 import { PanelEditorDialog } from "../storyboard/panel-editor-dialog";
+import { getStudioModelName } from "../components/model-select";
 import { useCanvasConnections } from "./use-canvas-connections";
 import { useCanvasDocument } from "./use-canvas-document";
 import {
   arrangeEpisodeBranches,
+  arrangeEpisodeCausalGraph,
+  buildEpisodeCanvasGraph,
   canvasBranchPath,
   mergeCanvasBranchGroups,
 } from "./canvas-layout";
@@ -58,14 +62,20 @@ import {
   CARD_WIDTH,
   CARD_HEIGHT,
   PORT_Y,
+  canvasNodeTask,
   edgeLabel,
   nodeMedia,
   panelCard,
   kindLabel,
   canvasSelection,
   linkedCanvasAsset,
+  canvasBaselineTargets,
+  isReusableCanvasBranch,
+  canvasCardSummary,
 } from "./canvas-view-model";
 import type { CanvasCard, CanvasDocument, CanvasPurpose } from "./types";
+
+const EMPTY_PANELS: StudioStoryboardPanel[] = [];
 
 type Review = {
   node: CanvasCard;
@@ -119,7 +129,7 @@ export function CanvasWorkspace({
   const arrowId = `canvas-arrow-${useId().replace(/:/g, "")}`;
   const [catalog, setCatalog] = useState<ProjectAssetCatalog>();
   const [storyboard, setStoryboard] = useState<StudioStoryboardData>();
-  const panels = storyboard?.storyboard?.panels ?? [];
+  const panels = storyboard?.storyboard?.panels ?? EMPTY_PANELS;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [edgeId, setEdgeId] = useState<string>();
   const [editingPanelId, setEditingPanelId] = useState<string>();
@@ -127,8 +137,11 @@ export function CanvasWorkspace({
   const [tool, setTool] = useState<"select" | "pan">("pan");
   const [library, setLibrary] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(true);
+  const [showReusableBranches, setShowReusableBranches] = useState(false);
   const [review, setReview] = useState<Review[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewPreparing, setReviewPreparing] = useState(false);
+  const [reviewError, setReviewError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [lipReview, setLipReview] = useState<{
     nodeId: string;
@@ -164,6 +177,9 @@ export function CanvasWorkspace({
   const t = (zh: string, en: string) => (locale === "en" ? en : zh);
   const active = document.nodes.find((node) => selected.has(node.id));
   const activeEdge = document.edges.find((edge) => edge.id === edgeId);
+  const reusableIds = useMemo(() => new Set(document.nodes.filter(node => isReusableCanvasBranch(node, document, catalog, snapshot.tasks)).map(node => node.id)), [document, catalog, snapshot.tasks]);
+  const hiddenIds = useMemo(() => new Set(showReusableBranches ? [] : [...reusableIds].filter(id => !selected.has(id))), [showReusableBranches, reusableIds, selected]);
+  const visibleNodes = document.nodes.filter(node => !hiddenIds.has(node.id));
   useEffect(() => {
     const canvas = container.current;
     if (!canvas) return;
@@ -211,6 +227,47 @@ export function CanvasWorkspace({
       (rect?.top ?? 0) + (rect?.height ?? 500) / 2,
     );
   }
+  function newNodePosition() {
+    const target = center();
+    const origin = {
+      x: target.x - CARD_WIDTH / 2,
+      y: target.y - CARD_HEIGHT / 2,
+    };
+    if (current.current.layoutMode !== "episode") return origin;
+
+    const occupied = current.current.nodes;
+    const stepX = CARD_WIDTH + 64;
+    const stepY = CARD_HEIGHT + 64;
+    for (let radius = 0; radius <= 24; radius++) {
+      const candidates: Array<{ x: number; y: number }> = [];
+      for (let x = -radius; x <= radius; x++) {
+        for (let y = -radius; y <= radius; y++) {
+          if (Math.max(Math.abs(x), Math.abs(y)) !== radius) continue;
+          candidates.push({
+            x: origin.x + x * stepX,
+            y: origin.y + y * stepY,
+          });
+        }
+      }
+      candidates.sort(
+        (a, b) =>
+          Math.abs(a.x - origin.x) + Math.abs(a.y - origin.y) -
+          (Math.abs(b.x - origin.x) + Math.abs(b.y - origin.y)),
+      );
+      const free = candidates.find(
+        (candidate) =>
+          !occupied.some(
+            (node) =>
+              candidate.x < node.x + CARD_WIDTH + 32 &&
+              candidate.x + CARD_WIDTH + 32 > node.x &&
+              candidate.y < node.y + CARD_HEIGHT + 32 &&
+              candidate.y + CARD_HEIGHT + 32 > node.y,
+          ),
+      );
+      if (free) return free;
+    }
+    return origin;
+  }
   function choose(id: string, add = false) {
     setEdgeId(undefined);
     setSelected((previous) => {
@@ -228,11 +285,10 @@ export function CanvasWorkspace({
       locate(existing);
       return;
     }
-    const position = center();
+    const position = newNodePosition();
     const next = {
       ...card,
-      x: position.x - CARD_WIDTH / 2,
-      y: position.y - CARD_HEIGHT / 2,
+      ...position,
     };
     const added = {
       ...current.current,
@@ -244,7 +300,7 @@ export function CanvasWorkspace({
         : added,
     );
     choose(next.id);
-    if (reveal) locate(current.current.nodes.find((node) => node.id === next.id)!);
+    if (reveal) locate(next);
   }
   function create(
     kind: "text" | "image" | "video",
@@ -289,18 +345,29 @@ export function CanvasWorkspace({
   function createBranch(source: CanvasCard, kind: "image" | "video") {
     if (busyRef.current) return;
     const media = nodeMedia(source, catalog, panels);
-    if (source.kind !== "text" && media?.kind !== "image") {
+    const hasImage = media?.kind === "image";
+    const linkedAsset = linkedCanvasAsset(source, catalog);
+    const assetPrompt = linkedAsset?.generationPrompt;
+    const hasTextPrompt = Boolean(source.text.trim() || assetPrompt?.trim());
+    if (!hasImage && !hasTextPrompt) {
       toast.error(
         t(
-          "请先为源节点选择一个图片版本，再创建分支",
-          "Choose an image version for this node before branching",
+          "源节点还没有图片或文字提示，请先补充提示词再创建分支",
+          "Add an image or text prompt to the source before creating a branch",
         ),
       );
       return;
     }
-    const pinned =
-      media?.kind === "image" ? { ...source, assetId: media.id } : source;
-    const assetPrompt = linkedCanvasAsset(source, catalog)?.generationPrompt;
+    const assetOnlySource =
+      !hasImage &&
+      ["character", "location", "prop"].includes(source.kind) &&
+      Boolean(source.entityId);
+    const branchSource =
+      media?.kind === "image"
+        ? { ...source, assetId: media.id }
+        : assetOnlySource && assetPrompt
+          ? { ...source, text: source.text || assetPrompt }
+          : source;
     const target: CanvasCard = {
       id: crypto.randomUUID(),
       kind,
@@ -308,26 +375,31 @@ export function CanvasWorkspace({
       title: `${source.title} · ${kindLabel(kind, locale)}`.slice(0, 300),
       text:
         kind === "image"
-          ? assetPrompt
+          ? hasImage
             ? [assetPrompt, source.text]
                 .filter(Boolean)
                 .join("\n\n")
                 .slice(0, 30000)
-            : source.kind === "text"
-              ? ""
-              : source.text
+            : assetOnlySource
+            ? [assetPrompt, source.text]
+                .filter(Boolean)
+                .join("\n\n")
+                .slice(0, 30000)
+            : ""
           : "",
-      videoText: kind === "video" ? (source.videoText ?? "") : "",
+      videoText:
+        kind === "video"
+          ? source.videoText?.trim() || (assetOnlySource ? assetPrompt ?? "" : "")
+          : "",
       x: source.x + CARD_WIDTH + 180,
       y: source.y,
     };
-    const purpose: CanvasPurpose =
-      source.kind === "text"
-        ? "context"
-        : kind === "video"
-          ? "first_frame"
-          : "reference";
-    const error = canvasConnectionError(pinned, target, purpose);
+    const purpose: CanvasPurpose = hasImage
+      ? kind === "video"
+        ? "first_frame"
+        : "reference"
+      : "context";
+    const error = canvasConnectionError(branchSource, target, purpose);
     if (error) {
       toast.error(error);
       return;
@@ -344,7 +416,7 @@ export function CanvasWorkspace({
       ...current.current,
       nodes: [
         ...current.current.nodes.map((node) =>
-          node.id === source.id ? pinned : node,
+          node.id === source.id ? branchSource : node,
         ),
         target,
       ],
@@ -453,10 +525,16 @@ export function CanvasWorkspace({
   const connections = useCanvasConnections(container, current, (from, to) => {
     if (busyRef.current) return;
     let source = current.current.nodes.find((node) => node.id === from)!;
-    if (!source.assetId && !source.panelId) {
-      const preview = nodeMedia(source, catalog, panels);
-      if (preview?.kind === "image")
-        source = { ...source, assetId: preview.id };
+    const preview = nodeMedia(source, catalog, panels);
+    const hasImage = preview?.kind === "image";
+    const isProjectAsset =
+      ["character", "location", "prop"].includes(source.kind) &&
+      Boolean(source.entityId);
+    const assetPrompt = linkedCanvasAsset(source, catalog)?.generationPrompt;
+    if (!source.assetId && hasImage) {
+      source = { ...source, assetId: preview.id };
+    } else if (isProjectAsset && assetPrompt && !source.text.trim()) {
+      source = { ...source, text: assetPrompt };
     }
     const destination = current.current.nodes.find((node) => node.id === to)!;
     const video = (destination.outputKind ?? destination.kind) === "video";
@@ -464,9 +542,17 @@ export function CanvasWorkspace({
       (edge) => edge.to === to && edge.purpose === "first_frame",
     );
     const purpose =
-      video && !hasFirstFrame && ["image", "panel"].includes(source.kind)
-        ? "first_frame"
-        : canvasEdgePurpose({ id: "", from, to }, source);
+      source.panelId && destination.panelId
+        ? "causality"
+        : isProjectAsset && !hasImage && destination.panelId
+          ? "story_asset"
+          : isProjectAsset && !hasImage && ["image", "video"].includes(destination.kind)
+            ? "context"
+          : source.panelId && !hasImage && ["image", "video"].includes(destination.kind)
+            ? "context"
+            : video && !hasFirstFrame && ["image", "panel"].includes(source.kind)
+              ? "first_frame"
+              : canvasEdgePurpose({ id: "", from, to }, source);
     const error = validateEdge(from, to, purpose, undefined, source);
     if (error) {
       toast.error(error);
@@ -503,7 +589,14 @@ export function CanvasWorkspace({
   useEffect(() => {
     const abort = new AbortController();
     void Promise.allSettled([
-      loadStudioAssetCatalog(projectId, abort.signal),
+      fetch(url, { method: "POST", signal: abort.signal })
+        .then(async (response) => {
+          if (!response.ok && response.status !== 404) {
+            const data = await response.json();
+            throw new Error(data.message ?? "画布素材同步失败");
+          }
+          return loadStudioAssetCatalog(projectId, abort.signal);
+        }),
       loadStudioStoryboard(projectId, episodeId, abort.signal),
     ]).then((results) => {
       if (abort.signal.aborted) return;
@@ -524,10 +617,66 @@ export function CanvasWorkspace({
     });
     return () => abort.abort();
   }, [projectId, episodeId, snapshot.tasks]);
+
+  const currentEpisodeGraph = useCallback(() => {
+    if (!catalog || !panels.length) return undefined;
+    const episode = snapshot.project.episodes.find((item) => item.id === episodeId);
+    const previous = episode
+      ? snapshot.project.episodes.find(
+          (item) => item.episodeNumber === episode.episodeNumber - 1,
+        )
+      : undefined;
+    return buildEpisodeCanvasGraph(
+      current.current,
+      panels,
+      catalog,
+      previous?.novelText?.trim()
+        ? {
+            id: previous.id,
+            episodeNumber: previous.episodeNumber,
+            name: previous.name,
+            text: previous.novelText,
+          }
+        : undefined,
+      new Set(snapshot.tasks.filter((task) => task.targetType === "canvas_node" && task.targetId).map((task) => task.targetId!)),
+    );
+  }, [catalog, panels, snapshot.project.episodes, snapshot.tasks, episodeId, current]);
+
   useEffect(() => {
     if (state.loading || !storyboard || layoutInitialized.current) return;
+    if (!catalog && !current.current.nodes.length && panels.length) return;
     layoutInitialized.current = true;
-    if (current.current.layoutMode === "branches") {
+    const hasEpisodeGraph = current.current.edges.some((edge) =>
+      ["causality", "shot_sequence", "story_asset", "episode_bridge", "shot_video"].includes(
+        edge.purpose ?? "",
+      ),
+    );
+    if (
+      catalog &&
+      panels.length &&
+      (current.current.layoutMode === "episode" || hasEpisodeGraph)
+    ) {
+      const graph = currentEpisodeGraph();
+      if (graph) {
+        const currentNodeIds = new Set(current.current.nodes.map((node) => node.id));
+        const graphNodeIds = new Set(graph.nodes.map((node) => node.id));
+        const currentEdgeIds = new Set(current.current.edges.map((edge) => edge.id));
+        const graphEdgeIds = new Set(graph.edges.map((edge) => edge.id));
+        const structureChanged =
+          graph.nodes.some((node) => node.episodeLayer !== current.current.nodes.find((item) => item.id === node.id)?.episodeLayer) ||
+          currentNodeIds.size !== graphNodeIds.size ||
+          [...graphNodeIds].some((id) => !currentNodeIds.has(id)) ||
+          currentEdgeIds.size !== graphEdgeIds.size ||
+          [...graphEdgeIds].some((id) => !currentEdgeIds.has(id));
+        if (current.current.layoutMode === "branches" || structureChanged) {
+          const arranged = arrangeEpisodeCausalGraph(graph, panels);
+          replace(arranged);
+          requestAnimationFrame(() => fit(arranged));
+        }
+        return;
+      }
+    }
+    if (current.current.layoutMode === "branches" && current.current.nodes.length) {
       const merged = mergeCanvasBranchGroups(current.current);
       if (merged !== current.current) {
         const arranged = arrangeEpisodeBranches(merged, panels, locale);
@@ -536,9 +685,22 @@ export function CanvasWorkspace({
       }
       return;
     }
+    if (!current.current.nodes.length && panels.length && catalog) {
+      assembleEpisodeGraph();
+      return;
+    }
     if (current.current.layoutMode) return;
     showBranches();
-  }, [state.loading, storyboard]);
+  }, [state.loading, storyboard, catalog, currentEpisodeGraph]);
+
+  function assembleEpisodeGraph() {
+    if (busyRef.current || !catalog || !panels.length) return;
+    const graph = currentEpisodeGraph();
+    if (!graph) return;
+    const arranged = arrangeEpisodeCausalGraph(graph, panels);
+    replace(arranged);
+    requestAnimationFrame(() => fit(arranged));
+  }
   useEffect(() => {
     if (
       state.loading ||
@@ -660,6 +822,7 @@ export function CanvasWorkspace({
         const ids = current.current.nodes
           .filter(
             (node) =>
+              !hiddenIds.has(node.id) &&
               node.x + CARD_WIDTH >= box.x &&
               node.x <= box.x + box.w &&
               node.y + CARD_HEIGHT >= box.y &&
@@ -685,7 +848,7 @@ export function CanvasWorkspace({
       window.removeEventListener("pointercancel", end);
       window.removeEventListener("blur", end);
     };
-  }, [current, replace]);
+  }, [current, replace, hiddenIds]);
   function dragNode(node: CanvasCard, event: PointerEvent<HTMLButtonElement>) {
     if (event.button !== 0 || busyRef.current) return;
     event.preventDefault();
@@ -775,6 +938,30 @@ export function CanvasWorkspace({
       ),
     });
     await onRefresh();
+  }
+  async function setAssetBaseline(entityId: string) {
+    if (!active || busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      const fresh = await loadStudioAssetCatalog(projectId);
+      const target = canvasBaselineTargets(active, current.current, fresh, panels)
+        .find((item) => item.entity.id === entityId);
+      if (!target) throw new Error(locale === "en" ? "This image is no longer an asset candidate" : "此图片已不在资产候选中，请刷新后重试");
+      await selectStudioAsset(projectId, {
+        targetType: target.entity.kind,
+        targetId: target.entity.kind === "prop" ? target.entity.id : target.candidate.id,
+        assetId: target.entity.kind === "prop" ? target.candidate.assetId ?? undefined : undefined,
+      });
+      setCatalog(await loadStudioAssetCatalog(projectId));
+      await onRefresh();
+      toast.success(locale === "en" ? "Asset baseline updated" : "已设为资产基准");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "设置基准失败");
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
   }
   async function applyMedia() {
     if (!active?.panelId) return;
@@ -907,10 +1094,13 @@ export function CanvasWorkspace({
     }
     busyRef.current = true;
     setBusy(true);
+    setReview([]);
+    setReviewError(undefined);
+    setReviewPreparing(true);
+    setReviewOpen(true);
     try {
       if (!(await state.save())) throw new Error("请先保存画布再审核");
-      const items: Review[] = [];
-      for (const node of nodes) {
+      const items = await Promise.all(nodes.map(async (node): Promise<Review> => {
         const kind =
           node.outputKind ?? (node.kind === "video" ? "video" : "image");
         const model =
@@ -930,7 +1120,7 @@ export function CanvasWorkspace({
           status: "待确认",
         };
         if (!model) item.error = "请配置生成模型";
-        else {
+        else try {
           const response = await fetch(url + "/generate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -966,14 +1156,16 @@ export function CanvasWorkspace({
                   ),
               );
           }
+        } catch (error) {
+          item.error = error instanceof Error ? error.message : "审核失败";
         }
-        items.push(item);
-      }
+        return item;
+      }));
       setReview(items);
-      setReviewOpen(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "审核失败");
+      setReviewError(error instanceof Error ? error.message : "审核失败");
     } finally {
+      setReviewPreparing(false);
       busyRef.current = false;
       setBusy(false);
     }
@@ -1034,6 +1226,7 @@ export function CanvasWorkspace({
             item.node,
         })),
       );
+      let submissionFailures = 0;
       for (const item of pending) {
         try {
           const kind =
@@ -1059,6 +1252,7 @@ export function CanvasWorkspace({
             ),
           );
         } catch (error) {
+          submissionFailures++;
           setReview((previous) =>
             previous.map((entry) =>
               entry.key === item.key
@@ -1072,6 +1266,10 @@ export function CanvasWorkspace({
           );
         }
       }
+      if (!submissionFailures && pending.length + review.filter(item => item.status === "已提交").length === review.length) {
+        setReviewOpen(false);
+        toast.success(t("生成任务已提交", "Generation tasks submitted"));
+      }
       await onRefresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "提交失败");
@@ -1083,9 +1281,10 @@ export function CanvasWorkspace({
   function fit(source: CanvasDocument = current.current) {
     if (!source.nodes.length) return;
     const items = [
-      ...source.nodes,
+      ...source.nodes.filter(node => showReusableBranches || selected.has(node.id) || !isReusableCanvasBranch(node, source, catalog, snapshot.tasks)),
       ...(source.layoutMode === "branches" ? (source.branchGroups ?? []) : []),
     ];
+    if (!items.length) return;
     const minX = Math.min(...items.map((n) => n.x)),
       minY = Math.min(...items.map((n) => n.y));
     const w = Math.max(...items.map((n) => n.x + CARD_WIDTH)) - minX,
@@ -1170,18 +1369,14 @@ export function CanvasWorkspace({
           toast.error(`${file.name}：${data.message ?? "导入失败"}`);
           continue;
         }
-        const position = center(),
+        const position = newNodePosition(),
           node: CanvasCard = {
             id: crypto.randomUUID(),
             kind,
             title: file.name,
             text: "",
             assetId: data.asset.id,
-            x:
-              position.x -
-              CARD_WIDTH / 2 +
-              ((current.current.nodes.length * 16) % 160),
-            y: position.y - CARD_HEIGHT / 2,
+            ...position,
           };
         replace({
           ...current.current,
@@ -1206,12 +1401,16 @@ export function CanvasWorkspace({
     saving: state.saving,
     dirty: state.dirty,
     saveError: state.saveError,
-    nodeCount: document.nodes.length,
+    nodeCount: visibleNodes.length,
+    reusableBranchCount: reusableIds.size,
+    showReusableBranches,
+    onToggleReusableBranches: () => setShowReusableBranches(value => !value),
     selectedCount: selected.size,
     canUndo: state.canUndo,
     canRedo: state.canRedo,
     outlineOpen,
     libraryOpen: library,
+    canAssembleEpisodeGraph: panels.length > 0,
     branches: document.layoutMode === "branches",
     onTool: setTool,
     onCreate: create,
@@ -1232,6 +1431,7 @@ export function CanvasWorkspace({
     onExport: exportDocument,
     onSave: () => void state.save(),
     onReview: () => void startReview(),
+    onAssembleEpisodeGraph: assembleEpisodeGraph,
   };
   if (state.loading || state.error)
     return (
@@ -1286,7 +1486,7 @@ export function CanvasWorkspace({
         )}
         {!library && outlineOpen && (
           <CanvasOutline
-            document={document}
+            document={{ ...document, nodes: visibleNodes, edges: document.edges.filter(edge => !hiddenIds.has(edge.from) && !hiddenIds.has(edge.to)) }}
             selected={selected}
             locale={locale}
             onSelect={(id) => {
@@ -1381,14 +1581,36 @@ export function CanvasWorkspace({
                   }),
                 )}
               {document.edges.map((edge) => {
+                if (hiddenIds.has(edge.from) || hiddenIds.has(edge.to)) return null;
                 const from = document.nodes.find((n) => n.id === edge.from),
                   to = document.nodes.find((n) => n.id === edge.to);
                 if (!from || !to) return null;
-                const x = from.x + CARD_WIDTH,
-                  y = from.y + PORT_Y,
-                  tx = to.x,
-                  ty = to.y + PORT_Y;
-                const branch = canvasBranchPath(x, y, tx, ty);
+                const verticalEpisodeEdge =
+                  document.layoutMode === "episode" &&
+                  ((edge.purpose === "story_asset" &&
+                    ((Boolean(to.panelId) && from.y >= to.y + CARD_HEIGHT) ||
+                      to.episodeLayer === "asset_image")) ||
+                    edge.purpose === "shot_video");
+                const branch = verticalEpisodeEdge
+                  ? (() => {
+                      const downToImage = to.episodeLayer === "asset_image";
+                      const x = from.x + CARD_WIDTH / 2;
+                      const y = downToImage ? from.y + CARD_HEIGHT : from.y;
+                      const tx = to.x + CARD_WIDTH / 2;
+                      const ty = downToImage ? to.y : to.y + CARD_HEIGHT;
+                      const middleY = (y + ty) / 2;
+                      return {
+                        path: `M ${x} ${y} C ${x} ${middleY}, ${tx} ${middleY}, ${tx} ${ty}`,
+                        labelX: (x + tx) / 2,
+                        labelY: middleY - 12,
+                      };
+                    })()
+                  : canvasBranchPath(
+                      from.x + CARD_WIDTH,
+                      from.y + PORT_Y,
+                      to.x,
+                      to.y + PORT_Y,
+                    );
                 const d = branch.path;
                 return (
                   <g
@@ -1406,9 +1628,22 @@ export function CanvasWorkspace({
                       stroke={
                         edgeId === edge.id
                           ? "var(--primary)"
-                          : "var(--muted-foreground)"
+                          : edge.purpose === "causality" || edge.purpose === "shot_sequence" ||
+                              edge.purpose === "episode_bridge"
+                            ? "var(--primary)"
+                            : "var(--muted-foreground)"
                       }
-                      strokeWidth={edgeId === edge.id ? 3 : 2}
+                      strokeWidth={
+                        edgeId === edge.id
+                          ? 3
+                          : edge.purpose === "causality" || edge.purpose === "shot_sequence" ||
+                              edge.purpose === "episode_bridge"
+                            ? 2.5
+                            : 1.5
+                      }
+                      strokeDasharray={
+                        edge.purpose === "story_asset" ? "6 5" : undefined
+                      }
                       markerEnd={`url(#${arrowId})`}
                     />
                     <path
@@ -1418,19 +1653,27 @@ export function CanvasWorkspace({
                       strokeWidth={18}
                       className="cursor-pointer"
                     />
-                    <text
-                      x={branch.labelX}
-                      y={branch.labelY}
-                      textAnchor="middle"
-                      fill="var(--muted-foreground)"
-                      fontSize={12}
-                      paintOrder="stroke"
-                      stroke="var(--background)"
-                      strokeWidth={5}
-                      strokeLinejoin="round"
-                    >
-                      {edgeLabel(edge, from, locale)}
-                    </text>
+                    {(edgeId === edge.id ||
+                      !(
+                        document.layoutMode === "episode" &&
+                        ["causality", "shot_sequence", "story_asset"].includes(
+                          edge.purpose ?? "",
+                        )
+                      )) && (
+                      <text
+                        x={branch.labelX}
+                        y={branch.labelY}
+                        textAnchor="middle"
+                        fill="var(--muted-foreground)"
+                        fontSize={12}
+                        paintOrder="stroke"
+                        stroke="var(--background)"
+                        strokeWidth={5}
+                        strokeLinejoin="round"
+                      >
+                        {edgeLabel(edge, from, locale)}
+                      </text>
+                    )}
                   </g>
                 );
               })}
@@ -1489,10 +1732,15 @@ export function CanvasWorkspace({
                   </button>
                 );
               })}
-            {document.nodes.map((node) => (
+            {visibleNodes.map((node) => (
               <CanvasNode
                 key={node.id}
                 node={node}
+                summary={canvasCardSummary(node, catalog, panels, locale)}
+                durationSeconds={panels.find(panel => panel.id === node.panelId)?.durationSeconds}
+                usageCount={["character", "location", "prop"].includes(node.kind)
+                  ? panels.filter(panel => node.kind === "character" ? panel.characters.includes(node.title) : node.kind === "location" ? panel.locationName === node.title : panel.props.includes(node.title)).length
+                  : undefined}
                 linkedPrompt={
                   linkedCanvasAsset(node, catalog)?.generationPrompt
                 }
@@ -1505,9 +1753,7 @@ export function CanvasWorkspace({
                   )
                   .filter((title): title is string => !!title)}
                 media={nodeMedia(node, catalog, panels)}
-                task={snapshot.tasks.find(
-                  (task) => task.targetId === (node.panelId ?? node.id),
-                )}
+                task={canvasNodeTask(node, snapshot.tasks)}
                 selected={selected.has(node.id)}
                 connecting={connections.source === node.id}
                 target={connections.target === node.id}
@@ -1626,6 +1872,7 @@ export function CanvasWorkspace({
             onOpenPanel={onOpenPanel}
             onSavePanel={savePanel}
             onApplyMedia={() => void applyMedia()}
+            onSetBaseline={(entityId) => void setAssetBaseline(entityId)}
             onOpenAssets={onOpenStage}
             onLipSync={() => void reviewLipSync()}
           />
@@ -1646,6 +1893,13 @@ export function CanvasWorkspace({
             )}
           </DialogDescription>
           <div className="max-h-[60vh] space-y-4 overflow-y-auto">
+            {reviewPreparing ? (
+              <div role="status" className="flex min-h-32 items-center justify-center gap-2 text-sm text-muted-foreground">
+                <LoaderCircle className="size-4 animate-spin" />
+                {t("正在保存画布并加载审核内容…", "Saving canvas and loading review…")}
+              </div>
+            ) : null}
+            {reviewError ? <p role="alert" className="text-sm text-destructive">{reviewError}</p> : null}
             {review.map((item) => (
               <section key={item.key} className="rounded-lg border p-3">
                 <div className="flex justify-between font-medium">
@@ -1653,9 +1907,12 @@ export function CanvasWorkspace({
                   <span className="text-xs">{item.status}</span>
                 </div>
                 <p className="my-2 text-xs text-muted-foreground">
-                  {item.model?.name ?? "未配置模型"} · {item.model?.channelName}
+                  {t("模型：", "Model: ")}
+                  {item.model ? getStudioModelName(item.model) : t("未配置模型", "No model configured")}
+                  {item.model?.channelName.trim() ? ` · ${item.model.channelName.trim()}` : ""}
                 </p>
                 <p className="text-xs">
+                  {t("输入：", "Inputs: ")}
                   {item.references.join(" / ") ||
                     t(
                       "没有画布连线输入；关联镜头仍会使用制作流程中的默认参考。",
@@ -1711,7 +1968,9 @@ export function CanvasWorkspace({
               }
               onClick={() => void submitReview()}
             >
-              {busy
+              {reviewPreparing
+                ? t("审核准备中…", "Preparing review…")
+                : busy
                 ? t("提交中…", "Submitting…")
                 : t("确认生成", "Confirm generation")}
             </Button>
@@ -1760,7 +2019,7 @@ export function CanvasWorkspace({
           >
             {lipSyncModels.map((model) => (
               <NativeSelectOption key={model.id} value={model.id}>
-                {model.name} · {model.channelName}
+                {getStudioModelName(model)}{model.channelName.trim() ? ` · ${model.channelName.trim()}` : ""}
               </NativeSelectOption>
             ))}
           </NativeSelect>

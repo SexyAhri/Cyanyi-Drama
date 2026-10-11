@@ -18,6 +18,7 @@ export function ModelSelect({
   models,
   onChange,
   placeholder,
+  showChannelInTrigger = false,
   size = "default",
   value,
 }: {
@@ -27,10 +28,13 @@ export function ModelSelect({
   models: StudioModelOption[];
   onChange: (value: string) => void;
   placeholder: string;
+  showChannelInTrigger?: boolean;
   size?: "sm" | "default";
   value: string;
 }) {
   const selected = models.find((model) => model.id === value);
+  const selectedName = selected ? getStudioModelName(selected) : "";
+  const selectedChannel = selected?.channelName.trim() ?? "";
   return (
     <Select
       disabled={disabled || models.length === 0}
@@ -44,7 +48,13 @@ export function ModelSelect({
       >
         <SelectValue>
           <span className="min-w-0 flex-1 truncate">
-            {selected ? getStudioModelName(selected) : placeholder}
+            {selected
+              ? showChannelInTrigger
+                ? selectedChannel
+                  ? `${selectedName} · ${selectedChannel}`
+                  : selectedName
+                : selectedName
+              : placeholder}
           </span>
         </SelectValue>
       </SelectTrigger>

@@ -6,7 +6,8 @@ import type {
   StudioStoryboardPanel,
   StudioSelectionContext,
 } from "../types";
-import type { CanvasCard, CanvasEdge, CanvasPurpose } from "./types";
+import type { MediaTask } from "@/lib/media/task-contract";
+import type { CanvasCard, CanvasDocument, CanvasEdge, CanvasPurpose } from "./types";
 import {
   buildStudioAssetEntities,
   type StudioAssetEntity,
@@ -42,6 +43,27 @@ export function linkedCanvasAsset(
   )
     return;
   return canvasAssetEntities(catalog).get(`${node.kind}-${node.entityId}`);
+}
+
+export function canvasBaselineTargets(
+  node: CanvasCard,
+  document: CanvasDocument,
+  catalog?: ProjectAssetCatalog,
+  panels: StudioStoryboardPanel[] = [],
+) {
+  const media = nodeMedia(node, catalog, panels);
+  if (media?.kind !== "image") return [];
+  const sources = [node, ...document.edges
+    .filter((edge) => edge.to === node.id)
+    .flatMap((edge) => document.nodes.filter((source) => source.id === edge.from))];
+  const seen = new Set<string>();
+  return sources.flatMap((source) => {
+    const entity = linkedCanvasAsset(source, catalog);
+    const candidate = entity?.candidates.find((item) => item.assetId === media.id);
+    if (!entity || !candidate || seen.has(`${entity.kind}-${entity.id}`)) return [];
+    seen.add(`${entity.kind}-${entity.id}`);
+    return [{ entity, candidate }];
+  });
 }
 
 export function canvasAssetCards(catalog?: ProjectAssetCatalog): CanvasCard[] {
@@ -94,6 +116,11 @@ export const purposeLabel = (purpose: CanvasPurpose, locale: StudioLocale) =>
     first_frame: ["视频首帧", "First frame"],
     last_frame: ["视频尾帧", "Last frame"],
     dialogue: ["台词音频", "Dialogue audio"],
+    causality: ["剧情因果", "Story causality"],
+    shot_sequence: ["镜头顺序", "Shot sequence"],
+    story_asset: ["剧情资产", "Story asset"],
+    episode_bridge: ["承接上一集", "Previous episode"],
+    shot_video: ["镜头视频", "Shot video"],
   })[purpose][locale === "en" ? 1 : 0];
 export function edgeLabel(
   edge: CanvasEdge,
@@ -105,6 +132,16 @@ export function edgeLabel(
     return locale === "en" ? "Character reference" : "角色参考";
   if (purpose === "reference" && source.kind === "location")
     return locale === "en" ? "Location reference" : "场景参考";
+  if (purpose === "causality")
+    return locale === "en" ? "Story causality" : "剧情因果";
+  if (purpose === "shot_sequence")
+    return locale === "en" ? "Shot sequence" : "镜头顺序";
+  if (purpose === "story_asset")
+    return locale === "en" ? "Story asset" : "剧情资产";
+  if (purpose === "episode_bridge")
+    return locale === "en" ? "Previous episode" : "承接上一集";
+  if (purpose === "shot_video")
+    return locale === "en" ? "Shot video" : "镜头视频";
   return purposeLabel(purpose, locale);
 }
 export function panelCard(
@@ -131,18 +168,53 @@ export function nodeCandidates(
   node: CanvasCard,
   catalog?: ProjectAssetCatalog,
 ) {
+  const inherited = inheritedCanvasAsset(node, catalog);
+  const inheritedIds = new Set(inherited?.candidates.map(candidate => candidate.assetId));
   return (catalog?.assets ?? [])
     .filter(
       (asset) =>
         asset.url &&
         asset.taskStatus === "succeeded" &&
         (asset.id === node.assetId ||
+          inheritedIds.has(asset.id) ||
           (!!node.panelId && asset.sourceTargetId === node.panelId) ||
           asset.sourceTargetId === node.id ||
           (!!node.entityId &&
             asset.references.some((ref) => ref.entityId === node.entityId))),
     )
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+/** Default episode asset branches reuse project images until they have their own output. */
+function inheritedCanvasAsset(node: CanvasCard, catalog?: ProjectAssetCatalog) {
+  const prefix = "episode-asset-image-";
+  if (!catalog || node.kind !== "image" || !node.id.startsWith(prefix)) return;
+  return canvasAssetEntities(catalog).get(node.id.slice(prefix.length));
+}
+
+export function isReusableCanvasBranch(node: CanvasCard, document: CanvasDocument, catalog: ProjectAssetCatalog | undefined, tasks: MediaTask[]) {
+  const entity = inheritedCanvasAsset(node, catalog);
+  if (!entity || node.assetId || node.modelId || node.promptVersions?.length || node.text !== entity.generationPrompt) return false;
+  if (tasks.some(task => task.targetType === "canvas_node" && task.targetId === node.id) || catalog?.assets.some(asset => asset.sourceTargetId === node.id)) return false;
+  const incoming = document.edges.filter(edge => edge.to === node.id);
+  const parent = document.nodes.find(source => source.id === incoming[0]?.from);
+  if (incoming.length !== 1 || !parent || node.title !== `${parent.title} · 图片`.slice(0, 300) || document.edges.some(edge => edge.from === node.id)) return false;
+  return entity.candidates.some(candidate => candidate.selected && candidate.url);
+}
+
+export function canvasCardSummary(node: CanvasCard, catalog: ProjectAssetCatalog | undefined, panels: StudioStoryboardPanel[], locale: StudioLocale) {
+  const panel = panels.find(item => item.id === node.panelId);
+  if (panel && node.kind === "video" && node.episodeLayer === "shot_video")
+    return [panel.locationName, panel.shotType, panel.cameraMove,
+      locale === "en" ? "Video result for this shot. Select to edit the full prompt." : "本镜头的视频结果，点击编辑完整提示词。"].filter(Boolean).join(" · ");
+  if (panel && node.kind === "panel")
+    return [panel.description, panel.lipSyncText ? `${panel.speakingCharacter ?? ""}：${panel.lipSyncText}` : panel.voiceoverText].filter(Boolean).join("\n");
+  const entity = linkedCanvasAsset(node, catalog);
+  if (entity)
+    return entity.visualProfile?.spec.shapeAndStructure || entity.description || entity.name;
+  const inherited = inheritedCanvasAsset(node, catalog);
+  if (inherited)
+    return locale === "en" ? `Image candidates for ${inherited.name}. Select to review or create a new version.` : `${inherited.name}的参考图候选。点击查看或生成新版本。`;
 }
 export function nodeMedia(
   node: CanvasCard,
@@ -164,15 +236,52 @@ export function nodeMedia(
   }
   const panel = panels.find((item) => item.id === node.panelId);
   const official =
-    (node.outputKind ?? "image") === "video"
+    (node.outputKind ?? (node.kind === "video" ? "video" : "image")) === "video"
       ? panel?.videoAssetId
       : panel?.imageAssetId;
   if (official) return catalog?.assets.find((asset) => asset.id === official);
-  return nodeCandidates(node, catalog).find(
+  const candidates = nodeCandidates(node, catalog);
+  const ownOutput = inheritedCanvasAsset(node, catalog)
+    ? candidates.find(asset => asset.sourceTargetId === node.id && asset.kind === "image")
+    : undefined;
+  if (ownOutput) return ownOutput;
+  const inherited = inheritedCanvasAsset(node, catalog);
+  if (inherited) {
+    const baseline = inherited.candidates.find(candidate => candidate.selected && candidate.url);
+    const fallback = inherited.candidates.filter(candidate => candidate.url)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    const assetId = (baseline ?? fallback)?.assetId;
+    if (assetId) return catalog?.assets.find(asset => asset.id === assetId);
+  }
+  return candidates.find(
     (asset) =>
       asset.kind ===
       (node.kind === "audio"
         ? "audio"
         : (node.outputKind ?? (node.kind === "video" ? "video" : "image"))),
   );
+}
+
+export function canvasNodeTask(
+  node: CanvasCard,
+  tasks: MediaTask[],
+): MediaTask | undefined {
+  const kind =
+    node.outputKind ??
+    (node.kind === "video" ? "video" : node.kind === "audio" ? "audio" : "image");
+  const targetType = node.panelId ? "storyboard_panel" : "canvas_node";
+  const targetId = node.panelId ?? node.id;
+  return tasks
+    .filter(
+      (task) =>
+        task.targetType === targetType &&
+        task.targetId === targetId &&
+        task.kind === kind,
+    )
+    .sort(
+      (a, b) =>
+        Number(["queued", "running"].includes(b.status)) -
+          Number(["queued", "running"].includes(a.status)) ||
+        b.updatedAt.localeCompare(a.updatedAt),
+    )[0];
 }

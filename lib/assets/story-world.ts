@@ -1,4 +1,6 @@
-import { loadApprovedWorldBible } from "@/lib/production/world-bible";
+import { Prisma } from "@prisma/client";
+
+import { loadCurrentWorldBible } from "@/lib/production/world-bible";
 import { prisma } from "@/lib/server/prisma";
 
 import type {
@@ -12,8 +14,25 @@ export type AssetStoryWorldContext = {
   projectVisualContext: string | null;
   visualEra: "source" | "premodern" | "contemporary" | "custom";
   visualEraCustom: string | null;
-  manuscripts: Array<{ title: string; synopsis: string | null }>;
-  approvedWorldBible: unknown;
+  manuscripts: Array<{
+    title: string;
+    synopsis: string | null;
+    approvedSourceNotes?: {
+      summary: string | null;
+      rules: string[];
+      matchingAssets: Array<{
+        kind: "character" | "location" | "prop";
+        name: string;
+        details: string;
+      }>;
+    };
+  }>;
+  projectStoryPackage: {
+    title: string;
+    version: number;
+    status: string;
+    payload: unknown;
+  } | null;
   relatedSourceEvidence: string[];
   lock: AssetStoryWorldLock;
   groundingText: string;
@@ -94,7 +113,7 @@ export async function loadProjectAssetStoryWorldContext(input: {
   assetName: string;
   assetFacts?: unknown;
 }): Promise<AssetStoryWorldContext> {
-  const [project, approvedWorldBible] = await Promise.all([
+  const [project, projectStoryPackage] = await Promise.all([
     prisma.project.findFirst({
       where: { id: input.projectId, userId: input.userId },
       select: {
@@ -110,15 +129,36 @@ export async function loadProjectAssetStoryWorldContext(input: {
         manuscripts: {
           orderBy: { createdAt: "desc" },
           take: 3,
-          select: { title: true, synopsis: true },
+          select: { id: true, title: true, synopsis: true, sourceHash: true },
         },
       },
     }),
-    loadApprovedWorldBible(input.userId, input.projectId),
+    loadCurrentWorldBible(input.userId, input.projectId),
   ]);
+
+  const sourceManuscripts = project?.manuscripts ?? [];
+  const assetNames = assetNameVariants(input.assetName, input.assetFacts);
+  const approvedNotes = await loadApprovedManuscriptNotes({
+    userId: input.userId,
+    projectId: input.projectId,
+    manuscripts: sourceManuscripts,
+    assetNames,
+  });
+  const manuscripts = sourceManuscripts.map((manuscript) => ({
+    title: manuscript.title,
+    synopsis: boundedText(manuscript.synopsis, 1_200),
+    ...(approvedNotes.get(manuscript.id)
+      ? { approvedSourceNotes: approvedNotes.get(manuscript.id) }
+      : {}),
+  }));
 
   let episodes = await loadRelatedEpisodes(input.projectId, input.assetName);
   if (!episodes.length) episodes = await loadRelatedEpisodes(input.projectId);
+  const manuscriptEvidence = await Promise.all(
+    sourceManuscripts.map((manuscript) =>
+      loadManuscriptEvidence(manuscript.id, assetNames),
+    ),
+  );
 
   return buildAssetStoryWorldContext({
     projectName: project?.name ?? null,
@@ -126,22 +166,25 @@ export async function loadProjectAssetStoryWorldContext(input: {
     projectVisualContext: project?.config?.globalAssetText ?? null,
     visualEra: normalizeVisualEra(project?.config?.visualEra),
     visualEraCustom: project?.config?.visualEraCustom ?? null,
-    manuscripts: project?.manuscripts ?? [],
-    approvedWorldBible: approvedWorldBible?.payload ?? null,
+    manuscripts,
+    projectStoryPackage,
     assetFacts: input.assetFacts,
-    relatedSourceEvidence: episodes.flatMap((episode) => {
-      const sources = [
-        episode.description,
-        episode.novelText,
-        ...episode.sourceVersions.flatMap((source) => [
-          source.summary,
-          source.content,
-        ]),
-      ];
-      return sources.flatMap((source) =>
-        source ? evidenceWindows(source, input.assetName) : [],
-      );
-    }),
+    relatedSourceEvidence: [
+      ...episodes.flatMap((episode) => {
+        const sources = [
+          episode.description,
+          episode.novelText,
+          ...episode.sourceVersions.flatMap((source) => [
+            source.summary,
+            source.content,
+          ]),
+        ];
+        return sources.flatMap((source) =>
+          source ? evidenceWindows(source, input.assetName) : [],
+        );
+      }),
+      ...manuscriptEvidence.flat(),
+    ],
   });
 }
 
@@ -151,8 +194,8 @@ export function buildAssetStoryWorldContext(input: {
   projectVisualContext?: string | null;
   visualEra?: "source" | "premodern" | "contemporary" | "custom";
   visualEraCustom?: string | null;
-  manuscripts?: Array<{ title: string; synopsis: string | null }>;
-  approvedWorldBible?: unknown;
+  manuscripts?: AssetStoryWorldContext["manuscripts"];
+  projectStoryPackage?: AssetStoryWorldContext["projectStoryPackage"];
   assetFacts?: unknown;
   relatedSourceEvidence?: string[];
 }): AssetStoryWorldContext {
@@ -165,7 +208,12 @@ export function buildAssetStoryWorldContext(input: {
     input.projectDescription,
     input.projectVisualContext,
     ...manuscripts.flatMap((item) => [item.title, item.synopsis]),
-    serializeCompact(input.approvedWorldBible),
+    ...manuscripts.flatMap((item) =>
+      item.approvedSourceNotes
+        ? [serializeCompact(item.approvedSourceNotes)]
+        : [],
+    ),
+    serializeCompact(input.projectStoryPackage),
     serializeCompact(input.assetFacts),
     ...relatedSourceEvidence,
   ]
@@ -186,7 +234,12 @@ export function buildAssetStoryWorldContext(input: {
     visualEra,
     visualEraCustom,
     manuscripts,
-    approvedWorldBible: compactJsonValue(input.approvedWorldBible),
+    projectStoryPackage: input.projectStoryPackage
+      ? {
+          ...input.projectStoryPackage,
+          payload: compactJsonValue(input.projectStoryPackage.payload),
+        }
+      : null,
     relatedSourceEvidence,
     lock,
     groundingText,
@@ -201,7 +254,7 @@ export function storyWorldContextForPrompt(context: AssetStoryWorldContext) {
     visualEra: context.visualEra,
     visualEraCustom: context.visualEraCustom,
     manuscripts: context.manuscripts,
-    approvedWorldBible: context.approvedWorldBible,
+    projectStoryPackage: context.projectStoryPackage,
     relatedSourceEvidence: context.relatedSourceEvidence,
     detectedWorld: context.lock,
   };
@@ -272,6 +325,170 @@ export function findStoryWorldTextConflicts(
     hasUnsupportedAffirmativeMatch(text, pattern, context.groundingText),
   ).map(({ label }) => label);
   return [...new Set(conflicts)];
+}
+
+async function loadApprovedManuscriptNotes(input: {
+  userId: string;
+  projectId: string;
+  manuscripts: Array<{ id: string; sourceHash: string }>;
+  assetNames: string[];
+}) {
+  const notes = new Map<
+    string,
+    NonNullable<AssetStoryWorldContext["manuscripts"][number]["approvedSourceNotes"]>
+  >();
+  const store = prisma.productionDeliverable;
+  if (!input.manuscripts.length || !store?.findMany) return notes;
+
+  const deliverables = await store.findMany({
+    where: {
+      userId: input.userId,
+      projectId: input.projectId,
+      scopeType: "manuscript",
+      scopeId: { in: input.manuscripts.map((manuscript) => manuscript.id) },
+      deliverableType: "story_bible",
+      status: { in: ["approved", "locked"] },
+      supersededAt: null,
+    },
+    orderBy: [{ version: "desc" }, { updatedAt: "desc" }],
+    select: { scopeId: true, payload: true },
+  });
+  const manuscriptsById = new Map(
+    input.manuscripts.map((manuscript) => [manuscript.id, manuscript]),
+  );
+
+  for (const deliverable of deliverables) {
+    if (notes.has(deliverable.scopeId)) continue;
+    const manuscript = manuscriptsById.get(deliverable.scopeId);
+    const payload = asRecord(deliverable.payload);
+    if (
+      !manuscript ||
+      payload?.packageFormat !== "cyanyi-manuscript-dossier-v1" ||
+      payload.sourceHash !== manuscript.sourceHash
+    )
+      continue;
+    const summary = asRecord(payload.summary);
+    if (!summary) continue;
+    notes.set(
+      deliverable.scopeId,
+      compactManuscriptNotes(summary, input.assetNames),
+    );
+  }
+  return notes;
+}
+
+function compactManuscriptNotes(
+  summary: Record<string, unknown>,
+  assetNames: string[],
+): NonNullable<AssetStoryWorldContext["manuscripts"][number]["approvedSourceNotes"]> {
+  const targetNames = assetNames.map(normalizeName).filter(Boolean);
+  const assetKinds = [
+    ["characters", "character"],
+    ["locations", "location"],
+    ["props", "prop"],
+  ] as const;
+  const matchingAssets = assetKinds.flatMap(([key, kind]) => {
+    const items = Array.isArray(summary[key]) ? summary[key] : [];
+    return items.flatMap((item) => {
+      const record = asRecord(item);
+      const name = typeof record?.name === "string" ? record.name.trim() : "";
+      const details =
+        typeof record?.details === "string" ? record.details.trim() : "";
+      const candidateName = normalizeName(name);
+      if (
+        !name ||
+        !details ||
+        !targetNames.some(
+          (targetName) =>
+            candidateName === targetName ||
+            candidateName.includes(targetName) ||
+            targetName.includes(candidateName),
+        )
+      )
+        return [];
+      return [{ kind, name, details: boundedText(details, 320) ?? "" }];
+    });
+  });
+  const rules = Array.isArray(summary.rules)
+    ? summary.rules
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => boundedText(item, 160))
+        .filter((item): item is string => Boolean(item))
+        .slice(0, 8)
+    : [];
+  return {
+    summary: boundedText(
+      typeof summary.summary === "string" ? summary.summary : null,
+      1_200,
+    ),
+    rules,
+    matchingAssets: matchingAssets.slice(0, 6),
+  };
+}
+
+async function loadManuscriptEvidence(manuscriptId: string, assetNames: string[]) {
+  const needles = uniqueStrings(assetNames).filter((name) => name.length >= 2);
+  if (!needles.length) return [];
+  const rows = await prisma.$queryRaw<Array<{ evidence: string }>>(Prisma.sql`
+    WITH source AS MATERIALIZED (
+      SELECT source_text, lower(source_text) AS folded_text
+      FROM manuscripts
+      WHERE id = ${manuscriptId}
+    )
+    SELECT substring(source.source_text FROM GREATEST(
+      strpos(source.folded_text, lower(needle.value)) - 300, 1
+    ) FOR 700) AS evidence
+    FROM source
+    CROSS JOIN (VALUES ${Prisma.join(
+      needles.map((needle) => Prisma.sql`(${needle})`),
+    )}) AS needle(value)
+    WHERE strpos(source.folded_text, lower(needle.value)) > 0
+    LIMIT 1
+  `);
+  return rows
+    .map(({ evidence }) => evidence.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+function normalizeName(value: string) {
+  return value.toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, "");
+}
+
+function assetNameVariants(assetName: string, assetFacts: unknown) {
+  const aliases: string[] = [];
+  function visit(value: unknown, insideAliasField = false) {
+    if (typeof value === "string") {
+      if (insideAliasField && value.trim()) aliases.push(value.trim());
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item) => visit(item, insideAliasField));
+      return;
+    }
+    const record = asRecord(value);
+    if (!record) return;
+    for (const [key, item] of Object.entries(record)) {
+      visit(item, insideAliasField || /alias|别名/iu.test(key));
+    }
+  }
+  visit(assetFacts);
+  return uniqueStrings([assetName, ...aliases])
+    .filter((name) => name.length >= 2)
+    .slice(0, 4);
+}
+
+function boundedText(value: string | null, maxLength: number) {
+  const normalized = value?.trim();
+  if (!normalized) return null;
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength)}…`
+    : normalized;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function detectStoryWorldLock(text: string): AssetStoryWorldLock {

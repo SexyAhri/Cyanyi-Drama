@@ -9,7 +9,14 @@ export type ToolRegistryItem = {
   label: string;
   description?: string;
   renderArgs?: (args: unknown) => ReactNode;
+  progressLabel?: string;
+  renderProgress?: (progress: {
+    text: string;
+    status?: string;
+    totalCharacters: number;
+  }) => ReactNode;
   renderResult?: (result: unknown) => ReactNode;
+  hideProcessDetails?: boolean;
   showArgs?: boolean;
 };
 

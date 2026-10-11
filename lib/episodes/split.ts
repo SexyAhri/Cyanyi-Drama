@@ -10,11 +10,13 @@ import { prisma } from "@/lib/server/prisma";
 
 import { EpisodeSplitError } from "./errors";
 import { resolveEpisodeTextProvider } from "./provider";
+import { chunkSource, sourceFingerprint, type SourceTaskHooks } from "./long-source";
+import type { PromptExecutionTrace } from "@/lib/llm/openai-structured";
 
 export { EpisodeSplitError } from "./errors";
 
 export const MAX_MANUSCRIPT_CHARS = 50_000_000;
-export const MAX_AI_SPLIT_CHARS = 500_000;
+export const MAX_AI_SPLIT_CHARS = 12_000;
 
 export type EpisodeSplitDraft = {
   number: number;
@@ -154,27 +156,44 @@ export async function splitEpisodesWithAi(input: {
   channelId: string;
   model: string;
   locale?: PromptLocale;
+  hooks?: SourceTaskHooks;
 }) {
-  if (input.content.length > MAX_AI_SPLIT_CHARS)
-    throw new EpisodeSplitError(
-      `AI 分集单次最多处理 ${MAX_AI_SPLIT_CHARS.toLocaleString()} 字符；超长原著请使用章节标记分集，AI 只处理确认后的单集`,
-    );
   await assertProjectOwnership(input.userId, input.projectId);
   const provider = await resolveEpisodeTextProvider(input);
-  const result = await requestOpenAiStructured({
+  const episodes: EpisodeSplitDraft[] = [];
+  const traces: PromptExecutionTrace[] = [];
+  for (const chunk of chunkSource(input.content, MAX_AI_SPLIT_CHARS)) {
+    await input.hooks?.assertActive();
+    await input.hooks?.reportProgress?.(`正在规划分集，第 ${chunk.index + 1} 段（原文 ${chunk.start}-${chunk.end}）`);
+    const key = sourceFingerprint({ text: chunk.text, start: chunk.start, model: input.model, channelId: input.channelId, version: 1 });
+    const cached = await input.hooks?.loadArtifact("episode.split-chunk", key) as {
+      boundaries?: unknown; trace?: PromptExecutionTrace;
+    } | null;
+    const parsed = episodeSplitSchema.safeParse(cached?.boundaries);
+    const result = parsed.success && cached?.trace ? { data: parsed.data, trace: cached.trace } : await requestOpenAiStructured({
     ...provider,
     prompt: renderPrompt({
       id: PROMPT_IDS.EPISODE_SPLIT,
       locale: input.locale,
-      variables: { source_text: input.content },
+      variables: { source_text: chunk.text },
     }),
     schema: episodeSplitSchema,
-    validate: (data) => validateAiBoundaries(data.episodes, input.content),
+    validate: (data) => validateAiBoundaries(data.episodes, chunk.text),
     temperature: 0.2,
   });
+    await input.hooks?.assertActive();
+    if (!(parsed.success && cached?.trace)) {
+      await input.hooks?.persistArtifact("episode.split-chunk", key, { boundaries: result.data, trace: result.trace });
+    }
+    const drafts = resolveAiEpisodeBoundaries(result.data.episodes, chunk.text);
+    for (const draft of drafts) episodes.push({ ...draft, number: episodes.length + 1,
+      startIndex: chunk.start + draft.startIndex, endIndex: chunk.start + draft.endIndex });
+    traces.push(result.trace);
+  }
+  if (!traces.length) throw new EpisodeSplitError("原文为空");
   return {
-    episodes: resolveAiEpisodeBoundaries(result.data.episodes, input.content),
-    trace: { ...result.trace, rawOutput: result.outputText },
+    episodes,
+    trace: { ...traces.at(-1)!, chunkCount: traces.length, traces, rawOutput: "分段分集；边界及各段模型记录保存在任务检查点" },
   };
 }
 

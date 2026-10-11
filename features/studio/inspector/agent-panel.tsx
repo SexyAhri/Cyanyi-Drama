@@ -1,4 +1,9 @@
 "use client";
+import { SplitNovelDialog } from "../writing/split-novel-dialog";
+import {
+  studioProductionOptionsSchema,
+  type StudioProductionOptions,
+} from "@/lib/studio/production-input";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -11,15 +16,16 @@ import {
   CheckCheck,
   Clapperboard,
   Layers3,
-  SlidersHorizontal,
   Sparkles,
 } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { MessageList } from "@/components/agent/message";
+import { removeMessageGroup } from "@/components/agent/chat/chat-utils";
 import type { ToolRegistry } from "@/components/agent/tool/tool-registry";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import type { AgentMessage } from "@/lib/agent/types";
 import {
   Tooltip,
   TooltipContent,
@@ -42,6 +48,11 @@ import {
   getDirectorSuggestions,
 } from "./director-assistant-copy";
 import { DirectorPromptReview } from "./director-prompt-review";
+import {
+  SCRIPT_TRENDING_TOPICS,
+  ScriptSetupDialog,
+} from "./script-setup-dialog";
+import { trimMessagesForRegeneration } from "@/components/agent/chat/chat-utils";
 
 const operations = [
   "cancel_media_task",
@@ -58,6 +69,10 @@ const operations = [
   "start_voice_design",
   "start_episode_adaptation",
   "start_asset_visual_design",
+  "start_story_package_generation",
+  "start_episode_preproduction",
+  "start_manuscript_analysis",
+  "start_original_episode_generation",
 ] as const;
 
 function createStudioToolRegistry(locale: StudioLocale): ToolRegistry {
@@ -78,6 +93,10 @@ function createStudioToolRegistry(locale: StudioLocale): ToolRegistry {
           "Design voice performance",
           "Adapt episode faithfully",
           "Design asset appearance",
+          "Generate complete story package",
+          "Continue episode preproduction",
+          "Build source adaptation dossier",
+          "Continue original episode",
         ]
       : [
           "取消媒体任务",
@@ -94,6 +113,10 @@ function createStudioToolRegistry(locale: StudioLocale): ToolRegistry {
           "配音表演设计",
           "忠实剧本改编",
           "资产视觉设计",
+          "生成完整策划包",
+          "继续本集前期制作",
+          "建立原著改编资料",
+          "续写原创本集正文",
         ];
   const description =
     locale === "en"
@@ -103,42 +126,43 @@ function createStudioToolRegistry(locale: StudioLocale): ToolRegistry {
     operations.map((name, index) => [
       name,
       {
-        description,
         label: labels[index],
         name,
+        description:
+          name === "start_story_package_generation"
+            ? locale === "en"
+              ? "Generate the complete story package and episode one from the current setup."
+              : "根据当前设定生成完整策划包和第一集正文。"
+            : description,
         showArgs:
           name === "revise_screenplay" ||
-          name === "update_canvas_prompt" ||
-          name.startsWith("start_"),
+          name === "update_canvas_prompt",
         ...(name.startsWith("start_")
           ? {
-              renderArgs: (value: unknown) => {
-                const plan =
-                  value && typeof value === "object" && "production" in value
-                    ? (value.production as {
-                        target?: string;
-                        model?: string;
-                        note?: string;
-                      })
-                    : null;
-                return plan ? (
-                  <div className="space-y-1 text-xs leading-relaxed">
-                    <p>
-                      {locale === "en" ? "Target" : "目标"}：{plan.target}
-                    </p>
-                    <p>
-                      {locale === "en" ? "Model" : "模型"}：{plan.model}
-                    </p>
-                    <p className="text-muted-foreground">{plan.note}</p>
-                  </div>
-                ) : null;
-              },
+              hideProcessDetails: true,
               renderResult: () => (
                 <p className="text-xs text-muted-foreground">
-                  {locale === "en"
-                    ? "Submitted. Follow progress and results in Tasks."
-                    : "已提交，可在任务栏查看进度与结果。"}
+                  {name === "start_story_package_generation"
+                    ? locale === "en"
+                      ? "Saved in development deliverables. Review the new package there."
+                      : "已保存到开发部交付物，可在这里查看完整策划包。"
+                    : locale === "en"
+                      ? "Submitted. Follow progress and results in Tasks."
+                      : "已提交，可在任务栏查看进度与结果。"}
                 </p>
+              ),
+            }
+          : {}),
+        ...(name === "start_story_package_generation"
+          ? {
+              progressLabel:
+                locale === "en" ? "Live package output" : "策划包实时输出",
+              renderProgress: ({ text }: { text: string }) => (
+                <div className="space-y-2">
+                  <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/60 p-3 font-mono text-[11px] leading-relaxed">
+                    {text}
+                  </pre>
+                </div>
               ),
             }
           : {}),
@@ -184,9 +208,10 @@ export function AgentPanel({
 }) {
   const text = directorAssistantCopy[locale];
   const [input, setInput] = useState("");
+  const [scriptBrief, setScriptBrief] = useState("");
+  const [productionOptions, setProductionOptions] = useState<StudioProductionOptions>({});
   const [preparing, setPreparing] = useState(false);
   const submitting = useRef(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsId = useId();
   const [showJump, setShowJump] = useState(false);
   const scrollPane = useRef<HTMLDivElement>(null);
@@ -194,7 +219,6 @@ export function AgentPanel({
   const followTail = useRef(true);
   const lastInput = useRef("");
   const suggestions = getDirectorSuggestions(context, locale);
-  const selectedModel = models.find((model) => model.id === analysisModelId);
   const episode = snapshot.project.episodes.find(
     (episode) => episode.id === context.episodeId,
   );
@@ -205,25 +229,63 @@ export function AgentPanel({
   const registry = useMemo(() => createStudioToolRegistry(locale), [locale]);
   const agent = useAgent({
     adapter,
-    threadId: `studio:${snapshot.project.id}:${context.episodeId ?? "project"}`,
+    threadId: `studio:${snapshot.project.id}`,
     onEvent: (event) => {
       if (event.type === "tool.done") void onRefresh();
     },
   });
   const reset = agent.reset;
+  const loadMessages = agent.loadMessages;
+  const [historyProject, setHistoryProject] = useState<string | null>(null);
   const busy = preparing || agent.isLoading || agent.isStreaming;
   const awaitingApproval = agent.messages.some(
     (message) => message.toolCall?.status === "pending",
   );
-  const contextKey = context.episodeId ?? "project";
+  const contextKey = snapshot.project.id;
 
   useEffect(() => {
     reset();
+    setHistoryProject(null);
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem(`studio:chat:${contextKey}`) ?? "[]");
+      if (Array.isArray(saved)) loadMessages(saved.slice(-100).flatMap(item => {
+        if (!item || typeof item.id !== "string" || (item.role !== "user" && item.role !== "assistant") || typeof item.content !== "string") return [];
+        const metadata = item.metadata && typeof item.metadata === "object" ? item.metadata : null;
+        const productionOptions = getStoredProductionOptions(metadata?.productionOptions);
+        return [{
+          id: item.id,
+          role: item.role,
+          content: item.content.slice(0, 16000),
+          ...(productionOptions ? { metadata: { productionOptions } } : {}),
+        }];
+      }));
+    } catch { /* Browser storage may be unavailable. */ }
+    setHistoryProject(contextKey);
+    setProductionOptions({});
     setInput("");
+    setScriptBrief("");
     followTail.current = true;
     setShowJump(false);
     lastInput.current = "";
-  }, [contextKey, reset]);
+  }, [contextKey, reset, loadMessages]);
+  useEffect(() => {
+    if (historyProject !== contextKey || busy) return;
+    try {
+      const messages = agent.messages
+        .filter(message => message.role === "user" || message.role === "assistant")
+        .slice(-100)
+        .map(({ id, role, content, metadata }) => {
+          const productionOptions = getStoredProductionOptions(metadata?.productionOptions);
+          return {
+            id,
+            role,
+            content: content.slice(0, 16000),
+            ...(productionOptions ? { metadata: { productionOptions } } : {}),
+          };
+        });
+      localStorage.setItem(`studio:chat:${contextKey}`, JSON.stringify(messages));
+    } catch { /* Keep the current chat usable when storage is full. */ }
+  }, [agent.messages, busy, contextKey, historyProject]);
   useEffect(() => {
     if (followTail.current && scrollPane.current)
       scrollPane.current.scrollTop = scrollPane.current.scrollHeight;
@@ -232,29 +294,67 @@ export function AgentPanel({
     if (agent.error) setInput((current) => current || lastInput.current);
   }, [agent.error]);
 
-  function useSuggestion(prompt: string) {
+  function setComposerDraft(prompt: string) {
     setInput(prompt);
     composer.current?.focus();
   }
 
-  async function submit(value = input) {
-    const content = value.trim();
-    if (!content || busy || submitting.current) return;
+  function handleEditMessage(message: AgentMessage) {
+    if (message.role !== "user") return;
+    setInput(message.content);
+    setScriptBrief("");
+    setProductionOptions(
+      getStoredProductionOptions(message.metadata?.productionOptions) ?? {},
+    );
+    composer.current?.focus();
+  }
+
+  function handleDeleteMessage(messageId: string) {
+    agent.loadMessages(removeMessageGroup(agent.messages, messageId));
+  }
+
+  async function handleRegenerateMessage(messageId: string) {
+    if (busy || submitting.current) return;
+    const previousUserMessage = findPreviousUserMessage(
+      agent.messages,
+      messageId,
+    );
+    if (!previousUserMessage) return;
+
     submitting.current = true;
     setPreparing(true);
     try {
       if (beforeSend && !(await beforeSend())) return;
+      const history = trimMessagesForRegeneration(
+        agent.messages,
+        previousUserMessage.id,
+      );
+      const productionOptions =
+        getStoredProductionOptions(
+          previousUserMessage.metadata?.productionOptions,
+        ) ?? {};
       const selectedModel = models.find(
         (model) => model.id === analysisModelId,
       );
       setInput("");
-      lastInput.current = content;
+      setScriptBrief("");
+      setProductionOptions({});
+      lastInput.current = previousUserMessage.content;
       followTail.current = true;
       setShowJump(false);
-      await agent.sendMessage(content, {
+      agent.loadMessages(history);
+      await agent.sendMessage(previousUserMessage.content, {
         metadata: {
           locale,
           studioContext: context,
+          productionOptions,
+          conversation: history
+            .filter(message => message.role === "user" || message.role === "assistant")
+            .slice(-12)
+            .map(message => ({
+              role: message.role,
+              content: message.content.slice(0, 4000),
+            })),
           studioAgentModel: selectedModel
             ? {
                 channelId: selectedModel.channelId,
@@ -263,6 +363,46 @@ export function AgentPanel({
             : undefined,
         },
       });
+    } finally {
+      submitting.current = false;
+      setPreparing(false);
+    }
+  }
+
+  async function submit(value = input) {
+    const message = value.trim();
+    if (!message || busy || submitting.current) return;
+    const activeBrief = scriptBrief;
+    const content = activeBrief
+      ? `${activeBrief}\n\n${message}`
+      : message;
+    submitting.current = true;
+    setPreparing(true);
+    try {
+      if (beforeSend && !(await beforeSend())) return;
+      const selectedModel = models.find(
+        (model) => model.id === analysisModelId,
+      );
+      setInput("");
+      lastInput.current = message;
+      followTail.current = true;
+      setShowJump(false);
+      await agent.sendMessage(content, {
+        metadata: {
+          locale,
+          studioContext: context,
+          productionOptions,
+          conversation: agent.messages.filter(message => message.role === "user" || message.role === "assistant").slice(-12).map(message => ({ role: message.role, content: message.content.slice(0, 4000) })),
+          studioAgentModel: selectedModel
+            ? {
+                channelId: selectedModel.channelId,
+                model: selectedModel.modelId,
+              }
+            : undefined,
+        },
+      });
+      setScriptBrief("");
+      setProductionOptions({});
     } finally {
       submitting.current = false;
       setPreparing(false);
@@ -285,24 +425,6 @@ export function AgentPanel({
               {episode?.name ?? snapshot.project.name}
             </p>
           </div>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant={settingsOpen ? "secondary" : "ghost"}
-                  aria-label={text.settings}
-                  aria-expanded={settingsOpen}
-                  aria-controls={settingsId}
-                  onClick={() => setSettingsOpen(!settingsOpen)}
-                />
-              }
-            >
-              <SlidersHorizontal className="size-4" />
-            </TooltipTrigger>
-            <TooltipContent>{text.settings}</TooltipContent>
-          </Tooltip>
         </div>
         {selections && onSelectContext && (
           <div className="mt-3 space-y-1.5">
@@ -380,20 +502,6 @@ export function AgentPanel({
             </span>
           </span>
         </div>
-        {settingsOpen && (
-          <div id={settingsId} className="mt-3 border-t pt-3">
-            <p className="mb-2 text-xs text-muted-foreground">{text.model}</p>
-            <ModelSelect
-              ariaLabel={text.model}
-              className="h-8"
-              disabled={busy}
-              models={models}
-              onChange={onAnalysisModelChange}
-              placeholder={text.noModel}
-              value={analysisModelId}
-            />
-          </div>
-        )}
       </header>
 
       <div
@@ -434,6 +542,9 @@ export function AgentPanel({
               }
             }}
             onDeny={agent.denyToolCall}
+            onDeleteMessage={handleDeleteMessage}
+            onEditMessage={handleEditMessage}
+            onRegenerateMessage={handleRegenerateMessage}
             pendingApprovalIds={agent.pendingApprovalIds}
             registry={registry}
             isThinking={busy}
@@ -446,30 +557,51 @@ export function AgentPanel({
                 aria-hidden="true"
               />
             </span>
-            <h3 className="text-base font-medium">
-              {context.view === "canvas" ? text.emptyCanvas : text.empty}
-            </h3>
-            <p className="mt-2 text-xs leading-6 text-muted-foreground">
-              {text.description}
-            </p>
-            <div className="mt-5 grid gap-2">
-              {suggestions.map((suggestion) => (
-                <button
-                  key={suggestion.title}
-                  onClick={() => useSuggestion(suggestion.prompt)}
-                  type="button"
-                  disabled={busy}
-                  title={text.draft}
-                  className="group flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left text-xs transition-colors hover:border-foreground/20 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-                >
-                  <span>{suggestion.title}</span>
-                  <ArrowUp
-                    className="size-3.5 rotate-45 text-muted-foreground transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 motion-reduce:transition-none"
-                    aria-hidden="true"
-                  />
-                </button>
-              ))}
-            </div>
+            {context.stageId === "writing" && context.view !== "canvas" ? (
+              <>
+                <h3 className="text-base font-semibold">{locale === "en" ? "Start with a trending idea" : "从爆款题材开始"}</h3>
+                <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {SCRIPT_TRENDING_TOPICS.map((topic, index) => (
+                    <button
+                      className="flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2.5 text-left text-xs transition-colors hover:border-foreground/25 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      key={topic.title}
+                      onClick={() => setComposerDraft(locale === "en" ? `I'd like to create a short drama inspired by ${trendingTitle(topic.title)}.` : `我想创作一部${topic.title}：${topic.idea}`)}
+                      type="button"
+                    >
+                      <span className="font-mono text-[10px] text-muted-foreground">#{index + 1}</span>
+                      <span className="truncate">{locale === "en" ? trendingTitle(topic.title) : topic.title}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 className="text-base font-medium">
+                  {context.view === "canvas" ? text.emptyCanvas : text.empty}
+                </h3>
+                <p className="mt-2 text-xs leading-6 text-muted-foreground">
+                  {text.description}
+                </p>
+                <div className="mt-5 grid gap-2">
+                  {suggestions.map((suggestion) => (
+                    <button
+                      key={suggestion.title}
+                      onClick={() => setComposerDraft(suggestion.prompt)}
+                      type="button"
+                      disabled={busy}
+                      title={text.draft}
+                      className="group flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left text-xs transition-colors hover:border-foreground/20 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                    >
+                      <span>{suggestion.title}</span>
+                      <ArrowUp
+                        className="size-3.5 rotate-45 text-muted-foreground transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 motion-reduce:transition-none"
+                        aria-hidden="true"
+                      />
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -509,6 +641,30 @@ export function AgentPanel({
           </p>
         )}
         <div className="rounded-2xl border bg-muted/25 p-1 transition-shadow focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15">
+          {(
+            <div className="flex min-w-0 flex-wrap items-center gap-2 px-2 pt-1.5">
+              <ScriptSetupDialog
+                locale={locale}
+                onApply={(brief, setup) => {
+                  setScriptBrief(brief);
+                  setProductionOptions({ storySetup: setup });
+                  setInput(
+                    locale === "en"
+                      ? "Generate the complete story package based on these settings."
+                      : "请根据以上设定生成完整策划包。",
+                  );
+                }}
+                projectArtStyle={snapshot.project.config.artStyle}
+              />
+              <SplitNovelDialog locale={locale} models={models} onCompleted={onRefresh} projectId={snapshot.project.id}
+                trigger={<Button size="sm" variant="ghost" className="h-7 px-2 text-xs">{locale === "en" ? "Import novel" : "上传小说"}</Button>} />
+              {scriptBrief && (
+                <span className="min-w-0 truncate text-[10px] text-muted-foreground" title={scriptBrief}>
+                  {scriptBrief.split("\n").slice(1).join(" · ")}
+                </span>
+              )}
+            </div>
+          )}
           <Textarea
             ref={composer}
             aria-label={text.ask}
@@ -530,19 +686,19 @@ export function AgentPanel({
             value={input}
           />
           <div className="flex min-w-0 items-center justify-between gap-2 px-2 pb-1.5">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => setSettingsOpen(!settingsOpen)}
-              className="min-w-0 truncate text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              title={
-                selectedModel
-                  ? `${selectedModel.name} · ${selectedModel.channelName}`
-                  : text.noModel
-              }
-            >
-              {selectedModel?.name ?? text.noModel}
-            </button>
+            <div className="w-52 min-w-0 max-w-[calc(100%-2.5rem)]">
+              <ModelSelect
+                ariaLabel={text.model}
+                className="h-7 border-transparent bg-transparent px-2 text-[11px] shadow-none hover:bg-muted"
+                disabled={busy}
+                models={models}
+                onChange={onAnalysisModelChange}
+                placeholder={text.noModel}
+                showChannelInTrigger
+                size="sm"
+                value={analysisModelId}
+              />
+            </div>
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -596,4 +752,37 @@ export function AgentPanel({
       </form>
     </div>
   );
+}
+
+function trendingTitle(title: string) {
+  const labels: Record<string, string> = {
+    "玄幻修仙逆袭": "Fantasy cultivation comeback",
+    "现实职场成长": "Workplace growth",
+    "末世生存基建": "Post-apocalyptic survival",
+    "非遗国潮视觉": "Intangible heritage and culture",
+    "古代女频甜宠": "Historical romance",
+    "规则怪谈悬疑": "Rules-based mystery",
+    "重生复仇爽剧": "Rebirth revenge drama",
+    "仙门团宠日常": "Cultivation found family",
+  };
+  return labels[title] ?? title;
+}
+
+function getStoredProductionOptions(value: unknown) {
+  const result = studioProductionOptionsSchema.safeParse(value);
+  return result.success && Object.keys(result.data).length > 0
+    ? result.data
+    : null;
+}
+
+function findPreviousUserMessage(
+  messages: AgentMessage[],
+  messageId: string,
+) {
+  const targetIndex = messages.findIndex((message) => message.id === messageId);
+  if (targetIndex < 0) return null;
+  for (let index = targetIndex - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") return messages[index] ?? null;
+  }
+  return null;
 }

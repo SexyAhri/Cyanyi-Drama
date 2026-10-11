@@ -21,6 +21,9 @@ export type AgentToolCall = {
   args: unknown;
   status: ToolCallStatus;
   approvalId?: string;
+  progressText?: string;
+  progressStatus?: string;
+  progressCharacters?: number;
   result?: unknown;
   error?: string;
 };
@@ -57,6 +60,15 @@ export type AgentEvent =
       type: "tool.running";
       messageId: string;
       toolCallId: string;
+    }
+  | {
+      type: "tool.progress";
+      messageId: string;
+      toolCallId: string;
+      delta?: string;
+      status?: string;
+      totalCharacters?: number;
+      resetText?: boolean;
     }
   | {
       type: "tool.done";

@@ -3,11 +3,9 @@ import {
   type EpisodeAdaptationMode,
 } from "@/lib/episodes/adaptation";
 import { EpisodeSourceError, EpisodeSplitError } from "@/lib/episodes/errors";
-import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
+import { startEpisodeProductionWorkflow } from "@/lib/studio/agent-production-actions";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
-import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import {
-  createOrReuseWorkflowRun,
   getWorkflowRun,
 } from "@/lib/workflow/store";
 
@@ -48,40 +46,13 @@ export async function POST(request: Request, context: Context) {
     instructions: stringValue(body.instructions),
     locale: body.locale === "en" ? ("en" as const) : ("zh" as const),
   };
-  const runtimeSettings = await loadUserRuntimeSettings(user.id);
-  const result = await createOrReuseWorkflowRun({
-    id: `workflow_${crypto.randomUUID()}`,
-    userId: user.id,
-    projectId,
-    episodeId,
-    workflowType: "episode-adaptation",
-    targetType: "episode",
-    targetId: episodeId,
-    input: adaptationInput,
-    steps: [
-      {
-        key: "adapt_episode",
-        type: "adapt_episode",
-        artifactTypes: ["adaptation.source", "prompt.trace"],
-        input: adaptationInput,
-        retryable: true,
-        maxAttempts: runtimeSettings.workflowStepMaxAttempts,
-      },
-    ],
-    maxAttempts: runtimeSettings.workflowStepMaxAttempts,
+  try {
+  const result = await startEpisodeProductionWorkflow({
+    userId: user.id, projectId, targetId: episodeId,
+    operation: "start_episode_adaptation", channelId, model,
+    locale: adaptationInput.locale,
+    options: { adaptationMode: mode, instructions: adaptationInput.instructions },
   });
-  if (!result)
-    return attachSessionCookie(
-      Response.json({ message: "项目或剧集不存在" }, { status: 404 }),
-      sessionId,
-    );
-  if (!result.reused)
-    await enqueueWorkflowJob({
-      runId: result.workflow.id,
-      userId: user.id,
-      projectId,
-      maxAttempts: 1,
-    });
   if (request.headers.get("accept")?.includes("application/x-ndjson"))
     return adaptationStreamResponse(
       {
@@ -98,6 +69,7 @@ export async function POST(request: Request, context: Context) {
     ),
     sessionId,
   );
+  } catch (error) { return sourceErrorResponse(error, sessionId); }
 }
 
 function adaptationStreamResponse(
