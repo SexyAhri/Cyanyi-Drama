@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 import { normalizeAuthRedirect } from "@/lib/auth/redirect";
 
@@ -18,9 +18,11 @@ export async function beginOAuthFlow(
   const config = await getOAuthProviderConfig(provider);
   const currentUser = await getCurrentUser();
   const state = randomBytes(32).toString("base64url");
+  const browserBinding = randomBytes(32).toString("base64url");
   await prisma.authFlow.create({
     data: {
       tokenHash: hashState(state),
+      browserBindingHash: hashState(browserBinding),
       provider,
       redirectPath: normalizeAuthRedirect(next),
       anonymousUserId: currentUser?.anonymous ? currentUser.id : null,
@@ -38,7 +40,10 @@ export async function beginOAuthFlow(
   authorize.searchParams.set("redirect_uri", callbackUrl);
   if (provider === "github") authorize.searchParams.set("scope", "user:email");
   else authorize.searchParams.set("response_type", "code");
-  return authorize.toString();
+  return {
+    authorizeUrl: authorize.toString(),
+    stateCookie: stateCookie(state, browserBinding, provider),
+  };
 }
 
 export async function completeOAuthFlow(
@@ -53,6 +58,12 @@ export async function completeOAuthFlow(
   if (providerError) throw new Error(`OAUTH_PROVIDER_ERROR:${providerError}`);
   if (!state || !code) throw new Error("OAUTH_CALLBACK_INVALID");
 
+  const browserBinding = readCookie(
+    request.headers.get("cookie"),
+    oauthStateCookieName(state),
+  );
+  if (!browserBinding) throw new Error("OAUTH_STATE_INVALID");
+
   const flow = await prisma.authFlow.findFirst({
     where: {
       tokenHash: hashState(state),
@@ -62,7 +73,12 @@ export async function completeOAuthFlow(
       expiresAt: { gt: new Date() },
     },
   });
-  if (!flow) throw new Error("OAUTH_STATE_INVALID");
+  if (
+    !flow?.browserBindingHash ||
+    !hashesEqual(flow.browserBindingHash, hashState(browserBinding))
+  ) {
+    throw new Error("OAUTH_STATE_INVALID");
+  }
   const claimed = await prisma.authFlow.updateMany({
     where: { id: flow.id, consumedAt: null, expiresAt: { gt: new Date() } },
     data: { consumedAt: new Date() },
@@ -94,6 +110,18 @@ export async function completeOAuthFlow(
 
 export function isOAuthProvider(value: string): value is OAuthProviderName {
   return value === "github" || value === "linuxdo";
+}
+
+export function oauthStateCookieName(state: string) {
+  return `cyanyi_oauth_${hashState(state).slice(0, 16)}`;
+}
+
+export function clearOAuthStateCookieHeader(request: Request) {
+  const state = new URL(request.url).searchParams.get("state")?.trim();
+  if (!state) return null;
+  const provider = new URL(request.url).pathname.split("/").at(-2);
+  if (!isOAuthProvider(provider ?? "")) return null;
+  return `${oauthStateCookieName(state)}=; Path=/api/auth/oauth/${provider}/callback; HttpOnly; SameSite=Lax; Max-Age=0${secureCookieSuffix()}`;
 }
 
 async function fetchGitHubProfile(
@@ -242,6 +270,38 @@ async function fetchLinuxDoProfile(
 
 function hashState(value: string) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function hashesEqual(left: string, right: string) {
+  const leftBuffer = Buffer.from(left, "hex");
+  const rightBuffer = Buffer.from(right, "hex");
+  return (
+    leftBuffer.length === rightBuffer.length &&
+    leftBuffer.length > 0 &&
+    timingSafeEqual(leftBuffer, rightBuffer)
+  );
+}
+
+function readCookie(cookieHeader: string | null, name: string) {
+  if (!cookieHeader) return null;
+  for (const item of cookieHeader.split(";")) {
+    const separator = item.indexOf("=");
+    if (separator < 0 || item.slice(0, separator).trim() !== name) continue;
+    return item.slice(separator + 1).trim() || null;
+  }
+  return null;
+}
+
+function stateCookie(
+  state: string,
+  browserBinding: string,
+  provider: OAuthProviderName,
+) {
+  return `${oauthStateCookieName(state)}=${browserBinding}; Path=/api/auth/oauth/${provider}/callback; HttpOnly; SameSite=Lax; Max-Age=${FLOW_TTL_MS / 1000}${secureCookieSuffix()}`;
+}
+
+function secureCookieSuffix() {
+  return process.env.NODE_ENV === "production" ? "; Secure" : "";
 }
 
 function oauthCallbackUrl(request: Request, provider: OAuthProviderName) {

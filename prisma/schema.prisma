@@ -118,15 +118,16 @@ model ExternalIdentity {
 }
 
 model AuthFlow {
-  id              String    @id @default(uuid())
-  tokenHash       String    @unique @map("token_hash") @db.VarChar(64)
-  provider        String    @db.VarChar(32)
-  intent          String    @default("login") @db.VarChar(32)
-  redirectPath    String    @default("/chat") @map("redirect_path") @db.VarChar(512)
-  anonymousUserId String?   @map("anonymous_user_id")
-  expiresAt       DateTime  @map("expires_at")
-  consumedAt      DateTime? @map("consumed_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
+  id                 String    @id @default(uuid())
+  tokenHash          String    @unique @map("token_hash") @db.VarChar(64)
+  browserBindingHash String?   @map("browser_binding_hash") @db.VarChar(64)
+  provider           String    @db.VarChar(32)
+  intent             String    @default("login") @db.VarChar(32)
+  redirectPath       String    @default("/chat") @map("redirect_path") @db.VarChar(512)
+  anonymousUserId    String?   @map("anonymous_user_id")
+  expiresAt          DateTime  @map("expires_at")
+  consumedAt         DateTime? @map("consumed_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
 
   @@index([provider, expiresAt])
   @@index([expiresAt, consumedAt])

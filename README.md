@@ -1,335 +1,172 @@
 # Cyanyi Drama
 
-Cyanyi Drama 是一个面向 AI 漫剧和短剧创作的智能工作台。
+Cyanyi Drama 是面向 AI 漫剧和短剧创作的 Web 工作台。它把文本创作、角色与场景资产、分镜、镜头、声音和成片交付放在同一个项目流程里，也提供独立的 AI 对话与媒体生成入口。
 
-项目以 `/chat` 对话式创作为主入口，并通过 `/projects` 进入专业漫剧工作台。普通问答、图片与视频生成和项目制片共用同一套渠道、模型与媒体任务基础设施；项目工作台按编剧、资产、分镜、镜头、声音和交付六个阶段组织生产。
+> 项目仍在持续开发中。生产结果依赖管理员配置的模型、服务商权限和账号额度。
 
-## 当前能力
+## 功能概览
 
-- ChatGPT 风格的聊天工作台、侧边栏、会话列表和设置中心
-- 公开产品首页，以及与项目数据串联的登录、注册和退出流程
-- 中文 / 英文界面基础支持
-- 文本聊天、图片生成、视频生成模式
-- 图片和视频生成工具卡，展示等待、执行、成功和失败状态
-- OpenAI 兼容协议、Anthropic、Google Gemini、火山方舟协议
-- 从服务商真实接口获取模型列表，不使用内置假模型
-- 多渠道配置，每个渠道独立保存 Base URL、协议、多个 API Key 和模型
-- 选中模型后自动根据所属渠道路由请求
-- 图片、视频媒体任务状态持久化和查询
-- 统一媒体任务系统：幂等创建、队列重试、进度、取消、事件记录和失败恢复
-- 匿名用户 Session、邮箱注册与可选 SMTP 验证码、登录和退出接口
-- API Key 与系统服务密钥加密保存，PostgreSQL 数据库持久化
-- 管理员统一维护系统渠道、登录服务、模型价格和易支付充值
-- 漫剧项目、项目配置和剧集数据持久化
-- 结构化角色、角色形象、场景、场景图和分镜草稿持久化
-- 工作流运行、步骤门禁、暂停、恢复、重试、取消和事件流水
-- 真实文本模型驱动的剧集解析，可产出角色、场景和分镜草稿
-- 角色/场景图片生成任务可回填业务资产引用
-- 角色/场景图片批量生成，并自动携带已选资产作为一致性参考
-- 项目图片/视频上传、来源追踪、参考图转角色和视觉资产提取
-- 整本小说标记分集与 AI 边界分集，支持安全批量落库
-- 模型级 OpenAI Compatible 媒体模板，支持同步、异步和显式空字段省略
-- 媒体冻结、结算、释放与用量的幂等对账，Worker Watchdog 自动补偿
-- Workflow Run、Step、Prompt 与 Media Task 的统一 Trace ID 和父子 Span
-- 15 个领域 Prompt 的双语 Canary Hash 与 Agent 行为门禁
-- 图片、异构视频和音轨统一转码为确定规格的 MP4 成片
-- 项目/剧集接口按当前用户隔离，媒体任务可关联项目和剧集
-- 六阶段漫剧工作区：编剧、资产、分镜、镜头、声音和交付
-- 逐步骤工作流与逐素材任务视图，展示具体部门、角色、场景、道具或镜头名称
-- 工作流步骤和媒体任务支持独立失败原因、重试、取消及 Trace 查看
-- 镜头图片与视频候选素材可预览、选择、上传、删除和批量生成
-- 固定高度制作工作区，长列表和详情仅在各自区域内滚动
-- LangGraph Human-in-the-loop 示例运行时
+- **AI 对话与媒体生成**：通过可配置渠道使用文本、图片和视频模型。
+- **漫剧项目工作区**：按编剧、资产、分镜、镜头、声音、交付六个阶段管理项目。
+- **工作流与任务管理**：展示执行进度、失败原因和 Trace；支持暂停、恢复、取消和重试。
+- **项目资产管理**：组织角色、场景、道具、分镜与媒体素材，并记录素材来源和所属项目。
+- **渠道和模型配置**：按渠道维护 Base URL、API Key、模型及媒体能力；模型列表来自服务商接口。
+- **账号与管理功能**：支持匿名 Session、邮箱密码、可选邮箱验证码，以及 GitHub 和 LinuxDO OAuth；管理员可配置系统渠道、登录方式和计费。
+- **中英文界面**：应用提供中文和英文界面文案。
 
-## 产品入口
+## 页面入口
 
-- `/chat`：默认主界面，用于对话、图片生成、视频生成和渠道设置；桌面侧栏及移动端顶栏均可进入漫剧创作。
-- `/projects`：漫剧项目列表，用于创建、搜索和打开项目。
-- `/projects/:projectId`：项目制作工作区；URL 会保留剧集和制作阶段，工作区顶栏可返回项目列表或 AI 对话。
+| 路径 | 用途 |
+| --- | --- |
+| `/` | 产品首页 |
+| `/chat` | AI 对话、图片与视频生成 |
+| `/projects` | 漫剧项目列表 |
+| `/projects/:projectId` | 项目制作工作区 |
+| `/login` | 登录和注册 |
+| `/admin` | 管理员工作区 |
 
-项目右侧的上下文 Agent 读取当前项目、剧集、阶段和选中实体，处理项目内检查与操作；`/chat` 保持通用创作入口。二者共享基础能力，但不会把完整制片界面塞入普通聊天窗口。
-
-## AI 漫剧方向
-
-Cyanyi Drama 的目标不是单纯提供一个聊天窗口，而是把 AI 能力组织成一条可复用的漫剧生产链：
-
-1. 输入小说、故事梗概或创意描述。
-2. 通过文本模型进行故事分析、角色提取和场景拆解。
-3. 通过图片模型生成角色、场景和分镜素材。
-4. 通过视频模型生成镜头片段和动态内容，并复用已确认分镜图作为参考。
-5. 分析对白与内心独白，按模型能力生成声音、音效或口型同步素材。
-6. 编排时间线、字幕和后期交付物，经过质量检查后输出成片。
-
-当前版本已经形成可操作的六阶段生产工作区。文本、图片、视频、声音和交付是否能完整跑通，取决于所配置渠道的真实模型能力；系统不会用假结果掩盖未接入、余额不足或服务商拒绝等错误。
+项目工作区会把剧集、制作阶段和当前选择保留在导航状态中。完成账号注册时，当前浏览器的匿名项目数据会迁移到新账号。
 
 ## 技术栈
 
-| 分类 | 技术 |
+| 部分 | 技术 |
 | --- | --- |
-| 应用框架 | Next.js 16 App Router |
-| UI | React 19、shadcn/ui、Base UI、Tailwind CSS 4 |
-| AI Runtime | Vercel AI SDK 7、LangGraph |
+| Web 应用 | Next.js 16 App Router、React 19、TypeScript |
+| UI | Tailwind CSS 4、shadcn/ui、Base UI |
+| AI 与工作流 | Vercel AI SDK、LangGraph |
 | 模型协议 | OpenAI Compatible、Anthropic、Google Gemini、Volcengine Ark |
-| 数据库 | Prisma ORM / PostgreSQL 17 |
-| 队列与缓存 | Redis、BullMQ |
-| 媒体存储 | PostgreSQL `bytea` / Base64 Data URL |
-| 认证 | HttpOnly Session Cookie |
-| 测试 | Vitest、TypeScript、ESLint |
+| 业务数据 | PostgreSQL 17、Prisma |
+| 后台任务 | Redis 7、BullMQ、独立 Worker |
+| 媒体数据 | PostgreSQL `bytea`；接口按需返回 Base64 Data URL |
 
-## 快速开始
+## 本地运行
 
-要求：Node.js 20+ 和 pnpm。
+### 环境要求
+
+- Node.js 20 或更高版本
+- pnpm（版本见 `package.json` 的 `packageManager`）
+- Docker 和 Docker Compose
+
+### 启动依赖服务
 
 ```bash
 pnpm install
 docker compose up -d
+```
+
+Compose 会启动本地 PostgreSQL 和 Redis。复制环境变量示例：
+
+```bash
+# macOS / Linux
+cp .env.example .env.local
+
+# PowerShell
+Copy-Item .env.example .env.local
+```
+
+本地示例配置使用 Compose 的数据库地址。生产环境必须设置唯一且高强度的 `APP_SECRET`，并使用自己的 `DATABASE_URL`、`REDIS_URL` 和 `APP_BASE_URL`。
+
+### 初始化数据库并启动
+
+```bash
 pnpm exec prisma migrate deploy
 pnpm dev
 ```
 
-媒体生成和工作流任务需要在另一个终端启动 Worker：
+打开 [http://localhost:3000](http://localhost:3000)。
+
+图片、视频、声音生成和后台工作流需要单独运行 Worker：
 
 ```bash
 pnpm worker
 ```
 
-打开：
+开发时保持 Web 应用和 Worker 使用相同的数据库、Redis 与应用密钥配置。
+
+## 模型与服务配置
+
+启动后，在应用设置中配置模型渠道的协议、Base URL、API Key 和模型；管理员还可以在管理工作区配置系统渠道、注册登录方式、SMTP 和支付服务。密钥只在服务端使用，读取设置时不会返回密钥原文。
+
+常用环境变量：
+
+| 变量 | 用途 |
+| --- | --- |
+| `DATABASE_URL` | PostgreSQL 连接地址 |
+| `REDIS_URL` | Redis 地址，供任务队列及登录限流使用 |
+| `APP_SECRET` | 加密服务端配置等敏感数据；生产环境必填 |
+| `APP_BASE_URL` | OAuth 回调和对外链接使用的应用地址 |
+| `AI_GATEWAY_API_KEY` | 可选的 AI Gateway 凭据 |
+| `EMAIL_*` | 可选的邮箱注册验证码和 SMTP 配置 |
+| `GITHUB_*`、`LINUXDO_*` | 可选的 OAuth 环境变量回退配置 |
+| `EPAY_*` | 可选的易支付环境变量回退配置 |
+
+完整变量清单及默认值见 [.env.example](.env.example)。使用 OAuth 时，服务商回调地址应配置为：
 
 ```text
-http://localhost:3000
+{APP_BASE_URL}/api/auth/oauth/github/callback
+{APP_BASE_URL}/api/auth/oauth/linuxdo/callback
 ```
 
-运行检查：
+服务商密钥也可以从管理员设置页维护。系统设置保存到数据库后，数据库中的启用状态优先；未填写的凭据仍可使用环境变量回退。
+
+## 后台任务和数据
+
+Web 应用负责接收请求、读写业务数据并创建任务。Redis/BullMQ 负责排队和任务事件，Worker 执行媒体生成及耗时工作流。任务状态、用量和媒体内容保存在 PostgreSQL；应用不会用伪造结果代替未配置或失败的服务商调用。
+
+用户、匿名 Session、渠道、项目、工作流和媒体任务都保存在数据库。会话使用 HttpOnly Cookie；密码使用 scrypt 哈希；Session 凭据以哈希形式保存。OAuth 流程使用短期 state 和浏览器绑定 Cookie。登录尝试通过 Redis 按邮箱失败次数和客户端 IP 限流。
+
+数据库结构变更通过 Prisma migration 管理：
 
 ```bash
-pnpm exec tsc --noEmit
-pnpm lint
-pnpm test
-pnpm build
+# 开发时创建并应用迁移
+pnpm db:migrate
+
+# 部署时应用已提交的迁移
+pnpm exec prisma migrate deploy
+
+# 更新 Prisma Client
+pnpm db:generate
 ```
 
-## 环境变量
+`pnpm db:reset-business` 默认只预览重置范围；只有确认要清除业务数据时才追加 `-- --execute`。该脚本会保留管理员账号和系统渠道配置。
 
-复制环境变量示例：
+## 开发命令
 
 ```bash
-cp .env.example .env.local
+pnpm dev                  # 启动 Next.js 开发服务器
+pnpm worker               # 启动 BullMQ Worker
+pnpm lint                 # ESLint
+pnpm test                 # Vitest
+pnpm exec tsc --noEmit    # TypeScript 类型检查
+pnpm build                # 生产构建
 ```
 
-常用配置：
-
-```env
-# 用于加密数据库中的 API Key。部署时请替换为随机长字符串。
-APP_SECRET=change-me
-
-# 可选：AI SDK Gateway 凭据。
-AI_GATEWAY_API_KEY=
-
-# 可选：启用邮箱验证码注册。启用前必须配置 SMTP。
-REGISTRATION_ENABLED=true
-EMAIL_AUTH_ENABLED=true
-EMAIL_VERIFICATION_ENABLED=false
-EMAIL_SMTP_HOST=smtp.example.com
-EMAIL_SMTP_PORT=465
-EMAIL_SMTP_SECURE=true
-EMAIL_SMTP_USER=
-EMAIL_SMTP_PASSWORD=
-EMAIL_FROM=
-
-# 可选：GitHub / LinuxDO 登录。也可由管理员在设置页配置。
-GITHUB_OAUTH_ENABLED=false
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
-LINUXDO_OAUTH_ENABLED=false
-LINUXDO_CLIENT_ID=
-LINUXDO_CLIENT_SECRET=
-LINUXDO_MINIMUM_TRUST_LEVEL=0
-
-# 可选：标准易支付。也可由管理员在设置页配置。
-EPAY_ENABLED=false
-EPAY_GATEWAY_URL=
-EPAY_MERCHANT_ID=
-EPAY_MERCHANT_KEY=
-EPAY_MINIMUM_AMOUNT=1
-EPAY_CREDIT_RATE=1
-
-# 可选：OpenAI Compatible 参考图编辑端点及 multipart 文件字段。
-OPENAI_COMPATIBLE_IMAGE_EDIT_PATH=images/edits
-OPENAI_COMPATIBLE_IMAGE_EDIT_FILE_FIELD=image[]
-```
-
-管理员也可以直接在设置中心填写服务商 Base URL、API Key、登录服务和支付服务配置。所有密钥由服务端加密保存且不会在读取接口中回显；普通用户只能调用已启用的系统渠道，不能查看或修改渠道配置。
-
-## 用户身份和数据
-
-用户、Session、渠道、模型、项目、媒体任务和媒体二进制统一保存到 PostgreSQL，连接地址由 `DATABASE_URL` 配置。Redis 只用于 BullMQ 队列、任务事件和分布式锁。图片、视频和语音以 `bytea` 保存，读取时由服务端转换为 Base64 Data URL，无需部署对象存储服务。
-
-`pnpm db:reset-business` 只预览业务数据重置范围；追加 `-- --execute` 后执行。脚本保留管理员账号、渠道及其模型配置，清空其他业务表。
-
-首页、登录页和注册页允许未登录访问；项目与创作工作区要求正式账号。业务接口在需要时会创建匿名用户和 HttpOnly Session，注册成功后把当前浏览器的匿名项目数据迁入正式账号。账号接口如下：
-
-- `GET /api/auth/session`：获取当前用户，没有 Session 时创建匿名用户
-- `POST /api/auth/email-code`：发送邮箱注册验证码，默认关闭；启用后 60 秒内不可重发，每小时最多 5 次
-- `POST /api/auth/register`：注册账号；启用邮箱验证时必须提交 6 位 `verificationCode`
-- `POST /api/auth/login`：登录
-- `POST /api/auth/logout`：退出登录
-- `GET /api/auth/oauth/github/start`：开始 GitHub OAuth 登录
-- `GET /api/auth/oauth/linuxdo/start`：开始 LinuxDO OAuth 登录
-
-验证码 10 分钟内有效、最多尝试 5 次且只能成功消费一次。匿名用户注册后，已有渠道、项目、资产、任务、费用记录和运行设置会迁移到正式账号。
-
-## 管理员、渠道和计费
-
-数据库中的 `User.role` 区分 `USER` 与 `ADMIN`。管理员设置页包含 SMTP 邮箱注册、GitHub OAuth、LinuxDO OAuth、系统渠道、模型价格和标准易支付；普通用户只显示项目偏好、运行设置和账户充值。OAuth state 只保存 SHA-256、10 分钟过期并原子消费；GitHub 只采用已验证邮箱，LinuxDO 可限制最低信任等级。
-
-系统渠道由管理员集中配置。每个渠道包含：
-
-- 渠道名称和协议类型
-- Base URL
-- 一个或多个 API Key
-- 从接口获取的模型列表
-- 选中的模型及其能力类型
-
-管理接口：
-
-- `GET /api/channels`：读取当前用户的渠道和模型
-- `PUT /api/channels`：创建或更新渠道、Key 和模型选择
-- `DELETE /api/channels?id=...`：删除渠道
-- `POST /api/models`：从服务商接口获取模型列表
-- `GET/PUT /api/admin/settings`：读取或保存登录、SMTP、OAuth 和易支付设置
-- `GET/PUT/DELETE /api/billing/prices`：管理模型价格和计费单位
-
-账户接口：
-
-- `GET /api/user/balance`：读取当前账户余额、冻结额度和累计消费
-- `GET/POST /api/billing/topup`：读取充值配置和订单，或创建服务端签名的充值订单
-- `GET/POST /api/billing/topup/notify`：易支付异步通知、验签和幂等入账
-
-模型列表必须由实际渠道接口返回。调用文本、图片或视频模型时，系统会依据选中的模型自动选择对应渠道和 API Key。
-
-OpenAI Compatible 图片/视频模型可在 `models[].capabilities.mediaTemplate` 中保存模型级媒体模板。模板支持自定义创建、状态、内容端点和 JSONPath 响应映射；只允许访问渠道 Base URL 的同源端点。无参考图时默认调用 `images/generations`，有参考图时通过 `images/edits` 的 multipart 请求提交，不会静默丢弃参考图或降级模型。配置细节见 [M5 外部资产与媒体模板](docs/m5-external-capabilities.md)。
-
-## 聊天和媒体任务
-
-- `/api/chat`：文本聊天、工具调用、图片生成和视频生成事件流
-- `GET /api/media/tasks`：读取当前用户的媒体任务
-- `GET /api/media/tasks/:taskId`：读取单个媒体任务
-- `/api/agent`：LangGraph HITL 示例运行时
-
-图片、视频和语音任务会经过统一状态机，记录 queued、running、succeeded 和 failed 等状态，并按用户隔离查询。火山方舟的视频生成支持异步创建、轮询和结果处理。服务商返回的媒体会转存到 PostgreSQL，媒体资产接口直接返回可渲染的 Base64 Data URL。
-
-媒体任务接口还支持：
-
-- `POST /api/media/tasks`：创建并入队任务，支持 `idempotencyKey`
-- `GET /api/media/tasks/:taskId`：读取任务及事件流水
-- `POST /api/media/tasks/:taskId`：使用 `{ "action": "cancel" }` 取消任务，或使用 `{ "action": "retry" }` 重试失败任务
-
-Worker 不会在没有实际服务商处理器时伪造成功状态；未接入的任务类型会明确失败并保留可重试错误，避免媒体任务出现假成功。
-
-## 项目接口
-
-- `GET /api/projects`：分页读取当前用户的漫剧项目
-- `POST /api/projects`：创建项目并初始化项目配置
-- `GET/PATCH/DELETE /api/projects/:projectId`：读取、更新和删除项目
-- `GET /api/projects/:projectId/data`：一次读取项目配置和剧集列表
-- `GET/POST /api/projects/:projectId/episodes`：读取和创建剧集
-- `PATCH/DELETE /api/projects/:projectId/episodes/:episodeId`：编辑和删除剧集
-- `GET/PATCH /api/projects/:projectId/config`：读取和更新项目级模型、画幅、画风等配置
-- `GET/PUT /api/projects/:projectId/characters`：读取和保存角色草稿
-- `GET/PUT /api/projects/:projectId/locations`：读取和保存场景草稿
-- `GET/PUT /api/projects/:projectId/props`：读取和保存道具草稿
-- `GET/PUT /api/projects/:projectId/episodes/:episodeId/storyboard`：读取和保存分镜草稿
-- `POST /api/projects/:projectId/episodes/:episodeId/parse`：创建真实文本解析工作流
-- `POST /api/projects/:projectId/assets/generate`：创建角色或场景图片任务
-- `POST /api/projects/:projectId/assets/generate-batch`：批量创建角色或场景图片任务，默认复用已选参考图
-- `POST /api/projects/:projectId/assets/upload`：上传项目图片或视频，并记录所有权、来源和目标实体引用
-- `POST /api/projects/:projectId/assets/reference-to-character`：使用已归属项目的参考图生成角色外观，或只提取角色描述
-- `POST /api/projects/:projectId/assets/extract`：从项目图片或视频抽帧中提取角色、场景和道具，可选择落库
-- `POST /api/projects/:projectId/assets/select`：确认角色、场景或分镜图片/视频资产为当前基准资产（分镜通过 `assetKind: "image" | "video"` 区分）
-- `POST /api/projects/:projectId/episodes/split`：整本小说自动选择标记分集或 AI 分集，可选择事务化创建剧集
-- `POST /api/projects/:projectId/episodes/:episodeId/storyboard/:panelId/generate`：根据分镜格和已确认资产生成分镜图片
-- `POST /api/projects/:projectId/episodes/:episodeId/storyboard/generate-batch`：批量生成剧集分镜图片
-- `POST /api/projects/:projectId/episodes/:episodeId/storyboard/:panelId/generate-video`：根据分镜格、分镜图片和已确认资产生成视频片段
-- `POST /api/projects/:projectId/episodes/:episodeId/storyboard/generate-video-batch`：批量生成剧集视频片段
-- `GET/PUT /api/projects/:projectId/episodes/:episodeId/production`：读取和保存 Clip、Shot、语音行和编辑时间线
-- `POST /api/projects/:projectId/episodes/:episodeId/production/timeline`：根据 Clip/Shot 和语音行生成时间线、字幕草稿
-- `GET/PUT /api/projects/:projectId/voice-presets`：读取和创建项目音色预设
-- `POST /api/projects/:projectId/episodes/:episodeId/voice-lines/:lineId/generate`：通过真实音频模型生成语音行
-- `POST /api/projects/:projectId/episodes/:episodeId/audio/merge`：创建音频合并任务
-- `POST /api/projects/:projectId/episodes/:episodeId/lip-sync`：创建口型同步任务
-- `POST /api/projects/:projectId/episodes/:episodeId/render`：创建时间线渲染任务
-- `GET /api/media/assets/:assetId`：读取媒体资产并生成对象存储签名 URL
-- `GET/POST /api/media/batches/:batchId`：读取批次汇总，批量取消或重试失败任务
-- `GET /api/projects/:projectId/workflows`：读取项目工作流
-- `GET/POST /api/workflows/:runId`：读取、暂停、恢复、重试或取消工作流
-- `POST /api/workflows/:runId/steps/:stepKey/retry`：手动重试一个失败步骤并重新执行其下游步骤，不受自动尝试次数限制
-
-## 制作任务与失败恢复
-
-右侧任务面板把一个 Workflow Run 拆成独立步骤展示，例如“编剧-小说解析”“编剧-剧情分片”“编剧-剧本转换”；媒体任务会解析业务目标并显示“角色-韩宇-素材生成”或“分镜-镜头 03-图片生成”等名称。
-
-失败操作遵循以下边界：
-
-- 工作流步骤只有在服务端标记为 `retryable` 且尚未达到最大尝试次数时显示重试。
-- 媒体任务在 `retryCount < maxRetries` 时允许独立重试，不需要重跑整个批次。
-- 服务商错误、超时、余额不足和响应格式异常会保留在任务记录及 Trace 中。
-- 删除仅用于已取消或失败的媒体任务；工作流历史仍保留用于审计和恢复。
-
-## 目录结构
+## 代码结构
 
 ```text
-app/                       页面和 API 路由
-components/agent/          聊天、Composer、设置和工具 UI
-components/ui/             通用 UI 组件
-features/studio/           六阶段漫剧工作区、上下文 Agent 和制作视图
-hooks/                     聊天、模型和运行时状态
-lib/agent/                 Agent 事件、适配器、协议和流处理
-lib/media/                 媒体任务契约和存储
-lib/providers/             各服务商独立的文本、图片、视频和声音适配器
-lib/server/                Prisma、认证和密钥加密
-lib/queue/                 Redis/BullMQ 队列和任务事件
-lib/storage/               S3 兼容对象存储适配器
-lib/worker/                BullMQ Worker 入口
-docs/                      集成、工具扩展和项目说明
+app/                  页面、布局和 Next.js API 路由
+components/           通用 UI、认证、管理和 Agent 界面
+features/studio/      漫剧工作区及编剧、资产、分镜、镜头、声音、交付功能
+hooks/                React Hooks
+lib/agent/            Agent 适配器、运行时、消息与流处理
+lib/providers/        模型和媒体服务商适配器
+lib/server/           服务端认证、Prisma、设置和密钥处理
+lib/queue/            Redis、BullMQ 队列和任务事件
+lib/worker/           后台 Worker 入口
+lib/workflow/         工作流契约、执行、状态和租约
+prisma/               Prisma schema 和数据库迁移
+scripts/              数据维护与导入脚本
+docs/                 架构、集成和开发说明
 ```
-
-## 后续规划
-
-- 强化小说到剧本的影视化补全、内心独白归属和镜头过渡连续性
-- 建立跨剧集锁定的角色三视图、场景空间、道具和视觉一致性基准
-- 完善长镜头逐秒动作规划、机位连续性和重复主体检测
-- 扩充不同服务商端点的兼容性矩阵与真实模型集成测试
-- 根据视频原生声音能力完善对白、音效、配音和字幕的混合交付策略
-- 增加批量任务背压、并发预算、成本上限和更完整的交付 QC
-- 完善生产环境的 PostgreSQL、Redis 和 S3 兼容存储部署方案
-
-## 开发原则
-
-- UI、业务流程和模型协议保持清晰边界。
-- 模型必须从配置渠道的真实接口获取，不在生产逻辑中写死假模型。
-- API Key、Session 和用户数据由服务端处理。
-- 媒体任务统一经过状态机，并按用户隔离。
-- 新增能力优先通过协议适配器和 Agent 事件接入，避免把服务商逻辑散落到 UI 中。
-- 新增用户可见文案时同步补充国际化内容。
-
-## 许可证
-
-本项目采用 [Cyanyi Drama 个人使用许可证 1.0](LICENSE)，属于源代码可用的
-自定义许可证，不是 OSI 定义的开源许可证。
-
-- 自然人可以将本项目用于学习、研究、评估和非商业个人开发。
-- 公司内部使用、接单交付、收费服务、SaaS、广告、营收或其他商业用途，必须事先取得书面商业授权。
-- 第三方依赖、资产和模型继续适用其各自的许可证。
-
-商业授权请通过项目公开的联系渠道联系版权所有者。
 
 ## 文档
 
-- [添加工具](docs/adding-tools.md)
+- [添加 Agent 工具](docs/adding-tools.md)
 - [HITL 后端要求](docs/hitl-backend.md)
-- [全链路开发计划（M0-M7）](docs/backend-parity-roadmap.md)
-- [M5 外部资产与媒体模板](docs/m5-external-capabilities.md)
+- [M5 外部能力与媒体模板](docs/m5-external-capabilities.md)
+- [M6 质量系统](docs/m6-quality-system.md)
+- [后端一致性路线图](docs/backend-parity-roadmap.md)
 
-## 项目状态
+## 许可证
 
-Cyanyi Drama 仍在快速开发中。六阶段工作区、模型路由、媒体任务、失败恢复和基础交付链路已经接通；真实服务商下的长篇连续性、视频与声音策略以及批量稳定性仍在持续验证。欢迎通过 Issue 反馈问题和建议。
+本项目采用 [Cyanyi Drama 个人使用许可证 1.0](LICENSE)，是源代码可用许可证，不是 OSI 定义的开源许可证。自然人可用于个人非商业用途；公司或其他商业用途、客户项目、收费服务和 SaaS 均须事先取得版权所有者的书面商业授权。第三方依赖与素材遵循各自许可证。

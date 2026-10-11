@@ -2,7 +2,9 @@ import {
   createCipheriv,
   createDecipheriv,
   randomBytes,
+  scrypt,
   scryptSync,
+  timingSafeEqual,
 } from "node:crypto";
 
 import { getAppSecret } from "./app-secret";
@@ -13,21 +15,28 @@ function getEncryptionKey() {
   return scryptSync(getAppSecret(), "cyanyi-db", 32);
 }
 
-export function hashPassword(password: string) {
+function deriveScrypt(password: string, salt: string, keyLength: number) {
+  return new Promise<Buffer>((resolve, reject) => {
+    scrypt(password, salt, keyLength, (error, derivedKey) => {
+      if (error) reject(error);
+      else resolve(derivedKey);
+    });
+  });
+}
+
+export async function hashPassword(password: string) {
   const salt = randomBytes(16).toString("hex");
-  const hash = scryptSync(password, `${PASSWORD_SALT}:${salt}`, 64).toString(
-    "hex",
-  );
+  const hash = (
+    await deriveScrypt(password, `${PASSWORD_SALT}:${salt}`, 64)
+  ).toString("hex");
   return `${salt}:${hash}`;
 }
 
-export function verifyPassword(password: string, encoded: string) {
+export async function verifyPassword(password: string, encoded: string) {
   const [salt, expected] = encoded.split(":");
-  if (!salt || !expected) return false;
-  const actual = scryptSync(password, `${PASSWORD_SALT}:${salt}`, 64).toString(
-    "hex",
-  );
-  return actual === expected;
+  if (!salt || !/^[a-f0-9]{128}$/i.test(expected ?? "")) return false;
+  const actual = await deriveScrypt(password, `${PASSWORD_SALT}:${salt}`, 64);
+  return timingSafeEqual(actual, Buffer.from(expected, "hex"));
 }
 
 export function encryptSecret(value: string) {

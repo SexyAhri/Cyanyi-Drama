@@ -1,24 +1,37 @@
 import { attachSessionCookie } from "@/lib/server/auth";
-import { completeOAuthFlow, isOAuthProvider } from "@/lib/server/oauth";
+import {
+  clearOAuthStateCookieHeader,
+  completeOAuthFlow,
+  isOAuthProvider,
+} from "@/lib/server/oauth";
 
 export async function GET(
   request: Request,
   context: { params: Promise<{ provider: string }> },
 ) {
   const { provider } = await context.params;
+  let response: Response;
   if (!isOAuthProvider(provider)) {
-    return Response.redirect(new URL("/login?oauth_error=unknown_provider", request.url));
-  }
-  try {
-    const result = await completeOAuthFlow(provider, request);
-    return attachSessionCookie(
-      Response.redirect(new URL(result.redirectPath, request.url)),
-      result.sessionId,
+    response = Response.redirect(
+      new URL("/login?oauth_error=unknown_provider", request.url),
     );
-  } catch (error) {
-    const code = oauthErrorCode(error);
-    return Response.redirect(new URL(`/login?oauth_error=${code}`, request.url));
+  } else {
+    try {
+      const result = await completeOAuthFlow(provider, request);
+      response = attachSessionCookie(
+        Response.redirect(new URL(result.redirectPath, request.url)),
+        result.sessionId,
+      );
+    } catch (error) {
+      const code = oauthErrorCode(error);
+      response = Response.redirect(
+        new URL(`/login?oauth_error=${code}`, request.url),
+      );
+    }
   }
+  const stateCookie = clearOAuthStateCookieHeader(request);
+  if (stateCookie) response.headers.append("Set-Cookie", stateCookie);
+  return response;
 }
 
 function oauthErrorCode(error: unknown) {

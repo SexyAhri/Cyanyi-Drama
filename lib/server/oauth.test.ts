@@ -30,7 +30,11 @@ vi.mock("./system-settings", () => ({
   getOAuthProviderConfig: mocks.getOAuthProviderConfig,
 }));
 
-import { beginOAuthFlow, completeOAuthFlow } from "./oauth";
+import {
+  beginOAuthFlow,
+  completeOAuthFlow,
+  oauthStateCookieName,
+} from "./oauth";
 
 describe("OAuth state lifecycle", () => {
   beforeEach(() => {
@@ -48,17 +52,22 @@ describe("OAuth state lifecycle", () => {
   });
 
   it("stores only a SHA-256 hash of the one-time state", async () => {
-    const authorizeUrl = await beginOAuthFlow(
+    const flowStart = await beginOAuthFlow(
       "github",
       new Request("http://localhost/api/auth/oauth/github/start"),
       "/chat",
     );
-    const state = new URL(authorizeUrl).searchParams.get("state");
+    const state = new URL(flowStart.authorizeUrl).searchParams.get("state");
+    const browserBinding = flowStart.stateCookie.split("=")[1]?.split(";")[0];
 
     expect(state).toBeTruthy();
+    expect(browserBinding).toBeTruthy();
     expect(mocks.authFlowCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         tokenHash: createHash("sha256").update(state!).digest("hex"),
+        browserBindingHash: createHash("sha256")
+          .update(browserBinding!)
+          .digest("hex"),
       }),
     });
     expect(mocks.authFlowCreate.mock.calls[0]?.[0].data.tokenHash).not.toBe(
@@ -67,10 +76,20 @@ describe("OAuth state lifecycle", () => {
   });
 
   it("atomically consumes state and rejects a replay", async () => {
+    const flowStart = await beginOAuthFlow(
+      "github",
+      new Request("http://localhost/api/auth/oauth/github/start"),
+      "/chat",
+    );
+    const state = new URL(flowStart.authorizeUrl).searchParams.get("state")!;
+    const browserBinding = flowStart.stateCookie.split("=")[1]?.split(";")[0]!;
     const flow = {
       id: "flow-1",
       anonymousUserId: null,
       redirectPath: "/chat",
+      browserBindingHash: createHash("sha256")
+        .update(browserBinding)
+        .digest("hex"),
     };
     mocks.authFlowFindFirst.mockResolvedValue(flow);
     mocks.authFlowUpdateMany
@@ -91,7 +110,12 @@ describe("OAuth state lifecycle", () => {
     }));
 
     const request = new Request(
-      "http://localhost/api/auth/oauth/github/callback?state=state-1&code=code-1",
+      `http://localhost/api/auth/oauth/github/callback?state=${state}&code=code-1`,
+      {
+        headers: {
+          cookie: `${oauthStateCookieName(state)}=${browserBinding}`,
+        },
+      },
     );
     await expect(completeOAuthFlow("github", request)).resolves.toMatchObject({
       redirectPath: "/chat",

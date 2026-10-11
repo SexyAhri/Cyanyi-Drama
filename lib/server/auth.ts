@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type { UserRole } from "@prisma/client";
 
@@ -15,6 +15,7 @@ import { getPublicAuthConfig } from "./auth-config";
 
 export const SESSION_COOKIE = "cyanyi_session";
 const SESSION_DAYS = 30;
+const DUMMY_PASSWORD_HASH = `${"0".repeat(32)}:${"0".repeat(128)}`;
 
 export type AuthUser = {
   id: string;
@@ -33,12 +34,22 @@ export class AdminRequiredError extends Error {
 export async function getCurrentUser() {
   await ensureDatabaseConfigured();
   const cookieStore = await cookies();
-  const sessionId = cookieStore.get(SESSION_COOKIE)?.value;
-  if (!sessionId) return null;
+  const sessionToken = cookieStore.get(SESSION_COOKIE)?.value;
+  if (!sessionToken) return null;
+  const sessionId = hashSessionToken(sessionToken);
   const session = await prisma.session.findFirst({
-    where: { id: sessionId, expiresAt: { gt: new Date() } },
+    where: {
+      id: { in: [sessionId, sessionToken] },
+      expiresAt: { gt: new Date() },
+    },
     include: { user: true },
   });
+  if (session?.id === sessionToken) {
+    await prisma.session.updateMany({
+      where: { id: sessionToken },
+      data: { id: sessionId },
+    });
+  }
   return session ? toAuthUser(session.user) : null;
 }
 
@@ -137,7 +148,7 @@ export async function registerUser(
           id: randomUUID(),
           email: normalizedEmail,
           emailVerifiedAt: verificationId ? new Date() : null,
-          passwordHash: hashPassword(password),
+          passwordHash: await hashPassword(password),
           displayName: displayName?.trim() || normalizedEmail.split("@")[0],
           anonymous: false,
         },
@@ -166,7 +177,11 @@ export async function loginUser(email: string, password: string) {
   const user = await prisma.user.findUnique({
     where: { email: normalizeEmail(email) },
   });
-  if (!user?.passwordHash || !verifyPassword(password, user.passwordHash))
+  const passwordMatches = await verifyPassword(
+    password,
+    user?.passwordHash ?? DUMMY_PASSWORD_HASH,
+  );
+  if (!user?.passwordHash || !passwordMatches)
     throw new Error("INVALID_CREDENTIALS");
   return { user: toAuthUser(user), sessionId: await createSession(prisma, user.id) };
 }
@@ -272,23 +287,31 @@ export async function loginWithExternalIdentity(input: {
 
 export async function destroyCurrentSession() {
   const cookieStore = await cookies();
-  const sessionId = cookieStore.get(SESSION_COOKIE)?.value;
-  if (sessionId) await prisma.session.deleteMany({ where: { id: sessionId } });
+  const sessionToken = cookieStore.get(SESSION_COOKIE)?.value;
+  if (sessionToken) {
+    await prisma.session.deleteMany({
+      where: { id: { in: [hashSessionToken(sessionToken), sessionToken] } },
+    });
+  }
 }
 
 async function createSession(
   tx: Prisma.TransactionClient | typeof prisma,
   userId: string,
 ) {
-  const id = randomUUID();
+  const sessionToken = randomUUID();
   await tx.session.create({
     data: {
-      id,
+      id: hashSessionToken(sessionToken),
       userId,
       expiresAt: new Date(Date.now() + SESSION_DAYS * 86_400_000),
     },
   });
-  return id;
+  return sessionToken;
+}
+
+function hashSessionToken(sessionToken: string) {
+  return createHash("sha256").update(sessionToken).digest("hex");
 }
 
 async function migrateAnonymousOwnership(

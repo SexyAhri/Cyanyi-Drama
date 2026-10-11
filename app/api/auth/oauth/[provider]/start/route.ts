@@ -10,7 +10,10 @@ export async function GET(
   }
   try {
     const next = new URL(request.url).searchParams.get("next") ?? undefined;
-    return Response.redirect(await beginOAuthFlow(provider, request, next));
+    const flow = await beginOAuthFlow(provider, request, next);
+    const response = Response.redirect(flow.authorizeUrl);
+    response.headers.append("Set-Cookie", flow.stateCookie);
+    return response;
   } catch {
     return Response.redirect(new URL("/login?oauth_error=service_unavailable", request.url));
   }
