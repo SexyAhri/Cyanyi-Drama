@@ -1,5 +1,6 @@
 import type { MediaTask } from "@/lib/media/task-contract";
 import { cachedStudioRequest, invalidateStudioCache, writeStudioCache } from "./request-cache";
+import { restoreWorkspaceEpisodeText } from "./workspace-episode-text";
 import {
   parseAssetVisualProfile,
   type AssetVisualProfile,
@@ -77,7 +78,12 @@ export async function deleteStudioProject(projectId: string) {
 
 export async function loadWorkspaceSnapshot(
   projectId: string,
-  options?: { signal?: AbortSignal; touch?: boolean; fresh?: boolean },
+  options?: {
+    signal?: AbortSignal;
+    touch?: boolean;
+    fresh?: boolean;
+    previous?: WorkspaceSnapshot | null;
+  },
 ): Promise<WorkspaceSnapshot> {
   const encodedProjectId = encodeURIComponent(projectId);
   const touch = options?.touch ? "1" : "0";
@@ -85,10 +91,22 @@ export async function loadWorkspaceSnapshot(
   const signal = options?.signal
     ? AbortSignal.any([options.signal, timeoutSignal])
     : timeoutSignal;
-  return request<WorkspaceSnapshot>(
-    `/api/projects/${encodedProjectId}/data?touch=${touch}`,
+  const previous = options?.previous?.project.id === projectId ? options.previous : null;
+  const textUpdatedAfter = previous?.project.episodes.reduce(
+    (latest, episode) => episode.updatedAt > latest ? episode.updatedAt : latest,
+    "",
+  );
+  const delta = textUpdatedAfter
+    ? `&textUpdatedAfter=${encodeURIComponent(textUpdatedAfter)}`
+    : "";
+  const result = await request<WorkspaceSnapshot>(
+    `/api/projects/${encodedProjectId}/data?touch=${touch}${delta}`,
     { signal, ...(options?.fresh ? { cache: "no-store" as const } : {}) },
   );
+  if (!previous || !delta) return result;
+  const episodes = restoreWorkspaceEpisodeText(result.project.episodes, previous.project.episodes);
+  if (!episodes) return loadWorkspaceSnapshot(projectId, { ...options, previous: null });
+  return { ...result, project: { ...result.project, episodes } };
 }
 
 export async function createStudioEpisode(

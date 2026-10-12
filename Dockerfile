@@ -7,6 +7,10 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV COREPACK_HOME=/opt/corepack
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN corepack enable \
     && corepack prepare pnpm@11.7.0 --activate
 
