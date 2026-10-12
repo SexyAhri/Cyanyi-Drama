@@ -22,7 +22,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 RUN pnpm exec prisma generate \
-    && APP_SECRET=build-only-placeholder pnpm build \
+    && DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build APP_SECRET=build-only-placeholder pnpm build \
     && chown -R node:node /app
 
 ENV NODE_ENV=production
