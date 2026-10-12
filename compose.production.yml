@@ -1,3 +1,5 @@
+name: cyanyi-drama-prod
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -27,8 +29,7 @@ services:
       retries: 10
 
   app:
-    image: cyanyi-drama:production
-    build: .
+    image: ghcr.io/sexyahri/cyanyi-drama:latest
     restart: unless-stopped
     ports:
       - "127.0.0.1:3456:3000"
@@ -57,7 +58,7 @@ services:
       start_period: 30s
 
   worker:
-    image: cyanyi-drama:production
+    image: ghcr.io/sexyahri/cyanyi-drama:latest
     restart: unless-stopped
     command: ["pnpm", "worker"]
     env_file:
@@ -75,7 +76,7 @@ services:
         condition: service_healthy
 
   migrate:
-    image: cyanyi-drama:production
+    image: ghcr.io/sexyahri/cyanyi-drama:latest
     profiles: ["tools"]
     restart: "no"
     command: ["pnpm", "exec", "prisma", "migrate", "deploy"]

@@ -12,7 +12,7 @@ git fetch --prune origin +refs/heads/main:refs/remotes/origin/main
 git reset --hard origin/main
 
 compose=(docker compose --env-file .env.production -f compose.production.yml)
-"${compose[@]}" build app
+"${compose[@]}" pull app worker migrate
 "${compose[@]}" run --rm migrate
 "${compose[@]}" up -d --remove-orphans
 
