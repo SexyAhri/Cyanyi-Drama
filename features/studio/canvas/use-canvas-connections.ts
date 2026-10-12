@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type RefObject } from "react";
 import type { CanvasDocument } from "./types";
 import { CARD_WIDTH, PORT_Y } from "./canvas-view-model";
 
@@ -15,7 +15,7 @@ export function useCanvasConnections(
   const sourceRef = useRef<string | undefined>(undefined);
   const gesture = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
   const connect = useRef(onConnect);
-  connect.current = onConnect;
+  useLayoutEffect(() => { connect.current = onConnect; }, [onConnect]);
 
   function cancel() {
     sourceRef.current = undefined; gesture.current = null;

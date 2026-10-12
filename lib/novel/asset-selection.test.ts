@@ -111,7 +111,7 @@ describe("project asset selection", () => {
         imageAssetId: null,
         videoAssetId: null,
       });
-      mediaAssetFindFirst.mockResolvedValue({ id: `asset-${assetKind}` });
+      mediaAssetFindFirst.mockResolvedValue({ id: `asset-${assetKind}`, task: { id: "task-1", payload: {} } });
 
       const result = await selectProjectAsset({
         userId: "user-1",
@@ -129,15 +129,14 @@ describe("project asset selection", () => {
           task: {
             userId: "user-1",
             projectId: "project-1",
-            targetType: "storyboard_panel",
-            targetId: "panel-1",
+            status: "succeeded",
           },
         },
-        select: { id: true },
+        select: { id: true, task: { select: { id: true, payload: true } } },
       });
       expect(storyboardPanelUpdate).toHaveBeenCalledWith({
         where: { id: "panel-1" },
-        data: { [field]: `asset-${assetKind}` },
+        data: { [field]: `asset-${assetKind}`, lipSyncAssetId: null },
       });
       expect(assetReferenceDeleteMany).toHaveBeenCalledWith({
         where: {
@@ -156,7 +155,7 @@ describe("project asset selection", () => {
     },
   );
 
-  it("rejects a storyboard candidate that belongs to another panel", async () => {
+  it("rejects a storyboard candidate unavailable in the owned project", async () => {
     storyboardPanelFindFirst.mockResolvedValue({
       id: "panel-1",
       imageAssetId: null,

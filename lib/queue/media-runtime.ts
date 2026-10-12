@@ -118,6 +118,7 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
               baseUrl: channel.baseUrl,
               apiKey,
               model: task.model,
+              mediaTaskId: task.id,
               kind: task.kind,
               request: outboundRequest,
               mediaTemplate,

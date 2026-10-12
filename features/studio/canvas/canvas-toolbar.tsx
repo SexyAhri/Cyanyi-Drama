@@ -40,6 +40,7 @@ export type CanvasToolbarProps = {
   libraryOpen: boolean;
   canAssembleEpisodeGraph?: boolean;
   freeLayout: boolean;
+  contextualAssetLinks?: boolean;
   onTool: (tool: "select" | "pan") => void;
   onCreate: (kind: "text" | "image" | "video") => void;
   onOutline: () => void;
@@ -116,6 +117,7 @@ export function CanvasHeader(props: CanvasToolbarProps) {
         {props.nodeCount}
         {t(" 个节点", " nodes")}
       </span>
+      {props.contextualAssetLinks && <span className="hidden text-xs text-muted-foreground xl:block">{t("选中节点查看资产连线", "Select a node to see asset links")}</span>}
       {props.reusableBranchCount > 0 && (
         <Button size="sm" variant={props.showReusableBranches ? "secondary" : "ghost"}
           aria-pressed={props.showReusableBranches} disabled={props.busy} onClick={props.onToggleReusableBranches}>

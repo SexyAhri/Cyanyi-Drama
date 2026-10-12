@@ -447,7 +447,7 @@ export function SplitNovelDialog({
                     value={mode}
                   >
                     <SelectTrigger className="h-9 w-full">
-                      <SelectValue />
+                      <SelectValue>{mode === "auto" ? copy.splitAuto : mode === "markers" ? copy.splitMarkers : copy.splitAi}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="auto">{copy.splitAuto}</SelectItem>

@@ -8,15 +8,11 @@ import { createOrReuseWorkflowRun } from "@/lib/workflow/store";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { resolveEpisodeTextProvider } from "./provider";
-import { chunkSource, sourceFingerprint, type SourceTaskHooks } from "./long-source";
+import { chunkSource, mapSourceTasks, sourceAnalysisConcurrency, sourceFingerprint, type SourceTaskHooks } from "./long-source";
 import { parseNovelStructure } from "./novel-volumes";
 
-const entry = z.object({ name: z.string().min(1).max(60), details: z.string().min(1).max(160) });
-export const ManuscriptNotesSchema = z.object({
-  summary: z.string().min(1).max(1200),
-  characters: z.array(entry).max(10), locations: z.array(entry).max(10), props: z.array(entry).max(10),
-  rules: z.array(z.string().min(1).max(160)).max(8),
-});
+import { ManuscriptNotesSchema } from "./source-notes-schema";
+export { ManuscriptNotesSchema } from "./source-notes-schema";
 export type ManuscriptNotes = z.infer<typeof ManuscriptNotesSchema>;
 export type ManuscriptDossier = {
   packageFormat: "cyanyi-manuscript-dossier-v1"; manuscriptId: string; sourceHash: string;
@@ -24,6 +20,10 @@ export type ManuscriptDossier = {
   chapters: Array<{ heading: string; startIndex: number; endIndex: number }>;
   chunks: Array<{ index: number; start: number; end: number; artifactRef: string }>;
 };
+
+export function manuscriptAnalysisConcurrency() {
+  return sourceAnalysisConcurrency(process.env.MANUSCRIPT_ANALYSIS_CONCURRENCY ?? process.env.SOURCE_ANALYSIS_CONCURRENCY);
+}
 
 export async function startManuscriptAnalysis(input: {
   userId: string; projectId: string; manuscriptId: string; channelId: string; model: string; locale: "zh" | "en";
@@ -57,16 +57,47 @@ export async function analyzeManuscript(input: {
   const done = await hooks.loadArtifact("manuscript.dossier", manuscript.id) as { deliverableId?: string } | null;
   if (done?.deliverableId) return done;
   const provider = await resolveEpisodeTextProvider(input);
+  const concurrency = manuscriptAnalysisConcurrency();
+  // Load reusable notes once rather than querying earlier runs for every source span.
+  // Fingerprints still bind exact text, source position, model and channel.
+  const previous = await prisma.workflowArtifact.findMany({
+    where: {
+      artifactType: { in: ["manuscript.chunk", "manuscript.merge"] }, refId: { not: null },
+      run: { userId: input.userId, projectId: input.projectId, targetId: input.manuscriptId,
+        workflowType: "manuscript-analysis", status: { in: ["succeeded", "failed", "paused"] },
+        input: { path: ["sourceHash"], equals: input.sourceHash } },
+    },
+    select: { artifactType: true, refId: true, payload: true },
+    orderBy: { createdAt: "desc" },
+  });
+  const reusable = new Map<string, unknown>();
+  for (const row of previous) {
+    const key = `${row.artifactType}:${row.refId}`;
+    if (!reusable.has(key)) reusable.set(key, row.payload);
+  }
+  let progress = Promise.resolve();
+  const reportProgress = (message: string) => {
+    progress = progress.then(async () => { await hooks.reportProgress?.(message); });
+    return progress;
+  };
   async function extract(type: string, ref: string, text: string, merge = false) {
     await hooks.assertActive();
     const key = sourceFingerprint({ ref, text, model: input.model, channel: input.channelId, version: 1 });
     const cached = ManuscriptNotesSchema.safeParse(await hooks.loadArtifact(type, key));
     if (cached.success) return { notes: cached.data, artifactRef: key };
+    const reused = ManuscriptNotesSchema.safeParse(reusable.get(`${type}:${key}`));
+    if (reused.success) {
+      await hooks.persistArtifact(type, key, reused.data);
+      return { notes: reused.data, artifactRef: key };
+    }
     const result = await requestOpenAiStructured({ ...provider, schema: ManuscriptNotesSchema,
       timeoutMs: 120_000, temperature: 0.2,
-      prompt: renderPrompt({ id: PROMPT_IDS.STORY_PACKAGE_GENERATION, locale: input.locale, variables: {
-        project_context: text, episode_count: "0", generation_task:
-          `${merge ? "合并提供的原著摘要与资料" : "只提取本段原著中明确发生的事件及人物、场景、道具、世界规则"}。不得创作续篇、改写结局或编造未提供的信息。信息不明请说明。保留事件顺序、人物别名和限制条件；这是原著资料草稿，所有实体详情需有原文短引用作为依据。输出语言与原文一致。严格使用 JSON Schema：${JSON.stringify(z.toJSONSchema(ManuscriptNotesSchema))}`,
+      // This background task only consumes completed JSON and gains nothing from a long-lived SSE connection.
+      stream: false,
+      prompt: renderPrompt({ id: PROMPT_IDS.SOURCE_NOTES, locale: input.locale, variables: {
+        source_text: text, output_schema: JSON.stringify(z.toJSONSchema(ManuscriptNotesSchema)),
+        extraction_task: merge ? "合并有序原著资料，保留关键事件与人物、场景、道具及世界规则。" :
+          "提取本段明确发生的事件及人物、场景、道具、世界规则。概要以约 600 字为目标，实体详情约 100 字，包含短引用；关键事实需要时可用结构允许的完整长度。",
       } }),
     });
     await hooks.assertActive();
@@ -74,29 +105,40 @@ export async function analyzeManuscript(input: {
     await hooks.persistArtifact("prompt.trace", key, result.trace);
     return { notes: result.data, artifactRef: key };
   }
-  const chunks: ManuscriptDossier["chunks"] = [];
-  const chunkNotes: ManuscriptNotes[] = [];
   const sourceChunks = chunkSource(manuscript.sourceText);
-  for (const chunk of sourceChunks) {
-    await hooks.reportProgress?.(`正在提取原著资料 ${chunk.index + 1}/${sourceChunks.length}`);
+  let completedChunks = 0;
+  await reportProgress(`正在提取原著资料 0/${sourceChunks.length}（${concurrency} 路并发，复用已保存结果）`);
+  const extracted = await mapSourceTasks(sourceChunks, concurrency, async chunk => {
     const result = await extract("manuscript.chunk", `${chunk.start}:${chunk.end}`, chunk.text);
-    chunks.push({ index: chunk.index, start: chunk.start, end: chunk.end, artifactRef: result.artifactRef });
-    chunkNotes.push(result.notes);
-  }
+    completedChunks++;
+    await reportProgress(`已提取原著资料 ${completedChunks}/${sourceChunks.length}（${concurrency} 路并发）`);
+    return { chunk: { index: chunk.index, start: chunk.start, end: chunk.end, artifactRef: result.artifactRef }, notes: result.notes };
+  });
+  const chunks = extracted.map(result => result.chunk);
+  const chunkNotes = extracted.map(result => result.notes);
   // Bounded hierarchical reduction; never send every chunk summary in one model request.
   let level = chunkNotes;
   let depth = 0;
   while (level.length > 1) {
-    const next: ManuscriptNotes[] = [];
+    const groups: Array<{ notes: ManuscriptNotes[]; ref: string }> = [];
     for (let start = 0; start < level.length;) {
       const group: ManuscriptNotes[] = [level[start++]];
-      while (start < level.length && group.length < 4 &&
+      while (start < level.length && group.length < 6 &&
         JSON.stringify([...group, level[start]]).length <= 12_000) group.push(level[start++]);
       // Each note is bounded by the schema. Pairwise merge guarantees reduction.
       if (group.length === 1 && start < level.length) group.push(level[start++]);
-      await hooks.reportProgress?.(`正在合并原著资料，第 ${depth + 1} 层`);
-      next.push(group.length === 1 ? group[0] : (await extract("manuscript.merge", `${depth}:${start}`, JSON.stringify(group), true)).notes);
+      groups.push({ notes: group, ref: `${depth}:${start}` });
     }
+    let completedGroups = 0;
+    await reportProgress(`正在合并原著资料，第 ${depth + 1} 层 0/${groups.length}（${concurrency} 路并发）`);
+    const next = await mapSourceTasks(groups, concurrency, async group => {
+      await hooks.assertActive();
+      const notes = group.notes.length === 1 ? group.notes[0]
+        : (await extract("manuscript.merge", group.ref, JSON.stringify(group.notes), true)).notes;
+      completedGroups++;
+      await reportProgress(`正在合并原著资料，第 ${depth + 1} 层 ${completedGroups}/${groups.length}（${concurrency} 路并发）`);
+      return notes;
+    });
     level = next; depth++;
   }
   const structure = parseNovelStructure(manuscript.sourceText);

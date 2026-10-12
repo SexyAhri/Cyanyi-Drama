@@ -1,11 +1,12 @@
 import { syncTimelineSources, type TimelineMediaTrack } from "@/lib/production/timeline-source-sync";
 import { prisma } from "@/lib/server/prisma";
+import { inspectStructuredScreenplay } from "@/lib/novel/screenplay-state";
 
 export type ProductionReadiness = {
   episodes: Record<string, {
     structuredScript: boolean; storyboard: boolean; storyboardApproved: boolean;
     panels: number; adoptedImages: number; adoptedVideos: number;
-    voiceLines: number; generatedVoices: number; timeline: boolean; rendered: boolean;
+    voiceLines: number; generatedVoices: number; speechExpected: boolean; timeline: boolean; rendered: boolean;
   }>;
   assets: { total: number; adopted: number };
 };
@@ -16,7 +17,7 @@ export async function loadProductionReadiness(userId: string, projectId: string)
   const [episodes, characters, locations, props, propReferences] = await Promise.all([
     prisma.episode.findMany({ where, select: { id: true,
       clips: { select: { screenplay: true } },
-      storyboard: { select: { status: true, panels: { select: { id: true, imageAssetId: true, videoAssetId: true, lipSyncAssetId: true, videoSegments: { select: { id: true, videoAssetId: true } } } } } },
+      storyboard: { select: { status: true, panels: { select: { id: true, imageAssetId: true, videoAssetId: true, lipSyncAssetId: true, lipSyncText: true, voiceoverText: true, videoSegments: { select: { id: true, videoAssetId: true } } } } } },
       voiceLines: { select: { audioAssetId: true } },
       editorProject: { select: { outputAssetId: true, renderStatus: true, timelineJson: true } },
     } }),
@@ -31,6 +32,7 @@ export async function loadProductionReadiness(userId: string, projectId: string)
       adopted: characters.filter(item => item.appearances.length > 0).length + locations.filter(item => item.selectedImage?.imageAssetId).length + props.filter(item => adoptedProps.has(item.id)).length },
     episodes: Object.fromEntries(episodes.map(episode => {
       const panels = episode.storyboard?.panels ?? [];
+      const scripts = episode.clips.map(clip => inspectStructuredScreenplay(clip.screenplay));
       let timelineCurrent = false;
       if (episode.editorProject) {
         try {
@@ -42,14 +44,24 @@ export async function loadProductionReadiness(userId: string, projectId: string)
         } catch { /* Invalid timeline is not ready for delivery. */ }
       }
       return [episode.id, {
-        structuredScript: episode.clips.length > 0 && episode.clips.every(clip => Boolean(clip.screenplay)),
+        structuredScript: scripts.length > 0 && scripts.every(script => script.structured),
         storyboard: panels.length > 0,
         storyboardApproved: panels.length > 0 && episode.storyboard?.status !== "director_review_required",
         panels: panels.length, adoptedImages: panels.filter(panel => panel.imageAssetId).length,
-        adoptedVideos: panels.filter(panel => panel.videoAssetId).length,
+        adoptedVideos: panels.filter(hasAdoptedPanelVideo).length,
         voiceLines: episode.voiceLines.length, generatedVoices: episode.voiceLines.filter(line => line.audioAssetId).length,
+        speechExpected: !scripts.length || scripts.some(script => script.speechExpected) ||
+          panels.some(panel => Boolean(panel.lipSyncText?.trim() || panel.voiceoverText?.trim())),
         timeline: Boolean(episode.editorProject), rendered: Boolean(timelineCurrent && episode.editorProject?.outputAssetId && episode.editorProject?.renderStatus === "succeeded"),
       }];
     })),
   };
+}
+
+export function hasAdoptedPanelVideo(panel: {
+  videoAssetId: string | null; lipSyncAssetId: string | null;
+  videoSegments: Array<{ videoAssetId: string | null }>;
+}) {
+  return panel.videoSegments.length > 0 ? panel.videoSegments.every(segment => Boolean(segment.videoAssetId)) :
+    Boolean(panel.videoAssetId || panel.lipSyncAssetId);
 }

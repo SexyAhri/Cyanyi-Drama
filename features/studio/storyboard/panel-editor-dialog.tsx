@@ -1,7 +1,7 @@
 "use client";
 
 import { LoaderCircle, Pencil, Save } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   Accordion,
@@ -64,7 +64,7 @@ export function PanelEditorDialog({
   const [isSaving, setIsSaving] = useState(false);
   const latestPanel = useRef(panel);
   const openedPanel = useRef(panel);
-  latestPanel.current = panel;
+  useLayoutEffect(() => { latestPanel.current = panel; }, [panel]);
 
   useEffect(() => {
     if (open) {

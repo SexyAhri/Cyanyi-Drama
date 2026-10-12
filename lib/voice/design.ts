@@ -182,6 +182,10 @@ export async function designEpisodeVoicePerformance(input: {
       prompt,
       schema: voicePerformanceDesignSchema,
       temperature: 0.35,
+      // Correct malformed/short voice profiles and exact line ID coverage once
+      // before marking the whole workflow failed. No extra call is made when
+      // the first structured response passes validation.
+      maxCorrectionAttempts: 1,
       validate: (design) =>
         validateVoicePerformanceDesign(design, {
           lineIds: targetLines.map((line) => line.id),

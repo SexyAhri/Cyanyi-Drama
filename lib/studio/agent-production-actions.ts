@@ -6,6 +6,7 @@ import { prisma } from "@/lib/server/prisma";
 import { createOrReuseWorkflowRun } from "@/lib/workflow/store";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
+import { inspectStructuredScreenplay } from "@/lib/novel/screenplay-state";
 import { resolveStorySetup, resolveAdaptationOptions, type StudioProductionOptions } from "./production-input";
 import {
   generateAndSaveStoryPackage,
@@ -184,11 +185,12 @@ export async function startEpisodeProductionWorkflow(input: {
     },
   });
   if (!episode) throw new Error("目标剧集不属于当前项目");
+  const scriptStates = episode.clips.map(clip => inspectStructuredScreenplay(clip.screenplay));
   if (input.operation !== "start_original_episode_generation" && !episode.novelText?.trim())
     throw new Error("本集没有生产稿，请先保存剧本");
   if (
     input.operation === "start_storyboard_generation" &&
-    (!episode.clips.length || episode.clips.some((clip) => !clip.screenplay))
+    (!scriptStates.length || scriptStates.some(script => !script.structured))
   )
     throw new Error("请先完成本集的 AI 场次与资产整理");
   if (input.operation === "start_voice_design" && !episode.voiceLines.length)
@@ -207,16 +209,11 @@ export async function startEpisodeProductionWorkflow(input: {
   const settings = await loadUserRuntimeSettings(input.userId);
   const combined = input.operation === "start_episode_preproduction";
   const flow = input.operation === "start_episode_preproduction" ? episodeFlows.start_script_organization : episodeFlows[input.operation];
-  const structured = episode.clips.length > 0 && episode.clips.every(clip => Boolean(clip.screenplay));
+  const structured = scriptStates.length > 0 && scriptStates.every(script => script.structured);
   const storyboardReady = Boolean(episode.storyboard?.panels.length);
   if (combined && storyboardReady && episode.storyboard?.status === "director_review_required")
     throw new Error("已有分镜草案与提示词，请先在分镜工作台检查并确认，无需再次生成");
-  const mayHaveSpeech = !structured || episode.clips.some(clip => {
-    try {
-      const screenplay = JSON.parse(clip.screenplay!) as { scenes: Array<{ content: Array<{ type: string }> }> };
-      return screenplay.scenes.some(scene => scene.content.some(line => line.type === "dialogue" || line.type === "voiceover"));
-    } catch { return true; }
-  });
+  const mayHaveSpeech = !structured || scriptStates.some(script => script.speechExpected);
   const sequence = combined ? [
     ...(!structured ? [episodeFlows.start_script_organization] : []),
     ...(!storyboardReady ? [episodeFlows.start_storyboard_generation] : []),

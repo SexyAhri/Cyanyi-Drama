@@ -60,7 +60,7 @@ type SceneStoryboardContext = {
   locale: "en" | "zh";
 };
 
-const STORYBOARD_PLANNER_VERSION = "scene-director-v5";
+const STORYBOARD_PLANNER_VERSION = "scene-director-v6";
 const TARGET_BEAT_SECONDS = 5;
 
 export async function buildEpisodeStoryboard(
@@ -78,7 +78,7 @@ export async function buildEpisodeStoryboard(
       },
       select: {
         novelText: true,
-        project: { select: { config: { select: { artStyle: true } } } },
+        project: { select: { config: { select: { artStyle: true, episodeTargetDurationSeconds: true } } } },
       },
     }),
     listProductionClips(userId, input.projectId, input.episodeId),
@@ -145,6 +145,7 @@ export async function buildEpisodeStoryboard(
           scenes,
           style: context.artStyle,
           productionSpec: context.productionSpec,
+          targetDurationSeconds: episode.project.config?.episodeTargetDurationSeconds,
           visualRules: context.visualRules,
           locale,
           assets: assets
@@ -181,6 +182,7 @@ export async function buildEpisodeStoryboard(
       })),
       artStyle: context.artStyle,
       productionSpec: context.productionSpec,
+      targetDurationSeconds: episode.project.config?.episodeTargetDurationSeconds,
       visualRules: context.visualRules,
       plannerVersion: STORYBOARD_PLANNER_VERSION,
       directorModel: input.model ?? null,
@@ -216,7 +218,7 @@ export async function buildEpisodeStoryboard(
       },
       select: {
         novelText: true,
-        project: { select: { config: { select: { artStyle: true } } } },
+        project: { select: { config: { select: { artStyle: true, episodeTargetDurationSeconds: true } } } },
       },
     }),
     getStoryboard(userId, input.projectId, input.episodeId),
@@ -233,7 +235,8 @@ export async function buildEpisodeStoryboard(
         clips.map((clip) => ({ id: clip.id, screenplay: clip.screenplay })),
       ) ||
     currentEpisode.novelText !== episode.novelText ||
-    currentEpisode.project.config?.artStyle !== episode.project.config?.artStyle
+    currentEpisode.project.config?.artStyle !== episode.project.config?.artStyle ||
+    currentEpisode.project.config?.episodeTargetDurationSeconds !== episode.project.config?.episodeTargetDurationSeconds
   )
     throw new Error("生成期间剧本或风格已修改，已完成草稿保留，请重新生成分镜");
   if (currentStoryboard?.version !== existingStoryboard?.version)

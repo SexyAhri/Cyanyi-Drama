@@ -12,12 +12,15 @@ import type { RenderedPrompt } from "@/lib/prompts/types";
 import {
   directorShotsSchema,
   directorShotsGenerationSchema,
+  materializeDirectorShots,
+  directorSpeechTiming,
   directorScenePanels,
   validateDirectorShots,
   type DirectorScene,
   type DirectorShot,
 } from "./storyboard-scene-contract";
 import { PANEL_PRODUCTION_DESIGN_INSTRUCTIONS } from "@/lib/production/panel-production-design";
+import { allocateStoryboardDuration, validateStoryboardDuration } from "./storyboard-duration-budget";
 
 const reviewSchema = z.object({
   approved: z.boolean(),
@@ -47,6 +50,7 @@ export async function directStoryboard(input: {
   style: string;
   locale: "zh" | "en";
   productionSpec: string;
+  targetDurationSeconds?: number;
   visualRules: string;
   assets: {
     characters: Array<{ name: string; visualSpec: string }>;
@@ -61,6 +65,11 @@ export async function directStoryboard(input: {
   ) => Promise<void>;
   loadArtifact?: (type: string, refId: string) => Promise<unknown | null>;
 }) {
+  const durationBudget = allocateStoryboardDuration(input.scenes, input.targetDurationSeconds);
+  const validateShots = (scene: DirectorScene, shots: DirectorShot[]) => [
+    ...validateDirectorShots(scene, shots),
+    ...validateStoryboardDuration(shots, durationBudget?.scenes.find(item => item.sceneId === scene.id)?.maximumSeconds),
+  ];
   const provider = await resolvePromptDesignProvider(input);
   const traces: unknown[] = [];
   const results = new Map<string, DirectorShot[]>();
@@ -68,17 +77,19 @@ export async function directStoryboard(input: {
   const sceneTraces = new Map<string, unknown[]>();
   const contract = `The supplied scene.units are the authoritative screenplay, not an existing shot list.
 Plan as many shots as needed for readable action, reactions and pacing; never force one shot per unit.
+Respect duration_budget.maximumSeconds for this scene. Combine compatible actions and reactions with spoken shots rather than adding unnecessary separate shots. Preserve all speech and source units; never accelerate speech to satisfy the budget. Shot count is determined by performance, not by a fixed quota.
 Cover every source unit in source_unit_ids, preserving plot order and exact speech.
 speech is null or {source_id,text}: at most one original dialogue/voiceover fragment per shot.
 Concatenating fragments for each spoken unit must reproduce its text exactly, including whitespace and punctuation.
 Long lines must be split into exact substrings so speech fits duration_seconds (1-15 seconds).
+speech_timing supplies the platform's minimum seconds and suggested exact fragments for each spoken unit. If using a suggested fragment unchanged, duration_seconds must be at least its minimum_seconds. For different fragments, estimate with ceil(CJK characters / 4.2 + remaining whitespace-delimited words / 2.6 + punctuation pauses * 0.18), at least 1 second. Never fit a longer line by speeding up speech or changing its text. Split lines needing more than 15 seconds into more shots, and make the motion beats, timed cues and video prompt fit each shot's actual duration.
 characters lists visible characters; asset_names uses only scene characters, props and location. Include the scene location in every shot's asset_names, and include every prop explicitly visible or named in that shot's visual description, action, image prompt, or video prompt. Do not list off-screen props.
-Use start_state, end_state and ordered motion_beats to describe continuous performance and camera.
+Use productionDesign.startState, end_state and ordered productionDesign.motionBeats to describe continuous performance and camera.
 image_prompt is a static first frame; video_prompt animates from it, ending at end_state.
 Video is silent; speech is synthesized separately. Only the dialogue speaker moves lips; voiceover never makes visible actors speak.
 ${PANEL_PRODUCTION_DESIGN_INSTRUCTIONS}
-productionDesign.startState.body must equal start_state; productionDesign.motionBeats must match motion_beats exactly after converting the snake_case time keys to camelCase.
-Output {shots:[{title,shot_type,duration_seconds,source_unit_ids,characters,asset_names,scene_description,action_description,camera_move,start_state,end_state,motion_beats:[{start_second,end_second,action,camera}],speech,image_prompt,video_prompt,productionDesign}]}.
+productionDesign is the single source of truth for startState and motionBeats. Do not output duplicate start_state or motion_beats fields, including when repairing older shots that contain them. The platform derives those compatibility fields itself.
+Output {shots:[{title,shot_type,duration_seconds,source_unit_ids,characters,asset_names,scene_description,action_description,camera_move,end_state,speech,image_prompt,video_prompt,productionDesign}]}.
 Required JSON Schema: ${JSON.stringify(z.toJSONSchema(directorShotsGenerationSchema))}
 Review output uses scene_ids and zero-based shot_indices to locate findings. Do not use prose-only locations.`;
   const templates = [
@@ -109,6 +120,8 @@ Review output uses scene_ids and zero-based shot_indices to locate findings. Do 
       visual_rules: input.visualRules,
       audio_mode: "silent_video_with_post_lip_sync",
       scene,
+      speech_timing: directorSpeechTiming(scene),
+      duration_budget: durationBudget ? { episodeTargetSeconds: durationBudget.targetSeconds, ...durationBudget.scenes[index] } : null,
       assets: {
         characters: related(input.assets.characters, scene.characters),
         locations: related(input.assets.locations, [scene.heading.location]),
@@ -126,7 +139,7 @@ Review output uses scene_ids and zero-based shot_indices to locate findings. Do 
         locale: input.locale,
         templates,
         contract,
-        version: 5,
+        version: 6,
       }),
     );
     return snapshot;
@@ -134,7 +147,7 @@ Review output uses scene_ids and zero-based shot_indices to locate findings. Do 
   const progress = async (phase: string) => {
     await input.assertActive();
     await input.persistArtifact("storyboard.director.progress", "total", {
-      version: 5,
+      version: 6,
       phase,
       totalScenes: input.scenes.length,
       completedScenes: results.size,
@@ -180,7 +193,7 @@ Review output uses scene_ids and zero-based shot_indices to locate findings. Do 
         input.locale,
       ),
       schema: directorShotsGenerationSchema,
-      validate: data => validateDirectorShots(input.scenes[index], data.shots).map(message => ({
+      validate: data => validateShots(input.scenes[index], materializeDirectorShots(data.shots)).map(message => ({
         code: "director_shot_invalid", path: "shots", message,
       })),
     });
@@ -188,7 +201,7 @@ Review output uses scene_ids and zero-based shot_indices to locate findings. Do 
     traces.push(response.trace);
     const id = input.scenes[index].id;
     sceneTraces.set(id, [...(sceneTraces.get(id) ?? []), response.trace]);
-    return response.data.shots;
+    return materializeDirectorShots(response.data.shots);
   };
   const parallel = async (
     indices: number[],
@@ -225,7 +238,7 @@ Review output uses scene_ids and zero-based shot_indices to locate findings. Do 
       if (
         cached.success &&
         cached.data.hash === hashes.get(scene.id) &&
-        !validateDirectorShots(scene, cached.data.shots).length
+        !validateShots(scene, cached.data.shots).length
       ) {
         results.set(scene.id, cached.data.shots);
         sceneTraces.set(scene.id, cached.data.traces);
@@ -243,13 +256,13 @@ Review output uses scene_ids and zero-based shot_indices to locate findings. Do 
             original_output: error.rawText,
           });
         }
-        const errors = validateDirectorShots(scene, shots);
+        const errors = validateShots(scene, shots);
         if (errors.length && !corrected)
           shots = await requestShots(index, {
             validation_errors: errors,
             original_shots: shots,
           });
-        const remaining = validateDirectorShots(scene, shots);
+        const remaining = validateShots(scene, shots);
         if (remaining.length)
           throw new Error(
             `STORYBOARD_SCENE_CONTRACT_INVALID:${scene.id}:${remaining.join(";")}`,
@@ -272,6 +285,7 @@ Review output uses scene_ids and zero-based shot_indices to locate findings. Do 
       production_spec: input.productionSpec,
       visual_rules: input.visualRules,
       review_scope: scope ? "repaired_scenes_and_boundaries" : "whole_episode",
+      episode_duration_budget: durationBudget,
       scenes: input.scenes
         .filter((scene) => !scope || scope.has(scene.id))
         .map((scene) => ({
@@ -379,7 +393,7 @@ Review output uses scene_ids and zero-based shot_indices to locate findings. Do 
           const shots = cached.success
             ? cached.data.shots
             : await requestShots(index, feedback);
-          const errors = validateDirectorShots(scene, shots);
+          const errors = validateShots(scene, shots);
           if (errors.length)
             throw new Error(
               `STORYBOARD_REPAIR_CONTRACT_INVALID:${scene.id}:${errors.join(";")}`,
@@ -468,7 +482,7 @@ function directorPrompt(
     agentId: `production_${task}`,
     maxSemanticCorrections: 0,
     locale,
-    version: 5,
+    version: 6,
     templateHash: hash(source),
     systemHash: hash(systemText),
     versionHash: hash({ source, contract, locale, systemText }),

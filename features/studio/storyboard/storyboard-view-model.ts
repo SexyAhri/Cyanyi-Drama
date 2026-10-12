@@ -2,6 +2,12 @@ import type { StoryboardContinuityIssue } from "@/lib/novel/continuity-store";
 
 import type { StudioStoryboardPanel } from "../types";
 
+export function isPackageSceneDraft(panels: StudioStoryboardPanel[]) {
+  return panels.length > 0 && panels.every(
+    panel => panel.worldContext.source === "story-package",
+  );
+}
+
 export function getPanelContinuityIssues(
   panel: StudioStoryboardPanel,
   issues: StoryboardContinuityIssue[],

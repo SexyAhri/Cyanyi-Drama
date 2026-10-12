@@ -14,7 +14,7 @@ const LOCALES: PromptLocale[] = ["zh", "en"];
 
 describe("prompt registry", () => {
   it("provides catalog-aligned Chinese and English templates", () => {
-    expect(PROMPT_ID_LIST).toHaveLength(22);
+    expect(new Set(PROMPT_ID_LIST).size).toBe(Object.keys(PROMPT_CATALOG).length);
 
     for (const id of PROMPT_ID_LIST) {
       for (const locale of LOCALES) {
@@ -133,6 +133,8 @@ function variablesFor(id: PromptId) {
 }
 
 const noSemanticRetryPromptIds = new Set<PromptId>([
+  PROMPT_IDS.PRODUCTION_SCRIPT_ORGANIZATION,
+  PROMPT_IDS.SOURCE_NOTES,
   PROMPT_IDS.STORY_SCREENPLAY_BEATS,
   PROMPT_IDS.STORY_SCREENPLAY_DIALOGUE,
   PROMPT_IDS.STORY_SCREENPLAY_NARRATION,
@@ -145,6 +147,7 @@ function contractError(code: string, id: PromptId, detail: string) {
 
 function expectedVersion(id: PromptId) {
   const versions: Record<PromptId, number> = {
+    [PROMPT_IDS.SOURCE_NOTES]: 1,
     [PROMPT_IDS.PRODUCTION_SCRIPT_ORGANIZATION]: 1,
     [PROMPT_IDS.STORY_CHARACTER_ANALYSIS]: 3,
     [PROMPT_IDS.STORY_LOCATION_PROP_ANALYSIS]: 5,
@@ -164,11 +167,11 @@ function expectedVersion(id: PromptId) {
     [PROMPT_IDS.CHARACTER_REFERENCE_DESCRIPTION]: 1,
     [PROMPT_IDS.EPISODE_SPLIT]: 1,
     [PROMPT_IDS.EPISODE_ADAPTATION]: 11,
-    [PROMPT_IDS.STORY_PACKAGE_GENERATION]: 3,
+    [PROMPT_IDS.STORY_PACKAGE_GENERATION]: 4,
     [PROMPT_IDS.ASSET_VISUAL_DESIGN]: 6,
     [PROMPT_IDS.STORYBOARD_MEDIA_PROMPT_DESIGN]: 3,
     [PROMPT_IDS.STORY_SCREENPLAY_REVISION]: 4,
-    [PROMPT_IDS.STUDIO_WORKFLOW_AGENT]: 1,
+    [PROMPT_IDS.STUDIO_WORKFLOW_AGENT]: 2,
   };
   return versions[id];
 }

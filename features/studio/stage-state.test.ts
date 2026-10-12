@@ -8,12 +8,32 @@ import {
   getTaskOutputRevision,
   getTasksForStage,
   getWorkflowContentRevision,
+  getWorkflowForStage,
+  getWorkflowOutputRevision,
   getWritingWorkflowContentRevision,
   getWritingWorkflowRuns,
 } from "./stage-state";
 import type { WorkspaceSnapshot } from "./types";
 
 describe("studio stage state", () => {
+  it.each([true, false])("requires speech evidence before marking zero-line audio complete (%s)", speechExpected => {
+    const state = snapshot({ novelText: "原文" });
+    state.readiness = { assets: { total: 0, adopted: 0 }, episodes: { "episode-1": {
+      structuredScript: true, storyboard: true, storyboardApproved: true,
+      panels: 1, adoptedImages: 0, adoptedVideos: 0, voiceLines: 0, generatedVoices: 0,
+      speechExpected, timeline: false, rendered: false,
+    } } };
+    expect(getStudioStageStates(state, "episode-1")[4].status).toBe(speechExpected ? "ready" : "completed");
+  });
+  it.each(["paused", "canceled", "canceling"])("preserves %s for unfinished combined phases", status => {
+    const combined = { ...workflow("episode-preproduction", status, "2026-10-12T01:00:00Z"), steps: [
+      { id: "writing", key: "organize_production_script", type: "organize_production_script", status: "pending", attempt: 0, index: 0, maxAttempts: 3, retryable: true },
+      { id: "storyboard", key: "build_scene_storyboard", type: "build_scene_storyboard", status: "pending", attempt: 0, index: 1, maxAttempts: 3, retryable: true },
+    ] };
+    expect(getWorkflowForStage([combined], "writing")?.status).toBe(status);
+    expect(getWorkflowForStage([combined], "storyboard")?.status).toBe(status);
+    expect(getStudioStageStates(snapshot({ novelText: "原文", workflows: [combined] }), "episode-1")[0].status).toBe(status === "canceling" ? "running" : status);
+  });
   it("includes VFX element and composite tasks in shot production", () => {
     const tasks = [
       mediaTask("running", "vfx_element"),
@@ -142,6 +162,19 @@ describe("studio stage state", () => {
 });
 
 describe("studio runtime revisions", () => {
+  it("refreshes assets after script organization and combined preparation", () => {
+    for (const type of ["story-to-script", "episode-preproduction", "original-episode-generation"]) {
+      const current = workflow(type, "running", "2026-10-12T01:00:00Z");
+      expect(getAssetCatalogWorkflowRevision([current])).not.toBe("");
+      expect(getAssetCatalogWorkflowRevision([{ ...current, status: "succeeded" }])).not.toBe(getAssetCatalogWorkflowRevision([current]));
+    }
+  });
+  it("invalidates output on step completion, ignoring ordering and heartbeats", () => {
+    const a = workflow("story-to-script", "running", "2026-10-12T01:00:00Z");
+    const b = workflow("script-to-storyboard", "queued", "2026-10-12T01:00:00Z");
+    expect(getWorkflowOutputRevision([a, b])).toBe(getWorkflowOutputRevision([b, { ...a, updatedAt: "2026-10-12T02:00:00Z" }]));
+    expect(getWorkflowOutputRevision([a, b])).not.toBe(getWorkflowOutputRevision([{ ...a, status: "succeeded" }, b]));
+  });
   it("ignores heartbeat timestamps but changes for workflow progress", () => {
     const current = workflow("story-to-script", "running", "2026-08-26T01:00:00Z");
     const heartbeat = { ...current, updatedAt: "2026-08-26T01:00:05Z" };
@@ -204,7 +237,7 @@ describe("studio runtime revisions", () => {
       "2026-08-26T01:00:00Z",
     );
     const unrelated = workflow(
-      "story-to-script",
+      "manuscript-analysis",
       "running",
       "2026-08-26T02:00:00Z",
     );

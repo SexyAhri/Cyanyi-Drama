@@ -10,7 +10,7 @@ import { prisma } from "@/lib/server/prisma";
 
 import { EpisodeSplitError } from "./errors";
 import { resolveEpisodeTextProvider } from "./provider";
-import { chunkSource, sourceFingerprint, type SourceTaskHooks } from "./long-source";
+import { chunkSource, mapSourceTasks, sourceAnalysisConcurrency, sourceFingerprint, type SourceTaskHooks } from "./long-source";
 import type { PromptExecutionTrace } from "@/lib/llm/openai-structured";
 
 export { EpisodeSplitError } from "./errors";
@@ -160,9 +160,8 @@ export async function splitEpisodesWithAi(input: {
 }) {
   await assertProjectOwnership(input.userId, input.projectId);
   const provider = await resolveEpisodeTextProvider(input);
-  const episodes: EpisodeSplitDraft[] = [];
-  const traces: PromptExecutionTrace[] = [];
-  for (const chunk of chunkSource(input.content, MAX_AI_SPLIT_CHARS)) {
+  const chunks = chunkSource(input.content, MAX_AI_SPLIT_CHARS);
+  const results = await mapSourceTasks(chunks, sourceAnalysisConcurrency(), async chunk => {
     await input.hooks?.assertActive();
     await input.hooks?.reportProgress?.(`正在规划分集，第 ${chunk.index + 1} 段（原文 ${chunk.start}-${chunk.end}）`);
     const key = sourceFingerprint({ text: chunk.text, start: chunk.start, model: input.model, channelId: input.channelId, version: 1 });
@@ -180,20 +179,32 @@ export async function splitEpisodesWithAi(input: {
     schema: episodeSplitSchema,
     validate: (data) => validateAiBoundaries(data.episodes, chunk.text),
     temperature: 0.2,
+    stream: false,
   });
     await input.hooks?.assertActive();
     if (!(parsed.success && cached?.trace)) {
       await input.hooks?.persistArtifact("episode.split-chunk", key, { boundaries: result.data, trace: result.trace });
     }
     const drafts = resolveAiEpisodeBoundaries(result.data.episodes, chunk.text);
+    return { chunk, drafts, trace: result.trace, reused: parsed.success && Boolean(cached?.trace) };
+  });
+  const episodes: EpisodeSplitDraft[] = [];
+  for (const { chunk, drafts } of results) {
     for (const draft of drafts) episodes.push({ ...draft, number: episodes.length + 1,
       startIndex: chunk.start + draft.startIndex, endIndex: chunk.start + draft.endIndex });
-    traces.push(result.trace);
   }
+  const traces: PromptExecutionTrace[] = results.map(result => result.trace);
   if (!traces.length) throw new EpisodeSplitError("原文为空");
+  const freshResults = results.filter(result => !result.reused);
+  const usages = freshResults.flatMap(result => result.trace.tokenUsage ? [result.trace.tokenUsage] : []);
+  const tokenUsage = usages.length === freshResults.length ? usages.reduce((total, usage) => ({
+    inputTokens: total.inputTokens + usage.inputTokens, outputTokens: total.outputTokens + usage.outputTokens,
+    totalTokens: total.totalTokens + usage.totalTokens,
+  }), { inputTokens: 0, outputTokens: 0, totalTokens: 0 }) : null;
   return {
     episodes,
-    trace: { ...traces.at(-1)!, chunkCount: traces.length, traces, rawOutput: "分段分集；边界及各段模型记录保存在任务检查点" },
+    trace: { ...traces.at(-1)!, tokenUsage, chunkCount: traces.length, reusedChunkCount: results.filter(result => result.reused).length,
+      traces, rawOutput: "分段分集；边界及各段模型记录保存在任务检查点" },
   };
 }
 

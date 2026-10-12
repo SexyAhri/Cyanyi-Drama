@@ -19,14 +19,20 @@ vi.mock("@/lib/episodes/provider", () => ({
 }));
 vi.mock("./deliverables", () => ({ createProductionDeliverable: mocks.save }));
 
-import { generateAndSaveStoryPackage, type StoryPackageGenerationProgress } from "./story-package-generation";
+import { generateAndSaveStoryPackage, validateFirstEpisode, type StoryPackageGenerationProgress } from "./story-package-generation";
 import type { StoryPackage } from "./story-package-contract";
 
 const imagePrompt = "国漫风格，中景，一名身穿蓝色长袍的修理师站在废器炉旁，背景为整齐的工具架，柔和侧光照亮衣料和金属纹理，构图清晰。";
 const videoPrompt = `15 秒，国漫风格，9:16，图片 1（角色参考：阿青）。0-3 秒：阿青从炉旁站起，镜头缓慢前推。3-6 秒：伸手检查零件，炉火映亮手部。6-9 秒：转身走向工具架，镜头平移。9-12 秒：取下工具，低头检查接口，动作保持连贯。12-15 秒：回到炉前放下工具，火光照亮面部，保持最终姿态。`;
 
 function makePackage(): StoryPackage {
+  const visualProfile = {
+    visualIdentity: "旧器物修理铺的基础参考", shapeAndStructure: "清晰结构", surfaceAndStyling: "旧布与铜质",
+    colorPalette: "低饱和蓝灰", lightingAndPresentation: "柔和侧光", signatureDetails: ["铜纹"],
+    consistencyRules: ["保持纹路"], negativePrompt: "无现代电器", inferenceNotes: ["材质为美术推定"],
+  };
   return {
+    resolvedSetup: { audience: ["悬疑爱好者"], characters: ["青年修理师"], eras: ["架空前工业小城"], hooks: ["旧物线索" ] },
     title: "废器炉",
     logline: "修理师追查一件旧器物的来历。",
     coreAppeal: ["修复器物", "揭开旧案"],
@@ -53,17 +59,26 @@ function makePackage(): StoryPackage {
       name: "阿青", role: "主角", storyFunction: "调查旧器物", tags: ["修理师"], ageAndAppearance: "青年，蓝衣",
       personality: "谨慎", motivation: "查明真相", arc: "从回避到面对", relationships: "独自经营修理铺",
       voiceStyle: "简短", speakingTell: "犹豫时停顿", signatureDetail: "蓝色围巾", pressureBehavior: "仔细观察",
-      addressingRules: "直接称名", firstAppearanceEpisode: 1, keyEpisodes: [1, 20], imageReferenceSlot: 1, imagePrompt,
+      addressingRules: "直接称名", firstAppearanceEpisode: 1, keyEpisodes: [1, 20], imageReferenceSlot: 1, imagePrompt, visualProfile,
     }],
-    props: [{ name: "旧零件", type: "机械零件", storyFunction: "提供调查线索", appearance: "带纹路的铜片", capabilities: "接通炉火", limits: "只能接通一次", costOrConsequence: "接通后损坏", firstAppearanceEpisode: 1, keyEpisodes: [1, 20], imageReferenceSlot: 2, imagePrompt }],
-    locations: [{ name: "修理铺", type: "室内", storyFunction: "调查起点", spatialRules: "工具架与炉子之间有窄道", atmosphere: "昏暗温暖", reusableActions: "从炉子走向工具架", keyEpisodes: [1, 20], imageReferenceSlot: 3, imagePrompt }],
+    props: [{ name: "旧零件", type: "机械零件", storyFunction: "提供调查线索", appearance: "带纹路的铜片", capabilities: "接通炉火", limits: "只能接通一次", costOrConsequence: "接通后损坏", firstAppearanceEpisode: 1, keyEpisodes: [1, 20], imageReferenceSlot: 2, imagePrompt, visualProfile }],
+    locations: [{ name: "修理铺", type: "室内", storyFunction: "调查起点", spatialRules: "工具架与炉子之间有窄道", atmosphere: "昏暗温暖", reusableActions: "从炉子走向工具架", keyEpisodes: [1, 20], imageReferenceSlot: 3, imagePrompt, visualProfile }],
     firstEpisode: {
       title: "炉火", synopsis: "阿青检查旧零件。", endingHook: "谁留下零件？", targetDurationSeconds: 95,
-      scenes: Array.from({ length: 4 }, (_, i) => ({
-        sceneNumber: i + 1, heading: `修理铺场次 ${i + 1}`, durationSeconds: 24, location: "修理铺",
+      scenes: Array.from({ length: 6 }, (_, i) => ({
+        sceneNumber: i + 1, heading: `修理铺场次 ${i + 1}`, durationSeconds: 15, location: "修理铺",
         characters: ["阿青"], props: ["旧零件"], action: "阿青检查零件。", dialogue: [{ speaker: "阿青", line: "这是什么？" }],
         camera: "缓慢前推", sound: "炉火声", endState: "零件放在炉边",
-        imageReferenceSlots: [{ number: 1, kind: "character", name: "阿青" }], imagePrompt, videoPrompt,
+        imageReferenceSlots: [{ number: 1, kind: "character", name: "阿青" }, { number: 2, kind: "prop", name: "旧零件" }, { number: 3, kind: "location", name: "修理铺" }], imagePrompt,
+        videoPrompt: `图片 2（道具：旧零件），图片 3（场景：修理铺）。${videoPrompt}`,
+        productionDesign: {
+          photography: { camera: "前推", cameraPosition: "炉前", focalLength: "50mm", lighting: "炉火", composition: "居中", depthOfField: "浅景深", colorTone: "暖色" },
+          acting: [{ name: "阿青", emotion: "好奇", action: "检查零件", expression: "凝视" }],
+          startState: { body: "站立", hands: "握零件", gaze: "向下", screenDirection: "朝右", props: "铜片在手" },
+          motionBeats: [{ startSecond: 0, endSecond: 15, action: "检查并放下零件", camera: "缓慢前推" }],
+          worldContext: { realm: "不适用", technique: "不适用", powerRule: "接通一次", environmentScale: "小铺", evidence: ["零件只能接通一次"] },
+          vfxCues: [], sfxCues: [],
+        },
       })),
     },
   };
@@ -76,12 +91,19 @@ const input = {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  mocks.project.mockResolvedValue({ id: "project-1", name: "测试项目", description: null, config: null });
+  mocks.project.mockResolvedValue({ id: "project-1", name: "测试项目", description: null, config: { episodeTargetDurationSeconds: 95 } });
   mocks.provider.mockResolvedValue({ baseUrl: "https://example.invalid", apiKeys: ["mock-key"], model: "mock-model" });
   mocks.save.mockResolvedValue({ id: "package-1", title: "废器炉 · 全剧策划包", version: 1, status: "draft" });
 });
 
 describe("story package generation phases", () => {
+  it("checks original-package scene duration against the configured episode target", () => {
+    const episode = makePackage().firstEpisode;
+    expect(validateFirstEpisode(episode, "zh", undefined, 95)).toEqual([]);
+    const tooShort = { ...episode, scenes: episode.scenes.slice(0, 3) };
+    expect(validateFirstEpisode(tooShort, "zh", undefined, 95).map(issue => issue.code)).toContain("episode_duration_out_of_range");
+    expect(validateFirstEpisode({ ...episode, targetDurationSeconds: 120 }, "zh", undefined, 95).map(issue => issue.code)).toContain("episode_duration_target_mismatch");
+  });
   it("generates all outlines before assets, streams readable previews, and saves the complete package", async () => {
     const storyPackage = makePackage();
     const { characters, props, locations, firstEpisode, episodeOutlines, hooks, foreshadowing, reversals, ...plan } = storyPackage;

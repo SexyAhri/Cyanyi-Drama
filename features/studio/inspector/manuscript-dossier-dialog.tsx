@@ -50,12 +50,12 @@ export function ManuscriptDossierDialog({ projectId, deliverable, dossier, initi
     finally { setActing(false); }
   }
   return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="flex h-[min(90dvh,900px)] min-h-0 flex-col overflow-hidden p-0 sm:max-w-5xl">
+    <DialogContent className="flex h-[min(90dvh,900px)] max-h-[calc(100dvh-2rem)] min-h-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
       <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{deliverable.title}</DialogTitle>
         <p className="text-xs text-muted-foreground">{t("原著提取资料 · 待审核内容不是新增剧情", "Source-grounded notes · review required")} · {deliverable.status} · v{deliverable.version}</p>
       </DialogHeader>
       <div className="shrink-0 px-5 py-3"><Select value={chunkRef} onValueChange={value => { if (value) { setChunkRef(value); setNotes(null); setError(""); } }}>
-        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>
+        <SelectTrigger className="w-full"><SelectValue>{selectedChunk ? `${t("原文段落", "Source chunk")} ${selectedChunk.index + 1} · ${selectedChunk.start}-${selectedChunk.end}` : t("全书 / 所选范围资料概览", "Selected source overview")}</SelectValue></SelectTrigger><SelectContent>
           <SelectItem value="overview">{t("全书 / 所选范围资料概览", "Selected source overview")}</SelectItem>
           {selectedChunk && !visibleChunks.includes(selectedChunk) ? <SelectItem value={selectedChunk.artifactRef}>{t("原文段落", "Source chunk")} {selectedChunk.index + 1} · {selectedChunk.start}-{selectedChunk.end}</SelectItem> : null}
           {visibleChunks.map(chunk => <SelectItem key={chunk.artifactRef} value={chunk.artifactRef}>{t("原文段落", "Source chunk")} {chunk.index + 1} · {chunk.start}-{chunk.end}</SelectItem>)}
@@ -77,7 +77,7 @@ export function ManuscriptDossierDialog({ projectId, deliverable, dossier, initi
           </> : <div className="space-y-4">{displayed[tab].length ? displayed[tab].map((entry, index) => <section key={index} className="border-b pb-4"><h3 className="font-semibold">{entry.name}</h3><p className="mt-2 whitespace-pre-wrap text-sm leading-7">{entry.details}</p></section>) : <p className="text-sm text-muted-foreground">{t("当前范围未提取到此类资料", "No notes for this category in the selected scope")}</p>}</div>}
         </TabsContent>)}
       </Tabs>
-      <DialogFooter className="shrink-0 border-t px-5 py-3"><Button variant="outline" onClick={() => onOpenChange(false)}>{t("关闭", "Close")}</Button>
+      <DialogFooter className="m-0 min-h-16 shrink-0 border-t px-5 py-3"><Button variant="outline" onClick={() => onOpenChange(false)}>{t("关闭", "Close")}</Button>
         {deliverable.status === "draft" || (deliverable.status === "review" && gate) ? <Button disabled={acting} onClick={() => void transition()}>
           {acting ? t("正在更新…", "Updating…") : deliverable.status === "draft" ? t("提交审核", "Submit for review") : `${t("确认审核", "Approve gate")} · ${gate?.key}`}
         </Button> : null}

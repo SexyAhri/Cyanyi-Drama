@@ -1,0 +1,25 @@
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, cyanyi-drama-prod]
+    env:
+      DEPLOY_PATH: /opt/cyanyi-drama
+    steps:
+      - name: Update production on the server
+        run: |
+          set -euo pipefail
+          test -f "$DEPLOY_PATH/scripts/deploy-production.sh"
+          bash "$DEPLOY_PATH/scripts/deploy-production.sh"

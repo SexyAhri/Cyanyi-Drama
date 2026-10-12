@@ -82,7 +82,7 @@ describe("OAuth state lifecycle", () => {
       "/chat",
     );
     const state = new URL(flowStart.authorizeUrl).searchParams.get("state")!;
-    const browserBinding = flowStart.stateCookie.split("=")[1]?.split(";")[0]!;
+    const browserBinding = flowStart.stateCookie.split("=")[1].split(";")[0];
     const flow = {
       id: "flow-1",
       anonymousUserId: null,

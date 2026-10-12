@@ -1,16 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { createStudioEpisode, loadWorkspaceSnapshot, StudioApiError } from "../api";
 import type { WorkspaceSnapshot } from "../types";
 import { invalidateStudioCache, peekStudioCache, writeStudioCache } from "../request-cache";
-import { getTaskOutputRevision, getAssetCatalogWorkflowRevision } from "../stage-state";
+import { getTaskOutputRevision, getWorkflowOutputRevision } from "../stage-state";
 
 export function useWorkspace(projectId: string) {
   const cacheUrl = `/api/projects/${encodeURIComponent(projectId)}/data`;
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(() => peekStudioCache<WorkspaceSnapshot>(cacheUrl) ?? null);
   const latest = useRef(snapshot);
+  const activeProject = useRef(projectId);
+  useLayoutEffect(() => { activeProject.current = projectId; }, [projectId]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(() => !peekStudioCache(cacheUrl));
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -35,12 +37,13 @@ export function useWorkspace(projectId: string) {
             signal: options?.signal,
             touch: !options?.background,
             fresh: options?.background,
+            previous: options?.background ? latest.current : null,
           });
-          if (!options?.signal?.aborted) {
+          if (!options?.signal?.aborted && activeProject.current === projectId) {
             const previous = latest.current;
             if (previous?.project.id === projectId &&
               (getTaskOutputRevision(previous.tasks) !== getTaskOutputRevision(result.tasks) ||
-                getAssetCatalogWorkflowRevision(previous.workflows) !== getAssetCatalogWorkflowRevision(result.workflows) ||
+                getWorkflowOutputRevision(previous.workflows) !== getWorkflowOutputRevision(result.workflows) ||
                 previous.project.updatedAt !== result.project.updatedAt)) {
               invalidateStudioCache(`/api/projects/${encodeURIComponent(projectId)}`);
               writeStudioCache(cacheUrl, result);
@@ -50,7 +53,7 @@ export function useWorkspace(projectId: string) {
           }
           return result;
         } catch (requestError) {
-          if (!options?.signal?.aborted) {
+          if (!options?.signal?.aborted && activeProject.current === projectId) {
             if (requestError instanceof StudioApiError && [401, 403, 404].includes(requestError.status)) {
               latest.current = null;
               setSnapshot(null);
@@ -61,7 +64,7 @@ export function useWorkspace(projectId: string) {
           }
           return null;
         } finally {
-          if (!options?.signal?.aborted) {
+          if (!options?.signal?.aborted && activeProject.current === projectId) {
             setIsLoading(false);
             setIsRefreshing(false);
           }

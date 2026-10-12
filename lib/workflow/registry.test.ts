@@ -15,6 +15,9 @@ describe("workflow registry", () => {
         "production-script.scenes",
         "clips.split",
         "screenplay.clip",
+        "production-script.organization",
+        "production-script.organization.raw",
+        "prompt.trace",
       ],
       retryable: true,
       maxAttempts: 3,
@@ -29,9 +32,9 @@ describe("workflow registry", () => {
     ]);
     expect(template?.steps[0]).toMatchObject({
       type: "build_scene_storyboard",
-      artifactTypes: ["storyboard.scenes"],
-      retryable: false,
-      maxAttempts: 1,
+      artifactTypes: ["storyboard.scenes", "storyboard.director.scene"],
+      retryable: true,
+      maxAttempts: 3,
     });
   });
 });

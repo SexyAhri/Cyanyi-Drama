@@ -57,8 +57,12 @@ import { useCanvasDocument } from "./use-canvas-document";
 import {
   arrangeEpisodeBranches,
   arrangeEpisodeCausalGraph,
+  needsEpisodeCanvasLayout,
+  EPISODE_CANVAS_LAYOUT_VERSION,
   buildEpisodeCanvasGraph,
   canvasBranchPath,
+  canvasEpisodeSequencePath,
+  canvasEpisodeOutputPath,
   mergeCanvasBranchGroups,
 } from "./canvas-layout";
 import {
@@ -654,33 +658,14 @@ export function CanvasWorkspace({
     if (state.loading || !storyboard || layoutInitialized.current) return;
     if (!catalog && panels.length) return;
     layoutInitialized.current = true;
-    const hasEpisodeGraph = current.current.edges.some((edge) =>
-      ["causality", "shot_sequence", "story_asset", "episode_bridge", "shot_video"].includes(
-        edge.purpose ?? "",
-      ),
-    );
-    if (
-      catalog &&
-      panels.length &&
-      (current.current.layoutMode === "episode" || hasEpisodeGraph)
-    ) {
+    if (current.current.layoutMode === "free") return;
+    if (catalog && panels.length) {
       const graph = currentEpisodeGraph();
       if (graph) {
-        const currentNodeIds = new Set(current.current.nodes.map((node) => node.id));
-        const graphNodeIds = new Set(graph.nodes.map((node) => node.id));
-        const currentEdgeIds = new Set(current.current.edges.map((edge) => edge.id));
-        const graphEdgeIds = new Set(graph.edges.map((edge) => edge.id));
-        const structureChanged =
-          current.current.episodeLayoutVersion !== 1 ||
-          graph.nodes.some((node) => node.episodeLayer !== current.current.nodes.find((item) => item.id === node.id)?.episodeLayer) ||
-          currentNodeIds.size !== graphNodeIds.size ||
-          [...graphNodeIds].some((id) => !currentNodeIds.has(id)) ||
-          currentEdgeIds.size !== graphEdgeIds.size ||
-          [...graphEdgeIds].some((id) => !currentEdgeIds.has(id));
-        if (current.current.layoutMode === "branches" || structureChanged) {
-          const arranged = arrangeEpisodeCausalGraph(graph, panels);
+        if (needsEpisodeCanvasLayout(current.current, graph)) {
+          const arranged = arrangeEpisodeCausalGraph(graph, panels, locale);
           replace(arranged);
-          requestAnimationFrame(() => fit(arranged));
+          requestAnimationFrame(() => showEpisodeStart(arranged));
         }
         return;
       }
@@ -694,10 +679,6 @@ export function CanvasWorkspace({
       }
       return;
     }
-    if (!current.current.nodes.length && panels.length && catalog) {
-      assembleEpisodeGraph();
-      return;
-    }
     if (current.current.layoutMode) return;
     showBranches();
   }, [state.loading, storyboard, catalog, currentEpisodeGraph]);
@@ -706,9 +687,9 @@ export function CanvasWorkspace({
     if (busyRef.current || !catalog || !panels.length) return;
     const graph = currentEpisodeGraph();
     if (!graph) return;
-    const arranged = arrangeEpisodeCausalGraph(graph, panels);
+    const arranged = arrangeEpisodeCausalGraph(graph, panels, locale);
     replace(arranged);
-    requestAnimationFrame(() => fit(arranged));
+    requestAnimationFrame(() => showEpisodeStart(arranged));
   }
   useEffect(() => {
     if (
@@ -1287,6 +1268,29 @@ export function CanvasWorkspace({
       setBusy(false);
     }
   }
+  function showEpisodeStart(source: CanvasDocument) {
+    if (source.nodes.length <= 8) {
+      fit(source);
+      return;
+    }
+    const firstPanel = [...panels].sort((a, b) => a.panelIndex - b.panelIndex)[0];
+    const firstNode = source.nodes.find(node => node.kind === "panel" && node.panelId === firstPanel?.id);
+    if (!firstNode) {
+      fit(source);
+      return;
+    }
+    const firstOutput = source.nodes.filter(node => ["image", "video"].includes(node.kind) && source.edges.some(edge => edge.from === firstNode.id && edge.to === node.id)).sort((a, b) => a.x - b.x)[0];
+    const firstBranch = [firstNode, ...(firstOutput ? [firstOutput] : [])];
+    const section = source.branchGroups?.find(group => group.nodeIds.includes(firstNode.id));
+    const minX = Math.min(...firstBranch.map(node => node.x));
+    const minY = Math.min(section?.y ?? firstNode.y, ...firstBranch.map(node => node.y));
+    const width = Math.max(...firstBranch.map(node => node.x + CARD_WIDTH)) - minX;
+    const height = Math.max(...firstBranch.map(node => node.y + CARD_HEIGHT)) - minY;
+    const rect = container.current?.getBoundingClientRect();
+    const k = Math.max(0.2, Math.min(0.75, ((rect?.width ?? 900) - 48) / width, ((rect?.height ?? 600) - 48) / height));
+    replace({ ...source, viewport: { x: 24 - minX * k, y: 24 - minY * k, k } }, false);
+  }
+
   function fit(source: CanvasDocument = current.current) {
     if (!source.nodes.length) return;
     const items = [
@@ -1421,6 +1425,7 @@ export function CanvasWorkspace({
     libraryOpen: library,
     canAssembleEpisodeGraph: panels.length > 0,
     freeLayout: document.layoutMode === "free",
+    contextualAssetLinks: document.layoutMode === "episode",
     onTool: setTool,
     onCreate: create,
     onOutline: () => setOutlineOpen(!outlineOpen),
@@ -1593,15 +1598,25 @@ export function CanvasWorkspace({
                 const from = document.nodes.find((n) => n.id === edge.from),
                   to = document.nodes.find((n) => n.id === edge.to);
                 if (!from || !to) return null;
+                const episode = document.layoutMode === "episode";
+                const assetReference = episode && edge.purpose === "story_asset" && to.kind === "panel";
+                if (assetReference && edgeId !== edge.id && !selected.has(from.id) && !selected.has(to.id)) return null;
+                const sequence = episode && ["shot_sequence", "causality", "episode_bridge"].includes(edge.purpose ?? "");
+                const output = episode && (to.episodeLayer === "shot_video" || to.episodeLayer === "asset_image" ||
+                  (from.kind === "panel" && ["image", "video", "audio"].includes(to.kind)));
                 const verticalEpisodeEdge =
-                  document.layoutMode === "episode" &&
+                  document.layoutMode === "episode" && document.episodeLayoutVersion !== EPISODE_CANVAS_LAYOUT_VERSION &&
                   ((edge.purpose === "story_asset" &&
                     ((Boolean(to.panelId) && from.y >= to.y + CARD_HEIGHT) ||
                       to.episodeLayer === "asset_image")) ||
                     edge.purpose === "shot_video" ||
                     (from.kind === "panel" && to.episodeLayer === "shot_video") ||
                     (["character", "location", "prop"].includes(from.kind) && to.episodeLayer === "asset_image"));
-                const branch = verticalEpisodeEdge
+                const branch = sequence && document.episodeLayoutVersion === EPISODE_CANVAS_LAYOUT_VERSION
+                  ? canvasEpisodeSequencePath(from, to)
+                  : output && document.episodeLayoutVersion === EPISODE_CANVAS_LAYOUT_VERSION
+                  ? canvasEpisodeOutputPath(from, to)
+                  : verticalEpisodeEdge
                   ? (() => {
                       const downToImage = to.episodeLayer === "asset_image";
                       const x = from.x + CARD_WIDTH / 2;
@@ -1704,6 +1719,20 @@ export function CanvasWorkspace({
                   );
                 })()}
             </svg>
+            {document.layoutMode === "episode" &&
+              document.branchGroups?.map(group => (
+                <button
+                  key={group.id}
+                  type="button"
+                  className="absolute flex h-12 items-center justify-between gap-4 border-b px-1 text-left text-sm font-semibold text-foreground"
+                  style={{ left: group.x, top: group.y, width: Math.max(CARD_WIDTH, ...document.nodes.filter(node => group.nodeIds.includes(node.id)).map(node => node.x + CARD_WIDTH - group.x)) }}
+                  onPointerDown={event => event.stopPropagation()}
+                  onClick={() => { setEdgeId(undefined); setSelected(new Set(group.nodeIds)); }}
+                >
+                  <span className="truncate">{group.label}</span>
+                  <span className="shrink-0 text-xs font-normal text-muted-foreground">{group.nodeIds.length}{t(" 个节点", " nodes")}</span>
+                </button>
+              ))}
             {document.layoutMode === "branches" &&
               document.branchGroups?.map((group) => {
                 const members = document.nodes.filter((node) =>

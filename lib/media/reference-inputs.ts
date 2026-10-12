@@ -31,7 +31,7 @@ export async function resolveStoredReferenceImages(
         ...(urls.length ? [{ url: { in: urls } }] : []),
       ],
     },
-    select: { url: true, storageKey: true, mimeType: true },
+    select: { id: true, url: true, storageKey: true, mimeType: true },
   });
   const byStorageKey = new Map(
     assets.flatMap((asset) =>
@@ -53,6 +53,7 @@ export async function resolveStoredReferenceImages(
       if (!asset?.storageKey) return reference;
       return {
         ...reference,
+        assetId: asset.id,
         storageKey: asset.storageKey,
         url: await resolveStoredMediaInput(
           asset.storageKey,

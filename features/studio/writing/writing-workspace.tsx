@@ -49,6 +49,7 @@ import type {
   WorkspaceSnapshot,
 } from "../types";
 import { AdaptationDialog, type AdaptationRequest } from "./adaptation-dialog";
+import { useStudioConfirmation } from "../components/use-studio-confirmation";
 import { WritingFlowPanel } from "./writing-flow-panel";
 
 type AdaptationDraft = {
@@ -81,6 +82,7 @@ export function WritingWorkspace({
   snapshot: WorkspaceSnapshot;
 }) {
   const copy = getStudioCopy(locale);
+  const { confirm, confirmationDialog } = useStudioConfirmation(locale);
   const [tab, setTab] = useState<"original" | "adapted" | "screenplay">(
     episode.activeSourceKind,
   );
@@ -375,7 +377,11 @@ export function WritingWorkspace({
   }
 
   async function startWorkflow() {
-    if (hasStructuredScript && !window.confirm(locale === "en" ? "Reorganize the existing screenplay? This updates structured scenes; downstream production must be reviewed." : "已有结构化剧本。确定重新整理？场次结构会更新，下游分镜需要重新核对。")) return;
+    if (hasStructuredScript && !await confirm({
+      title: locale === "en" ? "Reorganize the existing screenplay?" : "重新整理结构化剧本？",
+      description: locale === "en" ? "This uses the selected model’s tokens or credits and updates structured scenes. Review downstream storyboards afterward." : "将消耗所选模型的 Token/额度，并更新场次结构。完成后请重新核对下游分镜。",
+      confirmLabel: locale === "en" ? "Reorganize screenplay" : "确认并重新整理",
+    })) return;
     if (!savedText.trim() || isDirty) return;
     const model = models.find((item) => item.id === analysisModelId);
     if (!model) {
@@ -621,6 +627,7 @@ export function WritingWorkspace({
           placementWorkflow={placementWorkflow}
         />
       </div>
+      {confirmationDialog}
     </div>
   );
 }
@@ -689,7 +696,7 @@ function SourceVersionPane({
           value={source.id}
         >
           <SelectTrigger className="h-8 w-full sm:w-64">
-            <SelectValue />
+            <SelectValue>{copy.sourceVersion} {source.version} · {formatStudioDate(locale, source.createdAt)}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             {versions.map((version) => (

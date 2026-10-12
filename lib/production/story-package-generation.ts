@@ -159,23 +159,35 @@ export async function generateAndSaveStoryPackage(input: {
         },
       });
       let lastProgressAt = Date.now();
-      const result = await requestOpenAiStructured({
-        ...provider,
-        prompt,
-        schema: phase.schema,
-        validate: phase.validate,
-        maxCorrectionAttempts: 1,
-        temperature: 0.55,
-        timeoutMs: 270_000,
-        stream: true,
-        onTextDelta: () => {
-          const now = Date.now();
-          if (now - lastProgressAt >= 1_500) {
-            input.onProgress?.({ status: phase.status });
-            lastProgressAt = now;
-          }
-        },
-      });
+      let result: Awaited<ReturnType<typeof requestOpenAiStructured<T>>>;
+      try {
+        result = await requestOpenAiStructured({
+          ...provider,
+          prompt,
+          schema: phase.schema,
+          validate: phase.validate,
+          maxCorrectionAttempts: 2,
+          temperature: 0.55,
+          timeoutMs: 270_000,
+          stream: true,
+          onTextDelta: () => {
+            const now = Date.now();
+            if (now - lastProgressAt >= 1_500) {
+              input.onProgress?.({ status: phase.status });
+              lastProgressAt = now;
+            }
+          },
+        });
+      } catch (error) {
+        if (error instanceof StructuredOutputError) {
+          throw new StructuredOutputError(
+            error.code,
+            [`phase: ${phase.title}`, ...error.details],
+            error.rawText,
+          );
+        }
+        throw error;
+      }
       traces.push(result.trace);
       output.section(phase.title);
       output.push(phase.preview(result.data));
@@ -282,7 +294,7 @@ export async function generateAndSaveStoryPackage(input: {
       context: firstEpisodeContext,
       schema: StoryPackageFirstEpisodeGenerationSchema,
       validate: (value) =>
-        validateFirstEpisode(value.firstEpisode, input.locale, assets),
+        validateFirstEpisode(value.firstEpisode, input.locale, assets, projectContext.project.episodeDurationSeconds),
       preview: (value) => renderFirstEpisode(value.firstEpisode, input.locale),
     });
 
@@ -629,8 +641,27 @@ export function validateFirstEpisode(
   firstEpisode: StoryPackage["firstEpisode"],
   locale: "zh" | "en",
   assets?: Pick<StoryPackage, "characters" | "locations" | "props">,
+  targetDurationSeconds?: number,
 ) {
   const issues: StructuredValidationIssue[] = [];
+  if (targetDurationSeconds && Number.isFinite(targetDurationSeconds)) {
+    const plannedSeconds = firstEpisode.scenes.reduce((sum, scene) => sum + scene.durationSeconds, 0);
+    const tolerance = Math.max(15, targetDurationSeconds * 0.15);
+    if (Math.abs(plannedSeconds - targetDurationSeconds) > tolerance) {
+      issues.push({
+        code: "episode_duration_out_of_range",
+        path: "firstEpisode.scenes",
+        message: `Scene draft totals ${plannedSeconds}s for a ${targetDurationSeconds}s episode target. Add or remove 15-second scene drafts so the total is within ${Math.round(tolerance)}s of the target.`,
+      });
+    }
+    if (firstEpisode.targetDurationSeconds !== targetDurationSeconds) {
+      issues.push({
+        code: "episode_duration_target_mismatch",
+        path: "firstEpisode.targetDurationSeconds",
+        message: `Use the configured episode target of ${targetDurationSeconds}s.`,
+      });
+    }
+  }
   const assetKeys = assets
     ? new Set([
         ...assets.characters.map((item) => `character:${item.name}`),

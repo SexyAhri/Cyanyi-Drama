@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { StoryboardReviewNotice } from "../components/storyboard-review-notice";
+import { useStudioConfirmation } from "../components/use-studio-confirmation";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -232,6 +233,7 @@ export function AudioWorkspace({
   snapshot: WorkspaceSnapshot;
 }) {
   const text = copy[locale];
+  const { confirm, confirmationDialog } = useStudioConfirmation(locale);
   const projectId = snapshot.project.id;
   const audioWorkflowRevision = snapshot.workflows
     .filter((workflow) => workflow.episodeId === episode.id && ["voice-analysis", "voice-performance-design", "episode-preproduction"].includes(workflow.workflowType))
@@ -380,7 +382,11 @@ export function AudioWorkspace({
   }
 
   async function analyze() {
-    if (lines.length && !window.confirm(locale === "en" ? "Reanalyze existing dialogue? Changed lines may lose their audio selection." : "已有台词。确定重新分析？变动的台词需要重新制作声音。")) return;
+    if (lines.length && !await confirm({
+      title: locale === "en" ? "Reanalyze episode dialogue?" : "重新分析本集台词？",
+      description: locale === "en" ? "This uses the selected model’s tokens or credits. Changed dialogue may need new speech audio and a new audio selection." : "将消耗所选模型的 Token/额度。变动的台词需要重新制作声音，并重新核对音频采用。",
+      confirmLabel: locale === "en" ? "Reanalyze dialogue" : "确认并重新分析",
+    })) return;
     const model = analysisModels.find((item) => item.id === analysisModelId);
     if (!model) return;
     await run(
@@ -396,7 +402,11 @@ export function AudioWorkspace({
   }
 
   async function designVoices() {
-    if (lines.length && lines.every(line => line.voiceProfilePrompt && line.emotionPrompt) && !window.confirm(locale === "en" ? "Redesign existing voice performances?" : "已有配音设计。确定重新设计台词表演？")) return;
+    if (lines.length && lines.every(line => line.voiceProfilePrompt && line.emotionPrompt) && !await confirm({
+      title: locale === "en" ? "Redesign voice performances?" : "重新设计台词表演？",
+      description: locale === "en" ? "This uses the selected model’s tokens or credits and updates the existing voice performance design. Review the new design before generating speech." : "将消耗所选模型的 Token/额度，并更新已有配音表演设计。生成配音前请核对新的设计。",
+      confirmLabel: locale === "en" ? "Redesign performances" : "确认并重新设计",
+    })) return;
     const model = analysisModels.find((item) => item.id === analysisModelId);
     if (!model || !lines.length) return;
     await run(
@@ -782,6 +792,7 @@ export function AudioWorkspace({
           ) : null}
         </TabsContent>
       </Tabs>
+      {confirmationDialog}
     </div>
   );
 }

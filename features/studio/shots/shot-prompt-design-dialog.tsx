@@ -20,6 +20,7 @@ import type { StoryboardPromptDesignDetails } from "@/lib/novel/domain-types";
 
 import { designStudioPanelPrompt } from "../api";
 import { ModelSelect } from "../components/model-select";
+import { useStudioConfirmation } from "../components/use-studio-confirmation";
 import type {
   StudioLocale,
   StudioModelOption,
@@ -100,6 +101,7 @@ export function ShotPromptDesignDialog({
   trigger: React.ReactElement;
 }) {
   const copy = text[locale];
+  const { confirm, confirmationDialog } = useStudioConfirmation(locale);
   const [open, setOpen] = useState(false);
   const [modelId, setModelId] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -136,7 +138,11 @@ export function ShotPromptDesignDialog({
   }
 
   async function design() {
-    if (prompt.trim() && !window.confirm(locale === "en" ? "Redesign the existing prompt? Review and save the result to apply it." : "已有提示词。确定重新设计？新结果需要确认保存才会生效。")) return;
+    if (prompt.trim() && !await confirm({
+      title: locale === "en" ? "Redesign the existing prompt?" : "重新设计已有提示词？",
+      description: locale === "en" ? "This uses the selected model’s tokens or credits. Review and save the new prompt to apply it." : "将消耗所选模型的 Token/额度。新结果需要核对并保存后才会生效。",
+      confirmLabel: locale === "en" ? "Redesign prompt" : "确认并重新设计",
+    })) return;
     const model = analysisModels.find((item) => item.id === modelId);
     if (!model) return;
     setIsDesigning(true);
@@ -309,6 +315,7 @@ export function ShotPromptDesignDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+      {confirmationDialog}
     </Dialog>
   );
 }

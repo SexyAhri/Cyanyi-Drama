@@ -6,6 +6,8 @@ import type { PromptLocale } from "./types";
 type CanaryKey = `${PromptId}:${PromptLocale}`;
 
 export const PROMPT_CANARY_MANIFEST = {
+  "source_notes:zh": "d84bec610533a7e3f942ead062163b6928caa36ccefa7bab466c8d0a792bfdb0",
+  "source_notes:en": "0dd21122d6decd5abd59df0ec24755dd62ce90c0d6b94b7dfb08c78c200af95b",
   "production_script_organization:zh":
     "6f8ac32811966b7f7daaff5b65b019b195d24ff83bd9bf6581fb24065c53fcd1",
   "production_script_organization:en":
@@ -63,9 +65,9 @@ export const PROMPT_CANARY_MANIFEST = {
   "story_voice_analysis:en":
     "b517d4e8069dd4e841206262c8a7f934db81d8d266a9a5d2913972cf742c79cb",
   "story_voice_performance_design:zh":
-    "e970df0ff57716a96950112671cf1f19e2803c7dd36b4102224d7a3cb5796898",
+    "a27cd281fbbce7a62c84ef9d1414d921e19fefce1b62a6049c03bec71dfee894",
   "story_voice_performance_design:en":
-    "64cac3170fda29ce27fb3d756b4f5a4764179510fad319c9df2c5b9290686ceb",
+    "e37e2f3e9cff601939d92e7eb0a01fe66f0e1d3e5c203796012b4de998d3b12c",
   "story_continuity_review:zh":
     "4da2d6099b56b8196ffa2207e0ec02c389cf5339eae619be043cb4b6f4063be7",
   "story_continuity_review:en":

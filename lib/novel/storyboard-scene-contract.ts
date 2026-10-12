@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { screenplayConversionSchema } from "@/lib/prompts/schemas";
 import { estimateSpeechDurationSeconds } from "@/lib/prompts/validators";
-import { MAX_STORYBOARD_SHOT_SECONDS } from "./storyboard-dialogue-timing";
+import { MAX_STORYBOARD_SHOT_SECONDS, splitSpokenTextForShots } from "./storyboard-dialogue-timing";
 import { lockSilentVideoPerformance } from "@/lib/media/director-prompt-locks";
 import { PanelProductionDesignSchema, validatePanelProductionDesign } from "@/lib/production/panel-production-design";
 
@@ -96,10 +96,40 @@ export const directorShotsSchema = z.object({
 });
 export type DirectorShot = z.infer<typeof directorShotsSchema>["shots"][number];
 export const directorShotsGenerationSchema = z.object({
-  shots: z.array(directorShotsSchema.shape.shots.element.extend({
+  shots: z.array(directorShotsSchema.shape.shots.element.omit({
+    start_state: true,
+    motion_beats: true,
+  }).extend({
     productionDesign: PanelProductionDesignSchema,
   })).min(1).max(200),
 });
+
+/** Generate the production design once; materialize legacy fields for stored panels. */
+export function materializeDirectorShots(
+  shots: z.infer<typeof directorShotsGenerationSchema>["shots"],
+): DirectorShot[] {
+  return shots.map(shot => ({
+    ...shot,
+    start_state: shot.productionDesign.startState.body,
+    motion_beats: shot.productionDesign.motionBeats.map(beat => ({
+      start_second: beat.startSecond,
+      end_second: beat.endSecond,
+      action: beat.action,
+      camera: beat.camera,
+    })),
+  }));
+}
+
+export function directorSpeechTiming(scene: DirectorScene) {
+  return scene.units.filter(unit => unit.type !== "action").map(unit => ({
+    source_id: unit.id,
+    minimum_seconds: estimateSpeechDurationSeconds(unit.text),
+    suggested_fragments: splitSpokenTextForShots(unit.text).map(text => ({
+      text,
+      minimum_seconds: estimateSpeechDurationSeconds(text),
+    })),
+  }));
+}
 
 export function validateDirectorShots(
   scene: DirectorScene,
@@ -202,10 +232,9 @@ export function validateDirectorShots(
         !shot.characters.includes(source.speaker)
       )
         errors.push(`${label}: speaking character must be visible`);
-      if (
-        estimateSpeechDurationSeconds(shot.speech.text) > shot.duration_seconds
-      )
-        errors.push(`${label}: speech exceeds shot duration`);
+      const minimumSeconds = estimateSpeechDurationSeconds(shot.speech.text);
+      if (minimumSeconds > shot.duration_seconds)
+        errors.push(`${label}: speech exceeds shot duration: source_id=${source.id}, needs at least ${minimumSeconds}s, declared ${shot.duration_seconds}s. ${minimumSeconds > MAX_STORYBOARD_SHOT_SECONDS ? "Split into more shots using exact source substrings; each shot must be at most 15s." : "Increase duration and update motion beats, cue timing and video prompt, or split into exact source substrings."}`);
     }
     const previous = shots[index - 1];
     if (

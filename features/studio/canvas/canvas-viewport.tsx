@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ViewportTransform } from "./types";
 
 type CanvasViewportProps = {
@@ -19,7 +19,7 @@ type CanvasViewportProps = {
 
 export function CanvasViewport({ containerRef, viewport, tool, backgroundMode = "dots", onViewportChange, onCanvasMouseDown, onCanvasDeselect, onCanvasDoubleClick, onContextMenu, onDrop, children }: CanvasViewportProps) {
   const latest = useRef({ viewport, onViewportChange });
-  latest.current = { viewport, onViewportChange };
+  useLayoutEffect(() => { latest.current = { viewport, onViewportChange }; }, [viewport, onViewportChange]);
   const space = useRef(false);
   const hovered = useRef(false);
   const suppressClick = useRef(false);

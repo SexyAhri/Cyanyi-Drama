@@ -264,8 +264,13 @@ async function processClaimedWorkflowJob(
       });
       const artifactTypes = parseStringArray(step.artifactTypes);
       if (artifactTypes.length) {
-        await tx.workflowArtifact.createMany({
-          data: artifactTypes.map((artifactType) => ({
+        const persisted = await tx.workflowArtifact.findMany({
+          where: { runId, stepId: step.id, artifactType: { in: artifactTypes } },
+          select: { artifactType: true },
+        });
+        const summaries = completionArtifactTypes(artifactTypes, persisted, Boolean(promptTracePayload));
+        if (summaries.length) await tx.workflowArtifact.createMany({
+          data: summaries.map((artifactType) => ({
             id: `${run.id}_${step.id}_${artifactType}`
               .replace(/[^a-zA-Z0-9_-]/g, "_")
               .slice(0, 190),
@@ -397,6 +402,14 @@ async function processClaimedWorkflowJob(
     });
     return "done";
   }
+}
+
+/** Incremental content already represents these types; a step summary is not another chunk or trace. */
+export function completionArtifactTypes(
+  declared: string[], persisted: Array<{ artifactType: string }>, hasPromptTrace: boolean,
+) {
+  const existing = new Set(persisted.map(artifact => artifact.artifactType));
+  return declared.filter(type => !existing.has(type) && (type !== "prompt.trace" || hasPromptTrace));
 }
 
 export function classifyWorkflowFailureCode(message: string) {

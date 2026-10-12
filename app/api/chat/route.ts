@@ -59,6 +59,11 @@ import {
   type MediaTask,
 } from "@/lib/media/task-contract";
 import {
+  agnesVideoStatusUrl,
+  buildAgnesVideoBody,
+  isAgnesVideoModel,
+} from "@/lib/providers/media/openai-compatible";
+import {
   createDatabaseMediaTaskStore,
   type MediaTaskStore,
 } from "@/lib/media/task-store";
@@ -194,6 +199,7 @@ type ChatMediaToolIntent = {
 };
 
 type OpenAICompatibleVideoBody = {
+  [key: string]: unknown;
   model: string;
   preset?: string;
   prompt: string;
@@ -1763,15 +1769,23 @@ function createOpenAICompatibleVideoRequestParams({
 }): MediaRequestParams {
   const body = createOpenAICompatibleVideoFormBody(composer, prompt);
   const referenceCount = getComposerReferenceImages(composer).length;
+  const agnesVideo = isAgnesVideoModel(body.model);
   const usesMultipart = referenceCount > 0;
-  const requestBody = referenceCount
-    ? {
-        ...body,
-        ...(referenceCount
-          ? { "input_reference[]": `[${referenceCount} image(s)]` }
-          : {}),
-      }
-    : createOpenAICompatibleVideoJsonBody(body);
+  const requestBody = agnesVideo
+    ? buildAgnesVideoBody(body.model, {
+        prompt,
+        duration: composer.duration,
+        ratio: composer.ratio,
+        referenceImages: getComposerReferenceImages(composer).map(
+          (_reference, index) => ({ url: `[reference image ${index + 1}]` }),
+        ),
+      })
+    : referenceCount
+      ? {
+          ...body,
+          "input_reference[]": `[${referenceCount} image(s)]`,
+        }
+      : createOpenAICompatibleVideoJsonBody(body);
 
   return {
     endpoint: VIDEO_CREATE_PATH,
@@ -1779,22 +1793,27 @@ function createOpenAICompatibleVideoRequestParams({
       ? { requestUrl: createApiUrl(baseUrl, VIDEO_CREATE_PATH) }
       : {}),
     method: "POST",
-    contentType: usesMultipart ? "multipart/form-data" : "application/json",
+    contentType:
+      agnesVideo || !usesMultipart
+        ? "application/json"
+        : "multipart/form-data",
     model: body.model,
     prompt,
     seconds: body.seconds,
-    size: body.size,
-    ...(usesMultipart
-      ? {
-          resolution: body.resolution,
-          resolution_name: body.resolution_name,
-          preset: body.preset,
-          stream: body.stream,
-        }
-      : {
-          resolution: body.resolution,
-          stream: true,
-        }),
+    size: agnesVideo ? "720P" : body.size,
+    ...(agnesVideo
+      ? {}
+      : usesMultipart
+        ? {
+            resolution: body.resolution,
+            resolution_name: body.resolution_name,
+            preset: body.preset,
+            stream: body.stream,
+          }
+        : {
+            resolution: body.resolution,
+            stream: true,
+          }),
     requestBody: stringifyRequestBody(requestBody),
     referenceCount,
   };
@@ -1839,7 +1858,18 @@ function createSeedanceVideoRequestParams({
 function createOpenAICompatibleVideoFormBody(
   composer: AgentComposerMetadata,
   prompt: string,
+  referenceImages = getComposerReferenceImages(composer),
 ): OpenAICompatibleVideoBody {
+  if (isAgnesVideoModel(composer.videoModel ?? ""))
+    return buildAgnesVideoBody(composer.videoModel!, {
+      prompt,
+      duration: composer.duration,
+      ratio: composer.ratio,
+      referenceImages: referenceImages.map((reference) => ({
+        url: reference.url ?? "",
+      })),
+    });
+
   const seconds = normalizeOpenAICompatibleVideoSeconds(
     composer.duration,
     composer.videoModel,
@@ -1860,6 +1890,7 @@ function createOpenAICompatibleVideoFormBody(
 }
 
 function createOpenAICompatibleVideoJsonBody(body: OpenAICompatibleVideoBody) {
+  if (isAgnesVideoModel(body.model)) return body;
   return {
     model: body.model,
     prompt: body.prompt,
@@ -2703,7 +2734,9 @@ async function generateOpenAIVideoWithOpenAICompatible({
     baseUrl,
     composer,
     initialState,
-    provider: "openai",
+    provider: isAgnesVideoModel(composer.videoModel ?? "")
+      ? "agnes"
+      : "openai",
   });
 
   if (!finalState.url) {
@@ -2789,7 +2822,7 @@ async function pollVideoGenerationUntilComplete({
   baseUrl: string;
   composer: AgentComposerMetadata;
   initialState: VideoGenerationState;
-  provider: "openai" | "seedance";
+  provider: "agnes" | "openai" | "seedance";
 }) {
   const startedAt = Date.now();
   let currentState = initialState;
@@ -2797,28 +2830,36 @@ async function pollVideoGenerationUntilComplete({
   while (Date.now() - startedAt < VIDEO_POLL_TIMEOUT_MS) {
     await wait(VIDEO_POLL_INTERVAL_MS);
 
-    const payload = await requestProviderPayload({
-      apiKey,
-      baseUrl,
-      body:
-        provider === "openai" && VIDEO_STATUS_METHOD === "POST"
-          ? {
-              id: currentState.taskId,
-              taskId: currentState.taskId,
-            }
-          : undefined,
-      method:
-        provider === "openai" && VIDEO_STATUS_METHOD === "POST"
-          ? "POST"
-          : "GET",
-      path:
-        provider === "seedance"
-          ? resolvePathWithTaskId(
-              SEEDANCE_VIDEO_STATUS_PATH,
-              currentState.taskId!,
-            )
-          : resolvePathWithTaskId(VIDEO_STATUS_PATH, currentState.taskId!),
-    });
+    const payload =
+      provider === "agnes"
+        ? await requestAgnesVideoStatusPayload({
+            apiKey,
+            baseUrl,
+            model: composer.videoModel ?? "",
+            videoId: currentState.taskId!,
+          })
+        : await requestProviderPayload({
+            apiKey,
+            baseUrl,
+            body:
+              provider === "openai" && VIDEO_STATUS_METHOD === "POST"
+                ? {
+                    id: currentState.taskId,
+                    taskId: currentState.taskId,
+                  }
+                : undefined,
+            method:
+              provider === "openai" && VIDEO_STATUS_METHOD === "POST"
+                ? "POST"
+                : "GET",
+            path:
+              provider === "seedance"
+                ? resolvePathWithTaskId(
+                    SEEDANCE_VIDEO_STATUS_PATH,
+                    currentState.taskId!,
+                  )
+                : resolvePathWithTaskId(VIDEO_STATUS_PATH, currentState.taskId!),
+          });
 
     currentState = {
       ...currentState,
@@ -2999,15 +3040,23 @@ async function requestOpenAICompatibleVideoCreatePayload({
   prompt: string;
   referenceImages: NonNullable<AgentComposerMetadata["referenceImages"]>;
 }) {
-  const resolvedReferenceImages = await Promise.all(
-    referenceImages
-      .slice(0, 7)
-      .map((referenceImage, index) =>
-        resolveReferenceImageBlob(referenceImage, index),
-      ),
+  const agnesVideo = isAgnesVideoModel(composer.videoModel ?? "");
+  const resolvedReferenceImages = agnesVideo
+    ? []
+    : await Promise.all(
+        referenceImages
+          .slice(0, 7)
+          .map((referenceImage, index) =>
+            resolveReferenceImageBlob(referenceImage, index),
+          ),
+      );
+  const body = createOpenAICompatibleVideoFormBody(
+    composer,
+    prompt,
+    referenceImages,
   );
-  const body = createOpenAICompatibleVideoFormBody(composer, prompt);
   const hasReferenceImages = resolvedReferenceImages.length > 0;
+  const useJson = agnesVideo || !hasReferenceImages;
   let response: Response;
 
   try {
@@ -3015,11 +3064,11 @@ async function requestOpenAICompatibleVideoCreatePayload({
       method: "POST",
       headers: {
         Authorization: createBearerAuthHeader(apiKey),
-        ...(!hasReferenceImages ? { "Content-Type": "application/json" } : {}),
+        ...(useJson ? { "Content-Type": "application/json" } : {}),
       },
-      body: hasReferenceImages
-        ? createOpenAICompatibleVideoFormData(body, resolvedReferenceImages)
-        : JSON.stringify(createOpenAICompatibleVideoJsonBody(body)),
+      body: useJson
+        ? JSON.stringify(createOpenAICompatibleVideoJsonBody(body))
+        : createOpenAICompatibleVideoFormData(body, resolvedReferenceImages),
       cache: "no-store",
     });
   } catch (error) {
@@ -3307,6 +3356,26 @@ async function requestProviderPayload({
   }
 
   return await parseJsonIfPresent(response);
+}
+
+async function requestAgnesVideoStatusPayload({
+  apiKey,
+  baseUrl,
+  model,
+  videoId,
+}: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  videoId: string;
+}) {
+  const response = await fetch(agnesVideoStatusUrl(baseUrl, videoId, model), {
+    method: "GET",
+    headers: { Authorization: createBearerAuthHeader(apiKey) },
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(await getErrorResponseText(response));
+  return parseJsonIfPresent(response);
 }
 
 async function parseJsonIfPresent(response: Response) {

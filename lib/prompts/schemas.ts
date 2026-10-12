@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SourceNotesSchema } from "@/lib/episodes/source-notes-schema";
 
 import { PROMPT_IDS, type PromptId } from "./ids";
 import { StoryPackageSchema } from "@/lib/production/story-package-contract";
@@ -821,6 +822,7 @@ export const studioWorkflowAgentSchema = z
   .strict();
 
 export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
+  [PROMPT_IDS.SOURCE_NOTES]: SourceNotesSchema,
   [PROMPT_IDS.PRODUCTION_SCRIPT_ORGANIZATION]:
     productionScriptOrganizationSchema,
   [PROMPT_IDS.STORY_CHARACTER_ANALYSIS]: characterAnalysisSchema,

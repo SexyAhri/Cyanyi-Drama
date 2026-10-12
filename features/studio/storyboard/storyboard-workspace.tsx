@@ -16,6 +16,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -49,6 +59,7 @@ import { PanelEditorDialog } from "./panel-editor-dialog";
 import { DirectorReviewPanel } from "./director-review-panel";
 import { StoryboardProgressPanel } from "./storyboard-progress-panel";
 import {
+  isPackageSceneDraft as isPackageSceneDraftModel,
   getPanelContinuityIssues,
   mergeStoryboardPanelWithNext,
   replaceStoryboardPanel,
@@ -91,6 +102,7 @@ export function StoryboardWorkspace({
   const [isActing, setIsActing] = useState(false);
   const [selectedPanelId, setSelectedPanelId] = useState("");
   const [showSaved, setShowSaved] = useState(false);
+  const [replanConfirmOpen, setReplanConfirmOpen] = useState(false);
   useEffect(() => {
     if (focusedPanelId) setSelectedPanelId(focusedPanelId);
   }, [focusedPanelId]);
@@ -162,8 +174,12 @@ export function StoryboardWorkspace({
     () => data?.storyboard?.panels ?? [],
     [data?.storyboard?.panels],
   );
+  const isPackageSceneDraft = isPackageSceneDraftModel(panels);
   const selectedPanel =
     panels.find((panel) => panel.id === selectedPanelId) ?? panels[0];
+  const durationSeconds = Math.round(panels.reduce((sum, panel) => sum + (panel.durationSeconds ?? 0), 0) * 10) / 10;
+  const targetSeconds = snapshot.project.config.episodeTargetDurationSeconds;
+  const missingDurations = panels.filter(panel => !panel.durationSeconds).length;
   const showProgress =
     !!data?.progress &&
     (progressActive ||
@@ -212,8 +228,15 @@ export function StoryboardWorkspace({
     await Promise.all([load(), onRefresh()]);
   }
 
-  async function startWorkflow() {
-    if (panels.length && !window.confirm(locale === "en" ? "Replace the current storyboard with a new AI shot plan? Review it and select media again afterward." : "已有分镜和提示词。确定用 AI 重新拆镜？分镜将更新，已有素材需要重新核对采用。")) return;
+  function startWorkflow() {
+    if (panels.length) {
+      setReplanConfirmOpen(true);
+      return;
+    }
+    void runWorkflow();
+  }
+
+  async function runWorkflow() {
     const model = models.find((item) => item.id === analysisModelId);
     if (!model) {
       toast.error(
@@ -372,6 +395,7 @@ export function StoryboardWorkspace({
           <WorkflowButtons
             disabled={isActing || !analysisModelId}
             hasWorkflow={panels.length > 0}
+            isPackageSceneDraft={isPackageSceneDraft}
             locale={locale}
             onAction={controlWorkflow}
             onStart={startWorkflow}
@@ -382,15 +406,19 @@ export function StoryboardWorkspace({
 
       <div className="shrink-0 border-b py-3 text-xs leading-6 text-muted-foreground">
         {locale === "zh-CN"
-          ? "导演流程：结构化剧本 → 按场次并行拆镜与表演设计 → 汇总审核 → 问题场次定向修复 → 分镜确认。原文台词与说话人逐条关联，已完成场次即时展示；视频使用无声画面，配音与口型在声音阶段处理。"
-          : "Director flow: structured screenplay → parallel scene planning and performance design → consolidated review → targeted scene repair → storyboard confirmation. Completed scenes appear immediately; original dialogue is linked precisely. Speech and lip sync are produced separately."}
+          ? "统一导演流程适用于原著改编和原创剧本：结构化剧本 → 按场次拆镜与表演设计 → 整集时长及对白校验 → 汇总审核与定向修复 → 分镜确认。镜头数量随剧情和演出需要变化，不按来源固定。"
+          : "The same director flow handles adapted and original screenplays: structured screenplay → scene based shot planning → episode duration and dialogue checks → review and targeted repair → confirmation. Shot count follows the story and performance, not its source."}
       </div>
       {data?.storyboard?.status === "director_review_required" ? (
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b py-3 text-sm">
           <p className="text-destructive">
-            {locale === "zh-CN"
-              ? "已有分镜草案与提示词，请检查场次时长、镜头拆分和连续性。确认后直接制作媒体；也可选用 AI 重新拆镜。"
-              : "Director review requires attention. Inspect the shots before confirming them for media generation."}
+            {isPackageSceneDraft
+              ? locale === "zh-CN"
+                ? "当前是原创策划包按场景生成的分镜草稿，不等同于正式拆镜。推荐使用统一 AI 导演流程按动作与对白拆分并校验整集时长；这会消耗所选模型用量。也可保留草稿直接制作。"
+                : "These are original package scene drafts, not a director-planned shot list. Run the shared AI director to split action and dialogue and validate episode duration; this uses the selected model. You may also produce from these drafts as-is."
+              : locale === "zh-CN"
+                ? "请检查整集时长、对白完整性和镜头连续性。需要统一导演拆镜时使用上方 AI 操作；确认后可进入媒体制作。"
+                : "Review episode duration, dialogue coverage and continuity. Use the shared AI director above to replan, or confirm this shot plan for media production."}
           </p>
           <Button
             variant="outline"
@@ -398,9 +426,9 @@ export function StoryboardWorkspace({
             disabled={isActing}
             onClick={() => void savePanels(panels, "ready")}
           >
-            {locale === "zh-CN"
-              ? "已检查，确认分镜"
-              : "Confirm reviewed storyboard"}
+            {isPackageSceneDraft
+              ? locale === "zh-CN" ? "保留场景草稿并继续制作" : "Use scene drafts as-is"
+              : locale === "zh-CN" ? "已检查，确认分镜" : "Confirm reviewed storyboard"}
           </Button>
         </div>
       ) : null}
@@ -408,6 +436,24 @@ export function StoryboardWorkspace({
         value={selectedPanel?.actingNotes?.directorReview}
         locale={locale}
       />
+      {panels.length > 0 && (
+        <div className="shrink-0 space-y-2 border-b py-3 text-xs">
+          <p>{isPackageSceneDraft
+            ? locale === "en"
+              ? `${panels.length} scene drafts · ${durationSeconds}s / ${targetSeconds}s target · not yet expanded into final shots`
+              : `${panels.length} 个场景草稿 · ${durationSeconds} 秒 / 目标 ${targetSeconds} 秒 · 尚未拆成正式镜头`
+            : locale === "en"
+              ? `${panels.length} shots · ${durationSeconds}s planned / ${targetSeconds}s target${missingDurations ? ` · ${missingDurations} shots need duration` : ""}`
+              : `${panels.length} 个镜头 · 已知时长 ${durationSeconds} 秒 / 目标 ${targetSeconds} 秒${missingDurations ? ` · ${missingDurations} 镜尚未设置时长` : ""}`}</p>
+          {durationSeconds > targetSeconds && (
+            <Alert>
+              <TriangleAlert />
+              <AlertTitle>{locale === "en" ? `Episode exceeds target by ${Math.round((durationSeconds - targetSeconds) * 10) / 10}s` : `整集超出目标 ${Math.round((durationSeconds - targetSeconds) * 10) / 10} 秒`}</AlertTitle>
+              <AlertDescription>{locale === "en" ? "Review screenplay length and redundant reaction shots before producing media, or increase the target duration. Preserve dialogue and natural speech speed." : "制作媒体前请核对剧本长度与重复反应镜头，或提高目标时长。保留原文对白和自然语速，不能只按镜头数量压缩。"}</AlertDescription>
+            </Alert>
+          )}
+        </div>
+      )}
 
       <div className="min-w-0 pt-4 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col xl:overflow-hidden">
         {error ? (
@@ -437,7 +483,9 @@ export function StoryboardWorkspace({
             <aside className="border-b lg:border-r lg:border-b-0 xl:flex xl:min-h-0 xl:flex-col">
               <div className="flex h-11 items-center justify-between border-b px-3">
                 <h2 className="text-xs font-semibold">
-                  {copy.storyboardPanels}
+                  {isPackageSceneDraft
+                    ? locale === "en" ? "Scene drafts" : "场景草稿"
+                    : copy.storyboardPanels}
                 </h2>
                 <Badge variant="secondary">{panels.length}</Badge>
               </div>
@@ -510,6 +558,51 @@ export function StoryboardWorkspace({
           </div>
         )}
       </div>
+      <AlertDialog
+        onOpenChange={setReplanConfirmOpen}
+        open={replanConfirmOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {isPackageSceneDraft
+                ? locale === "en"
+                  ? "Turn scene drafts into a formal shot plan?"
+                  : "将场景草稿拆成正式分镜？"
+                : locale === "en"
+                  ? "Replan this episode’s storyboard?"
+                  : "重新拆分本集分镜？"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              <span className="block">
+                {locale === "en"
+                  ? "This runs the shared AI director with the selected model and uses its tokens or credits."
+                  : "将使用已选模型运行统一 AI 导演流程，并消耗该模型对应的 Token/额度。"}
+              </span>
+              <span className="mt-2 block">
+                {locale === "en"
+                  ? "The current shot plan will be replaced. Review existing media selections afterward."
+                  : "当前分镜将被替换；完成后请重新核对已有素材的采用状态。"}
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isActing}>
+              {locale === "en" ? "Cancel" : "取消"}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isActing}
+              onClick={(event) => {
+                event.preventDefault();
+                setReplanConfirmOpen(false);
+                void runWorkflow();
+              }}
+            >
+              {locale === "en" ? "Continue and replan" : "确认并重新拆镜"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -1122,6 +1215,7 @@ function previsSpecLabel(
 function WorkflowButtons({
   disabled,
   hasWorkflow,
+  isPackageSceneDraft,
   locale,
   onAction,
   onStart,
@@ -1129,6 +1223,7 @@ function WorkflowButtons({
 }: {
   disabled: boolean;
   hasWorkflow: boolean;
+  isPackageSceneDraft: boolean;
   locale: StudioLocale;
   onAction: (action: "cancel" | "retry" | "pause" | "resume") => void;
   onStart: () => void;
@@ -1223,7 +1318,11 @@ function WorkflowButtons({
       ) : (
         <Play className="size-4" />
       )}
-      {hasWorkflow ? (locale === "en" ? "AI replan (optional)" : "AI 重新拆镜（可选）") : copy.startStoryboard}
+      {hasWorkflow
+        ? isPackageSceneDraft
+          ? locale === "en" ? "Run shared AI director" : "用统一 AI 导演拆成正式镜头"
+          : locale === "en" ? "Replan with shared AI director" : "用统一 AI 导演重新拆镜"
+        : locale === "en" ? "Start shared AI director" : "开始统一导演拆镜"}
     </Button>
   );
 }

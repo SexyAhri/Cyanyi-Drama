@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Empty,
   EmptyDescription,
@@ -66,6 +67,16 @@ export function EpisodeSidebar({
 }) {
   const copy = getStudioCopy(locale);
   const episodes = snapshot.project.episodes;
+  const [episodeSearch, setEpisodeSearch] = useState("");
+  const [navigation, setNavigation] = useState({ selectedEpisodeId, page: 0 });
+  const filteredEpisodes = episodes.filter(episode =>
+    `${episode.episodeNumber} ${episode.name}`.toLocaleLowerCase().includes(episodeSearch.trim().toLocaleLowerCase()));
+  const pageSize = 50;
+  const pageCount = Math.max(1, Math.ceil(filteredEpisodes.length / pageSize));
+  const selectedIndex = filteredEpisodes.findIndex(episode => episode.id === selectedEpisodeId);
+  const page = Math.min(pageCount - 1, navigation.selectedEpisodeId === selectedEpisodeId
+    ? navigation.page : Math.max(0, Math.floor(selectedIndex / pageSize)));
+  const visibleEpisodes = filteredEpisodes.slice(page * pageSize, (page + 1) * pageSize);
   const [storyPackageTab, setStoryPackageTab] = useState<
     "overview" | "outline" | "characters" | "locations" | "props" | "episode"
   >("overview");
@@ -232,7 +243,23 @@ export function EpisodeSidebar({
           ) : null}
           {episodes.length ? (
             <div className="space-y-1 p-2">
-              {episodes.map((episode) => {
+              {episodes.length > pageSize ? <>
+                <Input aria-label={locale === "en" ? "Search episodes" : "搜索分集"}
+                  placeholder={locale === "en" ? "Episode number or title" : "集数或标题"}
+                  value={episodeSearch} onChange={event => {
+                    setEpisodeSearch(event.target.value);
+                    setNavigation({ selectedEpisodeId, page: 0 });
+                  }} className="mb-2 h-8 text-xs" />
+                <div className="flex items-center justify-between gap-1 pb-2 text-[10px] text-muted-foreground">
+                  <Button size="sm" variant="ghost" aria-label={locale === "en" ? "Previous episode page" : "上一页分集"}
+                    disabled={page === 0} onClick={() => setNavigation({ selectedEpisodeId, page: page - 1 })}>←</Button>
+                  <span aria-live="polite">{page + 1}/{pageCount} · {filteredEpisodes.length}</span>
+                  <Button size="sm" variant="ghost" aria-label={locale === "en" ? "Next episode page" : "下一页分集"}
+                    disabled={page + 1 >= pageCount} onClick={() => setNavigation({ selectedEpisodeId, page: page + 1 })}>→</Button>
+                </div>
+                {!filteredEpisodes.length ? <p className="py-3 text-xs text-muted-foreground">{locale === "en" ? "No matching episodes" : "没有匹配的分集"}</p> : null}
+              </> : null}
+              {visibleEpisodes.map((episode) => {
                 const writingState = getStudioStageStates(
                   snapshot,
                   episode.id,

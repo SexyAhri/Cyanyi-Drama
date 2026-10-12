@@ -37,7 +37,7 @@ export function parseStructuredOutput<T>(
     value = JSON.parse(extracted) as unknown;
   } catch (parseError) {
     try {
-      value = JSON.parse(jsonrepair(extracted)) as unknown;
+      value = repairStructuredJson(extracted, parseError);
       repaired = true;
     } catch (repairError) {
       throw new StructuredOutputError(
@@ -58,6 +58,126 @@ export function parseStructuredOutput<T>(
       text,
     );
   return { data: result.data, repaired };
+}
+
+function repairStructuredJson(
+  text: string,
+  initialParseError: unknown,
+): unknown {
+  let candidate = text;
+  let lastError = initialParseError;
+  for (let attempt = 0; attempt < 17; attempt += 1) {
+    try {
+      return JSON.parse(candidate) as unknown;
+    } catch (parseError) {
+      lastError = parseError;
+      const position = expectedArraySeparatorPosition(parseError);
+      const repaired =
+        position === null
+          ? null
+          : insertMissingArraySeparator(candidate, position);
+      if (repaired !== null) {
+        candidate = repaired;
+        continue;
+      }
+    }
+
+    try {
+      return JSON.parse(jsonrepair(candidate)) as unknown;
+    } catch (error) {
+      lastError = error;
+      const position = unexpectedCharacterPosition(error);
+      const repaired =
+        position === null
+          ? null
+          : insertMissingArraySeparator(candidate, position);
+      if (repaired === null) throw error;
+      candidate = repaired;
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Unable to repair structured JSON");
+}
+
+function expectedArraySeparatorPosition(error: unknown) {
+  if (!(error instanceof Error)) return null;
+  if (!/Expected\s+['"]?,['"]?\s+or\s+['"]?\]['"]?/i.test(error.message))
+    return null;
+  const match = /\bposition\s+(\d+)/i.exec(error.message);
+  if (!match) return null;
+  const position = Number(match[1]);
+  return Number.isSafeInteger(position) ? position : null;
+}
+
+function unexpectedCharacterPosition(error: unknown) {
+  if (!(error instanceof Error)) return null;
+  const position = (error as Error & { position?: unknown }).position;
+  if (typeof position === "number" && Number.isSafeInteger(position))
+    return position;
+  const match = /\bat position\s+(\d+)/i.exec(error.message);
+  if (!match) return null;
+  const parsedPosition = Number(match[1]);
+  return Number.isSafeInteger(parsedPosition) ? parsedPosition : null;
+}
+
+function insertMissingArraySeparator(text: string, position: number) {
+  if (position <= 0 || position >= text.length) return null;
+  const previous = text.slice(0, position).trimEnd();
+  if (!isCompletedJsonValue(previous)) return null;
+  let nextIndex = position;
+  while (/\s/.test(text[nextIndex] ?? "")) nextIndex += 1;
+  if (!isJsonValueStart(text[nextIndex] ?? "")) return null;
+
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < position; index += 1) {
+    const character = text[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (inString && character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (character === "{") stack.push("}");
+    else if (character === "[") stack.push("]");
+    else if (
+      (character === "}" || character === "]") &&
+      stack.at(-1) === character
+    )
+      stack.pop();
+  }
+  if (stack.at(-1) !== "]") return null;
+  return text.slice(0, position) + "," + text.slice(position);
+}
+
+function isCompletedJsonValue(text: string) {
+  const last = text.at(-1);
+  return (
+    last === "}" ||
+    last === "]" ||
+    last === '"' ||
+    (last !== undefined && /[0-9]/.test(last)) ||
+    /(?:^|[\s,\[])(?:true|false|null)$/i.test(text)
+  );
+}
+
+function isJsonValueStart(character: string) {
+  return (
+    character === "{" ||
+    character === "[" ||
+    character === '"' ||
+    character === "-" ||
+    /[0-9tfn]/i.test(character)
+  );
 }
 
 export async function generateStructuredOutput<T>(input: {

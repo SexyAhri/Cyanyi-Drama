@@ -8,6 +8,19 @@ import {
   panelCard,
 } from "./canvas-view-model";
 
+export const EPISODE_CANVAS_LAYOUT_VERSION = 4;
+
+/** Migrate automatic layouts while keeping an explicitly chosen free layout. */
+export function needsEpisodeCanvasLayout(document: CanvasDocument, graph: CanvasDocument) {
+  if (document.layoutMode === "free") return false;
+  if (document.layoutMode !== "episode" || document.episodeLayoutVersion !== EPISODE_CANVAS_LAYOUT_VERSION) return true;
+  const nodes = new Map(document.nodes.map(node => [node.id, node]));
+  const edges = new Set(document.edges.map(edge => edge.id));
+  return nodes.size !== graph.nodes.length || edges.size !== graph.edges.length ||
+    graph.nodes.some(node => !nodes.has(node.id) || node.episodeLayer !== nodes.get(node.id)?.episodeLayer) ||
+    graph.edges.some(edge => !edges.has(edge.id));
+}
+
 function normalizeAssetName(value: string) {
   return value.normalize("NFKC").trim().replace(/\s+/g, "").toLocaleLowerCase();
 }
@@ -221,172 +234,140 @@ export function buildEpisodeCanvasGraph(
   return { ...document, nodes: keptNodes, edges: edges.filter((edge) => keptIds.has(edge.from) && keptIds.has(edge.to)) };
 }
 
-/** Keep the story spine easy to scan and place reference assets in a separate lane. */
+/** One left-to-right shot timeline above a separate asset lane. */
 export function arrangeEpisodeCausalGraph(
   document: CanvasDocument,
   panels: StudioStoryboardPanel[],
+  locale: StudioLocale = "zh-CN",
 ): CanvasDocument {
   const orderedPanels = [...panels].sort((a, b) => a.panelIndex - b.panelIndex);
   const panelOrder = new Map(orderedPanels.map((panel, index) => [panel.id, index]));
-  const panelNodes = document.nodes
-    .filter(
-      (node) =>
-        node.kind === "panel" &&
-        node.panelId &&
-        panelOrder.has(node.panelId),
-    )
+  const panelNodes = document.nodes.filter(node => node.kind === "panel" && node.panelId && panelOrder.has(node.panelId))
     .sort((a, b) => panelOrder.get(a.panelId!)! - panelOrder.get(b.panelId!)!);
-  const panelPosition = new Map<string, { x: number; y: number }>();
-  const panelColumns = Math.max(1, Math.min(6, panelNodes.length));
-  const panelGap = CARD_WIDTH + 120;
-  const panelRowGap = CARD_HEIGHT + 320;
-  panelNodes.forEach((node, index) => {
-    const row = Math.floor(index / panelColumns);
-    const inRow = index % panelColumns;
-    const column = row % 2 === 0 ? inRow : panelColumns - 1 - inRow;
-    panelPosition.set(node.id, {
-      x: 40 + column * panelGap,
-      y: 40 + row * panelRowGap,
-    });
-  });
+  const positions = new Map<string, { x: number; y: number }>();
+  const groups: NonNullable<CanvasDocument["branchGroups"]> = [];
+  const stepX = CARD_WIDTH + 160;
+  const stepY = CARD_HEIGHT + 100;
+  const t = (zh: string, en: string) => locale === "en" ? en : zh;
+  const children = (parent: CanvasDocument["nodes"][number]) => document.nodes.filter(node =>
+    (node.kind === "image" || node.kind === "video" || node.kind === "audio") &&
+    !positions.has(node.id) &&
+    (document.edges.some(edge => edge.from === parent.id && edge.to === node.id) ||
+      (parent.kind === "panel" && node.panelId === parent.panelId)),
+  ).sort((a, b) => ["video", "image", "audio"].indexOf(a.kind) - ["video", "image", "audio"].indexOf(b.kind));
+  const placeColumn = (parent: CanvasDocument["nodes"][number], x: number, y: number) => {
+    positions.set(parent.id, { x, y });
+    const outputs = children(parent);
+    outputs.forEach((node, index) => positions.set(node.id, { x, y: y + (index + 1) * stepY }));
+    return [parent.id, ...outputs.map(node => node.id)];
+  };
 
-  const positions = new Map(panelPosition);
-  const videoNodes = document.nodes.filter(
-    (node) => node.episodeLayer === "shot_video",
-  );
-  for (const node of videoNodes) {
-    const parentEdge = document.edges.find((edge) => edge.to === node.id && panelPosition.has(edge.from));
-    const panel = panelNodes.find((item) => item.id === parentEdge?.from || (node.panelId && item.panelId === node.panelId));
-    const position = positions.get(panel?.id ?? "");
-    const siblings = videoNodes.filter((item) => document.edges.some((edge) => edge.from === panel?.id && edge.to === item.id));
-    const slot = Math.max(0, siblings.findIndex((item) => item.id === node.id));
-    if (position)
-      positions.set(node.id, {
-        x: position.x,
-        y: position.y - (slot + 1) * (CARD_HEIGHT + 80),
-      });
+  let shotX = 40;
+  for (const node of document.nodes.filter(node => node.sourceEpisodeId)) {
+    const ids = placeColumn(node, shotX, 112);
+    groups.push({ id: `episode-section-${node.id}`.slice(0, 100), label: t("前集承接", "Previous episode"), nodeIds: ids, x: shotX, y: 40 });
+    shotX += stepX + 160;
   }
-
-  const assetFirstUse = new Map(
-    document.edges
-      .filter((edge) => edge.purpose === "story_asset")
-      .flatMap((edge) => {
-        const asset = document.nodes.find((item) => item.id === edge.from);
-        const panel = document.nodes.find((item) => item.id === edge.to);
-        return asset &&
-          ["character", "location", "prop"].includes(asset.kind) &&
-          panel?.kind === "panel" &&
-          panel.panelId
-          ? [[edge.from, panelOrder.get(panel.panelId) ?? Infinity] as const]
-          : [];
-      })
-      .reduce((entries, [assetId, index]) => {
-        const previous = entries.get(assetId);
-        if (previous === undefined || index < previous)
-          entries.set(assetId, index);
-        return entries;
-      }, new Map<string, number>()),
-  );
-  const assetNodes = document.nodes
-    .filter((node) => ["character", "location", "prop"].includes(node.kind))
-    .sort((a, b) =>
-      (assetFirstUse.get(a.id) ?? Infinity) -
-        (assetFirstUse.get(b.id) ?? Infinity),
-    );
-  const panelRows = Math.ceil(panelNodes.length / panelColumns);
-  const assetGap = CARD_WIDTH + 40;
-  const assetColumns = Math.max(1, Math.min(6, assetNodes.length));
-  const assetTop = 40 + panelRows * panelRowGap + 80;
-  const occupiedAssetPositions: Array<{ x: number; y: number }> = [];
-  const groupSlots = new Map<number, number>();
-  assetNodes.forEach((node, index) => {
-    const useIndex = assetFirstUse.get(node.id) ?? Infinity;
-    const panel = Number.isFinite(useIndex) ? panelNodes[useIndex] : undefined;
-    const parent = positions.get(panel?.id ?? "");
-    const slot = groupSlots.get(useIndex) ?? 0;
-    groupSlots.set(useIndex, slot + 1);
-    const column = slot % 3;
-    let row = Math.floor(slot / 3);
-    const x = (parent?.x ?? 40 + (index % assetColumns) * assetGap) +
-      [0, 1, -1][column] * assetGap;
-    let y = assetTop + row * (2 * CARD_HEIGHT + 160);
-    while (
-      occupiedAssetPositions.some(
-        (item) =>
-          Math.abs(item.x - x) < CARD_WIDTH + 32 &&
-          Math.abs(item.y - y) < CARD_HEIGHT + 32,
-      )
-    ) {
-      row++;
-      y = assetTop + row * (2 * CARD_HEIGHT + 160);
+  const zeroBasedScenes = orderedPanels.some(panel => panel.sceneNumber === 0);
+  let sceneKey = "";
+  let sceneGroup: NonNullable<CanvasDocument["branchGroups"]>[number] | undefined;
+  for (const node of panelNodes) {
+    const panel = orderedPanels[panelOrder.get(node.panelId!)!];
+    const key = `${panel.clipId ?? ""}:${panel.sceneNumber ?? ""}:${panel.locationName ?? ""}`;
+    if (!sceneGroup || key !== sceneKey) {
+      if (sceneGroup) shotX += 160;
+      sceneKey = key;
+      const number = panel.sceneNumber == null
+        ? groups.filter(group => group.id.startsWith("episode-scene-")).length + 1
+        : panel.sceneNumber + (zeroBasedScenes ? 1 : 0);
+      const label = [`${t("场次", "Scene")} ${number}`, panel.locationName].filter(Boolean).join(" · ");
+      sceneGroup = { id: `episode-scene-${node.id}`.slice(0, 100), label, nodeIds: [], x: shotX, y: 40 };
+      groups.push(sceneGroup);
     }
-    occupiedAssetPositions.push({ x, y });
-    positions.set(node.id, { x, y });
-  });
+    sceneGroup.nodeIds.push(...placeColumn(node, shotX, 112));
+    shotX += stepX;
+  }
 
-  const imageNodes = document.nodes.filter(
-    (node) => node.episodeLayer === "asset_image",
-  );
-  const occupiedImagePositions: Array<{ x: number; y: number }> = [];
-  for (const node of imageNodes) {
-    const sourceEdge = document.edges.find(
-      (edge) => edge.to === node.id && assetNodes.some((asset) => asset.id === edge.from),
-    );
-    const parent = sourceEdge ? positions.get(sourceEdge.from) : undefined;
-    if (!parent) continue;
-    let y = parent.y + CARD_HEIGHT + 80;
-    while (
-      occupiedImagePositions.some(
-        (item) =>
-          Math.abs(item.x - parent.x) < CARD_WIDTH + 32 &&
-          Math.abs(item.y - y) < CARD_HEIGHT + 32,
-      )
-    )
-      y += CARD_HEIGHT + 48;
-    occupiedImagePositions.push({ x: parent.x, y });
-    positions.set(node.id, { x: parent.x, y });
+  const shotBottom = Math.max(352, ...[...positions.values()].map(position => position.y + CARD_HEIGHT));
+  const assetTop = shotBottom + 200;
+  // Retain the original episode layout's first-use order within each asset lane.
+  const firstUse = new Map<string, number>();
+  const shotOrder = new Map(panelNodes.map((node, index) => [node.id, index]));
+  for (const edge of document.edges) {
+    const index = shotOrder.get(edge.to);
+    if (edge.purpose === "story_asset" && index !== undefined) {
+      firstUse.set(edge.from, Math.min(firstUse.get(edge.from) ?? Infinity, index));
+    }
   }
-  const previousNodes = document.nodes.filter((node) => node.sourceEpisodeId);
-  for (const node of previousNodes) {
-    const first = panelNodes[0];
-    positions.set(node.id, {
-      x: (panelPosition.get(first?.id ?? "")?.x ?? 40) - CARD_WIDTH - 80,
-      y: panelPosition.get(first?.id ?? "")?.y ?? 40,
-    });
+  let assetX = 40;
+  for (const [kind, label] of [
+    ["character", t("角色资产", "Characters")],
+    ["location", t("场景资产", "Locations")],
+    ["prop", t("道具资产", "Props")],
+  ] as const) {
+    const assets = document.nodes.filter(node => node.kind === kind)
+      .sort((a, b) => (firstUse.get(a.id) ?? Infinity) - (firstUse.get(b.id) ?? Infinity));
+    if (!assets.length) continue;
+    const group = { id: `episode-assets-${kind}`, label, nodeIds: [] as string[], x: assetX, y: assetTop };
+    groups.push(group);
+    for (const asset of assets) {
+      group.nodeIds.push(...placeColumn(asset, assetX, assetTop + 72));
+      assetX += stepX;
+    }
+    assetX += 200;
   }
-  const customNodes = document.nodes.filter(
-    (node) =>
-      !node.panelId &&
-      !node.sourceEpisodeId &&
-      !node.episodeLayer &&
-      !["character", "location", "prop"].includes(node.kind),
-  );
-  const assetBottom =
-    assetTop + Math.ceil(assetNodes.length / assetColumns) * (CARD_HEIGHT + 48);
-  const imageBottom = imageNodes.reduce(
-    (bottom, node) =>
-      Math.max(bottom, (positions.get(node.id)?.y ?? 0) + CARD_HEIGHT),
-    assetBottom,
-  );
-  const customTop = imageBottom + 80;
-  customNodes.forEach((node, index) => {
-    positions.set(node.id, {
-      x: 40 + (index % 4) * (CARD_WIDTH + 40),
-      y: customTop + Math.floor(index / 4) * (CARD_HEIGHT + 48),
-    });
-  });
+
+  // Keep unlinked notes, legacy shots and uploads in their own lower section.
+  const remaining = document.nodes.filter(node => !positions.has(node.id));
+  if (remaining.length) {
+    const top = Math.max(assetTop + 72, ...[...positions.values()].map(position => position.y + CARD_HEIGHT)) + 200;
+    groups.push({ id: "episode-other-nodes", label: t("补充素材与备注", "Additional media and notes"), nodeIds: remaining.map(node => node.id), x: 40, y: top });
+    remaining.forEach((node, index) => positions.set(node.id, { x: 40 + index * stepX, y: top + 72 }));
+  }
   return {
     ...document,
     layoutMode: "episode",
-    episodeLayoutVersion: 1,
-    branchGroups: [],
-    nodes: document.nodes.map((node) => ({
-      ...node,
-      ...(positions.get(node.id) ?? {}),
-    })),
+    episodeLayoutVersion: EPISODE_CANVAS_LAYOUT_VERSION,
+    branchGroups: groups,
+    nodes: document.nodes.map(node => ({ ...node, ...positions.get(node.id) })),
   };
 }
 
+/** Timeline edges leave the right side and enter the next shot from the left. */
+export function canvasEpisodeSequencePath(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+) {
+  const x = from.x + CARD_WIDTH;
+  const y = from.y + CARD_HEIGHT / 2;
+  const tx = to.x;
+  const ty = to.y + CARD_HEIGHT / 2;
+  if (ty === y && tx > x) {
+    return { path: `M ${x} ${y} H ${tx}`, labelX: (x + tx) / 2, labelY: y - 12 };
+  }
+  return canvasBranchPath(x, y, tx, ty);
+}
+
+/** Additional candidates route around earlier cards in the same output column. */
+export function canvasEpisodeOutputPath(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+) {
+  if (from.x !== to.x || to.y <= from.y + CARD_HEIGHT) {
+    return canvasBranchPath(from.x + CARD_WIDTH, from.y + CARD_HEIGHT / 2, to.x, to.y + CARD_HEIGHT / 2);
+  }
+  const x = from.x + CARD_WIDTH / 2;
+  const y = from.y + CARD_HEIGHT;
+  if (to.y - y <= 160) {
+    return { path: `M ${x} ${y} V ${to.y}`, labelX: x + 24, labelY: (y + to.y) / 2 };
+  }
+  const gutter = from.x + CARD_WIDTH + 56;
+  return {
+    path: `M ${x} ${y} V ${y + 36} H ${gutter} V ${to.y - 36} H ${x} V ${to.y}`,
+    labelX: gutter + 16,
+    labelY: (y + to.y) / 2,
+  };
+}
 export function arrangeEpisodeBranches(
   document: CanvasDocument,
   panels: StudioStoryboardPanel[],

@@ -6,7 +6,7 @@ const channelFindFirst = vi.hoisted(() => vi.fn());
 const providerModelFindFirst = vi.hoisted(() => vi.fn());
 const novelCharacterFindMany = vi.hoisted(() => vi.fn());
 const voiceLineDeleteMany = vi.hoisted(() => vi.fn());
-const voiceLineCreateMany = vi.hoisted(() => vi.fn());
+const voiceLineCreate = vi.hoisted(() => vi.fn());
 const voiceLineFindMany = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/llm/openai-structured", () => ({
@@ -40,8 +40,11 @@ vi.mock("@/lib/server/prisma", () => ({
       callback({
         voiceLine: {
           deleteMany: voiceLineDeleteMany,
-          createMany: voiceLineCreateMany,
+          findMany: vi.fn().mockResolvedValue([]),
+          create: voiceLineCreate,
+          update: vi.fn(),
         },
+        storyboardPanel: { updateMany: vi.fn() },
       }),
   },
 }));
@@ -93,7 +96,7 @@ beforeEach(() => {
     { name: "乙", aliases: "[]", profileJson: "{}", introduction: null },
   ]);
   voiceLineDeleteMany.mockResolvedValue({ count: 0 });
-  voiceLineCreateMany.mockResolvedValue({ count: 2 });
+  voiceLineCreate.mockResolvedValue({ id: "line-created" });
   voiceLineFindMany.mockResolvedValue([
     { id: "line-1", speaker: "甲", content: "你好。" },
     { id: "line-2", speaker: "乙", content: "进来吧。" },
@@ -366,12 +369,9 @@ describe("voice analysis", () => {
     expect(requestOpenAiStructured.mock.calls[0]?.[0]).not.toHaveProperty(
       "validate",
     );
-    expect(voiceLineCreateMany).toHaveBeenCalledWith({
-      data: expect.arrayContaining([
-        expect.objectContaining({ speaker: "甲", content: "你好。" }),
-        expect.objectContaining({ speaker: "乙", content: "进来吧。" }),
-      ]),
-    });
+    expect(voiceLineCreate).toHaveBeenCalledTimes(2);
+    expect(voiceLineCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ speaker: "甲", content: "你好。" }) });
+    expect(voiceLineCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ speaker: "乙", content: "进来吧。" }) });
   });
 
   it("persists screenplay speech without semantic hard validation", async () => {
@@ -427,14 +427,13 @@ describe("voice analysis", () => {
 
     expect(result.voiceLines).toHaveLength(1);
     expect(requestOpenAiStructured).not.toHaveBeenCalled();
-    expect(voiceLineCreateMany).toHaveBeenCalledWith({
-      data: [
+    expect(voiceLineCreate).toHaveBeenCalledWith({
+      data:
         expect.objectContaining({
           speaker: "临时角色",
           content: "剧本新增对白",
           matchedPanelId: "panel-1",
         }),
-      ],
     });
   });
 
@@ -503,15 +502,14 @@ describe("voice analysis", () => {
     await analyzeEpisodeVoices(input);
 
     expect(requestOpenAiStructured).not.toHaveBeenCalled();
-    expect(voiceLineCreateMany).toHaveBeenCalledWith({
-      data: [
+    expect(voiceLineCreate).toHaveBeenCalledWith({
+      data:
         expect.objectContaining({
           speaker: "韩子枫",
           content: "回去吧。",
           delivery: "dialogue",
           matchedPanelId: "panel-2",
         }),
-      ],
     });
   });
 
@@ -523,6 +521,6 @@ describe("voice analysis", () => {
     await expect(analyzeEpisodeVoices(input)).rejects.toBeInstanceOf(
       VoiceAnalyzeError,
     );
-    expect(voiceLineCreateMany).not.toHaveBeenCalled();
+    expect(voiceLineCreate).not.toHaveBeenCalled();
   });
 });

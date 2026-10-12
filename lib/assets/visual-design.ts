@@ -97,6 +97,7 @@ export async function generateProjectAssetVisualProfile(input: {
     temperature: 0.35,
   });
   let spec = result.data;
+  const traces = [result.trace];
   const initialConflicts = findVisualProfileStoryWorldConflicts(
     spec,
     storyWorld,
@@ -119,6 +120,7 @@ export async function generateProjectAssetVisualProfile(input: {
       maxCorrectionAttempts: 2,
       temperature: 0.2,
     });
+    traces.push(result.trace);
     spec = result.data;
     const remainingConflicts = findVisualProfileStoryWorldConflicts(
       spec,
@@ -148,6 +150,13 @@ export async function generateProjectAssetVisualProfile(input: {
     storyWorld: storyWorld.lock,
     promptTrace: {
       ...result.trace,
+      tokenUsage: traces.every(trace => trace.tokenUsage != null) ? traces.reduce((total, trace) => ({
+        inputTokens: total.inputTokens + trace.tokenUsage!.inputTokens,
+        outputTokens: total.outputTokens + trace.tokenUsage!.outputTokens,
+        totalTokens: total.totalTokens + trace.tokenUsage!.totalTokens,
+      }), { inputTokens: 0, outputTokens: 0, totalTokens: 0 }) : null,
+      correctionAttempts: traces.reduce((total, trace) => total + (trace.correctionAttempts ?? 0), 0) + traces.length - 1,
+      ...(traces.length > 1 ? { phases: traces } : {}),
       rawOutput: result.outputText,
       ...(initialConflicts.length
         ? { storyEraCorrection: initialConflicts }

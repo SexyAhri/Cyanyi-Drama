@@ -16,10 +16,12 @@
 - `asset_names` 只能使用输入清单中的精确名称。参考图存在时保持其身份和外观锚点；缺失资产不编造名称或 ID。
 - `image_prompt` 必须对应修复后首帧，`video_prompt` 从该首帧描述动作过程、环境动态、运镜和终止状态。
 - 角色、服装、伤势、道具持有、场景状态、视线和运动方向在相邻镜头间保持连续。
+- 平台 Schema 包含 `productionDesign` 时，起始状态和动作节拍只写入 `productionDesign.startState`、`productionDesign.motionBeats`，不要照抄旧镜头的重复 `start_state`、`motion_beats` 字段。
+- 口播时长不足时，根据 `speech_timing` 和校验反馈增加时长或把台词拆成逐字保留的连续片段；任何镜头不得超过 15 秒，同时更新动作节拍、特效音效时间和视频提示词。不得通过加快语速、删改台词来绕过校验。
 
 ## 输出契约
 
-完整回复只能是合法 JSON，并使用与分镜生成完全相同的字段：
+完整回复只能是合法 JSON，并使用与分镜生成完全相同的字段。实际字段以平台注入的 JSON Schema 为准；以下为兼容字段示例，含 `productionDesign` 的契约不输出重复起始状态和节拍：
 
 ```json
 {

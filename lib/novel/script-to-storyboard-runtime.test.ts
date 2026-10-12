@@ -8,7 +8,7 @@ const episodeFindFirst = vi.hoisted(() => vi.fn());
 const storyClipUpdate = vi.hoisted(() => vi.fn());
 const voiceLineFindMany = vi.hoisted(() => vi.fn());
 const voiceLineDeleteMany = vi.hoisted(() => vi.fn());
-const voiceLineCreateMany = vi.hoisted(() => vi.fn());
+const voiceLineCreate = vi.hoisted(() => vi.fn());
 const voiceLineUpdate = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/production/domain-store", () => ({
@@ -24,10 +24,12 @@ vi.mock("@/lib/server/prisma", () => ({
     $transaction: vi.fn(async (callback) =>
       callback({
         voiceLine: {
+          findMany: voiceLineFindMany,
           deleteMany: voiceLineDeleteMany,
-          createMany: voiceLineCreateMany,
+          create: voiceLineCreate,
           update: voiceLineUpdate,
         },
+        storyboardPanel: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
       }),
     ),
   },
@@ -114,7 +116,7 @@ beforeEach(() => {
   storyClipUpdate.mockResolvedValue({});
   voiceLineFindMany.mockResolvedValue([]);
   voiceLineDeleteMany.mockResolvedValue({ count: 0 });
-  voiceLineCreateMany.mockResolvedValue({ count: 2 });
+  voiceLineCreate.mockResolvedValue({});
   voiceLineUpdate.mockResolvedValue({});
 });
 
@@ -359,7 +361,7 @@ describe("scene storyboard runtime", () => {
     expect(result).toMatchObject({
       source: "local-production-script",
       clipCount: 1,
-      sceneCount: 3,
+      sceneCount: 1,
       panelCount: 3,
       voiceLineCount: 2,
       promptTraces: [],
@@ -373,27 +375,28 @@ describe("scene storyboard runtime", () => {
     expect(hooks.persistArtifact).toHaveBeenCalledWith(
       "storyboard.scenes",
       "episode-1",
-      expect.objectContaining({ sceneCount: 3 }),
+      expect.objectContaining({ sceneCount: 1 }),
     );
     expect(storyClipUpdate).toHaveBeenCalledWith({
       where: { id: "clip-1" },
       data: { status: "storyboard_ready", shotCount: 3 },
     });
-    expect(voiceLineCreateMany).toHaveBeenCalledWith({
-      data: expect.arrayContaining([
-        expect.objectContaining({
+    expect(voiceLineCreate).toHaveBeenCalledTimes(2);
+    expect(voiceLineCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
           episodeId: "episode-1",
           speaker: "韩宇",
           content: "我一定要变强。",
           matchedPanelId: "panel-2",
-        }),
-        expect.objectContaining({
+      }),
+    });
+    expect(voiceLineCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
           episodeId: "episode-1",
           speaker: "旁白",
           content: "寒夜见证少年的坚持。",
           matchedPanelId: "panel-0",
-        }),
-      ]),
+      }),
     });
   });
 });

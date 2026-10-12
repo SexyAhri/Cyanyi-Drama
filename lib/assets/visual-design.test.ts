@@ -24,6 +24,7 @@ vi.mock("@/lib/settings/runtime-store", () => ({
 }));
 vi.mock("@/lib/server/prisma", () => ({
   prisma: {
+    $queryRaw: vi.fn().mockResolvedValue([]),
     project: { findFirst: projectFindFirst },
     novelCharacter: {
       findFirst: characterFindFirst,
@@ -141,7 +142,7 @@ describe("asset visual design", () => {
     });
   });
 
-  it("keeps story-world guidance advisory and persists the model result", async () => {
+  it("corrects a generated design that conflicts with the story era before persisting", async () => {
     const modernSpec = {
       ...spec,
       shapeAndStructure: "Middle-aged man with a modern crew cut",
@@ -154,8 +155,11 @@ describe("asset visual design", () => {
         promptId: "asset_visual_design",
         version: 2,
         correctionAttempts: 0,
+        tokenUsage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
       },
     });
+    requestOpenAiStructured.mockResolvedValueOnce({ data: spec, outputText: JSON.stringify(spec),
+      trace: { promptId: "asset_visual_design", correctionAttempts: 0, tokenUsage: { inputTokens: 200, outputTokens: 30, totalTokens: 230 } } });
 
     const result = await generateProjectAssetVisualProfile({
       userId: "user-1",
@@ -168,12 +172,15 @@ describe("asset visual design", () => {
     });
 
     expect(result.profile).toMatchObject({
-      spec: modernSpec,
+      spec,
       promptTrace: {
-        correctionAttempts: 0,
-        rawOutput: JSON.stringify(modernSpec),
+        rawOutput: JSON.stringify(spec),
+        storyEraCorrection: expect.any(Array),
+        tokenUsage: { inputTokens: 300, outputTokens: 50, totalTokens: 350 },
+        correctionAttempts: 1,
       },
     });
+    expect(requestOpenAiStructured).toHaveBeenCalledTimes(2);
     expect(characterUpdateMany).toHaveBeenCalledTimes(1);
   });
 

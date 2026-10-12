@@ -3,6 +3,10 @@ import { getOpenAICompatibleImageSizeCandidates } from "@/lib/agent/media-size";
 import { normalizeOpenAICompatibleVideoSeconds } from "@/lib/agent/media-video";
 import { fetchWithProviderRetry } from "@/lib/providers/http";
 import { executeOpenAiCompatibleMediaTemplate } from "@/lib/providers/openai-compatible-media-template";
+import {
+  createProviderInputUrl,
+  createProviderTaskInputUrl,
+} from "@/lib/media/provider-input-url";
 
 import {
   providerErrorMessage,
@@ -20,6 +24,10 @@ import type {
 
 export const openAiCompatibleMediaProvider: MediaProviderAdapter = {
   async generate(input) {
+    // Agnes has its own video contract; a generic channel template can add
+    // fields such as `resolution` that the Agnes API rejects.
+    if (input.kind === "video" && isAgnesVideoModel(input.model))
+      return generateVideo(input);
     if (
       input.mediaTemplate &&
       (input.kind === "image" || input.kind === "video")
@@ -45,6 +53,8 @@ async function generateImage(
   const references = await referencesAsDataUrls(
     input.request.referenceImages ?? [],
   );
+  if (isAgnesImageModel(input.model))
+    return generateAgnesImage(input, references);
   const endpoint = references.length
     ? process.env.OPENAI_COMPATIBLE_IMAGE_EDIT_PATH || "images/edits"
     : process.env.OPENAI_COMPATIBLE_IMAGE_GENERATION_PATH ||
@@ -66,6 +76,42 @@ async function generateImage(
     kind: "image",
     url,
     metadata: { model: input.model },
+  }));
+}
+
+async function generateAgnesImage(
+  input: GenerateProviderMediaInput,
+  references: string[],
+): Promise<MediaAsset[]> {
+  const response = await fetchWithProviderRetry(
+    joinUrl(input.baseUrl, "images/generations"),
+    {
+      method: "POST",
+      headers: bearerJsonHeaders(input.apiKey),
+      body: JSON.stringify({
+        model: input.model,
+        prompt: input.request.prompt ?? "",
+        size: normalizeAgnesImageSize(input.request.resolution),
+        ratio: normalizeAgnesAspectRatio(input.request.ratio),
+        n: normalizeImageCount(input.request.count ?? input.request.n),
+        ...(references.length
+          ? { extra_body: { image: references } }
+          : {}),
+      }),
+      cache: "no-store",
+    },
+    { maxAttempts: 3 },
+  );
+  const payload = await readProviderJson(response);
+  if (!response.ok)
+    throw new Error(providerErrorMessage(payload, response.status));
+  const urls = extractImageUrls(payload);
+  if (!urls.length) throw new Error("IMAGE_RESULT_MISSING:agnes-ai");
+  return urls.map((url, index) => ({
+    id: `${input.model}-${Date.now()}-${index}`,
+    kind: "image",
+    url,
+    metadata: { model: input.model, provider: "agnes-ai" },
   }));
 }
 
@@ -117,9 +163,10 @@ function normalizeImageCount(value?: number) {
 async function generateVideo(
   input: GenerateProviderMediaInput,
 ): Promise<MediaAsset[]> {
-  const createPath = trimPath(
-    process.env.OPENAI_COMPATIBLE_VIDEO_CREATE_PATH || "videos",
-  );
+  const agnesVideo = isAgnesVideoModel(input.model);
+  const createPath = agnesVideo
+    ? "videos"
+    : trimPath(process.env.OPENAI_COMPATIBLE_VIDEO_CREATE_PATH || "videos");
   const statusPath = trimPath(
     process.env.OPENAI_COMPATIBLE_VIDEO_STATUS_PATH || "videos/{id}",
   );
@@ -128,7 +175,17 @@ async function generateVideo(
     {
       method: "POST",
       headers: bearerJsonHeaders(input.apiKey),
-      body: JSON.stringify(buildVideoBody(input.model, input.request)),
+      body: JSON.stringify(
+        agnesVideo
+          ? buildAgnesVideoBody(
+              input.model,
+              await withAgnesVideoReferenceUrls(
+                input.request,
+                input.mediaTaskId,
+              ),
+            )
+          : buildVideoBody(input.model, input.request),
+      ),
     },
   );
   const payload = await readProviderJson(response);
@@ -137,9 +194,32 @@ async function generateVideo(
   return pollVideoResult({
     input,
     initialPayload: payload,
+    agnesVideo,
     statusPath: (taskId) =>
       statusPath.replace("{id}", encodeURIComponent(taskId)),
   });
+}
+
+async function withAgnesVideoReferenceUrls(
+  request: MediaProviderRequest,
+  mediaTaskId?: string,
+) {
+  const referenceImages = await Promise.all(
+    (request.referenceImages ?? []).map(async (reference, index) => {
+      if (reference.assetId)
+        return { ...reference, url: createProviderInputUrl(reference.assetId) };
+      if (
+        mediaTaskId &&
+        /^data:image\/[a-z0-9.+-]+;base64,/i.test(reference.url)
+      )
+        return {
+          ...reference,
+          url: createProviderTaskInputUrl(mediaTaskId, index),
+        };
+      return reference;
+    }),
+  );
+  return { ...request, referenceImages };
 }
 
 function buildVideoBody(model: string, request: MediaProviderRequest) {
@@ -233,6 +313,7 @@ async function generateLipSync(
 async function pollVideoResult(input: {
   input: GenerateProviderMediaInput;
   initialPayload: unknown;
+  agnesVideo: boolean;
   statusPath: (taskId: string) => string;
 }) {
   const initial = extractVideoState(input.initialPayload);
@@ -247,9 +328,17 @@ async function pollVideoResult(input: {
   for (let attempt = 0; attempt < 60; attempt += 1) {
     await waitForProviderPoll();
     const response = await fetchWithProviderRetry(
-      joinUrl(input.input.baseUrl, input.statusPath(initial.taskId)),
+      input.agnesVideo
+        ? agnesVideoStatusUrl(
+            input.input.baseUrl,
+            initial.taskId,
+            input.input.model,
+          )
+        : joinUrl(input.input.baseUrl, input.statusPath(initial.taskId)),
       {
-        method: process.env.OPENAI_COMPATIBLE_VIDEO_STATUS_METHOD || "GET",
+        method: input.agnesVideo
+          ? "GET"
+          : process.env.OPENAI_COMPATIBLE_VIDEO_STATUS_METHOD || "GET",
         headers: { Authorization: `Bearer ${input.input.apiKey}` },
       },
     );
@@ -336,7 +425,10 @@ function extractVideoState(payload: unknown) {
     : value;
   const content = record(data.content);
   return {
-    taskId: stringValue(data.id) || stringValue(data.task_id),
+    taskId:
+      stringValue(data.video_id) ||
+      stringValue(data.id) ||
+      stringValue(data.task_id),
     status: stringValue(data.status),
     error: providerErrorMessage({ error: data.error ?? value.error }, 200, "") || undefined,
     url:
@@ -345,6 +437,121 @@ function extractVideoState(payload: unknown) {
       stringValue(content.video_url) ||
       stringValue(content.url),
   };
+}
+
+export function buildAgnesVideoBody(
+  model: string,
+  request: MediaProviderRequest,
+) {
+  const references = request.referenceImages ?? [];
+  const firstFrame = references.find(
+    (reference) => reference.role === "first_frame",
+  )?.url;
+  const lastFrame = references.find(
+    (reference) => reference.role === "last_frame",
+  )?.url;
+  const keyframeMode = request.videoMode === "first-last";
+  const images = keyframeMode
+    ? []
+    : references.slice(0, 5).map((reference) => reference.url);
+  const audios = (request.referenceAudios ?? [])
+    .slice(0, 3)
+    .map((reference) => reference.url);
+  const mode = keyframeMode
+    ? "keyframe"
+    : images.length || audios.length
+      ? "reference"
+      : "text";
+
+  return {
+    model,
+    prompt: request.prompt ?? "",
+    mode,
+    seconds: normalizeAgnesVideoSeconds(request.duration),
+    size: "720P",
+    aspect_ratio: normalizeAgnesAspectRatio(request.ratio, "video"),
+    n: 1,
+    ...(mode === "keyframe"
+      ? {
+          ...(firstFrame ? { first_frame: firstFrame } : {}),
+          ...(lastFrame ? { last_frame: lastFrame } : {}),
+        }
+      : {}),
+    ...(mode === "reference" && images.length ? { images } : {}),
+    ...(mode === "reference" && audios.length ? { audios } : {}),
+  };
+}
+
+function normalizeAgnesVideoSeconds(value?: string) {
+  const seconds = Number.parseInt(value?.match(/\d+/)?.[0] ?? "5", 10);
+  return String(
+    Math.max(4, Math.min(12, Number.isFinite(seconds) ? seconds : 5)),
+  );
+}
+
+export function agnesVideoStatusUrl(
+  baseUrl: string,
+  videoId: string,
+  model: string,
+) {
+  const origin = baseUrl.replace(/\/v1\/?$/i, "").replace(/\/+$/, "");
+  const query = new URLSearchParams({ video_id: videoId, model_name: model });
+  return `${origin}/agnesapi?${query.toString()}`;
+}
+
+function normalizeAgnesImageSize(value?: string) {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "4k") return "4K";
+  if (normalized === "3k") return "3K";
+  if (normalized === "2k" || normalized === "1080p") return "2K";
+  return "1K";
+}
+
+function normalizeAgnesAspectRatio(
+  value?: string,
+  kind: "image" | "video" = "image",
+) {
+  const normalized =
+    value?.trim().replace(/\s+/g, "").replace(/x/gi, ":") ?? "";
+  const imageRatios = new Set([
+    "1:1",
+    "3:4",
+    "4:3",
+    "16:9",
+    "9:16",
+    "2:3",
+    "3:2",
+    "21:9",
+  ]);
+  const videoRatios = new Set([
+    "21:9",
+    "16:9",
+    "4:3",
+    "1:1",
+    "3:4",
+    "9:16",
+  ]);
+  const supported = kind === "video" ? videoRatios : imageRatios;
+  if (supported.has(normalized)) return normalized;
+
+  if (kind === "video") {
+    const nearestSupported: Record<string, string> = {
+      "2:3": "3:4",
+      "3:2": "4:3",
+      "9:21": "9:16",
+    };
+    return nearestSupported[normalized] ?? "1:1";
+  }
+
+  return "1:1";
+}
+
+function isAgnesImageModel(model: string) {
+  return /^agnes-image-2\.5-flash$/i.test(model.trim());
+}
+
+export function isAgnesVideoModel(model: string) {
+  return /^agnes-video-2\.5-flash$/i.test(model.trim());
 }
 
 function videoAsset(

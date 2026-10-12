@@ -45,6 +45,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AUTODL_COMFYUI_BASE_URL } from "@/lib/providers/media/autodl-comfyui-workflows";
 import { BAILIAN_DASHSCOPE_BASE_URL_PLACEHOLDER } from "@/lib/providers/media/bailian-dashscope-models";
+import {
+  AGNES_AI_BASE_URL,
+  AGNES_AI_MODELS,
+} from "@/lib/providers/agnes-ai";
 
 import type { ShellCopy } from "./chat-shell-i18n";
 import type {
@@ -272,6 +276,27 @@ export const ChannelSettingsPanel = forwardRef<
       modelCapabilities: cloneCapabilities(channel.modelCapabilities),
     });
     setEditorOpen(true);
+  }
+
+  function applyAgnesPreset() {
+    setDraft((current) =>
+      current
+        ? {
+            ...current,
+            name:
+              current.name === copy.settingsNewChannel
+                ? "Agnes AI"
+                : current.name,
+            protocol: "openai-compatible",
+            baseUrl: AGNES_AI_BASE_URL,
+            modelOptions: dedupeModels([
+              ...current.modelOptions,
+              ...AGNES_AI_MODELS,
+            ]),
+            modelIds: AGNES_AI_MODELS.map((model) => model.id),
+          }
+        : current,
+    );
   }
 
   function copyChannel(channel: ChannelConfig) {
@@ -664,9 +689,21 @@ export const ChannelSettingsPanel = forwardRef<
                 </div>
 
                 <div className="grid gap-2">
-                  <Label htmlFor="channel-endpoint">
-                    {copy.settingsChannelEndpoint}
-                  </Label>
+                  <div className="flex items-center justify-between gap-3">
+                    <Label htmlFor="channel-endpoint">
+                      {copy.settingsChannelEndpoint}
+                    </Label>
+                    {editorMode === "create" ? (
+                      <Button
+                        onClick={applyAgnesPreset}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        {copy.settingsAgnesModelPreset}
+                      </Button>
+                    ) : null}
+                  </div>
                   <Input
                     id="channel-endpoint"
                     onChange={(event) =>
@@ -677,7 +714,9 @@ export const ChannelSettingsPanel = forwardRef<
                       )
                     }
                     placeholder={
-                      draft.protocol === "autodl-comfyui"
+                      draft.baseUrl === AGNES_AI_BASE_URL
+                        ? AGNES_AI_BASE_URL
+                        : draft.protocol === "autodl-comfyui"
                         ? AUTODL_COMFYUI_BASE_URL
                         : draft.protocol === "bailian-dashscope"
                           ? BAILIAN_DASHSCOPE_BASE_URL_PLACEHOLDER

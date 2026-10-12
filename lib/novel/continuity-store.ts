@@ -27,7 +27,7 @@ export async function listLatestStoryboardContinuityIssues(
       userId,
       projectId,
       episodeId,
-      workflowType: "script-to-storyboard",
+      workflowType: { in: ["script-to-storyboard", "episode-preproduction"] },
     },
     orderBy: { updatedAt: "desc" },
     select: {

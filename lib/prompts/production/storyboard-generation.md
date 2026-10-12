@@ -24,11 +24,12 @@
 - `source_unit_ids` 指向本场权威剧本的内容条目，完整覆盖所有条目。可把一个动作拆成多个镜头，也可合并连续动作，不按条目机械切镜。
 - `speech` 无台词时为 null；有台词时保存原文来源 `source_id` 和原文片段 `text`。一个镜头只容纳一个说话片段，同一来源的全部片段按顺序拼接必须逐字等于原文，包含标点和空白。
 - `characters` 只列画面可见角色，必须同时列入 `asset_names`；对话说话人可见，画外音角色不必出现在画面。
-- `start_state`、`end_state` 保存连续性锚点；`motion_beats` 用时间区间描述动作过程和运镜，区间不重叠、不超出镜头时长。
+- `end_state` 保存结束时的连续性锚点。平台 Schema 包含 `productionDesign` 时，起始状态和动作节拍只写入 `productionDesign.startState` 与 `productionDesign.motionBeats`，不重复输出 `start_state`、`motion_beats`；其它契约可使用下方兼容字段。节拍区间连续覆盖镜头时长。
+- 平台提供 `speech_timing` 时，参考逐字保留的建议片段和 `minimum_seconds` 规划时长。超过 15 秒的台词必须拆镜；较短片段的镜头时长不得低于其最低口播时长，视频提示词与节拍使用同一时长。
 
 ## 输出契约
 
-完整回复只能是合法 JSON：
+完整回复只能是合法 JSON，实际字段以平台注入的 JSON Schema 为准；以下为兼容字段示例，含 `productionDesign` 的契约不输出重复起始状态和节拍：
 
 ```json
 {

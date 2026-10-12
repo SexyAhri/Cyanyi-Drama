@@ -1,0 +1,11 @@
+.git
+.next
+.next.stale-*
+node_modules
+.media
+.backups
+artifacts
+coverage
+.env*
+*.log
+*.tsbuildinfo

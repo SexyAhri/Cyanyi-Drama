@@ -63,6 +63,7 @@ export type ShellCopy = {
   settingsChannels: string;
   settingsChannelsDescription: string;
   settingsChannelEndpoint: string;
+  settingsAgnesModelPreset: string;
   settingsChannelApiKeys: string;
   settingsApiKeyMode: string;
   settingsApiKeyModeSingle: string;
@@ -261,6 +262,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsChannelsDescription:
       "Configure the runtime connection used by chat and media generation.",
     settingsChannelEndpoint: "Endpoint",
+    settingsAgnesModelPreset: "Add Agnes AI models",
     settingsChannelApiKeys: "Additional API Keys",
     settingsApiKeyMode: "Add mode",
     settingsApiKeyModeSingle: "Single key",
@@ -463,6 +465,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsChannels: "渠道",
     settingsChannelsDescription: "配置聊天和媒体生成使用的运行时连接。",
     settingsChannelEndpoint: "接口地址",
+    settingsAgnesModelPreset: "填入 Agnes AI 模型",
     settingsChannelApiKeys: "备用 API Keys",
     settingsApiKeyMode: "添加模式",
     settingsApiKeyModeSingle: "单密钥",

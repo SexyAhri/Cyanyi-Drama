@@ -319,7 +319,11 @@ describe("storyboard prompt preview", () => {
     expect(mocks.taskCreate.mock.calls[1][0].request.prompt).toContain(
       "本场次第 2/2 段",
     );
-    expect(mocks.storyboardVideoSegmentUpsert).toHaveBeenCalledTimes(2);
+    // Generating candidates must preserve adopted media; segment rows are created on adoption.
+    expect(mocks.storyboardVideoSegmentUpsert).not.toHaveBeenCalled();
+    expect(mocks.storyboardVideoSegmentDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.taskCreate.mock.calls.map(([task]) => task.request.videoSegmentIndex)).toEqual([0, 1]);
+    expect(mocks.taskCreate.mock.calls[0][0].request.generationId).toBe(mocks.taskCreate.mock.calls[1][0].request.generationId);
   });
 });
 

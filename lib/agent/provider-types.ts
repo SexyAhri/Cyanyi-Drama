@@ -1,4 +1,5 @@
 import type { OpenAiCompatibleMediaTemplate } from "@/lib/providers/openai-compatible-media-template";
+import { AGNES_AI_MODELS } from "@/lib/providers/agnes-ai";
 import { autoDlModelCapabilities } from "@/lib/providers/media/autodl-comfyui-workflows";
 import { bailianDashScopeModelCapabilities } from "@/lib/providers/media/bailian-dashscope-models";
 
@@ -80,6 +81,11 @@ export function inferModelCapabilities(
         : {}),
     };
   }
+
+  const agnesModel = AGNES_AI_MODELS.find(
+    (model) => model.modelId.toLowerCase() === normalized.toLowerCase(),
+  );
+  if (agnesModel) return agnesModel.capabilities;
 
   if (protocol === "volcengine-ark") {
     if (/seedream/i.test(normalized)) {

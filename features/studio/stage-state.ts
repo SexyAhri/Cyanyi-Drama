@@ -24,6 +24,9 @@ const ASSET_CATALOG_WORKFLOW_TYPES = new Set([
   "asset-visual-design",
   "character-reference-extraction",
   "visual-asset-extraction",
+  "story-to-script",
+  "episode-preproduction",
+  "original-episode-generation",
 ]);
 
 const WRITING_WORKFLOW_TYPES = new Set([
@@ -70,6 +73,10 @@ export function getTaskOutputRevision(tasks: MediaTask[]) {
         `${task.id}:${task.status}:${task.retryCount}:${task.completedAt ?? ""}`,
     )
     .join("|");
+}
+
+export function getWorkflowOutputRevision(workflows: WorkflowRunSummary[]) {
+  return [...workflows].sort((a, b) => a.id.localeCompare(b.id)).map(getWorkflowContentRevision).join("||");
 }
 
 export function getAssetCatalogWorkflowRevision(
@@ -168,7 +175,7 @@ export function getStudioStageStates(
     assets: assets.total > 0 && assets.adopted === assets.total,
     storyboard: records.storyboardApproved,
     shots: records.panels > 0 && records.adoptedVideos === records.panels,
-    audio: records.storyboardApproved && (records.voiceLines === 0 || records.generatedVoices === records.voiceLines),
+    audio: records.storyboardApproved && (records.voiceLines > 0 ? records.generatedVoices === records.voiceLines : records.speechExpected === false),
     delivery: records.rendered,
   };
   const ready: Record<StudioStageId, boolean> = {
@@ -232,7 +239,8 @@ export function getWorkflowForStage(
     const newer = workflows.some(run => directTypes[stageId]?.includes(run.workflowType) && run.createdAt > combined.createdAt);
     if (!newer) {
       const current = phase.find(step => step.status !== "succeeded") ?? phase[phase.length - 1];
-      return { ...combined, status: current.status === "pending" ? "not_started" : current.status, steps: phase };
+      const controlled = current.status !== "succeeded" && ["paused", "canceled", "canceling"].includes(combined.status);
+      return { ...combined, status: controlled ? combined.status : current.status === "pending" ? "not_started" : current.status, steps: phase };
     }
   }
   if (stageId === "writing") {
@@ -294,7 +302,7 @@ function writingStageStatus(input: {
   if (!input.hasEpisode) return "blocked";
   if (
     input.current &&
-    ["queued", "running", "canceling", "paused", "failed", "blocked"].includes(
+    ["queued", "running", "canceling", "canceled", "paused", "failed", "blocked"].includes(
       input.current.status,
     )
   ) {

@@ -5,12 +5,20 @@ import type { StoryboardContinuityIssue } from "@/lib/novel/continuity-store";
 import type { StudioStoryboardPanel } from "../types";
 import {
   getPanelContinuityIssues,
+  isPackageSceneDraft,
   mergeStoryboardPanelWithNext,
   replaceStoryboardPanel,
   splitStoryboardPanel,
 } from "./storyboard-view-model";
 
 describe("storyboard view model", () => {
+  it("distinguishes original package scene drafts from director-planned shots", () => {
+    const draft = createPanel({ worldContext: { source: "story-package" } });
+    expect(isPackageSceneDraft([draft])).toBe(true);
+    expect(isPackageSceneDraft([draft, createPanel({ id: "other" })])).toBe(false);
+    expect(isPackageSceneDraft([])).toBe(false);
+  });
+
   it("matches clip-local continuity issues to the persisted panel identity", () => {
     const panel = createPanel({ clipId: "clip-1", clipPanelIndex: 2 });
     const issues: StoryboardContinuityIssue[] = [

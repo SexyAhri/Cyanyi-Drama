@@ -11,6 +11,9 @@ export async function GET(request: Request, context: RouteContext) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { projectId } = await context.params;
   const touch = new URL(request.url).searchParams.get("touch") === "1";
+  const requestedTextDate = new URL(request.url).searchParams.get("textUpdatedAfter");
+  const textUpdatedAfter = requestedTextDate && Number.isFinite(Date.parse(requestedTextDate))
+    ? new Date(requestedTextDate).toISOString() : null;
   const mediaTaskStore = createDatabaseMediaTaskStore(user.id);
   const [project, episodes, workflows, recentTasks, queuedTasks, runningTasks] = await Promise.all([
     getProject(user.id, projectId, { touch }),
@@ -39,7 +42,12 @@ export async function GET(request: Request, context: RouteContext) {
   ]);
   return attachSessionCookie(
     Response.json({
-      project: { ...project, episodes },
+      project: { ...project, episodes: episodes.map(episode => {
+        if (textUpdatedAfter && episode.updatedAt <= textUpdatedAfter) {
+          return { ...episode, novelText: null, novelTextUnchanged: true };
+        }
+        return episode;
+      }) },
       readiness,
       workflows: workflows.map((workflow) => ({
         ...workflow,

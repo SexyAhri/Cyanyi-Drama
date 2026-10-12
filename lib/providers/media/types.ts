@@ -4,6 +4,7 @@ import type { OpenAiCompatibleMediaTemplate } from "@/lib/providers/openai-compa
 
 export type MediaReferenceImage = {
   url: string;
+  assetId?: string;
   storageKey?: string;
   mimeType?: string;
   role?: "reference_image" | "first_frame" | "last_frame";
@@ -51,6 +52,7 @@ export type GenerateProviderMediaInput = {
   baseUrl: string;
   apiKey: string;
   model: string;
+  mediaTaskId?: string;
   kind: "image" | "video" | "audio";
   request: MediaProviderRequest;
   mediaTemplate?: OpenAiCompatibleMediaTemplate;
