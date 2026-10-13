@@ -7,6 +7,7 @@ import {
 } from "@/lib/observability/trace-context";
 import { prisma } from "@/lib/server/prisma";
 import { resolveProductionConfiguration } from "@/lib/production-configuration/store";
+import { configurationSnapshotSchema } from "@/lib/production-configuration/contract";
 import {
   assertWorkflowAction,
   assertWorkflowDefinition,
@@ -105,6 +106,10 @@ export async function createOrReuseWorkflowRun(
     projectId: definition.projectId, episodeId: definition.episodeId ?? undefined,
     ...(targetType === "storyboard_panel" && definition.episodeId ? { panelId: targetId } : {}),
   });
+  const requestedConcurrency = workflowInput.concurrency;
+  const concurrency = typeof requestedConcurrency === "number" && Number.isFinite(requestedConcurrency)
+    ? Math.max(1, Math.min(8, Math.floor(requestedConcurrency)))
+    : productionConfiguration.workflow.concurrency;
   const runTrace = createWorkflowTraceContext(definition.id);
 
   try {
@@ -120,7 +125,7 @@ export async function createOrReuseWorkflowRun(
         targetType,
         targetId,
         activeDedupeKey,
-        input: toJson({ ...workflowInput, productionConfiguration }),
+        input: toJson({ ...workflowInput, concurrency, productionConfiguration }),
         steps: {
           create: definition.steps.map((step, index) => {
             const stepId = randomUUID();
@@ -395,6 +400,7 @@ export async function retryWorkflowRun(userId: string, runId: string) {
   });
   if (!current || !["failed", "blocked"].includes(current.status)) return null;
   const resetKeys = resolveRetryStepKeys(current.steps);
+  const retryMode = getRetryMode(current.input);
   const activeDedupeKey = buildRunDedupeKey(current);
   if (await hasConflictingActiveRun(runId, activeDedupeKey)) return null;
   const resetStepIds = current.steps
@@ -426,21 +432,25 @@ export async function retryWorkflowRun(userId: string, runId: string) {
         updatedAt: new Date(),
       },
     }),
-    prisma.workflowArtifact.deleteMany({
-      where: {
-        runId,
-        stepId: { in: resetStepIds },
-      },
-    }),
-    prisma.workflowCheckpoint.deleteMany({
-      where: { runId, stepKey: { in: resetKeys } },
-    }),
+    ...(retryMode === "restart"
+      ? [
+          prisma.workflowArtifact.deleteMany({
+            where: {
+              runId,
+              stepId: { in: resetStepIds },
+            },
+          }),
+          prisma.workflowCheckpoint.deleteMany({
+            where: { runId, stepKey: { in: resetKeys } },
+          }),
+        ]
+      : []),
     prisma.workflowEvent.create({
       data: {
         runId,
         type: "retry_requested",
         status: "queued",
-        payload: toJson({ resetKeys, retryMode: "restart" }),
+        payload: toJson({ resetKeys, retryMode }),
       },
     }),
   ]);
@@ -459,6 +469,7 @@ export async function retryWorkflowStep(
   if (!current || ["running", "canceled"].includes(current.status)) return null;
   const target = current.steps.find((step) => step.stepKey === stepKey);
   if (!target || !isWorkflowStepManuallyRetryable(target)) return null;
+  const retryMode = getRetryMode(current.input);
   const resetKeys = resolveDownstreamStepKeys(current.steps, stepKey);
   const activeDedupeKey = buildRunDedupeKey(current);
   if (await hasConflictingActiveRun(runId, activeDedupeKey)) return null;
@@ -491,23 +502,36 @@ export async function retryWorkflowStep(
         updatedAt: new Date(),
       },
     }),
-    prisma.workflowArtifact.deleteMany({
-      where: { runId, stepId: { in: resetStepIds } },
-    }),
-    prisma.workflowCheckpoint.deleteMany({
-      where: { runId, stepKey: { in: resetKeys } },
-    }),
+    ...(retryMode === "restart"
+      ? [
+          prisma.workflowArtifact.deleteMany({
+            where: { runId, stepId: { in: resetStepIds } },
+          }),
+          prisma.workflowCheckpoint.deleteMany({
+            where: { runId, stepKey: { in: resetKeys } },
+          }),
+        ]
+      : []),
     prisma.workflowEvent.create({
       data: {
         runId,
         stepId: target.id,
         type: "step_retry_requested",
         status: "queued",
-        payload: toJson({ stepKey, resetKeys, retryMode: "restart" }),
+        payload: toJson({ stepKey, resetKeys, retryMode }),
       },
     }),
   ]);
   return getWorkflowRun(userId, runId);
+}
+
+function getRetryMode(input: Prisma.JsonValue | null) {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    return "restart" as const;
+  const snapshot = configurationSnapshotSchema.safeParse(
+    (input as Record<string, unknown>).productionConfiguration,
+  );
+  return snapshot.success ? snapshot.data.workflow.retryMode : "restart";
 }
 
 export function isWorkflowStepManuallyRetryable(step: {

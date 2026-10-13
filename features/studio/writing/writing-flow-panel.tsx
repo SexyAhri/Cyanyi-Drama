@@ -253,16 +253,16 @@ function WorkflowActions({
   if (!status) return null;
   if (status === "failed" || status === "blocked") {
     return (
-      <Button
-        className="w-full"
-        disabled={disabled}
-        onClick={() => onAction("retry")}
-        type="button"
-        variant="outline"
-      >
-        <RotateCcw className="size-4" />
-        {copy.retryWorkflow}
-      </Button>
+      <div className="flex gap-2">
+        <Button className="flex-1" disabled={disabled} onClick={() => onAction("resume")} type="button" variant="outline">
+          <Play className="size-4" />
+          {copy.continueWorkflow}
+        </Button>
+        <Button className="flex-1" disabled={disabled} onClick={() => onAction("retry")} type="button" variant="outline">
+          <RotateCcw className="size-4" />
+          {copy.retryWorkflow}
+        </Button>
+      </div>
     );
   }
   if (!["queued", "running", "canceling", "paused"].includes(status))

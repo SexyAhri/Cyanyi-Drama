@@ -75,8 +75,12 @@ export const productionCopy = {
     agentHelp: "只配置已有能力；输出结构、权限校验与操作审批继续由服务端执行。",
     timeout: "文本请求超时（秒）",
     attempts: "连接故障最大尝试次数",
+    retryMode: "失败后默认方式",
+    retryContinue: "继续已有结果",
+    retryRestart: "重新生成失败步骤",
+    concurrency: "工作流并发上限",
     policyHelp:
-      "仅重试临时连接故障；超时、鉴权、参数和额度错误不重复请求。默认只请求一次。已开始返回内容的连接中断可能产生额外计费。",
+      "继续会保留可复用的检查点和片段；重新生成会清理失败步骤及后续步骤的中间结果。并发上限用于支持并发的工作流步骤。仅重试临时连接故障；超时、鉴权、参数和额度错误不重复请求。",
     unavailable: "请选择可用的文本模型；渠道管理可配置模型。",
     author: "修改人",
     at: "发布时间",
@@ -161,8 +165,12 @@ export const productionCopy = {
       "Only existing capabilities are configurable. Output schemas, authorization and operation approvals remain server-enforced.",
     timeout: "Text request timeout (seconds)",
     attempts: "Maximum connection attempts",
+    retryMode: "Default after failure",
+    retryContinue: "Continue with existing results",
+    retryRestart: "Regenerate failed steps",
+    concurrency: "Workflow concurrency limit",
     policyHelp:
-      "Retries apply to transient connection failures. Timeouts, authentication, parameter and balance errors are not retried. Default: one request. Interrupted responses may incur additional charges.",
+      "Continue keeps reusable checkpoints and partial results. Regenerate clears intermediate results for failed steps and their dependants. The concurrency limit applies to workflow steps that support parallel work. Retries apply only to transient connection failures.",
     unavailable:
       "Choose an available text model. Configure models in channel management.",
     author: "Author",

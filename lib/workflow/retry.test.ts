@@ -133,6 +133,24 @@ describe("manual workflow retry execution", () => {
     expect(state.steps[0].output).toEqual({ old: true });
   });
 
+  it.each(["run", "step"])("continues from saved checkpoints when the frozen policy requests continue on %s retry", async mode => {
+    const configuration = mergeProductionConfigurations([]);
+    state.input.productionConfiguration = {
+      ...configuration,
+      format: "production-configuration-v1",
+      sources: [],
+      workflow: { ...configuration.workflow, retryMode: "continue" },
+    };
+    state.steps = [step("prepare", "succeeded"), step("analyze", "failed", 1, ["prepare"]), step("finish", "succeeded", 2, ["analyze"])];
+    artifacts = state.steps.map(item => ({ stepId: item.id, artifactType: "result", refId: item.id, payload: { old: true } }));
+    if (mode === "run") await retryWorkflowRun(state.userId, state.id);
+    else await retryWorkflowStep(state.userId, state.id, "analyze");
+    expect(artifacts).toHaveLength(3);
+    expect(state.events.at(-1)?.payload).toMatchObject({ retryMode: "continue" });
+    await processWorkflowJob(state.id, state.userId, "new-worker");
+    expect(mocks.analyze.mock.calls[0][1].reusePreviousResults).toBe(true);
+  });
+
   it("clears artifacts for pending steps after a queue submission failure", async () => {
     state.steps[0].status = "pending";
     await retryWorkflowRun(state.userId, state.id);

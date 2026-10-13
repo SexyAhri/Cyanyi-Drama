@@ -105,7 +105,7 @@ export function RuntimeSettingsPanel({
         description={copy.settingsRuntimeRequestsDescription}
         title={copy.settingsRuntimeRequests}
       >
-        <div className="grid items-start gap-4 sm:grid-cols-2">
+        <div className="grid max-w-xl items-start gap-4">
           <NumberField
             disabled={loading || saving}
             hint={copy.settingsStructuredTimeoutHint}
@@ -135,15 +135,6 @@ export function RuntimeSettingsPanel({
         title={copy.settingsWorkflowExecution}
       >
         <div className="grid items-start gap-4 sm:grid-cols-2">
-          <NumberField
-            disabled={loading || saving}
-            hint={copy.settingsWorkflowConcurrencyHint}
-            label={copy.settingsWorkflowConcurrency}
-            max={8}
-            min={1}
-            onChange={(value) => update("workflowConcurrency", value)}
-            value={settings.workflowConcurrency}
-          />
           <NumberField
             disabled={loading || saving}
             hint={copy.settingsClipMaxCharsHint}

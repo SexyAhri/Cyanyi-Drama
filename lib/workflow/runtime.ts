@@ -209,16 +209,20 @@ async function processClaimedWorkflowJob(
     const productionConfiguration = savedConfiguration.success ? savedConfiguration.data
       : await resolveProductionConfiguration(userId, { projectId: run.projectId, episodeId: run.episodeId ?? undefined });
     if (!savedConfiguration.success) {
-      const frozenInput = { ...(isRecord(run.input) ? run.input : {}), productionConfiguration };
+      const frozenInput = {
+        ...(isRecord(run.input) ? run.input : {}),
+        concurrency:
+          getNumber(isRecord(run.input) ? run.input.concurrency : undefined) ??
+          productionConfiguration.workflow.concurrency,
+        productionConfiguration,
+      };
       const frozen = await prisma.workflowRun.updateMany({ where: { id: runId, leaseOwner: workerId }, data: { input: toInputJson(frozenInput) } });
       if (!frozen.count) throw new WorkflowControlError("lease_lost", runId);
       run.input = toInputJson(frozenInput) as Prisma.JsonValue;
     }
     const output = await withProductionConfiguration(userId, productionConfiguration, () => runStep(userId, run, step, {
       attempt: attemptNumber,
-      reusePreviousResults: !run.events.some(event =>
-        isRecord(event.payload) && event.payload.retryMode === "restart" &&
-        parseStringArray(event.payload.resetKeys ?? null).includes(step.stepKey)),
+      reusePreviousResults: shouldReusePreviousResults(run.events, step.stepKey),
       assertActive: () => assertWorkflowRunActive({ runId, workerId }),
       persistArtifact: (artifactType, refId, payload) =>
         persistIncrementalArtifact({
@@ -993,6 +997,16 @@ function findRunnableStep<
 
 function isRecord(value: unknown): value is Record<string, Prisma.JsonValue> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function shouldReusePreviousResults(
+  events: Array<{ payload: Prisma.JsonValue | null }>,
+  stepKey: string,
+) {
+  const retry = events.find((event) =>
+    isRecord(event.payload) &&
+    parseStringArray(event.payload.resetKeys ?? null).includes(stepKey),
+  );
+  return !retry || !isRecord(retry.payload) || retry.payload.retryMode !== "restart";
 }
 function getString(value: Prisma.JsonValue | undefined) {
   return typeof value === "string" ? value : undefined;

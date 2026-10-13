@@ -31,9 +31,8 @@ export async function POST(request: Request, context: Context) {
     ? body.steps.filter(isStep)
     : [];
   const template = workflowType ? getWorkflowTemplate(workflowType) : null;
-  const steps = (explicitSteps.length
-    ? explicitSteps
-    : (template?.steps ?? [])
+  const steps = (
+    explicitSteps.length ? explicitSteps : (template?.steps ?? [])
   ).map((step) => ({
     ...step,
     maxAttempts: explicitSteps.length
@@ -62,12 +61,16 @@ export async function POST(request: Request, context: Context) {
       targetId: typeof body.targetId === "string" ? body.targetId : undefined,
       input: {
         ...(isRecord(body.input) ? body.input : {}),
-        concurrency:
-          isRecord(body.input) &&
-          typeof body.input.concurrency === "number" &&
-          Number.isFinite(body.input.concurrency)
-            ? Math.max(1, Math.min(8, Math.floor(body.input.concurrency)))
-            : runtimeSettings.workflowConcurrency,
+        ...(isRecord(body.input) &&
+        typeof body.input.concurrency === "number" &&
+        Number.isFinite(body.input.concurrency)
+          ? {
+              concurrency: Math.max(
+                1,
+                Math.min(8, Math.floor(body.input.concurrency)),
+              ),
+            }
+          : {}),
       },
       steps,
     });

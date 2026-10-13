@@ -123,8 +123,6 @@ export type ShellCopy = {
   settingsStreamingDisabled: string;
   settingsWorkflowExecution: string;
   settingsWorkflowExecutionDescription: string;
-  settingsWorkflowConcurrency: string;
-  settingsWorkflowConcurrencyHint: string;
   settingsClipMaxChars: string;
   settingsClipMaxCharsHint: string;
   settingsRuntimeLoadError: string;
@@ -323,11 +321,9 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsStructuredStreaming: "Response mode",
     settingsStreamingEnabled: "Streaming",
     settingsStreamingDisabled: "Non-streaming",
-    settingsWorkflowExecution: "Workflow execution",
+    settingsWorkflowExecution: "Script segmentation",
     settingsWorkflowExecutionDescription:
-      "Shared defaults for task concurrency and content segmentation.",
-    settingsWorkflowConcurrency: "Default concurrency",
-    settingsWorkflowConcurrencyHint: "1-8 clips processed at the same time.",
+      "Maximum source characters per screenplay segment.",
     settingsClipMaxChars: "Clip character limit",
     settingsClipMaxCharsHint: "400-4000 source characters per screenplay clip.",
     settingsRuntimeLoadError: "Failed to load runtime settings.",
@@ -524,11 +520,9 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsStructuredStreaming: "响应模式",
     settingsStreamingEnabled: "流式响应",
     settingsStreamingDisabled: "非流式响应",
-    settingsWorkflowExecution: "工作流执行",
+    settingsWorkflowExecution: "剧本分段",
     settingsWorkflowExecutionDescription:
-      "统一控制任务并发和内容分段，新旧入口不再各自保存默认值。",
-    settingsWorkflowConcurrency: "默认并发数",
-    settingsWorkflowConcurrencyHint: "同时处理 1-8 个剧本片段。",
+      "设置每段剧本来源文本的字符数上限。",
     settingsClipMaxChars: "剧本分段字符上限",
     settingsClipMaxCharsHint: "每段原文 400-4000 字符。",
     settingsRuntimeLoadError: "运行设置加载失败。",

@@ -96,7 +96,9 @@ export function StoryboardWorkspace({
   const copy = getStudioCopy(locale);
   const cacheRevision = useStudioCacheRevision();
   const cacheUrl = `/api/projects/${encodeURIComponent(snapshot.project.id)}/episodes/${encodeURIComponent(episode.id)}/storyboard`;
-  const [data, setData] = useState<StudioStoryboardData | null>(() => peekStudioCache<StudioStoryboardData>(cacheUrl) ?? null);
+  const [data, setData] = useState<StudioStoryboardData | null>(
+    () => peekStudioCache<StudioStoryboardData>(cacheUrl) ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(() => !peekStudioCache(cacheUrl));
   const [isActing, setIsActing] = useState(false);
@@ -177,9 +179,14 @@ export function StoryboardWorkspace({
   const isPackageSceneDraft = isPackageSceneDraftModel(panels);
   const selectedPanel =
     panels.find((panel) => panel.id === selectedPanelId) ?? panels[0];
-  const durationSeconds = Math.round(panels.reduce((sum, panel) => sum + (panel.durationSeconds ?? 0), 0) * 10) / 10;
+  const durationSeconds =
+    Math.round(
+      panels.reduce((sum, panel) => sum + (panel.durationSeconds ?? 0), 0) * 10,
+    ) / 10;
   const targetSeconds = snapshot.project.config.episodeTargetDurationSeconds;
-  const missingDurations = panels.filter(panel => !panel.durationSeconds).length;
+  const missingDurations = panels.filter(
+    (panel) => !panel.durationSeconds,
+  ).length;
   const showProgress =
     !!data?.progress &&
     (progressActive ||
@@ -360,12 +367,27 @@ export function StoryboardWorkspace({
             <h1 className="break-keep text-xl font-semibold">
               {copy.storyboardWorkspace}
             </h1>
-            {workflow && ["queued", "running", "paused", "canceling"].includes(workflow.status) ? (
-              <StatusIndicator locale={locale} status={runtimeStatusToStageStatus(workflow.status)} />
+            {workflow &&
+            ["queued", "running", "paused", "canceling"].includes(
+              workflow.status,
+            ) ? (
+              <StatusIndicator
+                locale={locale}
+                status={runtimeStatusToStageStatus(workflow.status)}
+              />
             ) : panels.length > 0 ? (
-              <Badge variant="outline">{data?.storyboard?.status === "ready"
-                ? (locale === "en" ? "Confirmed" : "已确认") : (locale === "en" ? "Draft awaiting review" : "草案待确认")}</Badge>
-            ) : <StatusIndicator locale={locale} status="not_started" />}
+              <Badge variant="outline">
+                {data?.storyboard?.status === "ready"
+                  ? locale === "en"
+                    ? "Confirmed"
+                    : "已确认"
+                  : locale === "en"
+                    ? "Draft awaiting review"
+                    : "草案待确认"}
+              </Badge>
+            ) : (
+              <StatusIndicator locale={locale} status="not_started" />
+            )}
           </div>
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -427,8 +449,12 @@ export function StoryboardWorkspace({
             onClick={() => void savePanels(panels, "ready")}
           >
             {isPackageSceneDraft
-              ? locale === "zh-CN" ? "保留场景草稿并继续制作" : "Use scene drafts as-is"
-              : locale === "zh-CN" ? "已检查，确认分镜" : "Confirm reviewed storyboard"}
+              ? locale === "zh-CN"
+                ? "保留场景草稿并继续制作"
+                : "Use scene drafts as-is"
+              : locale === "zh-CN"
+                ? "已检查，确认分镜"
+                : "Confirm reviewed storyboard"}
           </Button>
         </div>
       ) : null}
@@ -438,18 +464,28 @@ export function StoryboardWorkspace({
       />
       {panels.length > 0 && (
         <div className="shrink-0 space-y-2 border-b py-3 text-xs">
-          <p>{isPackageSceneDraft
-            ? locale === "en"
-              ? `${panels.length} scene drafts · ${durationSeconds}s / ${targetSeconds}s target · not yet expanded into final shots`
-              : `${panels.length} 个场景草稿 · ${durationSeconds} 秒 / 目标 ${targetSeconds} 秒 · 尚未拆成正式镜头`
-            : locale === "en"
-              ? `${panels.length} shots · ${durationSeconds}s planned / ${targetSeconds}s target${missingDurations ? ` · ${missingDurations} shots need duration` : ""}`
-              : `${panels.length} 个镜头 · 已知时长 ${durationSeconds} 秒 / 目标 ${targetSeconds} 秒${missingDurations ? ` · ${missingDurations} 镜尚未设置时长` : ""}`}</p>
+          <p>
+            {isPackageSceneDraft
+              ? locale === "en"
+                ? `${panels.length} scene drafts · ${durationSeconds}s / ${targetSeconds}s target · not yet expanded into final shots`
+                : `${panels.length} 个场景草稿 · ${durationSeconds} 秒 / 目标 ${targetSeconds} 秒 · 尚未拆成正式镜头`
+              : locale === "en"
+                ? `${panels.length} shots · ${durationSeconds}s planned / ${targetSeconds}s target${missingDurations ? ` · ${missingDurations} shots need duration` : ""}`
+                : `${panels.length} 个镜头 · 已知时长 ${durationSeconds} 秒 / 目标 ${targetSeconds} 秒${missingDurations ? ` · ${missingDurations} 镜尚未设置时长` : ""}`}
+          </p>
           {durationSeconds > targetSeconds && (
             <Alert>
               <TriangleAlert />
-              <AlertTitle>{locale === "en" ? `Episode exceeds target by ${Math.round((durationSeconds - targetSeconds) * 10) / 10}s` : `整集超出目标 ${Math.round((durationSeconds - targetSeconds) * 10) / 10} 秒`}</AlertTitle>
-              <AlertDescription>{locale === "en" ? "Review screenplay length and redundant reaction shots before producing media, or increase the target duration. Preserve dialogue and natural speech speed." : "制作媒体前请核对剧本长度与重复反应镜头，或提高目标时长。保留原文对白和自然语速，不能只按镜头数量压缩。"}</AlertDescription>
+              <AlertTitle>
+                {locale === "en"
+                  ? `Episode exceeds target by ${Math.round((durationSeconds - targetSeconds) * 10) / 10}s`
+                  : `整集超出目标 ${Math.round((durationSeconds - targetSeconds) * 10) / 10} 秒`}
+              </AlertTitle>
+              <AlertDescription>
+                {locale === "en"
+                  ? "Review screenplay length and redundant reaction shots before producing media, or increase the target duration. Preserve dialogue and natural speech speed."
+                  : "制作媒体前请核对剧本长度与重复反应镜头，或提高目标时长。保留原文对白和自然语速，不能只按镜头数量压缩。"}
+              </AlertDescription>
             </Alert>
           )}
         </div>
@@ -476,7 +512,11 @@ export function StoryboardWorkspace({
         ) : !panels.length ? (
           <div className="flex min-h-96 flex-col items-center justify-center gap-3 border-b text-center text-muted-foreground">
             <Clapperboard className="size-6" />
-            <p className="max-w-md text-sm leading-6">{locale === "en" ? "No storyboard material is available for this episode. Adopt an original package or organize the screenplay first." : "本集尚无分镜内容。原创剧本采用后会接入已有场景与提示词；只有大纲的剧集需先完成正文。"}</p>
+            <p className="max-w-md text-sm leading-6">
+              {locale === "en"
+                ? "No storyboard material is available for this episode. Adopt an original package or organize the screenplay first."
+                : "本集尚无分镜内容。原创剧本采用后会接入已有场景与提示词；只有大纲的剧集需先完成正文。"}
+            </p>
           </div>
         ) : (
           <div className="grid min-h-152 border-b lg:grid-cols-[15rem_minmax(0,1fr)] xl:min-h-0 xl:flex-1 xl:overflow-hidden">
@@ -484,7 +524,9 @@ export function StoryboardWorkspace({
               <div className="flex h-11 items-center justify-between border-b px-3">
                 <h2 className="text-xs font-semibold">
                   {isPackageSceneDraft
-                    ? locale === "en" ? "Scene drafts" : "场景草稿"
+                    ? locale === "en"
+                      ? "Scene drafts"
+                      : "场景草稿"
                     : copy.storyboardPanels}
                 </h2>
                 <Badge variant="secondary">{panels.length}</Badge>
@@ -558,10 +600,7 @@ export function StoryboardWorkspace({
           </div>
         )}
       </div>
-      <AlertDialog
-        onOpenChange={setReplanConfirmOpen}
-        open={replanConfirmOpen}
-      >
+      <AlertDialog onOpenChange={setReplanConfirmOpen} open={replanConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -762,7 +801,7 @@ function PanelDetails({
       </header>
 
       <Tabs
-        className="min-h-[34rem] pt-3 xl:min-h-0 xl:flex-1 xl:overflow-hidden"
+        className="min-h-136 pt-3 xl:min-h-0 xl:flex-1 xl:overflow-hidden"
         defaultValue="overview"
         key={panel.id}
       >
@@ -1295,6 +1334,15 @@ function WorkflowButtons({
       <div className="flex gap-2">
         <Button
           disabled={disabled}
+          onClick={() => onAction("resume")}
+          size="sm"
+          variant="outline"
+        >
+          <Play className="size-4" />
+          {copy.continueWorkflow}
+        </Button>
+        <Button
+          disabled={disabled}
           onClick={() => onAction("retry")}
           size="sm"
           variant="outline"
@@ -1310,7 +1358,12 @@ function WorkflowButtons({
     );
   }
   return (
-    <Button disabled={disabled} onClick={onStart} size="sm" variant={hasWorkflow ? "outline" : "default"}>
+    <Button
+      disabled={disabled}
+      onClick={onStart}
+      size="sm"
+      variant={hasWorkflow ? "outline" : "default"}
+    >
       {disabled ? (
         <LoaderCircle className="size-4 animate-spin" />
       ) : hasWorkflow ? (
@@ -1320,9 +1373,15 @@ function WorkflowButtons({
       )}
       {hasWorkflow
         ? isPackageSceneDraft
-          ? locale === "en" ? "Run shared AI director" : "用统一 AI 导演拆成正式镜头"
-          : locale === "en" ? "Replan with shared AI director" : "用统一 AI 导演重新拆镜"
-        : locale === "en" ? "Start shared AI director" : "开始统一导演拆镜"}
+          ? locale === "en"
+            ? "Run shared AI director"
+            : "用统一 AI 导演拆成正式镜头"
+          : locale === "en"
+            ? "Replan with shared AI director"
+            : "用统一 AI 导演重新拆镜"
+        : locale === "en"
+          ? "Start shared AI director"
+          : "开始统一导演拆镜"}
     </Button>
   );
 }
