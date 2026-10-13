@@ -421,6 +421,7 @@ function buildTemplateVariables(
   variables.size = stringValue(request.size) ?? "";
   variables.resolution = stringValue(request.resolution) ?? "";
   variables.duration = jsonValue(request.duration) ?? null;
+  variables.generate_audio = request.audioMode !== "none";
   variables.task_id ??= "";
   variables.api_key = stringValue(request.api_key) ?? "";
   return variables;

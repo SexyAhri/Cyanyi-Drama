@@ -13,7 +13,7 @@ import { prisma } from "@/lib/server/prisma";
 import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { withProductionRules } from "@/lib/prompts/production-rules";
-import { lockSilentVideoPerformance } from "./director-prompt-locks";
+import { lockVideoAudioPerformance } from "./director-prompt-locks";
 
 export type StoryboardMediaPromptKind = "image" | "video";
 export type StoryboardVideoMode = "reference" | "first-last";
@@ -157,7 +157,7 @@ export async function designStoryboardMediaPrompt(input: {
     temperature: 0.35,
   });
   const design = parseStoryboardMediaPromptDesignText(result.text);
-  if (input.kind === "video") design.prompt = lockSilentVideoPerformance(design.prompt, { ...panel, locale });
+  if (input.kind === "video") design.prompt = lockVideoAudioPerformance(design.prompt, { ...panel, locale });
   return {
     design,
     rawOutput: result.outputText,

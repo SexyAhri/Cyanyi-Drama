@@ -18,6 +18,7 @@ import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
 import { resolveVideoModelLimits } from "@/lib/media/video-segment-plan";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { BillingError } from "@/lib/billing/service";
+import { lockVideoAudioPerformance } from "@/lib/media/director-prompt-locks";
 
 type Context = { params: Promise<{ projectId: string; episodeId: string }> };
 const schema = z.object({
@@ -204,7 +205,8 @@ export async function POST(request: Request, context: Context) {
       )
         return reply({ message: "首尾帧模式需要同时连接首帧和尾帧" }, 400);
     }
-    const standalonePrompt = [getProjectArtStyleDirective(episode.project.config?.artStyle ?? "realistic", "zh"), compiled.prompt].filter(Boolean).join("\n\n");
+    const rawStandalonePrompt = [getProjectArtStyleDirective(episode.project.config?.artStyle ?? "realistic", "zh"), compiled.prompt].filter(Boolean).join("\n\n");
+    const standalonePrompt = input.kind === "video" ? lockVideoAudioPerformance(rawStandalonePrompt) : rawStandalonePrompt;
     if (input.preview)
       return reply({
         prompt: standalonePrompt,
@@ -267,7 +269,7 @@ export async function POST(request: Request, context: Context) {
           : {
               duration: mediaDefaults.videoGenerationDuration,
               videoMode: mode,
-              audioMode: "none",
+              audioMode: "full",
               format: "mp4",
             }),
         ...(compiled.referenceImages.length

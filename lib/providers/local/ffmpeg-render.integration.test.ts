@@ -16,7 +16,7 @@ const ONE_PIXEL_PNG =
 
 describe("ffmpeg timeline render", () => {
   it(
-    "drops source audio and mixes only independent sound layers",
+    "preserves native source audio, supports replacement dialogue and mixes independent layers",
     async ({ skip }) => {
       const executable = process.env.FFMPEG_PATH || ffmpegStatic;
       if (!executable || !(await canExecuteFfmpeg(executable))) {
@@ -123,7 +123,7 @@ describe("ffmpeg timeline render", () => {
           -60,
         );
 
-        const silentRender = await renderTimelineVideo({
+        const nativeRender = await renderTimelineVideo({
           specification,
           segments: [
             {
@@ -134,14 +134,32 @@ describe("ffmpeg timeline render", () => {
             },
           ],
         });
-        const silentOutputPath = join(root, "source-audio-removed.mp4");
+        const nativeOutputPath = join(root, "source-audio-preserved.mp4");
         await writeFile(
-          silentOutputPath,
-          Buffer.from(silentRender.dataUrl.split(",")[1], "base64"),
+          nativeOutputPath,
+          Buffer.from(nativeRender.dataUrl.split(",")[1], "base64"),
         );
-        expect(await detectMaxVolume(executable, silentOutputPath)).toBeLessThan(
-          -80,
+        expect(await detectMaxVolume(executable, nativeOutputPath)).toBeGreaterThan(
+          -60,
         );
+        expect(nativeRender.hasAudio).toBe(true);
+
+        const silentPath = join(root, "silent-source.mp4");
+        await execFileAsync(executable, ["-hide_banner", "-loglevel", "error", "-y", "-i", videoPath, "-map", "0:v:0", "-c:v", "copy", "-an", silentPath]);
+        const silentUrl = `data:video/mp4;base64,${(await readFile(silentPath)).toString("base64")}`;
+        const silentSegment = { url: silentUrl, panelIndex: 0, kind: "video" as const, durationSeconds: 0.6 };
+        const silentRender = await renderTimelineVideo({ specification, segments: [silentSegment] });
+        expect(silentRender.hasAudio).toBe(false);
+        await expect(renderTimelineVideo({ specification, segments: [{ ...silentSegment, requiresAudio: true }] })).rejects.toThrow("TIMELINE_RENDER_SOURCE_AUDIO_MISSING:0");
+
+        const supplemented = await renderTimelineVideo({
+          specification,
+          segments: [silentSegment, { url: `data:video/mp4;base64,${video.toString("base64")}`, panelIndex: 1, kind: "video", durationSeconds: 0.6 }],
+          audioTracks: [{ url: `data:audio/wav;base64,${ambience.toString("base64")}`, kind: "music", volume: 0 }],
+        });
+        const supplementedPath = join(root, "native-with-supplementary-track.mp4");
+        await writeFile(supplementedPath, Buffer.from(supplemented.dataUrl.split(",")[1], "base64"));
+        expect(await detectMaxVolume(executable, supplementedPath)).toBeGreaterThan(-60);
       } finally {
         await rm(root, { recursive: true, force: true });
       }

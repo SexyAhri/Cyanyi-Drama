@@ -26,6 +26,7 @@ export type MediaProviderRequest = {
   quality?: string;
   duration?: string;
   fps?: number;
+  seed?: number;
   width?: number;
   height?: number;
   aspectRatio?: string;
@@ -42,7 +43,7 @@ export type MediaProviderRequest = {
   optimizeInstructions?: boolean;
   operation?: string;
   audioAssetId?: string;
-  audioMode?: "ambient_only" | "none";
+  audioMode?: "full" | "ambient_only" | "none";
   panelId?: string;
 };
 

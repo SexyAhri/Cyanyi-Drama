@@ -2,7 +2,7 @@ import { z } from "zod";
 import { screenplayConversionSchema } from "@/lib/prompts/schemas";
 import { estimateSpeechDurationSeconds } from "@/lib/prompts/validators";
 import { MAX_STORYBOARD_SHOT_SECONDS, splitSpokenTextForShots } from "./storyboard-dialogue-timing";
-import { lockSilentVideoPerformance } from "@/lib/media/director-prompt-locks";
+import { lockVideoAudioPerformance } from "@/lib/media/director-prompt-locks";
 import { PanelProductionDesignSchema, validatePanelProductionDesign } from "@/lib/production/panel-production-design";
 
 export type DirectorScene = ReturnType<typeof buildDirectorScenes>[number];
@@ -303,9 +303,11 @@ export function directorScenePanels(
       characters: shot.characters,
       props: scene.props.filter((name) => shot.asset_names.includes(name)),
       imagePrompt: shot.image_prompt,
-      videoPrompt: lockSilentVideoPerformance(shot.video_prompt, {
+      videoPrompt: lockVideoAudioPerformance(shot.video_prompt, {
         speakingCharacter,
+        lipSyncText: speakingCharacter ? shot.speech!.text : null,
         voiceoverText,
+        voiceoverCharacter: speech?.type === "voiceover" ? speech.speaker : null,
         locale,
       }),
       durationSeconds: shot.duration_seconds,

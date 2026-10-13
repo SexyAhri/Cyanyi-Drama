@@ -144,7 +144,7 @@ describe("timeline render coverage", () => {
     ).toThrow("TIMELINE_RENDER_SUBTITLE_PANEL_MISSING:3");
   });
 
-  it("strips provider audio from every storyboard video", () => {
+  it("strips provider audio only for explicitly silent storyboard tasks", () => {
     expect(
       shouldStripProviderVideoAudio({
         kind: "video",
@@ -158,7 +158,7 @@ describe("timeline render coverage", () => {
         targetType: "storyboard_panel",
         request: { audioMode: "ambient_only" },
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       shouldStripProviderVideoAudio({
         kind: "video",
@@ -172,6 +172,11 @@ describe("timeline render coverage", () => {
         targetType: "storyboard_panel",
         request: {},
       }),
-    ).toBe(true);
+    ).toBe(false);
+    expect(shouldStripProviderVideoAudio({ kind: "video", targetType: "storyboard_panel", request: { audioMode: "full" } })).toBe(false);
+  });
+
+  it("renders source dialogue without requiring another merged voice track", () => {
+    expect(() => assertTimelineDialogueAudioCoverage(2, undefined, true)).not.toThrow();
   });
 });

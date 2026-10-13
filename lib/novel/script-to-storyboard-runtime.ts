@@ -1,4 +1,5 @@
 import { reconcileEpisodeVoiceLines } from "@/lib/voice/reconcile";
+import { lockVideoAudioPerformance } from "@/lib/media/director-prompt-locks";
 import { createHash } from "node:crypto";
 
 import { screenplayConversionSchema } from "@/lib/prompts/schemas";
@@ -561,6 +562,8 @@ export function buildSceneStoryboardPanels(
           props,
           action: beatAction,
           speakingCharacter: dialogue?.speaker,
+          lipSyncText: dialogue?.text,
+          voiceoverText: voiceovers[beatIndex],
           durationSeconds,
           startState: stateBody(startState),
           endState: stateBody(endState),
@@ -737,24 +740,26 @@ function buildVideoPrompt(context: SceneStoryboardContext, facts: PromptFacts) {
           `Continue from the reference frame for ${facts.durationSeconds} seconds, carrying the pose, gaze, and motion into this shot.`,
           `Visible action: ${facts.action}`,
           facts.speakingCharacter &&
-            `During this shot, ${facts.speakingCharacter} speaks with natural facial and mouth movement; the others listen or react. The recorded voice and precise lip sync are added later.`,
+            `During this shot, ${facts.speakingCharacter} speaks with natural facial and mouth movement; the others listen or react.`,
           `End state: ${facts.endState}`,
           `Camera: ${facts.camera || fixedCamera(context.locale)}. Let the framing follow the action smoothly.`,
           facts.visualEffects &&
             `Effect synchronized to the action: ${facts.visualEffects}`,
-          "Keep contact, weight, breathing, gaze, and reactions continuous. Silent footage; no on-screen text.",
+          facts.soundEffects && `Synchronized sound effects: ${facts.soundEffects}`,
+          "Keep contact, weight, breathing, gaze, and reactions continuous. No on-screen text.",
         ]
       : [
           `从参考画面自然承接 ${facts.durationSeconds} 秒，延续人物姿态、视线和动作趋势。`,
           `可见动作：${facts.action}`,
           facts.speakingCharacter &&
-            `本镜由${facts.speakingCharacter}说话，面部与嘴部自然活动；其他人物倾听或回应。录音和精确口型在后期加入。`,
+            `本镜由${facts.speakingCharacter}说话，面部与嘴部自然活动；其他人物倾听或回应。`,
           `结束状态：${facts.endState}`,
           `摄影机：${facts.camera || fixedCamera(context.locale)}；随动作平顺调整构图。`,
           facts.visualEffects && `随动作同步出现的效果：${facts.visualEffects}`,
-          "保持接触、重量、呼吸、视线和人物反应的连续性。输出无声画面，不生成画面文字。",
+          facts.soundEffects && `同步音效：${facts.soundEffects}`,
+          "保持接触、重量、呼吸、视线和人物反应的连续性。不生成画面文字。",
         ];
-  return values.filter(Boolean).join("\n");
+  return lockVideoAudioPerformance(values.filter(Boolean).join("\n"), { ...facts, locale: context.locale });
 }
 
 type PromptFacts = {
@@ -765,6 +770,8 @@ type PromptFacts = {
   props: string[];
   action: string;
   speakingCharacter?: string;
+  lipSyncText?: string;
+  voiceoverText?: string;
   durationSeconds: number;
   startState: string;
   endState: string;

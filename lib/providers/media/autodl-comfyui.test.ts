@@ -16,6 +16,28 @@ beforeEach(() => {
 });
 
 describe("AutoDL ComfyUI media provider", () => {
+  it.each([
+    ["480p", "9:16", "480p竖"], ["480p", "16:9", "480p横"], ["480p", "1:1", "480p(1:1)"],
+    ["768p", "9:16", "768p竖"], ["768p", "16:9", "768p横"], ["768p", "1:1", "768p(1:1)"],
+    ["1080p", "16:9", "768p横"],
+  ])("matches H3 15s documented parameters for %s %s", async (resolution, ratio, expected) => {
+    fetchWithProviderRetry
+      .mockResolvedValueOnce(Response.json({ code: "Success", data: { task_id: "h3-task" } }))
+      .mockResolvedValueOnce(Response.json({ code: "Success", data: { status: "completed", results: [{ url: "https://cdn.test/video.mp4", type: "video", file_type: "mp4" }] } }));
+    const images = Array.from({ length: 9 }, (_, index) => ({ url: `https://cdn.test/${index}.png` }));
+    await autoDlComfyUiMediaProvider.generate({
+      protocol: "autodl-comfyui", providerKey: "autodl", baseUrl: "https://autodl.art/api/v1", apiKey: "test", kind: "video",
+      model: "minimax_h3_lightx2v_v5_15s",
+      request: { prompt: "甲说：“走吧。”，口型同步；环境声自然。", duration: "15s", seed: 123, ratio, resolution, audioMode: "full", referenceImages: images },
+    });
+    expect(fetchWithProviderRetry.mock.calls[0][0]).toBe("https://autodl.art/api/v1/comfyui/comfyui_workflow/minimax_h3_lightx2v_v5_15s");
+    expect(JSON.parse(fetchWithProviderRetry.mock.calls[0][1].body as string)).toEqual({
+      prompt: "甲说：“走吧。”，口型同步；环境声自然。", duration: 15, seed: 123, resolution: expected,
+      ...Object.fromEntries(images.map((image, index) => [`ref_image_${index}`, image.url])),
+    });
+    expect(fetchWithProviderRetry.mock.calls[1][0]).toBe("https://autodl.art/api/v1/comfyui/comfyui_workflow/result/h3-task");
+  });
+
   it("submits and polls an H3 multi-reference workflow with raw token auth", async () => {
     fetchWithProviderRetry
       .mockResolvedValueOnce(

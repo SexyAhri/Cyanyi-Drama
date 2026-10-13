@@ -22,6 +22,7 @@ export interface TimelineSegment {
   durationSeconds?: number;
   sourceStartSeconds?: number;
   volume?: number;
+  requiresAudio?: boolean;
   transition?: "cut" | "fade";
   transitionDurationSeconds?: number;
 }
@@ -73,6 +74,7 @@ export async function renderTimelineVideo(opts: RenderTimelineOptions) {
   await mkdir(root, { recursive: true });
   try {
     const inputPaths: string[] = [];
+    let hasSourceAudio = false;
     for (let index = 0; index < segments.length; index += 1) {
       const seg = segments[index];
       const ext = guessMediaExt(seg.storageKey ?? seg.url ?? "", seg.kind);
@@ -87,12 +89,17 @@ export async function renderTimelineVideo(opts: RenderTimelineOptions) {
         outputPath: sourcePath,
         errorCode: `TIMELINE_RENDER_DOWNLOAD_FAILED:${seg.panelIndex}`,
       });
+      const segmentHasAudio = seg.kind !== "image" && await hasAudioStream(sourcePath);
+      hasSourceAudio ||= segmentHasAudio && seg.volume !== 0;
+      if (seg.requiresAudio && (!segmentHasAudio || seg.volume === 0))
+        throw new Error(`TIMELINE_RENDER_SOURCE_AUDIO_MISSING:${seg.panelIndex}`);
       await executeFfmpeg(
         buildNormalizeSegmentArgs(
           sourcePath,
           normalizedPath,
           seg,
           specification,
+          segmentHasAudio,
         ),
       );
       inputPaths.push(normalizedPath);
@@ -169,6 +176,7 @@ export async function renderTimelineVideo(opts: RenderTimelineOptions) {
     return {
       dataUrl: `data:video/mp4;base64,${bytes.toString("base64")}`,
       specification,
+      hasAudio: hasSourceAudio || !!audioPath || audioTracks.length > 0,
     };
   } finally {
     await rm(root, { recursive: true, force: true }).catch(() => undefined);
@@ -202,6 +210,7 @@ export function buildNormalizeSegmentArgs(
   outputPath: string,
   segment: TimelineSegment,
   specification: RenderSpecification,
+  hasSourceAudio = false,
 ) {
   const duration = segment.durationSeconds ?? specification.imageDurationSeconds;
   const args = ["-hide_banner", "-loglevel", "error", "-y"];
@@ -254,7 +263,7 @@ export function buildNormalizeSegmentArgs(
     "-map",
     "0:v:0",
     "-map",
-    "1:a:0",
+    hasSourceAudio ? "0:a:0" : "1:a:0",
     "-vf",
     filters.join(","),
     "-c:v",
@@ -342,7 +351,7 @@ export function buildConcatFfmpegArgs(
     const totalDuration = Math.max(0.001, durationSeconds);
     base.push(
       "-filter_complex",
-      buildAudioMixFilter(audioTracks, totalDuration, specification.audioSampleRate),
+      buildAudioMixFilter(audioTracks, totalDuration, specification.audioSampleRate, !audioTracks.some((track) => track.kind === "dialogue")),
       ...videoArgs,
       "-c:a",
       specification.audioCodec,
@@ -382,12 +391,17 @@ export function buildAudioMixFilter(
   tracks: readonly MaterializedTimelineAudioTrack[],
   durationSeconds: number,
   sampleRate = 48_000,
+  includeSourceAudio = false,
 ) {
   if (!tracks.length) throw new Error("TIMELINE_AUDIO_TRACKS_EMPTY");
   const totalDuration = Math.max(0.001, durationSeconds);
   const filters: string[] = [];
   const dialogueLabels: string[] = [];
   const bedLabels: string[] = [];
+  if (includeSourceAudio) {
+    filters.push(`[0:a:0]aresample=${sampleRate},aformat=sample_rates=${sampleRate}:channel_layouts=stereo,apad,atrim=duration=${totalDuration.toFixed(3)}[source_audio]`);
+    dialogueLabels.push("[source_audio]");
+  }
 
   tracks.forEach((track, index) => {
     const start = clampAudioTime(track.startSeconds ?? 0, totalDuration);
@@ -539,6 +553,21 @@ function guessMediaExt(url: string, kind?: "image" | "video") {
   )
     return ext;
   return kind === "image" ? "png" : "mp4";
+}
+
+async function hasAudioStream(inputPath: string) {
+  for (const executable of resolveFfmpegExecutables()) {
+    try {
+      await execFileAsync(executable, ["-hide_banner", "-i", inputPath], { timeout: 30_000, windowsHide: true });
+    } catch (error) {
+      if (isMissingExecutable(error)) continue;
+      // FFmpeg's input inspection exits with code 1 because no output is requested.
+      const stderr = error && typeof error === "object" && "stderr" in error ? String(error.stderr) : "";
+      if (/Stream #.*Video:/u.test(stderr)) return /Stream #.*Audio:/u.test(stderr);
+      throw error;
+    }
+  }
+  throw new Error("FFMPEG_NOT_FOUND");
 }
 
 async function executeFfmpeg(args: string[]) {

@@ -209,10 +209,12 @@ describe("scene storyboard runtime", () => {
       lipSyncText: "我一定要变强。",
     });
     expect(panels[0].videoPrompt).toContain("从参考画面自然承接 5 秒");
-    expect(panels[0].videoPrompt).toContain("输出无声画面");
+    expect(panels[0].videoPrompt).toContain("生成完整声画视频");
     expect(panels[0].videoPrompt).not.toContain("嘴部自然闭合");
     expect(panels[0].videoPrompt).not.toContain("我一定要变强");
-    expect(panels[0].videoPrompt).not.toContain("凛冽寒风");
+    expect(panels.map((panel) => panel.videoPrompt).join("\n")).toContain("凛冽寒风");
+    expect(panels[2].videoPrompt).toContain("我一定要变强。");
+    expect(panels.filter((panel) => panel.voiceoverText)[0].videoPrompt).toContain("寒夜见证少年的坚持。");
     expect(panels.filter((panel) => panel.voiceoverText)).toHaveLength(1);
     expect(panels.flatMap((panel) => panel.vfxCues)).toEqual([
       expect.objectContaining({ description: "稀薄劲气环绕双臂。" }),

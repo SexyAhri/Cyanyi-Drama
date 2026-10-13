@@ -58,6 +58,7 @@ describe("render specification", () => {
         volume: 0.75,
       },
       specification,
+      true,
     );
     const image = buildNormalizeSegmentArgs(
       "input.png",
@@ -105,9 +106,15 @@ describe("render specification", () => {
     expect(concatArgs[concatArgs.indexOf("-filter_complex") + 1]).not.toContain(
       "[0:a:0]",
     );
-    expect(video).toEqual(expect.arrayContaining(["-map", "1:a:0"]));
-    expect(video).not.toContain("0:a:0");
+    expect(video).toEqual(expect.arrayContaining(["-map", "0:a:0"]));
+    expect(image).toEqual(expect.arrayContaining(["-map", "1:a:0"]));
     expect(video).not.toContain("-an");
+  });
+
+  it("mixes source dialogue with supplementary sound tracks", () => {
+    const args = buildConcatFfmpegArgs("inputs.txt", null, "output.mp4", normalizeRenderSpecification(), null, [{ path: "music.wav", kind: "music" }], 8);
+    expect(args[args.indexOf("-filter_complex") + 1]).toContain("[0:a:0]");
+    expect(args[args.indexOf("-filter_complex") + 1]).toContain("[1:a:0]");
   });
 
   it("mixes independent sound layers and ducks them under dialogue", () => {

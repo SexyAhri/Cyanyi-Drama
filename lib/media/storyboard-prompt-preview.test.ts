@@ -126,7 +126,7 @@ describe("storyboard prompt preview", () => {
     );
   });
 
-  it("previews the exact video prompt and only blocks a missing reference frame", async () => {
+  it("previews the audiovisual contract and only blocks a missing reference frame", async () => {
     const preview = await previewStoryboardPanelPrompt({
       userId: "user-1",
       projectId: "project-1",
@@ -142,20 +142,21 @@ describe("storyboard prompt preview", () => {
     expect(preview.issues.map((issue) => issue.code)).toEqual([
       "missing_reference_frame",
     ]);
-    expect(preview.submissionMode).toBe("verbatim");
+    expect(preview.submissionMode).toBe("compiled");
     expect(preview.basePrompt).toBe("林玄后退一步");
-    expect(preview.compiledPrompt).toBe(preview.basePrompt);
-    expect(preview.finalPrompt).toBe(preview.basePrompt);
+    expect(preview.compiledPrompt).toContain(preview.basePrompt);
+    expect(preview.finalPrompt).toBe(preview.compiledPrompt);
+    expect(preview.finalPrompt).toContain("生成完整声画视频");
     expect(preview.safetyRewrites).toEqual([]);
     expect(preview.sources).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           key: "submission_mode",
-          value: "场次完整视频提示词原样提交",
+          value: "完整视频提示词与镜头声音一起提交",
         }),
         expect.objectContaining({
           key: "audio_mode",
-          value: "关闭（audioMode=none，声音由后期独立合成）",
+          value: "开启（对白 / 画外音 / 心声 / 环境声 / 音效；字幕后期合成）",
         }),
       ]),
     );
@@ -167,7 +168,7 @@ describe("storyboard prompt preview", () => {
     );
   });
 
-  it("does not rewrite the designed video prompt during preview", async () => {
+  it("preserves the visual design when adding sound during preview", async () => {
     mocks.storyboardPanelFindFirst.mockResolvedValue({
       ...panel(),
       description: "窗外左侧自然光照亮木桌",
@@ -195,8 +196,8 @@ describe("storyboard prompt preview", () => {
     expect(preview.basePrompt).toBe(
       "weather=晴；keyLightSource=窗外日光；人物转身",
     );
-    expect(preview.compiledPrompt).toBe(preview.basePrompt);
-    expect(preview.finalPrompt).toBe(preview.basePrompt);
+    expect(preview.compiledPrompt).toContain(preview.basePrompt);
+    expect(preview.finalPrompt).toBe(preview.compiledPrompt);
     expect(preview.referenceCount).toBe(1);
     expect(preview.sources).toEqual(
       expect.arrayContaining([
@@ -208,12 +209,19 @@ describe("storyboard prompt preview", () => {
     );
   });
 
-  it("submits the designed video prompt unchanged with silent model audio", async () => {
+  it("previews and submits the same complete sound contract despite legacy silence instructions", async () => {
     const exactPrompt =
       "深冬夜晚，韩宇从参考图姿态起身，镜头缓慢横移；不生成可辨识人声。";
     mocks.storyboardPanelFindFirst.mockResolvedValue({
       ...panel(),
       videoPrompt: exactPrompt,
+      speakingCharacter: "韩宇",
+      lipSyncText: "我们走吧。",
+      voiceLines: [
+        { speaker: "韩宇", content: "我们走吧。", delivery: "dialogue" },
+        { speaker: "韩宇", content: "这一次我一定要成功。", delivery: "inner_monologue" },
+        { speaker: "旁白", content: "夜色渐深。", delivery: "voiceover" },
+      ],
       imageAsset: {
         url: "data:image/png;base64,AQID",
         storageKey: null,
@@ -225,31 +233,53 @@ describe("storyboard prompt preview", () => {
       },
     });
 
-    await createStoryboardPanelVideoTask({
+    const input = {
       userId: "user-1",
       projectId: "project-1",
       episodeId: "episode-1",
       panelId: "panel-1",
       channelId: "channel-1",
       model: "video-model",
-      mode: "reference",
+      mode: "reference" as const,
       ratio: "9:16",
       resolution: "1080p",
       duration: "10s",
-    });
+    };
+    const preview = await previewStoryboardPanelPrompt({ ...input, kind: "video" });
+    await createStoryboardPanelVideoTask(input);
 
     const task = mocks.taskCreate.mock.calls[0][0];
     expect(task.request).toMatchObject({
-      prompt: exactPrompt,
-      audioMode: "none",
+      prompt: preview.finalPrompt,
+      audioMode: "full",
       duration: "10s",
       ratio: "9:16",
       resolution: "1080p",
       videoMode: "reference",
     });
+    expect(task.request.prompt).not.toContain("不生成可辨识人声");
+    expect(task.request.prompt).toContain("我们走吧。");
+    expect(task.request.prompt).toContain("心声／内心独白");
+    expect(task.request.prompt).toContain("这一次我一定要成功。");
+    expect(task.request.prompt).toContain("夜色渐深。");
+    expect(task.request.prompt).toContain("不生成字幕");
     expect(task.request.referenceImages).toEqual([
       expect.objectContaining({ role: "first_frame" }),
     ]);
+  });
+
+  it("shows the actual H3 15-second resolution instead of unsupported 1080p", async () => {
+    mocks.channelFindFirst.mockResolvedValue({
+      protocol: "autodl-comfyui", models: [{ capabilitiesJson: "{}" }],
+    });
+    const preview = await previewStoryboardPanelPrompt({
+      userId: "user-1", projectId: "project-1", episodeId: "episode-1", panelId: "panel-1",
+      kind: "video", channelId: "channel-1", model: "minimax_h3_lightx2v_v5_15s",
+      ratio: "16:9", resolution: "1080p", duration: "15s",
+    });
+    expect(preview.maxDurationSeconds).toBe(15);
+    expect(preview.sources).toContainEqual({ key: "output", label: "输出规格", value: "16:9 · 768p横" });
+    expect(preview.segments).toHaveLength(1);
   });
 
   it("generates storyboard first frames in the configured video ratio", async () => {

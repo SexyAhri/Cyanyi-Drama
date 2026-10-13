@@ -141,6 +141,7 @@ async function buildVideoBody(
     prompt: request.prompt?.trim() ?? "",
     duration,
     resolution: autoDlResolution(workflow, request.ratio, request.resolution),
+    ...(Number.isInteger(request.seed) ? { seed: request.seed } : {}),
   };
   if (!base.prompt) throw new Error("AUTODL_VIDEO_PROMPT_REQUIRED");
   if (
@@ -151,6 +152,8 @@ async function buildVideoBody(
   if (workflow.kind === "text-video") return base;
 
   const references = request.referenceImages ?? [];
+  if (references.length > (workflow.maxReferenceImages ?? 0))
+    throw new Error(`AUTODL_REFERENCE_IMAGE_LIMIT:${workflow.id}:${workflow.maxReferenceImages ?? 0}`);
   const referenceUrls = await localReferencesAsDataUrls(references);
   if (workflow.kind === "first-last-video") {
     const firstFrameIndex = references.findIndex(
@@ -212,7 +215,7 @@ async function buildTtsBody(request: MediaProviderRequest) {
   };
 }
 
-function autoDlResolution(
+export function autoDlResolution(
   workflow: AutoDlWorkflowDefinition,
   ratio?: string,
   requested?: string,

@@ -1927,8 +1927,8 @@ export function CanvasWorkspace({
           <DialogTitle>{t("生成前审核", "Review generation")}</DialogTitle>
           <DialogDescription>
             {t(
-              "确认保存的提示词、模型和输入。视频先生成无声画面，台词音频在声音工作台处理。",
-              "Review saved prompts and inputs. Videos are silent; dialogue is processed in the audio workspace.",
+              "确认保存的提示词、模型和输入。视频同步生成对白、画外音、心声和场景声音，字幕在项目后期合成。",
+              "Review saved prompts and inputs. Generate dialogue, voiceover, inner monologue and scene sound with the video; compose subtitles in post.",
             )}
           </DialogDescription>
           <div className="max-h-[60vh] space-y-4 overflow-y-auto">

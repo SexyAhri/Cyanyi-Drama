@@ -136,6 +136,7 @@ function segmentPrompt(input: {
     `生成范围：本场次第 ${input.index + 1}/${input.count} 段，对应 ${formatSecond(input.startSeconds)}-${formatSecond(input.endSeconds)} 秒。`,
     basePrompt.includes(actionLine) ? "" : actionLine,
     "只生成当前片段，不提前表现后续动作，不重复前段动作；人物、场景、道具、画风、时段、光线和运镜必须承接同一场次。",
+    "声音也只生成该时间范围内对应的对白、画外音、心声、环境声与音效；按整镜时间线承接，跨片段台词连续，不在每段重读整镜台词。",
   ]
     .filter(Boolean)
     .join("\n");

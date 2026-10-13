@@ -15,6 +15,7 @@ beforeEach(() => {
 
 describe("Volcengine Ark video audio policy", () => {
   it.each([
+    ["full", true],
     ["ambient_only", true],
     ["none", false],
   ] as const)("maps %s to generate_audio=%s", async (audioMode, generateAudio) => {

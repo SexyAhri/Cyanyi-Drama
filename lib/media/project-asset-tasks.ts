@@ -5,6 +5,9 @@ import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { createMediaTask } from "./task-contract";
 import { createDatabaseMediaTaskStore } from "./task-store";
 import { enqueuePersistedMediaTask } from "./task-submit";
+import { lockVideoAudioPerformance } from "./director-prompt-locks";
+import { getAutoDlWorkflow } from "@/lib/providers/media/autodl-comfyui-workflows";
+import { autoDlResolution } from "@/lib/providers/media/autodl-comfyui";
 import { BillingError } from "@/lib/billing/service";
 import { resolveStoredMediaUrl } from "@/lib/storage";
 import {
@@ -377,6 +380,13 @@ export async function createStoryboardPanelVideoTask(input: {
       locationName: true,
       videoPrompt: true,
       firstLastFramePrompt: true,
+      speakingCharacter: true,
+      lipSyncText: true,
+      voiceoverText: true,
+      voiceLines: {
+        orderBy: { lineIndex: "asc" },
+        select: { speaker: true, content: true, delivery: true },
+      },
       imageAsset: {
         select: { url: true, storageKey: true, mimeType: true },
       },
@@ -425,7 +435,7 @@ export async function createStoryboardPanelVideoTask(input: {
     action: panel.description,
     durationSeconds,
     maxDurationSeconds: limits.maxDurationSeconds,
-    prompt: rawBasePrompt,
+    prompt: lockVideoAudioPerformance(rawBasePrompt, panel),
   });
   if (input.mode === "first-last" && segments.length > 1)
     throw new ProjectAssetTaskError(
@@ -552,7 +562,7 @@ export async function createStoryboardPanelVideoTask(input: {
           "1080p",
         duration: `${segment.durationSeconds}s`,
         format: "mp4",
-        audioMode: "none",
+        audioMode: "full",
         videoMode: input.mode ?? "reference",
         videoSegmentId: segmentId,
         videoSegmentIndex: segment.index,
@@ -653,8 +663,13 @@ export async function previewStoryboardPanelPrompt(input: {
       imagePrompt: true,
       videoPrompt: true,
       firstLastFramePrompt: true,
+      speakingCharacter: true,
       lipSyncText: true,
       voiceoverText: true,
+      voiceLines: {
+        orderBy: { lineIndex: "asc" },
+        select: { speaker: true, content: true, delivery: true },
+      },
       actingNotesJson: true,
       photographyRules: true,
       startStateJson: true,
@@ -700,7 +715,9 @@ export async function previewStoryboardPanelPrompt(input: {
     });
 
   if (input.kind === "video") {
+    const compiledPrompt = basePrompt ? lockVideoAudioPerformance(basePrompt, panel) : "";
     let limits = { maxDurationSeconds: 10, maxReferenceImages: 1 };
+    let outputResolution = input.resolution ?? input.mediaDefaults?.videoGenerationResolution ?? "1080p";
     if (input.channelId && input.model) {
       const channel = await prisma.channel.findFirst({
         where: accessibleChannelWhere(input.userId, input.channelId),
@@ -718,10 +735,14 @@ export async function previewStoryboardPanelPrompt(input: {
           model: input.model,
           protocol: channel.protocol,
           capabilities: parseStoredJsonValue(
-            channel.models[0]?.capabilitiesJson,
+            channel.models?.[0]?.capabilitiesJson,
             {},
           ),
         });
+      if (channel?.protocol === "autodl-comfyui") {
+        const workflow = getAutoDlWorkflow(input.model);
+        if (workflow) outputResolution = autoDlResolution(workflow, input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9", outputResolution);
+      } else if (/^agnes-video-/i.test(input.model)) outputResolution = "720P";
     }
     const durationSeconds =
       parseDurationSeconds(input.duration) ??
@@ -732,7 +753,7 @@ export async function previewStoryboardPanelPrompt(input: {
       action: panel.description,
       durationSeconds,
       maxDurationSeconds: limits.maxDurationSeconds,
-      prompt: basePrompt,
+      prompt: compiledPrompt,
     });
     if (input.mode === "first-last" && segments.length > 1)
       issues.push({
@@ -753,13 +774,13 @@ export async function previewStoryboardPanelPrompt(input: {
         label: "提交方式",
         value:
           segments.length === 1
-            ? "场次完整视频提示词原样提交"
+            ? "完整视频提示词与镜头声音一起提交"
             : "按模型上限本地拆分，每段提交完整视频提示词",
       },
       {
         key: "shot_prompt",
         label: "视频提示词",
-        value: basePrompt ? `${basePrompt.length} 个字符` : "未填写",
+        value: compiledPrompt ? `${compiledPrompt.length} 个字符` : "未填写",
       },
     ];
     if (input.mode === "first-last") {
@@ -822,21 +843,21 @@ export async function previewStoryboardPanelPrompt(input: {
       {
         key: "output",
         label: "输出规格",
-        value: `${input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9"} · ${input.resolution ?? input.mediaDefaults?.videoGenerationResolution ?? "1080p"}`,
+        value: `${input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9"} · ${outputResolution}`,
       },
       {
         key: "audio_mode",
         label: "模型音频",
-        value: "关闭（audioMode=none，声音由后期独立合成）",
+        value: "开启（对白 / 画外音 / 心声 / 环境声 / 音效；字幕后期合成）",
       },
     );
     return {
       basePrompt,
-      compiledPrompt: basePrompt,
-      finalPrompt: basePrompt,
+      compiledPrompt,
+      finalPrompt: compiledPrompt,
       issues,
       kind: "video",
-      submissionMode: segments.length === 1 ? "verbatim" : "segmented",
+      submissionMode: segments.length === 1 ? "compiled" : "segmented",
       referenceCount,
       maxDurationSeconds: limits.maxDurationSeconds,
       segments,

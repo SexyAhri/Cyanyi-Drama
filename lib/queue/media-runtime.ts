@@ -709,6 +709,7 @@ async function renderEpisodeTimeline(
   assertTimelineDialogueAudioCoverage(
     voiceLines.length,
     dialogueSource?.storageKey ?? dialogueSource?.url,
+    voiceLines.every((line) => resolvedTracks.some(({ panel, source, isImage, track }) => panel.id === line.matchedPanelId && source && !isImage && track.volume !== 0)),
   );
 
   const subtitles = buildTimelineSubtitles(voiceLines, sequence);
@@ -717,7 +718,7 @@ async function renderEpisodeTimeline(
     request as Record<string, unknown>,
   );
   const rendered = await renderTimelineVideo({
-    segments,
+    segments: segments.map((segment, index) => ({ ...segment, requiresAudio: !dialogueSource && voiceLines.some((line) => line.matchedPanelId === resolvedTracks[index].panel.id) })),
     audioTracks: renderAudioTracks,
     subtitles,
     specification,
@@ -733,7 +734,7 @@ async function renderEpisodeTimeline(
         panelCount: segments.length,
         imagePanelCount: segments.filter((segment) => segment.kind === "image")
           .length,
-        hasAudio: renderAudioTracks.length > 0,
+        hasAudio: rendered.hasAudio,
         audioTrackCount: renderAudioTracks.length,
         subtitleCount: subtitles.length,
         specification: rendered.specification,
@@ -749,7 +750,8 @@ export function shouldStripProviderVideoAudio(input: {
 }) {
   return (
     input.kind === "video" &&
-    input.targetType === "storyboard_panel"
+    input.targetType === "storyboard_panel" &&
+    input.request.audioMode === "none"
   );
 }
 
@@ -817,8 +819,9 @@ export function assertVoiceLinePanelCoverage(input: {
 export function assertTimelineDialogueAudioCoverage(
   voiceLineCount: number,
   audioUrl: string | undefined,
+  hasSourceDialogue = false,
 ) {
-  if (voiceLineCount > 0 && !audioUrl)
+  if (voiceLineCount > 0 && !audioUrl && !hasSourceDialogue)
     throw new Error("TIMELINE_RENDER_DIALOGUE_AUDIO_MISSING");
 }
 
