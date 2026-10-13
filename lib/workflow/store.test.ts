@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildActiveWorkflowDedupeKey,
   isWorkflowStepManuallyRetryable,
-  shouldPreserveRetryArtifacts,
 } from "./store";
 
 describe("workflow active dedupe key", () => {
@@ -28,18 +27,6 @@ describe("workflow active dedupe key", () => {
     expect(buildActiveWorkflowDedupeKey(input)).not.toBe(
       buildActiveWorkflowDedupeKey({ ...input, targetId: "episode-2" }),
     );
-  });
-});
-
-describe("workflow step artifact preservation", () => {
-  it("keeps partial artifacts when enqueue failure leaves the step pending", () => {
-    expect(shouldPreserveRetryArtifacts("pending")).toBe(true);
-    expect(shouldPreserveRetryArtifacts("failed")).toBe(true);
-    expect(shouldPreserveRetryArtifacts("blocked")).toBe(true);
-  });
-
-  it("invalidates artifacts when explicitly rerunning a completed step", () => {
-    expect(shouldPreserveRetryArtifacts("succeeded")).toBe(false);
   });
 });
 

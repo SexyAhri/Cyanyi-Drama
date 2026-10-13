@@ -1,7 +1,7 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { createDatabaseMediaTaskStore } from "@/lib/media/task-store";
-import { cancelMediaJob, enqueueMediaJob } from "@/lib/queue/media-queue";
-import { transitionMediaTask, type MediaTask } from "@/lib/media/task-contract";
+import { cancelMediaJob } from "@/lib/queue/media-queue";
+import { controlMediaTask } from "@/lib/media/task-actions";
 
 type Context = { params: Promise<{ batchId: string }> };
 
@@ -41,7 +41,7 @@ export async function POST(request: Request, context: Context) {
       if (task.status !== "queued" && task.status !== "running") continue;
       const canceled = await store.requestCancel(task.id);
       if (canceled) {
-        await cancelMediaJob(task.id).catch(() => undefined);
+        await cancelMediaJob(task.queueJobId ?? task.id).catch(() => undefined);
         updated.push(canceled);
       }
     }
@@ -55,19 +55,11 @@ export async function POST(request: Request, context: Context) {
     const retried = [];
     for (const task of tasks) {
       if (task.status !== "failed") continue;
-      const queued: MediaTask = {
-        ...transitionMediaTask(task, { type: "retry" }),
-        queueJobId: task.id,
-      };
-      await store.update(queued);
-      await enqueueMediaJob({
+      const queued = await controlMediaTask({
+        action: "retry",
         taskId: task.id,
         userId: user.id,
         projectId: task.projectId,
-        episodeId: task.episodeId,
-        channelId: task.channelId,
-        kind: task.kind,
-        maxAttempts: 1,
       });
       retried.push(queued);
     }

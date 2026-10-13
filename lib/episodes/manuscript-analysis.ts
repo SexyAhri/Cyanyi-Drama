@@ -60,7 +60,7 @@ export async function analyzeManuscript(input: {
   const concurrency = manuscriptAnalysisConcurrency();
   // Load reusable notes once rather than querying earlier runs for every source span.
   // Fingerprints still bind exact text, source position, model and channel.
-  const previous = await prisma.workflowArtifact.findMany({
+  const previous = hooks.reusePreviousResults === false ? [] : await prisma.workflowArtifact.findMany({
     where: {
       artifactType: { in: ["manuscript.chunk", "manuscript.merge"] }, refId: { not: null },
       run: { userId: input.userId, projectId: input.projectId, targetId: input.manuscriptId,

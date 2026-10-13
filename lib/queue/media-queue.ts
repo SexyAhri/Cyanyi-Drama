@@ -6,6 +6,7 @@ export const MEDIA_QUEUE_NAME = "cyanyi-media";
 
 export type MediaJob = {
   taskId: string;
+  queueJobId?: string;
   userId: string;
   projectId?: string;
   episodeId?: string;
@@ -25,7 +26,7 @@ export function getMediaQueue() {
 
 export async function enqueueMediaJob(job: MediaJob) {
   return getMediaQueue().add(job.kind, job, {
-    jobId: job.taskId,
+    jobId: job.queueJobId ?? job.taskId,
     attempts: Math.max(1, job.maxAttempts ?? 1),
     backoff: { type: "exponential", delay: 1000 },
     removeOnComplete: 1000,

@@ -94,4 +94,19 @@ describe("parallel manuscript analysis", () => {
     expect(persistArtifact).toHaveBeenCalledWith("manuscript.chunk", refId, notes("已有依据"));
     expect(mocks.artifacts.mock.calls[0][0].where.run).toMatchObject({ userId: "user", projectId: "project", targetId: "manuscript", input: { path: ["sourceHash"], equals: "hash" } });
   });
+
+  it("calls the model on explicit restart even if older runs contain valid notes", async () => {
+    const sourceText = "原著正文";
+    mocks.manuscript.mockResolvedValue({ id: "manuscript", sourceHash: "hash", sourceText, title: "原著" });
+    const refId = sourceFingerprint({ ref: `0:${sourceText.length}`, text: sourceText, model: "test", channel: "channel", version: 1 });
+    mocks.artifacts.mockResolvedValue([{ artifactType: "manuscript.chunk", refId, payload: notes("旧结果") }]);
+    mocks.request.mockResolvedValue({ data: notes("新结果"), trace: { model: "test" } });
+    await analyzeManuscript(input, {
+      reusePreviousResults: false,
+      assertActive: async () => {}, loadArtifact: async () => null, persistArtifact: async () => {},
+    });
+    expect(mocks.request).toHaveBeenCalledTimes(1);
+    expect(mocks.artifacts).not.toHaveBeenCalled();
+    expect(mocks.save.mock.calls[0][2].payload.summary).toEqual(notes("新结果"));
+  });
 });

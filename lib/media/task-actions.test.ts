@@ -97,7 +97,7 @@ describe("media task actions", () => {
 
     expect(retried).toMatchObject({
       id: failed.id,
-      queueJobId: failed.id,
+      queueJobId: expect.stringMatching(/^task-1_retry_/),
       retryCount: 1,
       status: "queued",
     });
@@ -107,8 +107,28 @@ describe("media task actions", () => {
         maxAttempts: 1,
         projectId: "project-a",
         taskId: failed.id,
+        queueJobId: retried.queueJobId,
       }),
     );
+  });
+
+  it("uses the new queue job when canceling a retried task", async () => {
+    const current = task({ queueJobId: "task-1_retry_new" });
+    mocks.get.mockResolvedValue(current);
+    mocks.requestCancel.mockResolvedValue(task({ status: "canceled" }));
+    await controlMediaTask({ action: "cancel", taskId: current.id, userId: "user-1" });
+    expect(mocks.cancelMediaJob).toHaveBeenCalledWith(current.queueJobId);
+  });
+
+  it("keeps retry actionable when queue submission fails", async () => {
+    mocks.get.mockResolvedValue(task({ status: "failed" }));
+    mocks.update.mockImplementation(async value => value);
+    mocks.enqueueMediaJob.mockRejectedValueOnce(new Error("Redis unavailable"));
+    await expect(controlMediaTask({ action: "retry", taskId: "task-1", userId: "user-1" }))
+      .rejects.toThrow("Redis unavailable");
+    expect(mocks.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      status: "failed", error: { code: "QUEUE_ENQUEUE_FAILED", message: "Redis unavailable", retryable: true },
+    }));
   });
 
   it("allows another explicit retry after the stored retry count is exhausted", async () => {

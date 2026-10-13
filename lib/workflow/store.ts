@@ -11,7 +11,6 @@ import {
   assertWorkflowDefinition,
   type WorkflowRunDefinition,
   type WorkflowRunStatus,
-  type WorkflowStepStatus,
 } from "./contract";
 
 const include = {
@@ -391,14 +390,8 @@ export async function retryWorkflowRun(userId: string, runId: string) {
   const resetKeys = resolveRetryStepKeys(current.steps);
   const activeDedupeKey = buildRunDedupeKey(current);
   if (await hasConflictingActiveRun(runId, activeDedupeKey)) return null;
-  const retryRootIds = current.steps
-    .filter((step) => ["failed", "blocked", "running"].includes(step.status))
-    .map((step) => step.id);
-  const downstreamStepIds = current.steps
-    .filter(
-      (step) =>
-        resetKeys.includes(step.stepKey) && !retryRootIds.includes(step.id),
-    )
+  const resetStepIds = current.steps
+    .filter((step) => resetKeys.includes(step.stepKey))
     .map((step) => step.id);
   await prisma.$transaction([
     prisma.workflowRun.update({
@@ -406,7 +399,11 @@ export async function retryWorkflowRun(userId: string, runId: string) {
       data: {
         status: "queued",
         activeDedupeKey,
+        output: Prisma.DbNull,
         error: Prisma.DbNull,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        queuedAt: new Date(),
         completedAt: null,
         cancelRequestedAt: null,
         updatedAt: new Date(),
@@ -416,6 +413,7 @@ export async function retryWorkflowRun(userId: string, runId: string) {
       where: { runId, stepKey: { in: resetKeys } },
       data: {
         status: "pending",
+        output: Prisma.DbNull,
         error: Prisma.DbNull,
         completedAt: null,
         updatedAt: new Date(),
@@ -424,10 +422,7 @@ export async function retryWorkflowRun(userId: string, runId: string) {
     prisma.workflowArtifact.deleteMany({
       where: {
         runId,
-        OR: [
-          { stepId: { in: downstreamStepIds } },
-          { stepId: { in: retryRootIds }, refId: null },
-        ],
+        stepId: { in: resetStepIds },
       },
     }),
     prisma.workflowCheckpoint.deleteMany({
@@ -438,7 +433,7 @@ export async function retryWorkflowRun(userId: string, runId: string) {
         runId,
         type: "retry_requested",
         status: "queued",
-        payload: toJson({ resetKeys }),
+        payload: toJson({ resetKeys, retryMode: "restart" }),
       },
     }),
   ]);
@@ -460,26 +455,20 @@ export async function retryWorkflowStep(
   const resetKeys = resolveDownstreamStepKeys(current.steps, stepKey);
   const activeDedupeKey = buildRunDedupeKey(current);
   if (await hasConflictingActiveRun(runId, activeDedupeKey)) return null;
-  const downstreamStepIds = current.steps
-    .filter(
-      (step) => resetKeys.includes(step.stepKey) && step.stepKey !== stepKey,
-    )
+  const resetStepIds = current.steps
+    .filter((step) => resetKeys.includes(step.stepKey))
     .map((step) => step.id);
-  const artifactWhere = buildRetryArtifactWhere({
-    runId,
-    targetStepId: target.id,
-    downstreamStepIds,
-    preserveTargetArtifacts: shouldPreserveRetryArtifacts(
-      target.status as WorkflowStepStatus,
-    ),
-  });
   await prisma.$transaction([
     prisma.workflowRun.update({
       where: { id: runId },
       data: {
         status: "queued",
         activeDedupeKey,
+        output: Prisma.DbNull,
         error: Prisma.DbNull,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        queuedAt: new Date(),
         completedAt: null,
         cancelRequestedAt: null,
         updatedAt: new Date(),
@@ -496,7 +485,7 @@ export async function retryWorkflowStep(
       },
     }),
     prisma.workflowArtifact.deleteMany({
-      where: artifactWhere,
+      where: { runId, stepId: { in: resetStepIds } },
     }),
     prisma.workflowCheckpoint.deleteMany({
       where: { runId, stepKey: { in: resetKeys } },
@@ -507,7 +496,7 @@ export async function retryWorkflowStep(
         stepId: target.id,
         type: "step_retry_requested",
         status: "queued",
-        payload: toJson({ stepKey, resetKeys }),
+        payload: toJson({ stepKey, resetKeys, retryMode: "restart" }),
       },
     }),
   ]);
@@ -524,38 +513,26 @@ export function isWorkflowStepManuallyRetryable(step: {
   return step.retryable && step.attempt < step.maxAttempts;
 }
 
-export function shouldPreserveRetryArtifacts(status: WorkflowStepStatus) {
-  return ["pending", "failed", "blocked"].includes(status);
-}
-
-function buildRetryArtifactWhere(input: {
-  runId: string;
-  targetStepId: string;
-  downstreamStepIds: string[];
-  preserveTargetArtifacts: boolean;
-}): Prisma.WorkflowArtifactWhereInput {
-  const targetFilters: Prisma.WorkflowArtifactWhereInput[] =
-    input.preserveTargetArtifacts
-      ? [{ stepId: input.targetStepId, refId: null }]
-      : [{ stepId: input.targetStepId }];
-  return {
-    runId: input.runId,
-    OR: [{ stepId: { in: input.downstreamStepIds } }, ...targetFilters],
-  };
-}
-
 function resolveRetryStepKeys(
   steps: Array<{
     stepKey: string;
+    stepIndex: number;
     status: string;
     dependsOn: Prisma.JsonValue | null;
   }>,
 ) {
   const reset = new Set(
     steps
-      .filter((step) => ["failed", "blocked", "running"].includes(step.status))
+      .filter((step) => step.status !== "succeeded")
       .map((step) => step.stepKey),
   );
+  // A queue/finalization failure may leave every step completed. Rerun the last
+  // step rather than immediately marking the run completed without execution.
+  if (!reset.size && steps.length) {
+    const last = steps.reduce((left, right) =>
+      left.stepIndex > right.stepIndex ? left : right);
+    reset.add(last.stepKey);
+  }
   let changed = true;
   while (changed) {
     changed = false;

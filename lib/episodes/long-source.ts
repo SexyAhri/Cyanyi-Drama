@@ -54,6 +54,7 @@ export async function mapSourceTasks<T, R>(
 }
 
 export type SourceTaskHooks = {
+  reusePreviousResults?: boolean;
   assertActive: () => Promise<void>;
   loadArtifact: (type: string, id: string) => Promise<unknown | null>;
   persistArtifact: (type: string, id: string, payload: unknown) => Promise<void>;

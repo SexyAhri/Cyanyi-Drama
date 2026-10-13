@@ -27,6 +27,7 @@ const worker = new Worker<MediaJob>(
       where: { id: job.data.taskId, userId: job.data.userId },
     });
     if (!task) throw new Error("MEDIA_TASK_NOT_FOUND");
+    if (task.queueJobId && task.queueJobId !== job.id) return;
     if (task.status === "canceled" || task.cancelRequestedAt) {
       await prisma.mediaTask.update({
         where: { id: task.id },
@@ -151,11 +152,12 @@ worker.on("failed", async (job, error) => {
   if (!job) return;
   const retryable = job.attemptsMade < (job.opts.attempts ?? 1);
   const now = new Date();
-  await prisma.mediaTask.updateMany({
+  const updated = await prisma.mediaTask.updateMany({
     where: {
       id: job.data.taskId,
       userId: job.data.userId,
       status: { not: "canceled" },
+      OR: [{ queueJobId: job.id }, { queueJobId: null }],
     },
     data: {
       status: "failed",
@@ -166,6 +168,7 @@ worker.on("failed", async (job, error) => {
       progressMessage: retryable ? "Retrying task" : null,
     },
   });
+  if (!updated.count) return;
   await prisma.mediaTaskEvent.create({
     data: {
       taskId: job.data.taskId,

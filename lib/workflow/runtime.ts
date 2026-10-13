@@ -73,7 +73,14 @@ async function processClaimedWorkflowJob(
 ): Promise<"done" | "requeue"> {
   const run = await prisma.workflowRun.findFirst({
     where: { id: runId, userId },
-    include: { steps: { orderBy: { stepIndex: "asc" } } },
+    include: {
+      steps: { orderBy: { stepIndex: "asc" } },
+      events: {
+        where: { type: { in: ["retry_requested", "step_retry_requested"] } },
+        orderBy: { createdAt: "desc" },
+        select: { payload: true },
+      },
+    },
   });
   if (!run) throw new Error("WORKFLOW_RUN_NOT_FOUND");
   if (run.status === "canceling") {
@@ -195,6 +202,9 @@ async function processClaimedWorkflowJob(
     await assertWorkflowRunActive({ runId, workerId });
     const output = await runStep(userId, run, step, {
       attempt: attemptNumber,
+      reusePreviousResults: !run.events.some(event =>
+        isRecord(event.payload) && event.payload.retryMode === "restart" &&
+        parseStringArray(event.payload.resetKeys ?? null).includes(step.stepKey)),
       assertActive: () => assertWorkflowRunActive({ runId, workerId }),
       persistArtifact: (artifactType, refId, payload) =>
         persistIncrementalArtifact({
@@ -434,6 +444,7 @@ async function runStep(
   runtime: {
     reportProgress?: (message: string) => Promise<void>;
     attempt: number;
+    reusePreviousResults: boolean;
     assertActive: () => Promise<void>;
     persistArtifact: (
       artifactType: string,
@@ -723,7 +734,7 @@ async function runStep(
         model,
         locale: getString(input.locale) === "en" ? "en" : "zh",
         sourceText: getString(input.sourceText),
-        resumeExisting: runtime.attempt > 1,
+        resumeExisting: runtime.reusePreviousResults && runtime.attempt > 1,
       },
       runtime,
     );
@@ -751,7 +762,7 @@ async function runStep(
       locale:
         getString(input.locale) === "en" ? ("en" as const) : ("zh" as const),
       concurrency: getNumber(input.concurrency),
-      resumeExisting: runtime.attempt > 1,
+      resumeExisting: runtime.reusePreviousResults && runtime.attempt > 1,
     };
     if (step.stepType === "generate_screenplay_beats")
       return generateEpisodeScreenplayBeats(userId, stageInput, runtime);

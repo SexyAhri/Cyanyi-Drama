@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { settleMediaTaskCharge } from "@/lib/billing/service";
 import { cancelMediaJob, enqueueMediaJob } from "@/lib/queue/media-queue";
 
@@ -53,7 +55,7 @@ export async function controlMediaTask(input: {
       throw new MediaTaskActionError(
         "Task cannot be canceled in its current state.",
       );
-    await cancelMediaJob(task.id).catch(() => undefined);
+    await cancelMediaJob(task.queueJobId ?? task.id).catch(() => undefined);
     if (canceled.status === "canceled") {
       try {
         await settleMediaTaskCharge(input.userId, task.id, false);
@@ -81,15 +83,33 @@ export async function controlMediaTask(input: {
       error instanceof Error ? error.message : "Retry limit reached.",
     );
   }
-  queued = { ...queued, queueJobId: task.id };
+  // BullMQ retains terminal jobs. Reusing the old ID returns that job without execution.
+  queued = { ...queued, queueJobId: `${task.id}_retry_${randomUUID()}` };
   await store.update(queued);
-  await enqueueMediaJob({
-    taskId: task.id,
-    userId: input.userId,
-    projectId: task.projectId,
-    episodeId: task.episodeId,
-    kind: task.kind,
-    maxAttempts: 1,
-  });
+  try {
+    await enqueueMediaJob({
+      taskId: task.id,
+      queueJobId: queued.queueJobId,
+      userId: input.userId,
+      projectId: task.projectId,
+      episodeId: task.episodeId,
+      kind: task.kind,
+      maxAttempts: 1,
+    });
+  } catch (error) {
+    const now = new Date().toISOString();
+    await store.update({
+      ...queued,
+      status: "failed",
+      error: {
+        code: "QUEUE_ENQUEUE_FAILED",
+        message: error instanceof Error ? error.message : "Queue unavailable.",
+        retryable: true,
+      },
+      completedAt: now,
+      updatedAt: now,
+    });
+    throw error;
+  }
   return queued;
 }
