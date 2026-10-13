@@ -59,6 +59,7 @@ export function renderPrompt(input: {
     ),
     systemText,
     text,
+    variables: { ...input.variables },
   };
   if (input.id === "asset_visual_design") return withProductionRules(rendered, "asset-prompt-generation");
   if (input.id === "episode_adaptation") return withProductionRules(rendered, "script-generation");

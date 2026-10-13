@@ -20,6 +20,7 @@ vi.mock("@/lib/episodes/manuscript-analysis", () => ({ analyzeManuscript: mocks.
 import { controlWorkflowRun } from "./actions";
 import { retryWorkflowRun, retryWorkflowStep } from "./store";
 import { processWorkflowJob } from "./runtime";
+import { mergeProductionConfigurations } from "@/lib/production-configuration/contract";
 
 const now = new Date();
 function step(id: string, status: string, index = 0, dependsOn: string[] = []) {
@@ -35,7 +36,7 @@ function fixture() {
     id: "run-1", userId: "user-1", projectId: "project-1", episodeId: null,
     workflowType: "manuscript-analysis", targetType: "manuscript", targetId: "manuscript-1",
     status: "failed", activeDedupeKey: null, output: { old: true }, error: { message: "failed" },
-    input: { manuscriptId: "manuscript-1", sourceHash: "hash", channelId: "channel-1", model: "test" },
+    input: { manuscriptId: "manuscript-1", sourceHash: "hash", channelId: "channel-1", model: "test", productionConfiguration: { ...mergeProductionConfigurations([]), format: "production-configuration-v1", sources: [] } },
     leaseOwner: "old-worker" as string | null, leaseExpiresAt: new Date(Date.now() + 60_000) as Date | null,
     queuedAt: now, startedAt: now, completedAt: now, createdAt: now, updatedAt: now,
     steps: [step("analyze", "failed")],

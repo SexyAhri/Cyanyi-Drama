@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { currentProductionConfiguration } from "@/lib/production-configuration/context";
+import { DEFAULT_SOUND_POLICY, soundPolicyInstructions } from "@/lib/production-configuration/contract";
 import { z } from "zod";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { StructuredOutputError } from "@/lib/llm/structured-output";
@@ -86,7 +88,7 @@ speech_timing supplies the platform's minimum seconds and suggested exact fragme
 characters lists visible characters; asset_names uses only scene characters, props and location. Include the scene location in every shot's asset_names, and include every prop explicitly visible or named in that shot's visual description, action, image prompt, or video prompt. Do not list off-screen props.
 Use productionDesign.startState, end_state and ordered productionDesign.motionBeats to describe continuous performance and camera.
 image_prompt is a static first frame; video_prompt animates from it, ending at end_state.
-Video is silent; speech is synthesized separately. Only the dialogue speaker moves lips; voiceover never makes visible actors speak.
+${soundPolicyInstructions(currentProductionConfiguration()?.snapshot.sound ?? DEFAULT_SOUND_POLICY, "en")}
 ${PANEL_PRODUCTION_DESIGN_INSTRUCTIONS}
 productionDesign is the single source of truth for startState and motionBeats. Do not output duplicate start_state or motion_beats fields, including when repairing older shots that contain them. The platform derives those compatibility fields itself.
 Output {shots:[{title,shot_type,duration_seconds,source_unit_ids,characters,asset_names,scene_description,action_description,camera_move,end_state,speech,image_prompt,video_prompt,productionDesign}]}.
@@ -118,7 +120,8 @@ Review output uses scene_ids and zero-based shot_indices to locate findings. Do 
       project_style: input.style,
       production_spec: input.productionSpec,
       visual_rules: input.visualRules,
-      audio_mode: "silent_video_with_post_lip_sync",
+      audio_mode: currentProductionConfiguration()?.snapshot.sound ?? DEFAULT_SOUND_POLICY,
+      production_configuration: currentProductionConfiguration()?.snapshot ?? null,
       scene,
       speech_timing: directorSpeechTiming(scene),
       duration_budget: durationBudget ? { episodeTargetSeconds: durationBudget.targetSeconds, ...durationBudget.scenes[index] } : null,
@@ -488,5 +491,7 @@ function directorPrompt(
     versionHash: hash({ source, contract, locale, systemText }),
     systemText,
     text,
+    variables: { task_snapshot: JSON.stringify(snapshot) },
+    platformContract: `${contract}\n自然语言输出使用${locale === "en" ? "英文" : "简体中文"}。`,
   };
 }

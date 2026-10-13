@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { configureProductionRequest } from "@/lib/production-configuration/request";
+import { currentProductionConfiguration } from "@/lib/production-configuration/context";
 
 import { z } from "zod";
 
@@ -30,6 +32,7 @@ export type PromptExecutionTrace = {
   correctionAttempts: number;
   tokenUsage: PromptTokenUsage | null;
   outputHash: string;
+  configurationSources?: Array<{ scopeKey: string; version: number }>;
 };
 
 export async function requestOpenAiText(input: {
@@ -45,6 +48,7 @@ export async function requestOpenAiText(input: {
   onOutputStart?: () => void;
   onTextDelta?: (delta: string) => void;
 }) {
+  input = await configureProductionRequest(input);
   const response = await requestText({
     baseUrl: input.baseUrl,
     apiKey: input.apiKeys[0],
@@ -77,6 +81,7 @@ export async function requestOpenAiText(input: {
     correctionAttempts: 0,
     tokenUsage: response.tokenUsage,
     outputHash: sha256(outputText),
+    configurationSources: currentProductionConfiguration()?.snapshot.sources,
   };
   return { text: outputText, outputText, trace };
 }
@@ -99,6 +104,7 @@ export async function requestOpenAiStructured<T>(input: {
   onOutputStart?: () => void;
   onTextDelta?: (delta: string) => void;
 }) {
+  input = await configureProductionRequest(input);
   let tokenUsage: PromptTokenUsage | null = null;
   let apiKeyIndex = 0;
   const responseFormat = buildStructuredResponseFormat({
@@ -161,6 +167,7 @@ export async function requestOpenAiStructured<T>(input: {
     correctionAttempts: result.correctionAttempts,
     tokenUsage,
     outputHash: sha256(result.outputText),
+    configurationSources: currentProductionConfiguration()?.snapshot.sources,
   };
   return {
     ...result,
@@ -187,7 +194,7 @@ async function requestText(input: {
 }) {
   let lastError: unknown;
   const startedAt = Date.now();
-  const maxAttempts = 1;
+  const maxAttempts = Math.max(1, Math.min(5, Math.floor(input.maxTransportAttempts ?? 1)));
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       input.onOutputStart?.();

@@ -1,3 +1,6 @@
+import { DEFAULT_SOUND_POLICY, soundPolicyInstructions, type SoundPolicy } from "@/lib/production-configuration/contract";
+import { currentProductionConfiguration } from "@/lib/production-configuration/context";
+
 export type VideoSpeechLine = {
   speaker: string;
   content: string;
@@ -14,9 +17,11 @@ export function lockVideoAudioPerformance(
     voiceoverCharacter?: string | null;
     voiceLines?: readonly VideoSpeechLine[];
     locale?: "zh" | "en";
+    soundPolicy?: SoundPolicy;
   } = {},
 ) {
   const en = input.locale === "en";
+  const policy = input.soundPolicy ?? currentProductionConfiguration()?.snapshot.sound ?? DEFAULT_SOUND_POLICY;
   const lines = [...(input.voiceLines ?? [])];
   const dialogue = input.lipSyncText;
   const voiceover = input.voiceoverText;
@@ -36,10 +41,21 @@ export function lockVideoAudioPerformance(
       content: voiceover,
       delivery: input.voiceoverCharacter ? "inner_monologue" : "voiceover",
     });
-  const sound = en
-    ? "Generate a complete audiovisual clip: include the approved dialogue, off-screen narration and inner monologue, synchronized environmental sound and action effects. Keep voices intelligible, character voices consistent and sound continuous; include music only when specified. Do not invent or rewrite speech. No generated subtitles, captions, titles or watermarks; subtitles are composed later."
-    : "生成完整声画视频：包含本镜已有的对白、画外音、旁白、心声，以及与场景和动作同步的环境声、音效；人声清晰，角色音色一致，声音连续，配乐仅按已有设计生成。不得新增、改写台词。不生成字幕、标题或水印，字幕由项目后期合成。";
-  const spoken = lines.filter((line) => line.content.trim()).map((line) => {
+  const sanitized = removeLegacySilentVideoInstructions(prompt);
+  const contract = /(?:\n|^)(?:【声音与台词】|\[Sound and speech\])\n[\s\S]*?(?:【声音与台词结束】|\[End sound and speech\])/gu;
+  // Recover approved lines, including multiline dialogue, from standalone
+  // canvas prompts when they are recompiled under another published policy.
+  if (!lines.length) for (const block of sanitized.match(contract) ?? []) {
+    const patterns = [
+      /(?:^|\n)([^\n]+?)(逐字说出原文对白一次|以心声／内心独白逐字朗读原文一次|以画外音／旁白逐字朗读原文一次)：“([\s\S]*?)”。/gu,
+      /(?:^|\n)([^\n]+?) (speaks the original dialogue|delivers inner monologue|delivers off-screen narration) exactly once: “([\s\S]*?)”\./gu,
+    ];
+    for (const pattern of patterns) for (const match of block.matchAll(pattern))
+      lines.push({ speaker: match[1], content: match[3], delivery: /对白|dialogue/u.test(match[2]) ? "dialogue" : /心声|inner monologue/u.test(match[2]) ? "inner_monologue" : "voiceover" });
+  }
+  const sound = soundPolicyInstructions(policy, en ? "en" : "zh");
+  const spoken = lines.filter((line) => policy.mode === "native" && line.content.trim() &&
+    (line.delivery === "dialogue" ? policy.dialogue : line.delivery === "inner_monologue" ? policy.innerMonologue : policy.voiceover)).map((line) => {
     const text = `“${line.content}”`;
     if (line.delivery === "dialogue")
       return en
@@ -50,10 +66,6 @@ export function lockVideoAudioPerformance(
       ? `${line.speaker} delivers ${inner ? "inner monologue" : "off-screen narration"} exactly once: ${text}. This is off-screen audio, not visible speech; visible characters do not lip-sync to it.`
       : `${line.speaker}以${inner ? "心声／内心独白" : "画外音／旁白"}逐字朗读原文一次：${text}。声音来自画外，画面人物不对这段声音做口型，自然保持表情与身体动作。`;
   });
-  const sanitized = removeLegacySilentVideoInstructions(prompt);
-  const contract = /(?:\n|^)(?:【声音与台词】|\[Sound and speech\])\n[\s\S]*?(?:【声音与台词结束】|\[End sound and speech\])/gu;
-  // Standalone canvas nodes may only carry their previously compiled prompt.
-  if (!lines.length && sanitized.match(contract)) return sanitized;
   const base = sanitized.replace(contract, "").trim();
   return [
     base,

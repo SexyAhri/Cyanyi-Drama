@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { resolveProductionConfiguration } from "@/lib/production-configuration/store";
+import { soundPolicyAudioMode, soundPolicyInstructions } from "@/lib/production-configuration/contract";
 
 import { prisma } from "@/lib/server/prisma";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
@@ -397,6 +399,7 @@ export async function createStoryboardPanelVideoTask(input: {
   });
   if (!panel) throw new ProjectAssetTaskError("分镜格不存在", 404);
   assertStoryboardApprovedForMedia(panel.storyboard.status);
+  const productionConfiguration = await resolveProductionConfiguration(input.userId, input);
   const rawBasePrompt =
     input.prompt?.trim() ||
     (input.mode === "first-last"
@@ -435,7 +438,7 @@ export async function createStoryboardPanelVideoTask(input: {
     action: panel.description,
     durationSeconds,
     maxDurationSeconds: limits.maxDurationSeconds,
-    prompt: lockVideoAudioPerformance(rawBasePrompt, panel),
+    prompt: lockVideoAudioPerformance(rawBasePrompt, { ...panel, soundPolicy: productionConfiguration.sound }),
   });
   if (input.mode === "first-last" && segments.length > 1)
     throw new ProjectAssetTaskError(
@@ -562,7 +565,8 @@ export async function createStoryboardPanelVideoTask(input: {
           "1080p",
         duration: `${segment.durationSeconds}s`,
         format: "mp4",
-        audioMode: "full",
+        audioMode: soundPolicyAudioMode(productionConfiguration.sound),
+        productionConfiguration,
         videoMode: input.mode ?? "reference",
         videoSegmentId: segmentId,
         videoSegmentIndex: segment.index,
@@ -715,7 +719,9 @@ export async function previewStoryboardPanelPrompt(input: {
     });
 
   if (input.kind === "video") {
-    const compiledPrompt = basePrompt ? lockVideoAudioPerformance(basePrompt, panel) : "";
+    const productionConfiguration = await resolveProductionConfiguration(input.userId, input);
+    const audioMode = soundPolicyAudioMode(productionConfiguration.sound);
+    const compiledPrompt = basePrompt ? lockVideoAudioPerformance(basePrompt, { ...panel, soundPolicy: productionConfiguration.sound }) : "";
     let limits = { maxDurationSeconds: 10, maxReferenceImages: 1 };
     let outputResolution = input.resolution ?? input.mediaDefaults?.videoGenerationResolution ?? "1080p";
     if (input.channelId && input.model) {
@@ -848,7 +854,7 @@ export async function previewStoryboardPanelPrompt(input: {
       {
         key: "audio_mode",
         label: "模型音频",
-        value: "开启（对白 / 画外音 / 心声 / 环境声 / 音效；字幕后期合成）",
+        value: `${audioMode} · ${soundPolicyInstructions(productionConfiguration.sound)}`,
       },
     );
     return {

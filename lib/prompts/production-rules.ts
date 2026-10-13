@@ -27,7 +27,6 @@ export function withProductionRules(
   const source = readProductionTemplate(task);
   let rules = source.split("## 输出契约")[0];
   if (task === "video-prompt-generation") {
-    // The current pipeline uses silent video + separate speech/lip sync.
     // H3 private syntax must not reach generic video models.
     rules = rules.split("## MiniMax H3 模式映射")[0];
   }
@@ -36,5 +35,6 @@ export function withProductionRules(
   const hash = createHash("sha256")
     .update(`${prompt.versionHash}\0${source}\0production-rules-v1`)
     .digest("hex");
-  return { ...prompt, text, versionHash: hash };
+  return { ...prompt, text, versionHash: hash,
+    platformContract: [prompt.platformContract, rules].filter(Boolean).join("\n\n") };
 }

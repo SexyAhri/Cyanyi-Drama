@@ -13,11 +13,13 @@ const mocks = vi.hoisted(() => ({
   storyboardVideoSegmentUpsert: vi.fn(),
   taskCreate: vi.fn(),
   transaction: vi.fn(),
+  configurationFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/server/prisma", () => ({
   prisma: {
     channel: { findFirst: mocks.channelFindFirst },
+    productionConfiguration: { findMany: mocks.configurationFindMany },
     projectConfig: { findUnique: mocks.projectConfigFindUnique },
     providerModel: {
       count: mocks.providerModelCount,
@@ -61,6 +63,7 @@ import {
 describe("storyboard prompt preview", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.configurationFindMany.mockResolvedValue([]);
     mocks.channelFindFirst.mockResolvedValue({
       id: "channel-1",
       protocol: "openai-compatible",
@@ -156,7 +159,7 @@ describe("storyboard prompt preview", () => {
         }),
         expect.objectContaining({
           key: "audio_mode",
-          value: "开启（对白 / 画外音 / 心声 / 环境声 / 音效；字幕后期合成）",
+          value: expect.stringContaining("full ·"),
         }),
       ]),
     );

@@ -46,4 +46,6 @@ export type RenderedPrompt = {
   versionHash: string;
   systemText: string;
   text: string;
+  variables?: Record<string, string>;
+  platformContract?: string;
 };

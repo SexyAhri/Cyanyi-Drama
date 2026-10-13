@@ -6,6 +6,7 @@ import {
   createWorkflowTraceContext,
 } from "@/lib/observability/trace-context";
 import { prisma } from "@/lib/server/prisma";
+import { resolveProductionConfiguration } from "@/lib/production-configuration/store";
 import {
   assertWorkflowAction,
   assertWorkflowDefinition,
@@ -98,6 +99,12 @@ export async function createOrReuseWorkflowRun(
   });
   const existing = await findReusableWorkflowRun(activeDedupeKey);
   if (existing) return { workflow: toRun(existing), reused: true };
+  const workflowInput = definition.input && typeof definition.input === "object" && !Array.isArray(definition.input)
+    ? definition.input as Record<string, unknown> : {};
+  const productionConfiguration = await resolveProductionConfiguration(definition.userId, {
+    projectId: definition.projectId, episodeId: definition.episodeId ?? undefined,
+    ...(targetType === "storyboard_panel" && definition.episodeId ? { panelId: targetId } : {}),
+  });
   const runTrace = createWorkflowTraceContext(definition.id);
 
   try {
@@ -113,7 +120,7 @@ export async function createOrReuseWorkflowRun(
         targetType,
         targetId,
         activeDedupeKey,
-        input: toJson(definition.input),
+        input: toJson({ ...workflowInput, productionConfiguration }),
         steps: {
           create: definition.steps.map((step, index) => {
             const stepId = randomUUID();

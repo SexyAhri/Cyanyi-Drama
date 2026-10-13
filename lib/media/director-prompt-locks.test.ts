@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { lockVideoAudioPerformance } from "./director-prompt-locks";
+import { DEFAULT_SOUND_POLICY } from "@/lib/production-configuration/contract";
 
 describe("video sound contract", () => {
+  it("removes disabled speech requirements when recompiling a prior prompt", () => {
+    const initial = lockVideoAudioPerformance("镜头推近。", { voiceLines: [{ speaker: "甲", content: "对白内容", delivery: "dialogue" }, { speaker: "乙", content: "心声内容", delivery: "inner_monologue" }] });
+    const updated = lockVideoAudioPerformance(initial, { soundPolicy: { ...DEFAULT_SOUND_POLICY, dialogue: false, music: "off" } });
+    expect(updated).not.toContain("对白内容"); expect(updated).toContain("心声内容"); expect(updated).toContain("不生成对白"); expect(updated).toContain("不生成配乐");
+    const silent = lockVideoAudioPerformance(initial, { soundPolicy: { ...DEFAULT_SOUND_POLICY, mode: "silent" } });
+    expect(silent).not.toContain("逐字"); expect(silent).not.toContain("包含本镜已有");
+  });
   it("preserves dialogue, character thoughts and narration with the right performance", () => {
     const prompt = lockVideoAudioPerformance("镜头推近。生成无声画面，不生成对白、旁白、字幕或水印。", {
       speakingCharacter: "甲", lipSyncText: "等我回来！",
@@ -44,5 +52,13 @@ describe("video sound contract", () => {
     expect(updated.match(/我会回来。/gu)).toHaveLength(1);
     expect(updated).toContain("甲以心声／内心独白");
     expect(updated).not.toContain("画外音以画外音／旁白");
+  });
+
+  it("recovers multiline approved dialogue when a saved canvas prompt is recompiled", () => {
+    const initial = lockVideoAudioPerformance("镜头推近。", { lipSyncText: "第一句，\n第二句！" });
+    const updated = lockVideoAudioPerformance(initial, { soundPolicy: { ...DEFAULT_SOUND_POLICY, dialogue: false } });
+    expect(updated).not.toContain("第一句");
+    expect(updated).not.toContain("第二句");
+    expect(updated.match(/不生成对白/gu)).toHaveLength(1);
   });
 });

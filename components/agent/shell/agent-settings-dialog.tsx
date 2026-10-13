@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { ProductionConfigurationPanel, type ProductionPanelStatus } from "@/features/production-configuration/panel";
+import { productionCopy } from "@/features/production-configuration/copy";
+import type { ConfigurationScope } from "@/lib/production-configuration/contract";
 import { RotateCcw, Save, Settings } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -34,7 +37,7 @@ import {
 } from "./runtime-settings-panel";
 import type { ShellSettings } from "./shell-settings";
 
-type SettingsTab = "preferences" | "runtime" | "account";
+type SettingsTab = "preferences" | "runtime" | "account" | "production";
 
 type AgentSettingsDialogProps = {
   copy: ShellCopy;
@@ -50,6 +53,7 @@ type AgentSettingsDialogProps = {
   settings: ShellSettings;
   user?: ShellUser | null;
   showProjectVisualWorld?: boolean;
+  productionScope?: ConfigurationScope;
 };
 
 export function AgentSettingsDialog({
@@ -61,6 +65,7 @@ export function AgentSettingsDialog({
   settings,
   user,
   showProjectVisualWorld = false,
+  productionScope,
 }: AgentSettingsDialogProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>("preferences");
   const [runtimeStatus, setRuntimeStatus] =
@@ -68,9 +73,16 @@ export function AgentSettingsDialog({
   const [accountStatus, setAccountStatus] =
     useState<AccountSettingsPanelStatus>({ loading: true, submitting: false });
   const runtimeBusy = runtimeStatus.loading || runtimeStatus.saving;
+  const [productionStatus, setProductionStatus] = useState<ProductionPanelStatus>({ dirty: false, busy: false });
+  const configurationCopy = productionCopy[copy.locale];
+  function changeOpen(next: boolean) {
+    if (!next && activeTab === "production" && (productionStatus.busy || (productionStatus.dirty && !window.confirm(configurationCopy.discard)))) return;
+    if (!next) setProductionStatus({ dirty: false, busy: false });
+    onOpenChange(next);
+  }
 
   return (
-    <Dialog onOpenChange={onOpenChange} open={open}>
+    <Dialog onOpenChange={changeOpen} open={open}>
       <DialogContent className="max-h-[92vh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-5xl">
         <DialogHeader>
           <div className="flex items-center gap-3">
@@ -84,7 +96,11 @@ export function AgentSettingsDialog({
 
         <Tabs
           className="flex min-h-0 w-full min-w-0 flex-col"
-          onValueChange={(value) => setActiveTab(value as SettingsTab)}
+          onValueChange={(value) => {
+            if (activeTab === "production" && value !== activeTab && (productionStatus.busy || (productionStatus.dirty && !window.confirm(configurationCopy.discard)))) return;
+            setProductionStatus({ dirty: false, busy: false });
+            setActiveTab(value as SettingsTab);
+          }}
           value={activeTab}
         >
           <TabsList
@@ -100,9 +116,11 @@ export function AgentSettingsDialog({
             <TabsTrigger className="flex-none px-0 pb-3" value="account">
               {copy.settingsAccount}
             </TabsTrigger>
+            <TabsTrigger className="flex-none px-0 pb-3" value="production">{configurationCopy.title}</TabsTrigger>
           </TabsList>
 
           <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pt-4">
+            <TabsContent className="mt-0" value="production"><ProductionConfigurationPanel locale={copy.locale} models={models} scope={productionScope} onStatusChange={setProductionStatus} /></TabsContent>
             <TabsContent className="mt-0 grid gap-3" value="preferences">
               <PreferencesSettingsPanel
                 copy={copy}
@@ -160,7 +178,7 @@ export function AgentSettingsDialog({
               {copy.settingsAccountRedirecting}
             </Button>
           ) : (
-            <Button onClick={() => onOpenChange(false)} type="button">
+            <Button onClick={() => changeOpen(false)} disabled={activeTab === "production" && productionStatus.busy} type="button">
               {copy.settingsFinish}
             </Button>
           )}

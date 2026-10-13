@@ -45,6 +45,7 @@ model User {
   approvedProductionDeliverables ProductionDeliverable[]  @relation("ProductionDeliverableApprover")
   productionApprovalDecisions    ProductionApprovalGate[] @relation("ProductionApprovalDecider")
   runtimeSettings                UserRuntimeSettings?
+  productionConfigurations       ProductionConfiguration[]
   externalIdentities             ExternalIdentity[]
   paymentOrders                  PaymentOrder[]
 
@@ -72,6 +73,25 @@ model UserRuntimeSettings {
   user                            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("user_runtime_settings")
+}
+
+model ProductionConfiguration {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  scopeKey    String    @map("scope_key")
+  revision    Int       @default(0)
+  version     Int       @default(0)
+  draft       Json      @default("{}")
+  published   Json?
+  history     Json      @default("[]")
+  publishedAt DateTime? @map("published_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, scopeKey])
+  @@index([userId, updatedAt])
+  @@map("production_configurations")
 }
 
 model Session {

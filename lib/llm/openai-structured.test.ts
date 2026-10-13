@@ -271,7 +271,7 @@ describe("OpenAI structured requests", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does not let callers re-enable transport retries", async () => {
+  it("honors a bounded transport retry policy for interrupted connections", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
       status: 200,
       ok: true,
@@ -290,10 +290,10 @@ describe("OpenAI structured requests", () => {
           variables: { source_text: "source", character_library: "[]" },
         }),
         schema,
-        maxTransportAttempts: 5,
+        maxTransportAttempts: 2,
       }),
-    ).rejects.toThrow(/attempts=1/);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    ).rejects.toThrow(/attempts=2/);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("keeps a complete structured event-stream result when the socket closes", async () => {

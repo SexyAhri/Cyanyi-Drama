@@ -48,6 +48,8 @@ import type { StudioLocale } from "../types";
 
 export function WorkspaceTopbar({
   episodeName,
+  episodeId,
+  panelId,
   isRefreshing,
   locale,
   onLocaleChange,
@@ -61,6 +63,8 @@ export function WorkspaceTopbar({
   user,
 }: {
   episodeName?: string;
+  episodeId?: string;
+  panelId?: string;
   isRefreshing: boolean;
   locale: StudioLocale;
   onLocaleChange: () => void;
@@ -300,6 +304,7 @@ export function WorkspaceTopbar({
         runtimeConnection={runtime.connection}
         settings={settings}
         showProjectVisualWorld
+        productionScope={{ projectId, episodeId, panelId }}
       />
     </>
   );

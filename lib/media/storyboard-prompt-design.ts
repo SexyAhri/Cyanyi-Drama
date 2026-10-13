@@ -1,4 +1,7 @@
 import { jsonrepair } from "jsonrepair";
+import { currentProductionConfiguration, withProductionConfiguration } from "@/lib/production-configuration/context";
+import { resolveProductionConfiguration } from "@/lib/production-configuration/store";
+import { soundPolicyInstructions } from "@/lib/production-configuration/contract";
 
 import {
   compileAssetVisualProfile,
@@ -115,6 +118,7 @@ export async function designStoryboardMediaPrompt(input: {
     resolvePromptDesignProvider(input),
   ]);
   if (!project) throw new StoryboardPromptDesignError("项目不存在", 404);
+  const configuration = currentProductionConfiguration()?.snapshot ?? await resolveProductionConfiguration(input.userId, input);
 
   const characters = parseStringList(panel.charactersJson);
   const props = parseStringList(panel.propsJson);
@@ -151,13 +155,18 @@ export async function designStoryboardMediaPrompt(input: {
   const prompt = input.kind === "video"
     ? withProductionRules(basePrompt, "video-prompt-generation")
     : withProductionRules(basePrompt, "storyboard-generation");
-  const result = await requestOpenAiText({
+  if (input.kind === "video") {
+    const soundContract = soundPolicyInstructions(configuration.sound, locale);
+    prompt.platformContract = [prompt.platformContract, soundContract].filter(Boolean).join("\n\n");
+    prompt.text += `\n\n${soundContract}`;
+  }
+  const result = await withProductionConfiguration(input.userId, configuration, () => requestOpenAiText({
     ...provider,
     prompt,
     temperature: 0.35,
-  });
+  }));
   const design = parseStoryboardMediaPromptDesignText(result.text);
-  if (input.kind === "video") design.prompt = lockVideoAudioPerformance(design.prompt, { ...panel, locale });
+  if (input.kind === "video") design.prompt = lockVideoAudioPerformance(design.prompt, { ...panel, locale, soundPolicy: configuration.sound });
   return {
     design,
     rawOutput: result.outputText,

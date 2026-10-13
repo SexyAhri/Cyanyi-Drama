@@ -389,6 +389,8 @@ export function WorkspacePage({
       <div className="flex h-dvh min-h-0 flex-col bg-background">
         <WorkspaceTopbar
           episodeName={selectedEpisode?.name}
+          episodeId={selectedEpisode?.id}
+          panelId={selection?.kind === "panel" ? selection.id : undefined}
           isRefreshing={isRefreshing}
           locale={locale}
           onLocaleChange={toggleLocale}

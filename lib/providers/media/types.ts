@@ -1,4 +1,5 @@
 import type { ChannelProtocol } from "@/lib/agent/provider-types";
+import type { ProductionConfigurationSnapshot } from "@/lib/production-configuration/contract";
 import type { MediaAsset } from "@/lib/media/task-contract";
 import type { OpenAiCompatibleMediaTemplate } from "@/lib/providers/openai-compatible-media-template";
 
@@ -44,6 +45,7 @@ export type MediaProviderRequest = {
   operation?: string;
   audioAssetId?: string;
   audioMode?: "full" | "ambient_only" | "none";
+  productionConfiguration?: ProductionConfigurationSnapshot;
   panelId?: string;
 };
 

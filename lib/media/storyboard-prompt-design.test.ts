@@ -9,6 +9,7 @@ const providerModelFindFirst = vi.hoisted(() => vi.fn());
 const characterFindMany = vi.hoisted(() => vi.fn());
 const locationFindFirst = vi.hoisted(() => vi.fn());
 const propFindMany = vi.hoisted(() => vi.fn());
+const configurationFindMany = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/llm/openai-structured", () => ({ requestOpenAiText }));
 vi.mock("@/lib/server/crypto", () => ({
@@ -23,6 +24,7 @@ vi.mock("@/lib/settings/runtime-store", () => ({
 }));
 vi.mock("@/lib/server/prisma", () => ({
   prisma: {
+    productionConfiguration: { findMany: configurationFindMany },
     storyboardPanel: {
       findFirst: storyboardPanelFindFirst,
       findMany: storyboardPanelFindMany,
@@ -94,6 +96,7 @@ const panel = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+    configurationFindMany.mockResolvedValue([]);
   storyboardPanelFindFirst.mockResolvedValue(panel);
   storyboardPanelFindMany.mockResolvedValue([
     {

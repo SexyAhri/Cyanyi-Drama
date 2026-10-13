@@ -5,6 +5,8 @@ import type {
   AgentToolCall,
 } from "@/lib/agent/types";
 import { createHash } from "node:crypto";
+import { resolveProductionConfiguration, assertConfigurationScope } from "@/lib/production-configuration/store";
+import { withProductionConfiguration } from "@/lib/production-configuration/context";
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { controlMediaTask } from "@/lib/media/task-actions";
@@ -90,6 +92,7 @@ type StudioAgentOperation =
   | "update_canvas_prompt";
 
 type ApprovalPayload = {
+  episodeId?: string;
   expiresAt: number;
   locale: StudioAgentLocale;
   messageId: string;
@@ -229,6 +232,7 @@ async function* runStudioAgentEvents(
       messageId,
       operation: decision.operation,
       projectId: input.projectId,
+      episodeId: state.episode?.id,
       targetId: target.id,
       targetLabel:
         "name" in target && typeof target.name === "string"
@@ -835,8 +839,15 @@ async function decideStudioAgentAction(
   },
   state: AgentState,
 ): Promise<StudioAgentDecision> {
-  const provider = await resolveStudioAgentProvider(input, state);
-  if (!provider) return deterministicStudioAgentDecision(input, state);
+  const configuration = await resolveProductionConfiguration(input.userId, { projectId: state.project.id, episodeId: state.episode?.id });
+  const configuredAgent = configuration.agents[PROMPT_IDS.STUDIO_WORKFLOW_AGENT];
+  const disabled = new Set(configuredAgent?.disabledOperations ?? []);
+  const provider = await resolveStudioAgentProvider({ ...input,
+    modelSelection: configuredAgent?.channelId && configuredAgent.model ? { channelId: configuredAgent.channelId, model: configuredAgent.model } : input.modelSelection }, state);
+  if (!provider) {
+    const decision = deterministicStudioAgentDecision(input, state);
+    return decision.operation && disabled.has(decision.operation) ? { ...decision, operation: null, targetId: null } : decision;
+  }
   const retrievedIds: string[] = [];
   let result: Awaited<
     ReturnType<
@@ -847,6 +858,7 @@ async function decideStudioAgentAction(
   >;
   for (let retrieval = 0; ; retrieval++) {
     const candidates = buildOperationCandidates(state);
+    for (const operation of disabled) if (operation in candidates) candidates[operation as keyof typeof candidates] = [];
     candidates.read_project_object = candidates.read_project_object.filter(
       (item) => !retrievedIds.includes(item.id),
     );
@@ -860,7 +872,7 @@ async function decideStudioAgentAction(
         user_request: input.content.trim(),
       },
     });
-    result = await requestOpenAiStructured({
+    result = await withProductionConfiguration(input.userId, configuration, () => requestOpenAiStructured({
       baseUrl: provider.baseUrl,
       apiKeys: provider.apiKeys,
       model: provider.model,
@@ -869,7 +881,8 @@ async function decideStudioAgentAction(
       structuredOutputMode: provider.structuredOutputMode,
       temperature: 0.1,
       ...provider.requestOptions,
-    });
+    }));
+    if (result.data.operation && disabled.has(result.data.operation)) return { reply: input.locale === "en" ? "This operation is disabled in the published Agent settings." : "当前已发布的 Agent 设置已停用该操作。", operation: null, targetId: null };
     if (result.data.operation !== "read_project_object") break;
     const targetId = result.data.targetId;
     if (
@@ -1333,6 +1346,11 @@ async function executeOperation(
     totalCharacters?: number;
   }) => void,
 ) {
+  const scope = { projectId: approval.projectId, episodeId: approval.episodeId ?? approval.canvasDraft?.episodeId };
+  await assertConfigurationScope(approval.userId, scope);
+  const configuration = await resolveProductionConfiguration(approval.userId, scope);
+  if (configuration.agents[PROMPT_IDS.STUDIO_WORKFLOW_AGENT]?.disabledOperations?.includes(approval.operation))
+    throw new StudioAgentError("该操作已在 Agent 设置中停用，请更新设置后重新申请操作", 403);
   if (approval.operation === "read_project_object")
     throw new StudioAgentError("读取项目资料无需审批，请重新发送问题");
   if (isProductionOperation(approval.operation)) {

@@ -30,6 +30,9 @@ import {
   generateEpisodeScreenplayNarration,
 } from "@/lib/novel/staged-screenplay-runtime";
 import { prisma } from "@/lib/server/prisma";
+import { configurationSnapshotSchema } from "@/lib/production-configuration/contract";
+import { resolveProductionConfiguration } from "@/lib/production-configuration/store";
+import { withProductionConfiguration } from "@/lib/production-configuration/context";
 import { designEpisodeVoicePerformance } from "@/lib/voice/design";
 import { analyzeEpisodeVoices } from "@/lib/voice/analyze";
 import {
@@ -200,7 +203,18 @@ async function processClaimedWorkflowJob(
   });
   try {
     await assertWorkflowRunActive({ runId, workerId });
-    const output = await runStep(userId, run, step, {
+    const savedConfiguration = configurationSnapshotSchema.safeParse(isRecord(run.input) ? run.input.productionConfiguration : undefined);
+    if (!savedConfiguration.success && isRecord(run.input) && "productionConfiguration" in run.input)
+      throw new Error("WORKFLOW_CONFIGURATION_SNAPSHOT_INVALID");
+    const productionConfiguration = savedConfiguration.success ? savedConfiguration.data
+      : await resolveProductionConfiguration(userId, { projectId: run.projectId, episodeId: run.episodeId ?? undefined });
+    if (!savedConfiguration.success) {
+      const frozenInput = { ...(isRecord(run.input) ? run.input : {}), productionConfiguration };
+      const frozen = await prisma.workflowRun.updateMany({ where: { id: runId, leaseOwner: workerId }, data: { input: toInputJson(frozenInput) } });
+      if (!frozen.count) throw new WorkflowControlError("lease_lost", runId);
+      run.input = toInputJson(frozenInput) as Prisma.JsonValue;
+    }
+    const output = await withProductionConfiguration(userId, productionConfiguration, () => runStep(userId, run, step, {
       attempt: attemptNumber,
       reusePreviousResults: !run.events.some(event =>
         isRecord(event.payload) && event.payload.retryMode === "restart" &&
@@ -227,7 +241,7 @@ async function processClaimedWorkflowJob(
       reportProgress: async message => { await prisma.workflowEvent.create({ data: {
         runId, stepId: step.id, type: "progress", status: "running", message,
       } }); },
-    });
+    }));
     await assertWorkflowRunActive({ runId, workerId });
     const outputJson = toInputJson(output);
     const outputText = JSON.stringify(output);
