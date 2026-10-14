@@ -1,4 +1,4 @@
-import { canvasEdgePurpose } from "@/lib/studio/canvas-document";
+import { canvasAssetSource, canvasEdgePurpose } from "@/lib/studio/canvas-document";
 import type {
   ProjectAssetCatalog,
   ProjectMediaAsset,
@@ -7,6 +7,7 @@ import type {
   StudioSelectionContext,
 } from "../types";
 import type { MediaTask } from "@/lib/media/task-contract";
+import { isAssetVisualProfileComplete } from "@/lib/assets/visual-profile";
 import type { CanvasCard, CanvasDocument, CanvasEdge, CanvasPurpose } from "./types";
 import {
   buildStudioAssetEntities,
@@ -51,7 +52,7 @@ export function canvasBaselineTargets(
   catalog?: ProjectAssetCatalog,
   panels: StudioStoryboardPanel[] = [],
 ) {
-  const media = nodeMedia(node, catalog, panels);
+  const media = nodeMedia(node, catalog, panels, document);
   if (media?.kind !== "image") return [];
   const sources = [node, ...document.edges
     .filter((edge) => edge.to === node.id)
@@ -167,8 +168,9 @@ export function panelCard(
 export function nodeCandidates(
   node: CanvasCard,
   catalog?: ProjectAssetCatalog,
+  document?: CanvasDocument,
 ) {
-  const inherited = inheritedCanvasAsset(node, catalog);
+  const inherited = canvasNodeAsset(node, catalog, document);
   const inheritedIds = new Set(inherited?.candidates.map(candidate => candidate.assetId));
   return (catalog?.assets ?? [])
     .filter(
@@ -186,10 +188,28 @@ export function nodeCandidates(
 }
 
 /** Default episode asset branches reuse project images until they have their own output. */
-function inheritedCanvasAsset(node: CanvasCard, catalog?: ProjectAssetCatalog) {
+function inheritedCanvasAsset(node: CanvasCard, catalog?: ProjectAssetCatalog, document?: CanvasDocument) {
   const prefix = "episode-asset-image-";
-  if (!catalog || node.kind !== "image" || !node.id.startsWith(prefix)) return;
+  if (!catalog || node.kind !== "image") return;
+  const source = canvasAssetSource(node, document);
+  if (source) return linkedCanvasAsset(source, catalog);
+  if (document?.edges.some(edge => edge.to === node.id && document.nodes.some(parent => parent.id === edge.from && parent.entityId && ["character", "location", "prop"].includes(parent.kind)))) return;
+  if (!node.id.startsWith(prefix)) return;
   return canvasAssetEntities(catalog).get(node.id.slice(prefix.length));
+}
+
+export function canvasNodeAsset(node: CanvasCard, catalog?: ProjectAssetCatalog, document?: CanvasDocument) {
+  return linkedCanvasAsset(node, catalog) ?? inheritedCanvasAsset(node, catalog, document);
+}
+
+export function canvasImageAvailability(node: CanvasCard, catalog: ProjectAssetCatalog | undefined, document: CanvasDocument, locale: StudioLocale) {
+  const entity = canvasNodeAsset(node, catalog, document);
+  if (!entity) return;
+  return isAssetVisualProfileComplete(entity.visualProfile)
+    ? locale === "en" ? "Design ready · image not generated" : "设定已完成 · 图片未生成"
+    : entity.visualProfile
+      ? locale === "en" ? "Design incomplete · image not generated" : "设定待完善 · 图片未生成"
+    : locale === "en" ? "Image not generated" : "图片未生成";
 }
 
 export function isReusableCanvasBranch(node: CanvasCard, document: CanvasDocument, catalog: ProjectAssetCatalog | undefined, tasks: MediaTask[]) {
@@ -201,7 +221,7 @@ export function isReusableCanvasBranch(node: CanvasCard, document: CanvasDocumen
   // Fold only a single adopted result with no pending work or prompt edits.
   const parentEntity = linkedCanvasAsset(parent, catalog);
   const baseline = parentEntity?.candidates.find(candidate => candidate.selected && candidate.url);
-  const ownOutputs = nodeCandidates(node, catalog).filter(asset => asset.sourceTargetId === node.id || asset.id === node.assetId);
+  const ownOutputs = nodeCandidates(node, catalog, document).filter(asset => asset.sourceTargetId === node.id || asset.id === node.assetId);
   const recordedVersion = node.promptVersions?.length === 1 ? node.promptVersions[0] : undefined;
   const unchangedGeneratedPrompt = recordedVersion?.kind === "image" && recordedVersion.prompt === node.text && recordedVersion.createdAt <= (ownOutputs[0]?.createdAt ?? "");
   if (node.episodeLayer === "asset_image" && baseline && ownOutputs.length === 1 && ownOutputs[0].id === baseline.assetId && (!node.promptVersions?.length || unchangedGeneratedPrompt) &&
@@ -210,7 +230,7 @@ export function isReusableCanvasBranch(node: CanvasCard, document: CanvasDocumen
     const generatedPrompt = completedTask?.request.prompt;
     if (unchangedGeneratedPrompt || node.text === parentEntity?.generationPrompt || (typeof generatedPrompt === "string" && node.text === generatedPrompt)) return true;
   }
-  const entity = inheritedCanvasAsset(node, catalog);
+  const entity = inheritedCanvasAsset(node, catalog, document);
   if (!entity || node.assetId || node.modelId || node.promptVersions?.length || node.text !== entity.generationPrompt) return false;
   if (tasks.some(task => task.targetType === "canvas_node" && task.targetId === node.id) || catalog?.assets.some(asset => asset.sourceTargetId === node.id)) return false;
   return entity.candidates.some(candidate => candidate.selected && candidate.url);
@@ -227,7 +247,7 @@ export function canvasCardSummary(node: CanvasCard, catalog: ProjectAssetCatalog
   const entity = linkedCanvasAsset(node, catalog);
   if (entity)
     return entity.visualProfile?.spec.shapeAndStructure || entity.description || entity.name;
-  const inherited = inheritedCanvasAsset(node, catalog) ?? (parent && linkedCanvasAsset(parent, catalog));
+  const inherited = inheritedCanvasAsset(node, catalog, document) ?? (parent && linkedCanvasAsset(parent, catalog));
   if (inherited)
     return locale === "en" ? `Image candidates for ${inherited.name}. Select to review or create a new version.` : `${inherited.name}的参考图候选。点击查看或生成新版本。`;
 }
@@ -235,6 +255,7 @@ export function nodeMedia(
   node: CanvasCard,
   catalog?: ProjectAssetCatalog,
   panels: StudioStoryboardPanel[] = [],
+  document?: CanvasDocument,
 ): ProjectMediaAsset | undefined {
   if (node.assetId)
     return catalog?.assets.find((asset) => asset.id === node.assetId);
@@ -255,12 +276,12 @@ export function nodeMedia(
       ? panel?.videoAssetId
       : panel?.imageAssetId;
   if (official) return catalog?.assets.find((asset) => asset.id === official);
-  const candidates = nodeCandidates(node, catalog);
-  const ownOutput = inheritedCanvasAsset(node, catalog)
+  const candidates = nodeCandidates(node, catalog, document);
+  const ownOutput = inheritedCanvasAsset(node, catalog, document)
     ? candidates.find(asset => asset.sourceTargetId === node.id && asset.kind === "image")
     : undefined;
   if (ownOutput) return ownOutput;
-  const inherited = inheritedCanvasAsset(node, catalog);
+  const inherited = inheritedCanvasAsset(node, catalog, document);
   if (inherited) {
     const baseline = inherited.candidates.find(candidate => candidate.selected && candidate.url);
     const fallback = inherited.candidates.filter(candidate => candidate.url)
@@ -280,19 +301,30 @@ export function nodeMedia(
 export function canvasNodeTask(
   node: CanvasCard,
   tasks: MediaTask[],
+  catalog?: ProjectAssetCatalog,
+  document?: CanvasDocument,
 ): MediaTask | undefined {
   const kind =
     node.outputKind ??
     (node.kind === "video" ? "video" : node.kind === "audio" ? "audio" : "image");
   const targetType = node.panelId ? "storyboard_panel" : "canvas_node";
   const targetId = node.panelId ?? node.id;
-  return tasks
+  const ownTasks = tasks
     .filter(
       (task) =>
-        task.targetType === targetType &&
-        task.targetId === targetId &&
+        ((task.targetType === targetType && task.targetId === targetId) ||
+          (task.targetType === "canvas_node" && task.targetId === node.id)) &&
         task.kind === kind,
-    )
+    );
+  const entity = canvasNodeAsset(node, catalog, document);
+  const candidateIds = new Set(entity?.kind === "character"
+    ? catalog?.characters.find(item => item.id === entity.id)?.appearances.map(item => item.id)
+    : entity?.kind === "location"
+      ? catalog?.locations.find(item => item.id === entity.id)?.images.map(item => item.id)
+      : []);
+  return (ownTasks.length ? ownTasks : tasks.filter(task => entity && task.kind === "image" &&
+    ((task.targetType === entity.kind && task.targetId === entity.id) ||
+      (task.targetType === (entity.kind === "character" ? "character_appearance" : "location_image") && candidateIds.has(task.targetId ?? "")))))
     .sort(
       (a, b) =>
         Number(["queued", "running"].includes(b.status)) -

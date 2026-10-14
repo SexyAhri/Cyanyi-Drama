@@ -97,7 +97,13 @@ describe("prompt registry", () => {
         maxSemanticCorrections: noSemanticRetryPromptIds.has(id) ? 0 : 1,
         mode: "targeted",
       });
-      expect(rendered.agentId).toBe(entry.agent.id);
+      const productionAgentId =
+        id === PROMPT_IDS.ASSET_VISUAL_DESIGN
+          ? "production_asset-prompt-generation"
+          : id === PROMPT_IDS.EPISODE_ADAPTATION
+            ? "production_script-generation"
+            : entry.agent.id;
+      expect(rendered.agentId).toBe(productionAgentId);
       expect(rendered.maxSemanticCorrections).toBe(
         entry.agent.retryPolicy.maxSemanticCorrections,
       );

@@ -50,6 +50,7 @@ export async function GET(request: Request) {
     costs: costs.map((cost) => ({
       ...cost,
       cost: cost.cost.toString(),
+      quantity: Number(cost.quantity),
       createdAt: cost.createdAt.toISOString(),
     })),
     filters: { apiTypes: apiTypes.map((item) => item.apiType) },

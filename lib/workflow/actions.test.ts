@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   removeTerminalWorkflowRun: vi.fn(),
   requestWorkflowCancel: vi.fn(),
   retryWorkflowRun: vi.fn(),
+  retryWorkflowStep: vi.fn(),
   updateWorkflowRunStatus: vi.fn(),
 }));
 
@@ -17,10 +18,11 @@ vi.mock("./store", () => ({
   removeTerminalWorkflowRun: mocks.removeTerminalWorkflowRun,
   requestWorkflowCancel: mocks.requestWorkflowCancel,
   retryWorkflowRun: mocks.retryWorkflowRun,
+  retryWorkflowStep: mocks.retryWorkflowStep,
   updateWorkflowRunStatus: mocks.updateWorkflowRunStatus,
 }));
 
-import { controlWorkflowRun, deleteWorkflowRun } from "./actions";
+import { controlWorkflowRun, deleteWorkflowRun, retryWorkflowStepAndEnqueue } from "./actions";
 
 describe("workflow actions", () => {
   beforeEach(() => {
@@ -87,6 +89,63 @@ describe("workflow actions", () => {
       maxAttempts: 1,
       projectId: "project-a",
       runId: current.id,
+      userId: "user-1",
+    });
+  });
+
+  it("resumes the same paused workflow and enqueues its existing run", async () => {
+    const snapshot = { snapshotVersion: 7 };
+    const current = run({ status: "paused", input: snapshot });
+    const queued = run({ status: "queued", input: snapshot });
+    mocks.getWorkflowRun.mockResolvedValue(current);
+    mocks.updateWorkflowRunStatus.mockResolvedValue(queued);
+    mocks.enqueueWorkflowJob.mockResolvedValue({ id: "job-resume" });
+
+    await expect(
+      controlWorkflowRun({
+        action: "resume",
+        projectId: "project-a",
+        runId: current.id,
+        userId: "user-1",
+      }),
+    ).resolves.toBe(queued);
+
+    expect(mocks.updateWorkflowRunStatus).toHaveBeenCalledWith(
+      "user-1",
+      current.id,
+      "queued",
+      "resume_requested",
+    );
+    expect(mocks.enqueueWorkflowJob).toHaveBeenCalledWith({
+      maxAttempts: 1,
+      projectId: "project-a",
+      runId: current.id,
+      userId: "user-1",
+    });
+  });
+
+  it("uses the shared retry and enqueue rule for an explicitly selected step", async () => {
+    const workflow = run({ status: "queued" });
+    mocks.retryWorkflowStep.mockResolvedValue(workflow);
+    mocks.enqueueWorkflowJob.mockResolvedValue({ id: "job-step-retry" });
+
+    await expect(retryWorkflowStepAndEnqueue({
+      mode: "continue",
+      runId: workflow.id,
+      stepKey: "write-script",
+      userId: "user-1",
+    })).resolves.toBe(workflow);
+
+    expect(mocks.retryWorkflowStep).toHaveBeenCalledWith(
+      "user-1",
+      workflow.id,
+      "write-script",
+      "continue",
+    );
+    expect(mocks.enqueueWorkflowJob).toHaveBeenCalledWith({
+      maxAttempts: 1,
+      projectId: "project-a",
+      runId: workflow.id,
       userId: "user-1",
     });
   });

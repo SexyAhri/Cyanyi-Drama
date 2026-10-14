@@ -8,14 +8,23 @@ import type {
 } from "../types";
 import {
   buildOperationItems,
+  filterOperationItems,
+  prioritizeFocusedOperation,
   buildTraceRows,
   isOperationDeletable,
   isOperationRetryable,
   operationErrorMessage,
+  operationCauseKey,
+  operationModelKey,
+  operationPhaseKey,
+  formatElapsedDuration,
   localizedTraceAttributes,
   traceEventLabel,
   traceEventDisplayStatus,
   traceEventSourceLabel,
+  traceAgentLabel,
+  traceArtifactLabel,
+  traceConfigurationSources,
   traceSpanKindLabel,
   traceSpanLabel,
   type OperationItem,
@@ -24,6 +33,44 @@ import {
 } from "./inspector-view-model";
 
 describe("studio inspector view model", () => {
+  it("puts a directly linked workflow or media run at the start of the operations list", () => {
+    const items = [
+      { id: "step-a", kind: "workflow-step", updatedAt: "1", workflow: { id: "run-a" }, step: { id: "step-a" } },
+      { id: "task-b", kind: "task", updatedAt: "2", task: { id: "task-b" } },
+    ] as unknown as OperationItem[];
+    expect(prioritizeFocusedOperation(items, "task-b").map((item) => item.id)).toEqual(["task-b", "step-a"]);
+    expect(prioritizeFocusedOperation(items, "run-a").map((item) => item.id)).toEqual(["step-a", "task-b"]);
+    expect(prioritizeFocusedOperation(items)).toBe(items);
+  });
+  it("filters failed operation items by cause, model, and persisted phase", () => {
+    const rateLimited = { id: "media-1", kind: "task", updatedAt: "1", task: {
+      id: "media-1", model: "image-a", status: "failed", executionPhase: "failed",
+      error: { code: "PROVIDER_HTTP_429", message: "rate limit" },
+    } } as unknown as OperationItem;
+    const saveFailure = { id: "media-2", kind: "task", updatedAt: "2", task: {
+      id: "media-2", model: "image-b", status: "failed", executionPhase: "failed",
+      error: { failureStage: "result_storage", message: "download failed" },
+    } } as unknown as OperationItem;
+    const dependency = { id: "step-1", kind: "workflow-step", updatedAt: "3", workflow: {
+      id: "run-1", steps: [],
+    }, step: { id: "step-1", status: "blocked", error: { code: "WORKFLOW_DEPENDENCY_BLOCKED" } } } as unknown as OperationItem;
+
+    expect([rateLimited, saveFailure, dependency].map(operationCauseKey)).toEqual([
+      "rate_limit", "result_storage", "dependency",
+    ]);
+    expect(operationModelKey(rateLimited)).toBe("image-a");
+    expect(operationPhaseKey(dependency)).toBe("blocked");
+    expect(filterOperationItems([rateLimited, saveFailure, dependency], {
+      cause: "result_storage", model: "image-b", phase: "failed",
+    })).toEqual([saveFailure]);
+  });
+
+  it("formats persisted elapsed time without inventing progress for active spans", () => {
+    expect(formatElapsedDuration("2026-10-14T10:00:00.000Z", "2026-10-14T10:00:12.500Z", "zh-CN")).toBe("12 秒");
+    expect(formatElapsedDuration("2026-10-14T10:00:00.000Z", "2026-10-14T10:02:03.000Z", "en")).toBe("2 min 3 s");
+    expect(formatElapsedDuration("invalid", "also-invalid", "en")).toBe("—");
+    expect(formatElapsedDuration("2026-10-14T10:00:00.000Z", undefined, "en")).toBe("In progress");
+  });
   it("sorts project operations and filters the selected episode", () => {
     const snapshot = {
       project: { episodes: [] },
@@ -227,6 +274,38 @@ describe("studio inspector view model", () => {
     ).toContain("不是应用超时");
   });
 
+  it("turns provider failures into actionable localized recovery steps", () => {
+    expect(operationErrorMessage({ message: "STRUCTURED_PROVIDER_FAILED:429:rate limit" }, "zh-CN"))
+      .toContain("等待限流窗口");
+    expect(operationErrorMessage({ message: "STRUCTURED_PROVIDER_FAILED:401:unauthorized" }, "en"))
+      .toContain("check the API key");
+    expect(operationErrorMessage({ message: "insufficient_quota" }, "zh-CN"))
+      .toContain("补足额度");
+    expect(operationErrorMessage({ failureStage: "result_storage", message: "MEDIA_DOWNLOAD_FAILED:503" }, "zh-CN"))
+      .toContain("重试会复用已保存的模型结果");
+    expect(operationErrorMessage({ failureStage: "generation", message: "provider rejected input" }, "en"))
+      .toContain("Model generation failed");
+  });
+
+  it("explains media budget overrun and missing price blockers", () => {
+    expect(operationErrorMessage({ code: "BILLING_MEDIA_BUDGET_EXCEEDED", message: "BILLING_MEDIA_BUDGET_EXCEEDED" }, "zh-CN"))
+      .toContain("提高预算");
+    expect(operationErrorMessage({ code: "BILLING_MEDIA_BUDGET_PRICE_UNKNOWN", message: "BILLING_MEDIA_BUDGET_PRICE_UNKNOWN" }, "en"))
+      .toContain("Configure pricing");
+  });
+
+  it("shows the exact unfinished prerequisite on dependency-blocked workflow steps", () => {
+    const error = {
+      code: "WORKFLOW_DEPENDENCY_BLOCKED",
+      blockedSteps: [{
+        stepKey: "render",
+        waitingOn: [{ stepKey: "storyboard", status: "running" }],
+      }],
+    };
+    expect(operationErrorMessage(error, "zh-CN")).toContain("storyboard（进行中）");
+    expect(operationErrorMessage(error, "en")).toContain("storyboard (running)");
+  });
+
   it("builds trace rows from parent span relationships", () => {
     const spans = [
       { spanId: "root" },
@@ -306,7 +385,22 @@ describe("studio inspector view model", () => {
     expect(traceEventLabel("artifact_committed", "zh-CN")).toBe(
       "中间结果已保存",
     );
+    expect(traceEventLabel("queued", "zh-CN")).toBe("等待后台执行");
+    expect(traceEventLabel("blocked", "zh-CN", "步骤 B 等待前置步骤：A（进行中）")).toBe("等待前置步骤");
+    expect(traceEventLabel("blocked", "zh-CN")).toBe("等待人工确认");
     expect(traceEventSourceLabel("workflow", "zh-CN")).toBe("工作流");
+    expect(traceAgentLabel("production_storyboard-generation", "zh-CN")).toBe("分镜生成");
+    expect(traceAgentLabel("custom_agent", "en")).toBe("Custom agent");
+    expect(traceArtifactLabel("screenplay.clip", "zh-CN")).toBe("剧本片段");
+    expect(traceConfigurationSources([
+      { scopeKey: "project:project-1", version: 4 },
+      { scopeKey: "episode:episode-1", version: 2 },
+      { scopeKey: "invalid", version: 9 },
+      { scopeKey: "panel:panel-1", version: "bad" },
+      { scopeKey: "user", version: 3 },
+    ], "zh-CN")).toEqual([
+      "项目:project-1 v4", "剧集:episode-1 v2", "invalid v9", "镜头:panel-1", "个人 v3",
+    ]);
     expect(localizedTraceAttributes(artifact.attributes, "zh-CN")).toMatchObject({
       "片段序号": 0,
       "是否成功": false,
@@ -315,5 +409,16 @@ describe("studio inspector view model", () => {
     expect(localizedTraceAttributes(artifact.attributes, "zh-CN")).not.toHaveProperty(
       "模型渠道",
     );
+    expect(localizedTraceAttributes({ reused: true, reuseReason: "cache_fingerprint_match",
+      cacheVersion: "workflow-cache-v2", promptVersion: "5", promptVersionHash: "prompt-hash" }, "zh-CN"))
+      .toMatchObject({
+        "复用已有结果": true,
+        "复用原因": "cache_fingerprint_match",
+        "缓存指纹版本": "workflow-cache-v2",
+        "提示词版本": "5",
+        "提示词版本摘要": "prompt-hash",
+      });
+    expect(localizedTraceAttributes({ fallbackUsed: true, fallbackReason: "http_503", fallbackPriceCompatibility: "different" }, "zh-CN"))
+      .toMatchObject({ "降级原因": "http_503", "备用模型价格兼容性": "different" });
   });
 });

@@ -79,11 +79,12 @@ function roundDownToMultipleOfEight(value: number) {
 
 export async function referencesAsDataUrls(
   references: Array<{ url: string; mimeType?: string }>,
+  signal?: AbortSignal,
 ) {
   return Promise.all(
     references.slice(0, 9).map(async (reference) => {
       if (reference.url.startsWith("data:")) return reference.url;
-      const response = await fetch(reference.url, { cache: "no-store" });
+      const response = await fetch(reference.url, { cache: "no-store", signal });
       if (!response.ok)
         throw new Error(`REFERENCE_IMAGE_FETCH_FAILED:${response.status}`);
       const contentType =
@@ -98,12 +99,13 @@ export async function referencesAsDataUrls(
 
 export async function localReferencesAsDataUrls(
   references: Array<{ url: string; mimeType?: string }>,
+  signal?: AbortSignal,
 ) {
   return Promise.all(
     references.map(async (reference) => {
       if (reference.url.startsWith("data:") || !isLoopbackUrl(reference.url))
         return reference.url;
-      return (await referencesAsDataUrls([reference]))[0];
+      return (await referencesAsDataUrls([reference], signal))[0];
     }),
   );
 }
@@ -121,6 +123,11 @@ function isLoopbackUrl(value: string) {
   }
 }
 
-export function waitForProviderPoll(delayMs = 3_000) {
-  return new Promise((resolve) => setTimeout(resolve, delayMs));
+export function waitForProviderPoll(delayMs = 3_000, signal?: AbortSignal) {
+  if (signal?.aborted) return Promise.reject(signal.reason ?? new Error("MEDIA_REQUEST_ABORTED"));
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => { clearTimeout(timer); reject(signal?.reason ?? new Error("MEDIA_REQUEST_ABORTED")); };
+    const timer = setTimeout(() => { signal?.removeEventListener("abort", onAbort); resolve(); }, delayMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }

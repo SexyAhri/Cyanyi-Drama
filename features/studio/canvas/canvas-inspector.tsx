@@ -83,11 +83,17 @@ export function CanvasInspector({
   const from = document.nodes.find((item) => item.id === edge?.from);
   const target = document.nodes.find((item) => item.id === edge?.to);
   const generating = node && ["panel", "image", "video"].includes(node.kind);
-  const candidates = node ? nodeCandidates(node, catalog) : [];
+  const candidates = node ? nodeCandidates(node, catalog, document) : [];
   const linkedAsset = node ? linkedCanvasAsset(node, catalog) : undefined;
-  const media = node ? nodeMedia(node, catalog, panels) : undefined;
-  const inheritedMedia = node?.kind === "image" && node.id.startsWith("episode-asset-image-") && media?.url && media.sourceTargetId !== node.id;
-  const baselineTargets = node ? canvasBaselineTargets(node, document, catalog, panels) : [];
+  const media = node ? nodeMedia(node, catalog, panels, document) : undefined;
+  const inheritedMedia =
+    node?.kind === "image" &&
+    node.episodeLayer === "asset_image" &&
+    media?.url &&
+    media.sourceTargetId !== node.id;
+  const baselineTargets = node
+    ? canvasBaselineTargets(node, document, catalog, panels)
+    : [];
   const versionDefault = linkedAsset
     ? t("项目当前采用版本", "Current project version")
     : t("当前镜头 / 最新结果", "Current shot / latest result");
@@ -111,7 +117,7 @@ export function CanvasInspector({
     appearanceIds?.filter((item) => item.assetId) ??
     candidates.map((item, index) => ({
       assetId: item.id,
-      label: `${index + 1} · ${item.kind} · ${new Date(item.createdAt).toLocaleString(locale === "en" ? "en-US" : "zh-CN")}`,
+      label: `${index + 1} · ${item.kind === "image" ? t("图片", "Image") : t("视频", "Video")} · ${new Date(item.createdAt).toLocaleString(locale === "en" ? "en-US" : "zh-CN")}`,
     }));
   return (
     <aside
@@ -132,7 +138,7 @@ export function CanvasInspector({
           <X className="size-4" />
         </Button>
       </header>
-      <div className="min-h-0 min-w-0 space-y-4 overflow-x-hidden overflow-y-auto break-words p-3 text-xs">
+      <div className="min-h-0 min-w-0 space-y-4 overflow-x-hidden overflow-y-auto break-anywhere p-3 text-xs">
         {edge && from && (
           <>
             <p className="text-muted-foreground">
@@ -385,7 +391,10 @@ export function CanvasInspector({
             )}
             {inheritedMedia ? (
               <p className="leading-5 text-muted-foreground">
-                {t("已复用项目资产图，无需为本集重复生成。需要新版本时可重新生成。", "Using the project asset image. Generate again only if you need a new version.")}
+                {t(
+                  "已复用项目资产图，无需为本集重复生成。需要新版本时可重新生成。",
+                  "Using the project asset image. Generate again only if you need a new version.",
+                )}
               </p>
             ) : null}
             {baselineTargets.map(({ entity, candidate }) => (
@@ -398,8 +407,14 @@ export function CanvasInspector({
               >
                 <Check className="size-3.5" />
                 {candidate.selected
-                  ? t(`${entity.name} · 当前基准`, `${entity.name} · Current baseline`)
-                  : t(`设为${entity.name}的基准`, `Set as ${entity.name} baseline`)}
+                  ? t(
+                      `${entity.name} · 当前基准`,
+                      `${entity.name} · Current baseline`,
+                    )
+                  : t(
+                      `设为${entity.name}的基准`,
+                      `Set as ${entity.name} baseline`,
+                    )}
               </Button>
             ))}
             {node.panelId && node.assetId && (
@@ -493,7 +508,7 @@ export function CanvasInspector({
                   {[...node.promptVersions].reverse().map((version) => (
                     <div key={version.id} className="rounded border p-2">
                       <p className="mb-1 text-muted-foreground">
-                        {version.kind} ·{" "}
+                        {version.kind === "image" ? t("图片", "Image") : t("视频", "Video")} ·{" "}
                         {new Date(version.createdAt).toLocaleString()}
                       </p>
                       <p className="line-clamp-3 whitespace-pre-wrap leading-5">
@@ -556,7 +571,9 @@ export function CanvasInspector({
             disabled={busy || !models.length}
             onClick={onReview}
           >
-            {inheritedMedia ? t("重新生成新版本", "Generate a new version") : t("审核并生成", "Review and generate")}
+            {inheritedMedia
+              ? t("重新生成新版本", "Generate a new version")
+              : t("审核并生成", "Review and generate")}
           </Button>
         )}
       </footer>

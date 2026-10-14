@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { detectChatMediaToolIntent } from "./route";
+import { detectChatMediaToolIntent } from "@/lib/agent/chat-media-intent";
 
 describe("detectChatMediaToolIntent", () => {
   const composer = {

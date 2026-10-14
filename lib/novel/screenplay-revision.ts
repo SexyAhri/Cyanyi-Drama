@@ -177,6 +177,8 @@ export async function reviseScreenplayClip(input: {
   });
   const result = await requestOpenAiStructured({
     baseUrl: channel.baseUrl,
+    billing: { userId: input.userId, projectId: input.projectId },
+    channelId: input.channelId,
     apiKeys,
     model: input.model,
     prompt,
@@ -280,6 +282,7 @@ export async function reviseScreenplayClip(input: {
     });
     await tx.storyboardPanel.updateMany({
       where: {
+        clipId: clip.id,
         storyboard: {
           episodeId: clip.episodeId,
           projectId: input.projectId,
@@ -288,7 +291,7 @@ export async function reviseScreenplayClip(input: {
       data: { status: "stale" },
     });
     await tx.voiceLine.updateMany({
-      where: { episodeId: clip.episodeId },
+      where: { episodeId: clip.episodeId, matchedPanel: { clipId: clip.id } },
       data: { status: "stale" },
     });
     await tx.editorProject.updateMany({

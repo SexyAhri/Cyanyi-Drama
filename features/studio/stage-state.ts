@@ -361,8 +361,12 @@ function withWorkflow(
   status: StudioStageStatus,
   workflow?: WorkflowRunSummary,
 ): StudioStageState {
+  const steps = workflow?.steps ?? [];
   return {
     ...emptyStage(id, status),
+    completedTasks: steps.filter((step) => step.status === "succeeded").length,
+    failedTasks: steps.filter((step) => ["failed", "blocked"].includes(step.status)).length,
+    totalTasks: steps.length,
     workflow,
   };
 }

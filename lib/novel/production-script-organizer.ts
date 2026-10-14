@@ -145,6 +145,7 @@ export async function organizeEpisodeProductionScript(
     listProductionProps(userId, input.projectId),
     resolveEpisodeTextProvider({
       userId,
+      projectId: input.projectId,
       channelId: input.channelId,
       model: input.model,
     }),

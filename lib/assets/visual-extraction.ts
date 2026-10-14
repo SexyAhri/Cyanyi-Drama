@@ -168,6 +168,7 @@ export async function extractCharacterReferenceDescription(input: {
 
 async function resolveVisionProvider(input: {
   userId: string;
+  projectId?: string;
   channelId: string;
   model: string;
 }) {
@@ -196,6 +197,8 @@ async function resolveVisionProvider(input: {
   const runtimeSettings = await loadUserRuntimeSettings(input.userId);
   return {
     baseUrl: channel.baseUrl,
+    billing: { userId: input.userId, projectId: input.projectId },
+    channelId: input.channelId,
     apiKeys,
     model: input.model,
     ...structuredRequestOptions(runtimeSettings),

@@ -3,7 +3,27 @@ const mocks = vi.hoisted(() => ({ request: vi.fn(), provider: vi.fn() }));
 vi.mock("@/lib/llm/openai-structured", () => ({ requestOpenAiStructured: mocks.request }));
 vi.mock("./provider", () => ({ resolveEpisodeTextProvider: mocks.provider }));
 import { condenseAdaptationSource } from "./source-notes";
-import { sourceFingerprint } from "./long-source";
+import { workflowCacheFingerprint } from "@/lib/workflow/cache-fingerprint";
+import { PROMPT_IDS, renderPrompt } from "@/lib/prompts";
+import { AdaptationNotesSchema } from "./source-notes-schema";
+import { z } from "zod";
+
+function adaptationCacheKey(source: string, channelId: string, model: string) {
+  const prompt = renderPrompt({ id: PROMPT_IDS.SOURCE_NOTES, variables: {
+    source_text: source,
+    output_schema: JSON.stringify(z.toJSONSchema(AdaptationNotesSchema)),
+    extraction_task: "提取本段原文的改编依据：保留关键事件、人物关系、对白短引用、场景道具、世界限制和结尾状态。为有限时长的改编提炼重点，不提前发生事件。",
+  } });
+  return workflowCacheFingerprint({
+    source: { reference: `0:${source.length}`, text: source },
+    prompt,
+    promptVersion: "adaptation-notes-v2",
+    channelId,
+    model,
+    agentConfiguration: null,
+    parameters: { temperature: 0.2, stream: false, schema: z.toJSONSchema(AdaptationNotesSchema) },
+  });
+}
 
 beforeEach(() => { vi.resetAllMocks(); vi.unstubAllEnvs(); mocks.provider.mockResolvedValue({ model: "model" }); });
 describe("parallel adaptation notes", () => {
@@ -36,9 +56,15 @@ describe("parallel adaptation notes", () => {
   });
   it("does not call the model for a saved note", async () => {
     const source = "保存的原文";
-    const key = sourceFingerprint({ start: 0, text: source, model: "model", channelId: "channel", version: 1 });
-    const hooks = { assertActive: vi.fn(), persistArtifact: vi.fn(), loadArtifact: vi.fn(async (_type, id) => id === key ? { notes: "保存的笔记" } : null) };
+    const key = adaptationCacheKey(source, "channel", "model");
+    const recordRequest = vi.fn(async () => {});
+    const hooks = { assertActive: vi.fn(), persistArtifact: vi.fn(), recordRequest,
+      loadArtifact: vi.fn(async (_type, id) => id === key ? { notes: "保存的笔记" } : null) };
     expect(await condenseAdaptationSource({ source, userId: "user", channelId: "channel", model: "model", hooks })).toBe("保存的笔记");
     expect(mocks.request).not.toHaveBeenCalled();
+    expect(recordRequest).toHaveBeenCalledWith(expect.objectContaining({
+      status: "succeeded", reused: true, reuseReason: "cache_fingerprint_match",
+      inputHash: key, cacheVersion: "workflow-cache-v2", artifactRefs: [`adaptation.notes:${key}`],
+    }));
   });
 });

@@ -44,6 +44,7 @@ export function CanvasNode({
   durationSeconds,
   usageCount,
   inputs,
+  imageAvailability,
 }: {
   node: CanvasCard;
   media?: ProjectMediaAsset;
@@ -63,6 +64,7 @@ export function CanvasNode({
   durationSeconds?: number | null;
   usageCount?: number;
   inputs: string[];
+  imageAvailability?: string;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const Icon = {
@@ -84,16 +86,16 @@ export function CanvasNode({
         canceled: locale === "en" ? "Canceled" : "已取消",
       }[task.status]
     : media?.url
-      ? node.kind === "image" && node.id.startsWith("episode-asset-image-") && media.sourceTargetId !== node.id
+      ? node.kind === "image" && node.episodeLayer === "asset_image" && media.sourceTargetId !== node.id
         ? locale === "en" ? "Using project image" : "复用项目素材"
         : locale === "en"
         ? "Ready"
         : "已有素材"
-      : ["image", "video", "panel"].includes(node.kind)
+      : imageAvailability ?? (["image", "video", "panel"].includes(node.kind)
         ? locale === "en"
           ? "Draft"
           : "待生成"
-        : kindLabel(node.kind, locale);
+        : kindLabel(node.kind, locale));
   const previewText = summary || (node.kind === "video" ? node.videoText : linkedPrompt || node.text);
   return (
     <section

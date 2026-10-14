@@ -195,6 +195,12 @@ describe("screenplay revision", () => {
       expect(update).toHaveBeenCalledWith(
         expect.objectContaining({ data: { status: "stale" } }),
       );
+    expect(storyboardPanelUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { clipId: "clip-1", storyboard: { episodeId: "episode-1", projectId: "project-1" } },
+    }));
+    expect(voiceLineUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { episodeId: "episode-1", matchedPanel: { clipId: "clip-1" } },
+    }));
     expect(editorProjectUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { renderStatus: "stale" } }),
     );

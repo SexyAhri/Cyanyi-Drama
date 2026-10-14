@@ -30,11 +30,20 @@ import {
   generateEpisodeScreenplayNarration,
 } from "@/lib/novel/staged-screenplay-runtime";
 import { prisma } from "@/lib/server/prisma";
+import { withModelBilling } from "@/lib/billing/context";
+import type { WorkflowRequestUpdate } from "./request-events";
+import {
+  resolveFailedDependencyBlockers,
+  runWorkflowStepWave,
+  scheduleRunnableWorkflowSteps,
+} from "./scheduler";
 import { configurationSnapshotSchema } from "@/lib/production-configuration/contract";
+import { classifyProviderFailure } from "@/lib/providers/failure-classification";
 import { resolveProductionConfiguration } from "@/lib/production-configuration/store";
 import { withProductionConfiguration } from "@/lib/production-configuration/context";
 import { designEpisodeVoicePerformance } from "@/lib/voice/design";
 import { analyzeEpisodeVoices } from "@/lib/voice/analyze";
+import { notifyWorkflowActionRequired, notifyWorkflowTerminal } from "@/lib/notifications/execution-notifications";
 import {
   assertWorkflowRunActive,
   WorkflowControlError,
@@ -73,6 +82,7 @@ async function processClaimedWorkflowJob(
   runId: string,
   userId: string,
   workerId: string,
+  options: { stepKey?: string; deferRunSettlement?: boolean } = {},
 ): Promise<"done" | "requeue"> {
   const run = await prisma.workflowRun.findFirst({
     where: { id: runId, userId },
@@ -93,7 +103,7 @@ async function processClaimedWorkflowJob(
   if (["canceled", "paused", "succeeded"].includes(run.status)) return "done";
   const now = new Date();
   const started = await prisma.workflowRun.updateMany({
-    where: { id: runId, leaseOwner: workerId },
+    where: { id: runId, leaseOwner: workerId, status: { in: ["queued", "running"] } },
     data: {
       status: "running",
       startedAt: run.startedAt ?? now,
@@ -106,17 +116,235 @@ async function processClaimedWorkflowJob(
     data: { runId, type: "running", status: "running" },
   });
   const interruptedStep = run.steps.find((item) => item.status === "running");
-  if (interruptedStep) {
-    await failInterruptedWorkflowStep({
+  if (!options.stepKey && interruptedStep) {
+    await failInterruptedWorkflowSteps({
       runId,
       workerId,
-      step: interruptedStep,
+      steps: run.steps.filter((item) => item.status === "running"),
     });
     return "done";
   }
-  const step = findRunnableStep(run.steps);
+  if (!options.stepKey) {
+    const savedConfiguration = configurationSnapshotSchema.safeParse(
+      isRecord(run.input) ? run.input.productionConfiguration : undefined,
+    );
+    if (!savedConfiguration.success && isRecord(run.input) && "productionConfiguration" in run.input)
+      throw new Error("WORKFLOW_CONFIGURATION_SNAPSHOT_INVALID");
+    const productionConfiguration = savedConfiguration.success
+      ? savedConfiguration.data
+      : await resolveProductionConfiguration(userId, { projectId: run.projectId, episodeId: run.episodeId ?? undefined });
+    if (!savedConfiguration.success) {
+      const frozenInput = {
+        ...(isRecord(run.input) ? run.input : {}),
+        concurrency:
+          getNumber(isRecord(run.input) ? run.input.concurrency : undefined) ??
+          productionConfiguration.workflow.concurrency,
+        productionConfiguration,
+      };
+      const frozen = await prisma.workflowRun.updateMany({
+        where: { id: runId, userId, leaseOwner: workerId, status: "running" },
+        data: { input: toInputJson(frozenInput) },
+      });
+      if (!frozen.count) throw new WorkflowControlError("lease_lost", runId);
+      run.input = toInputJson(frozenInput) as Prisma.JsonValue;
+    }
+
+    if (run.steps.every((item) => item.status === "succeeded")) {
+      const lastStep = run.steps.at(-1);
+      await finishRun(runId, userId, workerId, lastStep?.output ?? {});
+      return "done";
+    }
+
+    const concurrency =
+      getNumber(isRecord(run.input) ? run.input.concurrency : undefined) ??
+      productionConfiguration.workflow.concurrency;
+    const schedule = scheduleRunnableWorkflowSteps(run.steps.map((item) => ({
+      stepKey: item.stepKey,
+      stepIndex: item.stepIndex,
+      stepType: item.stepType,
+      status: item.status,
+      dependsOn: item.dependsOn,
+    })), concurrency);
+    if (!schedule.runnable.length) {
+      const error = {
+        code: "WORKFLOW_DEPENDENCY_BLOCKED",
+        message: "没有可执行的工作流步骤；请先完成显示的前置步骤。",
+        blockedSteps: schedule.blocked,
+      };
+      const blockedAt = new Date();
+      const blocked = await prisma.$transaction(async (tx) => {
+        const owned = await tx.workflowRun.updateMany({
+          where: { id: runId, userId, leaseOwner: workerId, status: "running" },
+          data: {
+            status: "blocked",
+            error: toInputJson(error),
+            completedAt: blockedAt,
+            heartbeatAt: blockedAt,
+            activeDedupeKey: null,
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            updatedAt: blockedAt,
+          },
+        });
+        if (!owned.count) return false;
+        for (const blocker of schedule.blocked) await tx.workflowStep.updateMany({
+          where: { runId, stepKey: blocker.stepKey, status: { in: ["pending", "ready"] } },
+          data: {
+            status: "blocked",
+            error: toInputJson({ code: "WORKFLOW_DEPENDENCY_BLOCKED", blockedSteps: [blocker] }),
+            updatedAt: blockedAt,
+          },
+        });
+        return true;
+      });
+      if (blocked) await prisma.workflowEvent.create({
+        data: {
+          runId,
+          type: "blocked",
+          status: "blocked",
+          message: error.message,
+          payload: error,
+        },
+      });
+      if (blocked && schedule.blocked.length) await Promise.all(schedule.blocked.map((blocker) => {
+        const blockedStep = run.steps.find((item) => item.stepKey === blocker.stepKey);
+        return prisma.workflowEvent.create({
+          data: {
+            runId,
+            stepId: blockedStep?.id,
+            type: "blocked",
+            status: "blocked",
+            message: `步骤 ${blocker.stepKey} 等待前置步骤：${blocker.waitingOn.map((dependency) => `${dependency.stepKey}（${dependency.status}）`).join("、")}`,
+            payload: toInputJson(blocker),
+          },
+        });
+      }));
+      return "done";
+    }
+
+    const manualGate = schedule.runnable.find((candidate) => candidate.stepType === "manual_gate");
+    if (manualGate) {
+      const pausedAt = new Date();
+      await prisma.workflowRun.updateMany({
+        where: { id: runId, userId, leaseOwner: workerId, status: "running" },
+        data: { status: "paused", heartbeatAt: pausedAt, updatedAt: pausedAt },
+      });
+      await prisma.workflowEvent.create({
+        data: {
+          runId,
+          stepId: run.steps.find((item) => item.stepKey === manualGate.stepKey)?.id,
+          type: "manual_gate",
+          status: "paused",
+          message: "Workflow is waiting for an explicit resume.",
+        },
+      });
+      await notifyWorkflowActionRequired({ userId, runId, stepKey: manualGate.stepKey });
+      return "done";
+    }
+
+    await runWorkflowStepWave(run.steps.map((item) => ({
+      stepKey: item.stepKey,
+      stepIndex: item.stepIndex,
+      stepType: item.stepType,
+      status: item.status,
+      dependsOn: item.dependsOn,
+    })), concurrency, (candidate) =>
+      processClaimedWorkflowJob(runId, userId, workerId, {
+        stepKey: candidate.stepKey,
+        deferRunSettlement: true,
+      }),
+    );
+
+    const settled = await prisma.workflowRun.findFirst({
+      where: { id: runId, userId },
+      include: { steps: { orderBy: { stepIndex: "asc" } } },
+    });
+    if (!settled || settled.leaseOwner !== workerId || settled.status !== "running") return "done";
+
+    const failedStep = settled.steps.find((item) => ["failed", "blocked"].includes(item.status));
+    if (failedStep) {
+      const failure = failedStep.error && typeof failedStep.error === "object"
+        ? failedStep.error as Record<string, unknown>
+        : { code: "WORKFLOW_STEP_FAILED", message: `步骤 ${failedStep.stepKey} 失败` };
+      const failureBlockers = resolveFailedDependencyBlockers(settled.steps.map((item) => ({
+        stepKey: item.stepKey,
+        stepIndex: item.stepIndex,
+        status: item.status,
+        dependsOn: item.dependsOn,
+      })));
+      const runFailure = { ...failure, failedStepKey: failedStep.stepKey, blockedSteps: failureBlockers };
+      const failedAt = new Date();
+      const failed = await prisma.$transaction(async (tx) => {
+        const owned = await tx.workflowRun.updateMany({
+          where: { id: runId, userId, leaseOwner: workerId, status: "running" },
+          data: {
+            status: "failed",
+            error: toInputJson(runFailure),
+            completedAt: failedAt,
+            heartbeatAt: failedAt,
+            activeDedupeKey: null,
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            updatedAt: failedAt,
+          },
+        });
+        if (!owned.count) return false;
+        for (const blocker of failureBlockers) await tx.workflowStep.updateMany({
+          where: { runId, stepKey: blocker.stepKey, status: { in: ["pending", "ready"] } },
+          data: {
+            status: "blocked",
+            error: toInputJson({ code: "WORKFLOW_DEPENDENCY_BLOCKED", blockedSteps: [blocker] }),
+            updatedAt: failedAt,
+          },
+        });
+        return true;
+      });
+      if (failed) await prisma.workflowEvent.create({
+        data: {
+          runId,
+          stepId: failedStep.id,
+          type: "failed",
+          status: "failed",
+          message: typeof failure.message === "string" ? failure.message : "工作流步骤失败",
+          payload: toInputJson(runFailure),
+        },
+      });
+      if (failed) await notifyWorkflowTerminal({ userId, runId, status: "failed" });
+      if (failed && failureBlockers.length) await Promise.all(failureBlockers.map((blocker) => {
+        const blockedStep = settled.steps.find((item) => item.stepKey === blocker.stepKey);
+        return prisma.workflowEvent.create({
+          data: {
+            runId,
+            stepId: blockedStep?.id,
+            type: "blocked",
+            status: "blocked",
+            message: `步骤 ${blocker.stepKey} 等待的前置步骤未完成。`,
+            payload: toInputJson(blocker),
+          },
+        });
+      }));
+      return "done";
+    }
+
+    if (settled.steps.every((item) => item.status === "succeeded")) {
+      const lastStep = settled.steps.at(-1);
+      await finishRun(runId, userId, workerId, lastStep?.output ?? {});
+      return "done";
+    }
+
+    const queuedAt = new Date();
+    const queued = await prisma.workflowRun.updateMany({
+      where: { id: runId, userId, leaseOwner: workerId, status: "running" },
+      data: { status: "queued", heartbeatAt: queuedAt, updatedAt: queuedAt },
+    });
+    return queued.count ? "requeue" : "done";
+  }
+
+  const step = options.stepKey
+    ? run.steps.find((item) => item.stepKey === options.stepKey && ["pending", "ready"].includes(item.status))
+    : findRunnableStep(run.steps);
   if (!step && run.steps.every((item) => item.status === "succeeded")) {
-    await finishRun(runId, workerId, {});
+    await finishRun(runId, userId, workerId, {});
     return "done";
   }
   if (!step) {
@@ -144,6 +372,7 @@ async function processClaimedWorkflowJob(
         message: "没有可执行的工作流步骤，请检查前置步骤状态。",
       },
     });
+    await notifyWorkflowActionRequired({ userId, runId, stepKey: "workflow_dependency_blocked" });
     return "done";
   }
   if (step.stepType === "manual_gate") {
@@ -164,6 +393,7 @@ async function processClaimedWorkflowJob(
         message: "Workflow is waiting for an explicit resume.",
       },
     });
+    await notifyWorkflowActionRequired({ userId, runId, stepKey: step.stepKey });
     return "done";
   }
   const attemptNumber = step.attempt + 1;
@@ -173,31 +403,51 @@ async function processClaimedWorkflowJob(
   };
   const executionInput = mergedStepInput(run.input, step.input);
   const attemptStartedAt = new Date();
-  await prisma.$transaction([
-    prisma.workflowStep.update({
-      where: { id: step.id },
-      data: {
-        status: "running",
-        attempt: attemptNumber,
-        startedAt: step.startedAt ?? attemptStartedAt,
-        completedAt: null,
-        updatedAt: attemptStartedAt,
-      },
-    }),
-    prisma.workflowStepAttempt.create({
-      data: {
-        runId,
-        stepId: step.id,
-        attempt: attemptNumber,
-        status: "running",
-        provider: getString(executionInput.channelId),
-        modelKey: getString(executionInput.model),
-        inputHash: hashJson(attemptInput),
-        input: attemptInput,
-        startedAt: attemptStartedAt,
-      },
-    }),
-  ]);
+  let workflowAttemptId = "";
+  try {
+    await prisma.$transaction(async (tx) => {
+      const owned = await tx.workflowRun.updateMany({
+        where: {
+          id: runId,
+          userId,
+          leaseOwner: workerId,
+          status: "running",
+          leaseExpiresAt: { gt: attemptStartedAt },
+        },
+        data: { heartbeatAt: attemptStartedAt, updatedAt: attemptStartedAt },
+      });
+      if (!owned.count) throw new WorkflowControlError("lease_lost", runId);
+      const claimed = await tx.workflowStep.updateMany({
+        where: { id: step.id, runId, status: { in: ["pending", "ready"] } },
+        data: {
+          status: "running",
+          attempt: attemptNumber,
+          startedAt: step.startedAt ?? attemptStartedAt,
+          completedAt: null,
+          updatedAt: attemptStartedAt,
+        },
+      });
+      if (!claimed.count) throw new WorkflowControlError("lease_lost", runId);
+      const attempt = await tx.workflowStepAttempt.create({
+        data: {
+          runId,
+          stepId: step.id,
+          attempt: attemptNumber,
+          status: "running",
+          provider: getString(executionInput.channelId),
+          modelKey: getString(executionInput.model),
+          inputHash: hashJson(attemptInput),
+          input: attemptInput,
+          startedAt: attemptStartedAt,
+        },
+        select: { id: true },
+      });
+      workflowAttemptId = attempt?.id ?? "";
+    });
+  } catch (error) {
+    if (error instanceof WorkflowControlError) return "done";
+    throw error;
+  }
   await prisma.workflowEvent.create({
     data: { runId, stepId: step.id, type: "step_running", status: "running" },
   });
@@ -220,7 +470,9 @@ async function processClaimedWorkflowJob(
       if (!frozen.count) throw new WorkflowControlError("lease_lost", runId);
       run.input = toInputJson(frozenInput) as Prisma.JsonValue;
     }
-    const output = await withProductionConfiguration(userId, productionConfiguration, () => runStep(userId, run, step, {
+    const output = await withModelBilling({ userId, projectId: run.projectId, episodeId: run.episodeId ?? undefined,
+      sourceType: "workflow_step_attempt", sourceId: workflowAttemptId }, () =>
+      withProductionConfiguration(userId, productionConfiguration, () => runStep(userId, run, step, {
       attempt: attemptNumber,
       reusePreviousResults: shouldReusePreviousResults(run.events, step.stepKey),
       assertActive: () => assertWorkflowRunActive({ runId, workerId }),
@@ -242,10 +494,22 @@ async function processClaimedWorkflowJob(
         }),
       loadRunArtifact: (artifactType, refId) =>
         loadRunArtifact({ runId, artifactType, refId }),
+      recordRequest: async (request) => {
+        await prisma.workflowEvent.create({
+          data: {
+            runId,
+            stepId: step.id,
+            type: `request_${request.status}`,
+            status: request.status,
+            message: `${request.requestType}${request.targetId ? ` · ${request.targetId}` : ""}`,
+            payload: toInputJson(request),
+          },
+        });
+      },
       reportProgress: async message => { await prisma.workflowEvent.create({ data: {
         runId, stepId: step.id, type: "progress", status: "running", message,
       } }); },
-    }));
+    })));
     await assertWorkflowRunActive({ runId, workerId });
     const outputJson = toInputJson(output);
     const outputText = JSON.stringify(output);
@@ -326,6 +590,7 @@ async function processClaimedWorkflowJob(
       },
     });
     await assertWorkflowRunActive({ runId, workerId });
+    if (options.deferRunSettlement) return "done";
     const remaining = run.steps.some(
       (item) => item.id !== step.id && item.status !== "succeeded",
     );
@@ -340,7 +605,7 @@ async function processClaimedWorkflowJob(
       });
       return "requeue";
     } else {
-      await finishRun(runId, workerId, output);
+      await finishRun(runId, userId, workerId, output);
       return "done";
     }
   } catch (error) {
@@ -382,20 +647,27 @@ async function processClaimedWorkflowJob(
     };
     const failedAt = new Date();
     const failed = await prisma.$transaction(async (tx) => {
-      const owned = await tx.workflowRun.updateMany({
-        where: { id: runId, leaseOwner: workerId, status: "running" },
-        data: {
-          status: "failed",
-          error: failure,
-          heartbeatAt: failedAt,
-          completedAt: failedAt,
-          activeDedupeKey: null,
-          leaseOwner: null,
-          leaseExpiresAt: null,
-          updatedAt: failedAt,
-        },
-      });
-      if (!owned.count) return false;
+      if (!options.deferRunSettlement) {
+        const owned = await tx.workflowRun.updateMany({
+          where: { id: runId, leaseOwner: workerId, status: "running" },
+          data: {
+            status: "failed",
+            error: failure,
+            heartbeatAt: failedAt,
+            completedAt: failedAt,
+            activeDedupeKey: null,
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            updatedAt: failedAt,
+          },
+        });
+        if (!owned.count) return false;
+      } else {
+        const owned = await tx.workflowRun.count({
+          where: { id: runId, leaseOwner: workerId, status: "running" },
+        });
+        if (!owned) return false;
+      }
       await tx.workflowStep.update({
         where: { id: step.id },
         data: {
@@ -411,6 +683,7 @@ async function processClaimedWorkflowJob(
           status: "failed",
           errorCode: failure.code,
           errorMessage: failure.message,
+          ...(getFailedPromptTrace(error) ? { usageJson: { promptTraces: [getFailedPromptTrace(error)!] } } : {}),
           finishedAt: failedAt,
           updatedAt: failedAt,
         },
@@ -428,6 +701,7 @@ async function processClaimedWorkflowJob(
         payload: failure,
       },
     });
+    if (!options.deferRunSettlement) await notifyWorkflowTerminal({ userId, runId, status: "failed" });
     return "done";
   }
 }
@@ -441,11 +715,20 @@ export function completionArtifactTypes(
 }
 
 export function classifyWorkflowFailureCode(message: string) {
-  if (/STRUCTURED_PROVIDER_TIMEOUT:/.test(message)) return "PROVIDER_TIMEOUT";
-  if (/STRUCTURED_PROVIDER_TRANSPORT(?:_FAILED)?:/.test(message))
-    return "PROVIDER_TRANSPORT_ERROR";
-  if (/STRUCTURED_PROVIDER_FAILED:/.test(message))
-    return "PROVIDER_RESPONSE_ERROR";
+  const category = classifyProviderFailure(message);
+  if (category) {
+    return {
+      authentication: "PROVIDER_AUTHENTICATION",
+      content_rejected: "PROVIDER_CONTENT_REJECTED",
+      invalid_parameters: "PROVIDER_INVALID_PARAMETERS",
+      network: "PROVIDER_TRANSPORT_ERROR",
+      output_validation: "OUTPUT_VALIDATION_FAILED",
+      quota: "PROVIDER_QUOTA",
+      rate_limit: "PROVIDER_RATE_LIMIT",
+      timeout: "PROVIDER_TIMEOUT",
+      provider_unavailable: "PROVIDER_UNAVAILABLE",
+    }[category];
+  }
   return "WORKFLOW_STEP_FAILED";
 }
 
@@ -477,6 +760,7 @@ async function runStep(
       artifactType: string,
       refId: string,
     ) => Promise<unknown | null>;
+    recordRequest?: (request: WorkflowRequestUpdate) => Promise<void>;
   },
 ) {
   if (step.stepType === "generate_original_episode") {
@@ -893,27 +1177,32 @@ async function runStep(
   throw new Error(`WORKFLOW_STEP_HANDLER_NOT_IMPLEMENTED:${step.stepType}`);
 }
 
-async function failInterruptedWorkflowStep(input: {
+async function failInterruptedWorkflowSteps(input: {
   runId: string;
   workerId: string;
-  step: {
+  steps: Array<{
     id: string;
+    stepKey: string;
     attempt: number;
     maxAttempts: number;
     retryable: boolean;
-  };
+  }>;
 }) {
   const failedAt = new Date();
-  const failure = {
+  const failure = (step: typeof input.steps[number]) => ({
     code: "WORKFLOW_STEP_INTERRUPTED",
-    message: "Worker 中断了正在执行的步骤，请从该步骤手动重试。",
-    attempt: input.step.attempt,
-    maxAttempts: input.step.maxAttempts,
-    retryable:
-      input.step.retryable && input.step.attempt < input.step.maxAttempts,
-    retryExhausted: input.step.attempt >= input.step.maxAttempts,
-  };
+    message: `Worker 中断了正在执行的步骤 ${step.stepKey}，请从该步骤手动重试。`,
+    attempt: step.attempt,
+    maxAttempts: step.maxAttempts,
+    retryable: step.retryable && step.attempt < step.maxAttempts,
+    retryExhausted: step.attempt >= step.maxAttempts,
+  });
   const failed = await prisma.$transaction(async (tx) => {
+    const runFailure = {
+      code: "WORKFLOW_STEP_INTERRUPTED",
+      message: `Worker 中断了 ${input.steps.length} 个正在执行的步骤，请从失败步骤手动重试。`,
+      interruptedSteps: input.steps.map((step) => step.stepKey),
+    };
     const owned = await tx.workflowRun.updateMany({
       where: {
         id: input.runId,
@@ -922,7 +1211,7 @@ async function failInterruptedWorkflowStep(input: {
       },
       data: {
         status: "failed",
-        error: failure,
+        error: runFailure,
         heartbeatAt: failedAt,
         completedAt: failedAt,
         activeDedupeKey: null,
@@ -932,38 +1221,39 @@ async function failInterruptedWorkflowStep(input: {
       },
     });
     if (!owned.count) return false;
-    await tx.workflowStep.update({
-      where: { id: input.step.id },
+    await tx.workflowStep.updateMany({
+      where: { runId: input.runId, status: "running" },
       data: {
         status: "failed",
-        error: failure,
+        error: runFailure,
         completedAt: failedAt,
         updatedAt: failedAt,
       },
     });
     await tx.workflowStepAttempt.updateMany({
-      where: { stepId: input.step.id, status: "running" },
+      where: { runId: input.runId, status: "running" },
       data: {
         status: "failed",
-        errorCode: failure.code,
-        errorMessage: failure.message,
+        errorCode: "WORKFLOW_STEP_INTERRUPTED",
+        errorMessage: runFailure.message,
         finishedAt: failedAt,
         updatedAt: failedAt,
       },
     });
     return true;
   });
-  if (failed)
-    await prisma.workflowEvent.create({
+  if (failed) {
+    for (const step of input.steps) await prisma.workflowEvent.create({
       data: {
         runId: input.runId,
-        stepId: input.step.id,
+        stepId: step.id,
         type: "failed",
         status: "failed",
-        message: failure.message,
-        payload: failure,
+        message: failure(step).message,
+        payload: failure(step),
       },
     });
+  }
 }
 
 function findRunnableStep<
@@ -1029,6 +1319,32 @@ function parseStringArray(value: Prisma.JsonValue | null) {
 
 function toInputJson(value: unknown) {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function getFailedPromptTrace(error: unknown) {
+  if (!(error instanceof Error) || !isRecord(error)) return null;
+  const trace = error.executionTrace;
+  return isUsageTrace(trace) ? trace : null;
+}
+
+function isUsageTrace(value: unknown): value is {
+  promptId?: string;
+  channelId?: string;
+  model: string;
+  tokenUsage: { inputTokens: number; outputTokens: number; totalTokens: number } | null;
+  characterUsage: { inputCharacters: number; outputCharacters: number; totalCharacters: number };
+  requestCount: number;
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const trace = value as Record<string, unknown>;
+  const usage = trace.characterUsage;
+  const tokens = trace.tokenUsage;
+  return typeof trace.model === "string" &&
+    typeof trace.requestCount === "number" && Number.isSafeInteger(trace.requestCount) &&
+    !!usage && typeof usage === "object" && !Array.isArray(usage) &&
+    Number.isSafeInteger((usage as Record<string, unknown>).inputCharacters) &&
+    Number.isSafeInteger((usage as Record<string, unknown>).outputCharacters) &&
+    (tokens === null || (!!tokens && typeof tokens === "object" && !Array.isArray(tokens)));
 }
 
 function hashJson(value: unknown) {
@@ -1168,7 +1484,7 @@ async function loadRunArtifact(input: {
   return artifact?.payload ?? null;
 }
 
-async function finishRun(runId: string, workerId: string, output: unknown) {
+async function finishRun(runId: string, userId: string, workerId: string, output: unknown) {
   const completedAt = new Date();
   const updated = await prisma.workflowRun.updateMany({
     where: { id: runId, leaseOwner: workerId, status: "running" },
@@ -1187,6 +1503,7 @@ async function finishRun(runId: string, workerId: string, output: unknown) {
   await prisma.workflowEvent.create({
     data: { runId, type: "succeeded", status: "succeeded" },
   });
+  await notifyWorkflowTerminal({ userId, runId, status: "succeeded" });
 }
 
 async function acknowledgeWorkflowCancel(runId: string, workerId: string) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { configurationScopeKey, mergeProductionConfigurations, productionConfigurationPatchSchema, soundPolicyAudioMode, soundPolicyInstructions, DEFAULT_SOUND_POLICY } from "./contract";
+import { configurationScopeKey, configurationSnapshotSchema, mergeProductionConfigurations, productionConfigurationPatchSchema, soundPolicyAudioMode, soundPolicyInstructions, DEFAULT_SOUND_POLICY } from "./contract";
 import { configurationDiff } from "@/features/production-configuration/view-model";
 
 describe("production configuration contract", () => {
@@ -20,6 +20,25 @@ describe("production configuration contract", () => {
     expect(configurationScopeKey({ projectId: "p", episodeId: "e", panelId: "shot" })).toBe("panel:shot");
     expect(productionConfigurationPatchSchema.safeParse({ sound: { inventDialogue: true } }).success).toBe(false);
     expect(productionConfigurationPatchSchema.safeParse({ workflow: { transportAttempts: 99 } }).success).toBe(false);
+  });
+  it("keeps template policies backward compatible and merges them by workflow type", () => {
+    const base = mergeProductionConfigurations([
+      { workflow: { templates: { "story-to-script": [{ key: "organize_production_script", enabled: false, dependsOn: [], retryable: false, maxAttempts: 1 }] } } },
+      { workflow: { templates: { "script-to-storyboard": [{ key: "build_scene_storyboard", enabled: true, dependsOn: [], retryable: true, maxAttempts: 4 }] } } },
+    ]);
+    expect(base.workflow.templates).toMatchObject({
+      "story-to-script": [{ key: "organize_production_script", enabled: false, retryable: false, maxAttempts: 1 }],
+      "script-to-storyboard": [{ key: "build_scene_storyboard", enabled: true, retryable: true, maxAttempts: 4 }],
+    });
+    expect(base.workflow.templates["story-to-script"][0].dependsOn).toEqual([]);
+    const legacySnapshot = configurationSnapshotSchema.parse({
+      format: "production-configuration-v1",
+      sound: DEFAULT_SOUND_POLICY,
+      agents: {},
+      workflow: { retryMode: "restart", requestTimeoutSeconds: 600, transportAttempts: 1, maxCorrections: 0, concurrency: 2 },
+      sources: [],
+    });
+    expect(legacySnapshot.workflow.templates).toEqual({});
   });
   it("maps native, post, silent and ambience-only audio precisely", () => {
     expect(soundPolicyAudioMode(DEFAULT_SOUND_POLICY)).toBe("full");

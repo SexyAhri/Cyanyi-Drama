@@ -42,7 +42,7 @@ export async function getExecutionTrace(userId: string, traceId: string) {
       where: { traceId: normalized, userId },
       include: {
         steps: { orderBy: { stepIndex: "asc" } },
-        events: { orderBy: { createdAt: "asc" }, take: 500 },
+        events: { orderBy: { createdAt: "asc" }, take: 12000 },
         stepAttempts: { orderBy: { createdAt: "asc" }, take: 500 },
         artifacts: {
           orderBy: { createdAt: "asc" },
@@ -66,6 +66,24 @@ export async function getExecutionTrace(userId: string, traceId: string) {
     }),
   ]);
   if (!run && !tasks.length) return null;
+
+  const taskIds = tasks.map((task) => task.id);
+  const [freezes, usageCosts] = taskIds.length
+    ? await Promise.all([
+        prisma.balanceFreeze.findMany({
+          where: { userId, taskId: { in: taskIds }, source: "media_task" },
+          select: { taskId: true, requestId: true, amount: true, status: true },
+          orderBy: { createdAt: "asc" },
+        }),
+        prisma.usageCost.findMany({
+          where: { userId, sourceType: "media_task", sourceId: { in: taskIds } },
+          select: { sourceId: true, cost: true, quantity: true, unit: true },
+          orderBy: { createdAt: "asc" },
+        }),
+      ])
+    : [[], []];
+  const freezesByTask = groupByTaskId(freezes);
+  const costsByTask = groupByTaskId(usageCosts);
 
   const spans: ExecutionSpan[] = [];
   const channelNames = new Map(
@@ -144,7 +162,10 @@ export async function getExecutionTrace(userId: string, traceId: string) {
           status: "succeeded",
           startedAt: requiredIso(artifact.createdAt),
           completedAt: requiredIso(artifact.createdAt),
-          attributes: prompt,
+          attributes: {
+            ...prompt,
+            channelName: channelNames.get(stringField(prompt.channelId)),
+          },
         });
       const artifactSummary = traceableArtifactSummary(artifact.payload);
       if (artifactSummary)
@@ -163,6 +184,52 @@ export async function getExecutionTrace(userId: string, traceId: string) {
             ...artifactSummary,
           },
         });
+    }
+    const requestEvents = run.events.filter((event) => event.type.startsWith("request_"));
+    const requests = new Map<string, typeof requestEvents>();
+    for (const event of requestEvents) {
+      const payload = isJsonRecord(event.payload) ? event.payload : {};
+      const requestId = stringField(payload.requestId);
+      if (!requestId) continue;
+      const group = requests.get(requestId) ?? [];
+      group.push(event);
+      requests.set(requestId, group);
+    }
+    for (const [requestId, events] of requests) {
+      events.sort((left, right) =>
+        left.createdAt.getTime() - right.createdAt.getTime() ||
+        Number(left.status !== "running") - Number(right.status !== "running"),
+      );
+      const first = events[0];
+      const last = events.at(-1)!;
+      const payload = isJsonRecord(last.payload) ? last.payload : {};
+      const original = isJsonRecord(first.payload) ? first.payload : {};
+      spans.push({
+        spanId: stableSpanId("workflow-request", requestId),
+        parentSpanId: run.steps.find((step) => step.id === first.stepId)?.spanId,
+        kind: "workflow_request",
+        name: stringField(payload.requestType || original.requestType) || "workflow request",
+        status: last.status ?? "running",
+        startedAt: requiredIso(first.createdAt),
+        ...(last.status && last.status !== "running" ? { completedAt: requiredIso(last.createdAt) } : {}),
+        attributes: {
+          requestId,
+          requestType: stringField(payload.requestType || original.requestType),
+          targetType: stringField(payload.targetType || original.targetType),
+          targetId: stringField(payload.targetId || original.targetId),
+          provider: stringField(payload.provider || original.provider),
+          model: stringField(payload.model || original.model),
+          inputHash: stringField(payload.inputHash || original.inputHash),
+          input: original.input,
+          artifactRefs: payload.artifactRefs,
+          reused: payload.reused === true,
+          reuseReason: stringField(payload.reuseReason),
+          cacheVersion: stringField(payload.cacheVersion || original.cacheVersion),
+          promptVersion: stringField(payload.promptVersion || original.promptVersion),
+          promptVersionHash: stringField(payload.promptVersionHash || original.promptVersionHash),
+          error: payload.error,
+        },
+      });
     }
   }
   for (const task of tasks)
@@ -184,7 +251,23 @@ export async function getExecutionTrace(userId: string, traceId: string) {
         protocol: task.protocol,
         model: task.model,
         progress: task.progress,
+        executionPhase: task.executionPhase,
+        providerTaskId: task.providerTaskId,
         assetIds: task.assets.map((asset) => asset.id),
+        retryCount: task.retryCount,
+        failureStage: isJsonRecord(task.error) ? stringField(task.error.failureStage) : undefined,
+        ...traceErrorAttributes(task.error),
+        effectiveParameters: traceMediaParameters(task.payload),
+        creditHolds: (freezesByTask.get(task.id) ?? []).map((freeze) => ({
+          requestId: freeze.requestId,
+          amount: freeze.amount.toString(),
+          status: freeze.status,
+        })),
+        settledCredits: (costsByTask.get(task.id) ?? []).map((cost) => ({
+          amount: cost.cost.toString(),
+          quantity: cost.quantity,
+          unit: cost.unit,
+        })),
       },
     });
 
@@ -221,6 +304,12 @@ export async function getExecutionTrace(userId: string, traceId: string) {
             event.status,
             isCurrentStart,
           ),
+          ...(event.type === "artifact_committed" && isJsonRecord(event.payload)
+            ? {
+                artifactType: stringField(event.payload.artifactType) || undefined,
+                artifactRefId: stringField(event.payload.refId) || undefined,
+              }
+            : {}),
           message: event.message,
           createdAt: event.createdAt.toISOString(),
         };
@@ -232,6 +321,7 @@ export async function getExecutionTrace(userId: string, traceId: string) {
           spanId: task.spanId,
           type: event.type,
           status: event.status,
+          executionPhase: event.executionPhase ?? undefined,
           message: event.message,
           createdAt: event.createdAt.toISOString(),
         })),
@@ -247,6 +337,7 @@ type ExecutionSpan = {
     | "workflow_run"
     | "workflow_step"
     | "workflow_attempt"
+    | "workflow_request"
     | "workflow_artifact"
     | "prompt"
     | "media_task";
@@ -341,6 +432,37 @@ function workflowEventDisplayStatus(
 
 function stringField(value: unknown) {
   return typeof value === "string" ? value : "";
+}
+
+function groupByTaskId<T extends { taskId?: string | null; sourceId?: string | null }>(items: T[]) {
+  const grouped = new Map<string, T[]>();
+  for (const item of items) {
+    const taskId = item.taskId ?? item.sourceId;
+    if (!taskId) continue;
+    const group = grouped.get(taskId) ?? [];
+    group.push(item);
+    grouped.set(taskId, group);
+  }
+  return grouped;
+}
+
+function traceMediaParameters(payload: Prisma.JsonValue | null) {
+  if (!isJsonRecord(payload) || !isJsonRecord(payload.request)) return {};
+  const request = payload.request;
+  const allowed = [
+    "ratio", "resolution", "duration", "videoMode", "audioMode", "format",
+    "count", "quality", "qualityTier", "size", "seed", "fps", "operation",
+  ];
+  return Object.fromEntries(allowed.flatMap((key) => {
+    const value = request[key];
+    return value === null || value === undefined || typeof value === "object"
+      ? []
+      : [[key, value]];
+  }));
+}
+
+function isJsonRecord(value: Prisma.JsonValue | null | undefined): value is Prisma.JsonObject {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function traceErrorAttributes(value: Prisma.JsonValue | null) {

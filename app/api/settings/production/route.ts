@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
-import { productionConfigurationPatchSchema } from "@/lib/production-configuration/contract";
+import { configurationScopeSchema } from "@/lib/production-configuration/contract";
+import {
+  managementConfigurationPatchSchema,
+  managementValues,
+} from "@/lib/production-configuration/management";
 import {
   ConfigurationError,
   readProductionConfiguration,
@@ -12,23 +16,42 @@ import {
   validateConfigurationAgents,
 } from "@/lib/production-configuration/agents";
 
-const scopeSchema = z
-  .object({
-    projectId: z.string().min(1).max(200).optional(),
-    episodeId: z.string().min(1).max(200).optional(),
-    panelId: z.string().min(1).max(200).optional(),
-  })
-  .strict();
+const scopeSchema = configurationScopeSchema;
 const mutationSchema = z
   .object({
     scope: scopeSchema,
-    action: z.enum(["save", "publish", "restore"]),
+    action: z.enum(["save", "publish"]),
     expectedRevision: z.number().int().nonnegative(),
-    patch: productionConfigurationPatchSchema.optional(),
-    restoreVersion: z.number().int().positive().optional(),
-    note: z.string().max(1000).optional(),
+    patch: managementConfigurationPatchSchema,
+    section: z.enum(["agents", "sound"]),
   })
-  .strict();
+  .strict()
+  .superRefine((data, ctx) => {
+    if (data.section) {
+      if (
+        !["save", "publish"].includes(data.action) ||
+        !data.patch ||
+        Object.keys(data.patch).some((key) => key !== data.section)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message: "分项管理只能保存或发布当前配置项",
+        });
+      }
+      if (data.section === "agents" && data.scope.projectId) {
+        ctx.addIssue({ code: "custom", message: "Agent 管理只支持全局范围" });
+      }
+      if (
+        data.section === "sound" &&
+        Object.keys(data.patch?.sound ?? {}).some((key) => key !== "mode")
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message: "声音制作方式管理只能修改制作方式",
+        });
+      }
+    }
+  });
 export async function GET(request: Request) {
   const { user, sessionId } = await ensureAnonymousUser();
   try {
@@ -42,7 +65,10 @@ export async function GET(request: Request) {
     );
     const configuration = await readProductionConfiguration(user.id, scope);
     return attachSessionCookie(
-      Response.json({ configuration, agents: getConfigurationAgentCatalog() }),
+      Response.json({
+        configuration: managementRecord(configuration),
+        agents: getConfigurationAgentCatalog(),
+      }),
       sessionId,
     );
   } catch (error) {
@@ -58,10 +84,22 @@ export async function PUT(request: Request) {
       ...data,
       userId: user.id,
     });
-    return attachSessionCookie(Response.json({ configuration }), sessionId);
+    return attachSessionCookie(
+      Response.json({ configuration: managementRecord(configuration) }),
+      sessionId,
+    );
   } catch (error) {
     return failure(error, sessionId);
   }
+}
+function managementRecord(
+  record: Awaited<ReturnType<typeof readProductionConfiguration>>,
+) {
+  return {
+    ...record,
+    effective: managementValues(record.effective),
+    inherited: managementValues(record.inherited),
+  };
 }
 function failure(error: unknown, sessionId: string | null) {
   const status =

@@ -9,6 +9,7 @@ import {
   buildTimelineSubtitles,
 } from "@/lib/production/timeline";
 import { prisma } from "@/lib/server/prisma";
+import { markAssetDependentPanelsStale, type ChangedProjectAsset } from "@/lib/media/asset-dependencies";
 
 export type ProductionPropInput = {
   name: string;
@@ -72,6 +73,7 @@ export async function upsertProductionProps(
 ) {
   if (!(await ownsProject(userId, projectId))) return null;
   const result = [];
+  const changedAssets: ChangedProjectAsset[] = [];
   for (const item of input) {
     const name = item.name.trim();
     if (!name) continue;
@@ -114,7 +116,9 @@ export async function upsertProductionProps(
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     });
+    changedAssets.push({ kind: "prop", name, fields: ["summary", "metadata"] });
   }
+  await markAssetDependentPanelsStale(prisma, { userId, projectId, assets: changedAssets });
   return result;
 }
 

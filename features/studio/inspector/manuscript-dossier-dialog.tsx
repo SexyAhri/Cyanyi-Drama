@@ -10,6 +10,7 @@ import type { ManuscriptDossier, ManuscriptNotes } from "@/lib/episodes/manuscri
 import type { ProductionDeliverableRecord, StudioLocale } from "../types";
 import { transitionStudioDeliverable } from "../api";
 import { getNextPendingGate } from "../production/deliverable-view-model";
+import { productionLabel } from "../production/copy";
 
 export function ManuscriptDossierDialog({ projectId, deliverable, dossier, initialTab, open, onOpenChange, onRefresh, locale }: {
   projectId: string; deliverable: ProductionDeliverableRecord; dossier: ManuscriptDossier;
@@ -52,7 +53,7 @@ export function ManuscriptDossierDialog({ projectId, deliverable, dossier, initi
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="flex h-[min(90dvh,900px)] max-h-[calc(100dvh-2rem)] min-h-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
       <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{deliverable.title}</DialogTitle>
-        <p className="text-xs text-muted-foreground">{t("原著提取资料 · 待审核内容不是新增剧情", "Source-grounded notes · review required")} · {deliverable.status} · v{deliverable.version}</p>
+        <p className="text-xs text-muted-foreground">{t("原著提取资料 · 待审核内容不是新增剧情", "Source-grounded notes · review required")} · {productionLabel(locale, "statuses", deliverable.status)} · v{deliverable.version}</p>
       </DialogHeader>
       <div className="shrink-0 px-5 py-3"><Select value={chunkRef} onValueChange={value => { if (value) { setChunkRef(value); setNotes(null); setError(""); } }}>
         <SelectTrigger className="w-full"><SelectValue>{selectedChunk ? `${t("原文段落", "Source chunk")} ${selectedChunk.index + 1} · ${selectedChunk.start}-${selectedChunk.end}` : t("全书 / 所选范围资料概览", "Selected source overview")}</SelectValue></SelectTrigger><SelectContent>

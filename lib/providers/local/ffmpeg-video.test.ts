@@ -7,11 +7,15 @@ import { promisify } from "node:util";
 import ffmpegStatic from "ffmpeg-static";
 import { describe, expect, it } from "vitest";
 
-import { buildStripAudioArgs, stripAudioFromVideoUrl } from "./ffmpeg-video";
+import { buildStripAudioArgs, stripAudioFromVideoUrl, inspectVideoBytes, parseVideoInspection } from "./ffmpeg-video";
 
 const execFileAsync = promisify(execFile);
 
 describe("FFmpeg video audio policy", () => {
+  it("parses actual streams and rejects invalid video inspections", () => {
+    expect(parseVideoInspection("Duration: 00:01:02.50\n Stream #0:0: Video: h264\n Stream #0:1: Audio: aac")).toEqual({ durationSeconds: 62.5, hasAudio: true });
+    expect(() => parseVideoInspection("Duration: N/A\n Stream #0:0: Audio: aac")).toThrow("VIDEO_OUTPUT_INSPECTION_INVALID");
+  });
   it("copies the video stream without encoding and removes every audio stream", () => {
     const args = buildStripAudioArgs("input.mp4", "output.mp4");
 
@@ -57,10 +61,14 @@ describe("FFmpeg video audio policy", () => {
           sourcePath,
         ]);
         const source = await readFile(sourcePath);
+        await expect(inspectVideoBytes(source, { requireAudio: true, expectedDurationSeconds: 0.5 })).resolves.toMatchObject({ hasAudio: true, method: "ffmpeg", speechCoverage: "not_checked" });
+        await expect(inspectVideoBytes(source, { requireAudio: true, expectedDurationSeconds: 10 })).rejects.toThrow("VIDEO_OUTPUT_DURATION_MISMATCH");
         const stripped = await stripAudioFromVideoUrl(
           `data:video/mp4;base64,${source.toString("base64")}`,
         );
         await writeFile(strippedPath, stripped);
+        await expect(inspectVideoBytes(stripped, { requireAudio: false })).resolves.toMatchObject({ hasAudio: false });
+        await expect(inspectVideoBytes(stripped, { requireAudio: true })).rejects.toThrow("VIDEO_OUTPUT_AUDIO_MISSING");
 
         await expect(
           mapStream(executable, strippedPath, "0:v:0"),

@@ -27,10 +27,10 @@ export const autoDlComfyUiMediaProvider: MediaProviderAdapter = {
       return executeWorkflow(
         input,
         workflow,
-        await buildVideoBody(workflow, input.request),
+        await buildVideoBody(workflow, input.request, input.signal),
       );
     if (input.kind === "audio" && workflow.kind === "tts")
-      return executeWorkflow(input, workflow, await buildTtsBody(input.request));
+      return executeWorkflow(input, workflow, await buildTtsBody(input.request, input.signal));
     throw new Error(
       `AUTODL_WORKFLOW_KIND_MISMATCH:${input.model}:${input.kind}`,
     );
@@ -43,7 +43,7 @@ export const autoDlComfyUiMediaProvider: MediaProviderAdapter = {
     const [imageUrl, audioUrl] = await localReferencesAsDataUrls([
       { url: input.imageUrl },
       { url: input.audioUrl },
-    ]);
+    ], input.signal);
     return executeWorkflow(
       {
         baseUrl: input.baseUrl,
@@ -64,41 +64,63 @@ export const autoDlComfyUiMediaProvider: MediaProviderAdapter = {
       "lip_sync",
     );
   },
+  resume(input, providerTaskId) {
+    const workflow = requireWorkflow(input.model);
+    return executeWorkflow(input, workflow, {}, undefined, providerTaskId);
+  },
 };
 
 async function executeWorkflow(
   input: Pick<
     GenerateProviderMediaInput,
-    "baseUrl" | "apiKey" | "model" | "kind"
+    | "baseUrl"
+    | "apiKey"
+    | "model"
+    | "kind"
+    | "signal"
+    | "onExecutionPhase"
+    | "onProviderTaskId"
   >,
   workflow: AutoDlWorkflowDefinition,
   body: Record<string, unknown>,
   operation?: string,
+  resumeTaskId?: string,
 ): Promise<MediaAsset[]> {
   const baseUrl = normalizeBaseUrl(input.baseUrl);
-  const response = await fetchWithProviderRetry(
-    `${baseUrl}/comfyui/comfyui_workflow/${encodeURIComponent(workflow.id)}`,
-    {
-      method: "POST",
-      headers: autoDlHeaders(input.apiKey),
-      body: JSON.stringify(body),
-      cache: "no-store",
-    },
-  );
-  const payload = await readProviderJson(response);
-  assertAutoDlResponse(response, payload, "SUBMIT");
-  const taskId = stringAt(dataOf(payload), "task_id");
+  let taskId = resumeTaskId;
+  if (!taskId) {
+    await input.onExecutionPhase?.("request_sent");
+    const response = await fetchWithProviderRetry(
+      `${baseUrl}/comfyui/comfyui_workflow/${encodeURIComponent(workflow.id)}`,
+      {
+        method: "POST",
+        headers: autoDlHeaders(input.apiKey),
+        body: JSON.stringify(body),
+        cache: "no-store",
+        signal: input.signal,
+      },
+    );
+    const payload = await readProviderJson(response);
+    assertAutoDlResponse(response, payload, "SUBMIT");
+    taskId = stringAt(dataOf(payload), "task_id");
+  }
   if (!taskId) throw new Error("AUTODL_TASK_ID_MISSING");
+  if (!resumeTaskId) {
+    await input.onProviderTaskId?.(taskId);
+    await input.onExecutionPhase?.("submitted");
+  }
+  await input.onExecutionPhase?.("generating");
 
   const startedAt = Date.now();
   while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
-    await wait(POLL_INTERVAL_MS);
+    await wait(POLL_INTERVAL_MS, input.signal);
     const resultResponse = await fetchWithProviderRetry(
       `${baseUrl}/comfyui/comfyui_workflow/result/${encodeURIComponent(taskId)}`,
       {
         method: "GET",
         headers: { Authorization: input.apiKey.trim() },
         cache: "no-store",
+        signal: input.signal,
       },
     );
     const resultPayload = await readProviderJson(resultResponse);
@@ -132,6 +154,7 @@ async function executeWorkflow(
 async function buildVideoBody(
   workflow: AutoDlWorkflowDefinition,
   request: MediaProviderRequest,
+  signal?: AbortSignal,
 ) {
   const duration = clampDuration(
     durationSeconds(request.duration),
@@ -154,7 +177,7 @@ async function buildVideoBody(
   const references = request.referenceImages ?? [];
   if (references.length > (workflow.maxReferenceImages ?? 0))
     throw new Error(`AUTODL_REFERENCE_IMAGE_LIMIT:${workflow.id}:${workflow.maxReferenceImages ?? 0}`);
-  const referenceUrls = await localReferencesAsDataUrls(references);
+  const referenceUrls = await localReferencesAsDataUrls(references, signal);
   if (workflow.kind === "first-last-video") {
     const firstFrameIndex = references.findIndex(
       (reference) => reference.role === "first_frame",
@@ -178,7 +201,7 @@ async function buildVideoBody(
   if (workflow.kind === "reference-video" && !body.ref_image_0)
     throw new Error("AUTODL_REFERENCE_IMAGE_REQUIRED");
   if (workflow.kind === "audio-reference-video")
-    (await localReferencesAsDataUrls(request.referenceAudios ?? []))
+    (await localReferencesAsDataUrls(request.referenceAudios ?? [], signal))
       .slice(0, workflow.maxReferenceAudios ?? 0)
       .forEach((url, index) => {
         body[`ref_audio_${index}`] = url;
@@ -186,7 +209,7 @@ async function buildVideoBody(
   return body;
 }
 
-async function buildTtsBody(request: MediaProviderRequest) {
+async function buildTtsBody(request: MediaProviderRequest, signal?: AbortSignal) {
   const text = request.input?.trim() || request.prompt?.trim();
   if (!text) throw new Error("AUTODL_TTS_TEXT_REQUIRED");
   const referenceAudioSource =
@@ -199,7 +222,7 @@ async function buildTtsBody(request: MediaProviderRequest) {
       typeof referenceAudioSource === "string"
         ? { url: referenceAudioSource }
         : referenceAudioSource,
-    ])
+    ], signal)
   )[0];
   const emotions = emotionWeights(
     request.emotionPrompt,
@@ -381,6 +404,11 @@ function isHttpUrl(value?: string) {
   return /^https?:\/\//i.test(value?.trim() ?? "");
 }
 
-function wait(delayMs: number) {
-  return new Promise((resolve) => setTimeout(resolve, delayMs));
+function wait(delayMs: number, signal?: AbortSignal) {
+  if (signal?.aborted) return Promise.reject(signal.reason ?? new Error("MEDIA_REQUEST_ABORTED"));
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => { clearTimeout(timer); reject(signal?.reason ?? new Error("MEDIA_REQUEST_ABORTED")); };
+    const timer = setTimeout(() => { signal?.removeEventListener("abort", onAbort); resolve(); }, delayMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }

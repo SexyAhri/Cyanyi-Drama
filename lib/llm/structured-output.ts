@@ -12,7 +12,34 @@ export type StructuredValidationIssue = {
   message: string;
 };
 
+export type FailedStructuredExecutionTrace = {
+  promptId: string;
+  agentId: string;
+  promptVersion: number;
+  promptVersionHash: string;
+  model: string;
+  channelId?: string;
+  structuredOutputMode: "text" | "json_object" | "json_schema";
+  correctionAttempts: number;
+  tokenUsage: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  } | null;
+  characterUsage?: {
+    inputCharacters: number;
+    outputCharacters: number;
+    totalCharacters: number;
+  };
+  requestCount?: number;
+  billing?: import("@/lib/billing/model-charge").ModelChargeReceipt[];
+  outputHash?: string;
+  configurationSources?: Array<{ scopeKey: string; version: number }>;
+};
+
 export class StructuredOutputError extends Error {
+  executionTrace?: FailedStructuredExecutionTrace;
+
   constructor(
     readonly code:
       | "STRUCTURED_JSON_INVALID"

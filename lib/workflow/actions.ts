@@ -5,10 +5,11 @@ import {
   removeTerminalWorkflowRun,
   requestWorkflowCancel,
   retryWorkflowRun,
+  retryWorkflowStep,
   updateWorkflowRunStatus,
 } from "./store";
 
-export type WorkflowAction = "cancel" | "pause" | "resume" | "retry";
+export type WorkflowAction = "cancel" | "pause" | "resume" | "retry" | "continue";
 
 export class WorkflowActionError extends Error {
   constructor(
@@ -17,6 +18,23 @@ export class WorkflowActionError extends Error {
   ) {
     super(message);
   }
+}
+
+export async function retryWorkflowStepAndEnqueue(input: {
+  mode?: "continue";
+  runId: string;
+  stepKey: string;
+  userId: string;
+}) {
+  const workflow = await retryWorkflowStep(input.userId, input.runId, input.stepKey, input.mode);
+  if (!workflow) return null;
+  await enqueueWorkflowJob({
+    runId: input.runId,
+    userId: input.userId,
+    projectId: workflow.projectId,
+    maxAttempts: 1,
+  });
+  return workflow;
 }
 
 export async function deleteWorkflowRun(input: {
@@ -49,8 +67,8 @@ export async function controlWorkflowRun(input: {
   let workflow;
   if (input.action === "cancel") {
     workflow = await requestWorkflowCancel(input.userId, input.runId);
-  } else if (input.action === "retry") {
-    workflow = await retryWorkflowRun(input.userId, input.runId);
+  } else if (input.action === "retry" || input.action === "continue") {
+    workflow = input.action === "continue" ? await retryWorkflowRun(input.userId, input.runId, "continue") : await retryWorkflowRun(input.userId, input.runId);
   } else {
     try {
       workflow = await updateWorkflowRunStatus(
@@ -69,7 +87,7 @@ export async function controlWorkflowRun(input: {
   if (!workflow)
     throw new WorkflowActionError(`当前状态不支持操作: ${current.status}`);
 
-  if (input.action === "resume" || input.action === "retry") {
+  if (input.action === "resume" || input.action === "retry" || input.action === "continue") {
     await enqueueWorkflowJob({
       runId: input.runId,
       userId: input.userId,

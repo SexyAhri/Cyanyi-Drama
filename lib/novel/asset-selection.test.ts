@@ -7,13 +7,18 @@ const storyboardVideoSegmentDeleteMany = vi.hoisted(() => vi.fn());
 const assetReferenceDeleteMany = vi.hoisted(() => vi.fn());
 const assetReferenceCreate = vi.hoisted(() => vi.fn());
 const transaction = vi.hoisted(() => vi.fn());
+const propFindFirst = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/server/prisma", () => ({
   prisma: {
     mediaAsset: { findFirst: mediaAssetFindFirst },
     storyboardPanel: { findFirst: storyboardPanelFindFirst },
+    novelProp: { findFirst: propFindFirst },
     $transaction: transaction,
   },
+}));
+vi.mock("@/lib/media/asset-dependencies", () => ({
+  markAssetDependentPanelsStale: vi.fn().mockResolvedValue({ panelIds: [], episodeIds: [] }),
 }));
 
 import { selectProjectAsset } from "./asset-selection";

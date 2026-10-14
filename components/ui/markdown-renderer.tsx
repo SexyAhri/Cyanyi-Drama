@@ -1,4 +1,8 @@
-import { isValidElement, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import {
+  isValidElement,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -11,7 +15,7 @@ type MarkdownRendererProps = {
 
 export function MarkdownRenderer({ children }: MarkdownRendererProps) {
   return (
-    <div className="min-w-0 max-w-full space-y-3 [overflow-wrap:anywhere]">
+    <div className="min-w-0 max-w-full space-y-3 break-anywhere">
       <Markdown remarkPlugins={[remarkGfm]} components={components}>
         {children}
       </Markdown>
@@ -44,7 +48,9 @@ function CodeBlock({ children }: { children?: ReactNode }) {
     ? children.props.className
     : undefined;
   const language = /language-([\w-]+)/.exec(className ?? "")?.[1];
-  const isPlainText = !language || /^(text|txt|plain|plaintext|prompt|markdown|md)$/i.test(language);
+  const isPlainText =
+    !language ||
+    /^(text|txt|plain|plaintext|prompt|markdown|md)$/i.test(language);
   const code = takeStringContents(children);
 
   return (
@@ -53,12 +59,14 @@ function CodeBlock({ children }: { children?: ReactNode }) {
         <span>{isPlainText ? "文本" : language}</span>
         <CopyButton content={code} copyMessage="已复制" />
       </div>
-      <pre className={cn(
-        "max-w-full p-3 text-sm leading-6",
-        isPlainText
-          ? "whitespace-pre-wrap break-words font-sans [overflow-wrap:anywhere]"
-          : "overflow-x-auto font-mono",
-      )}>
+      <pre
+        className={cn(
+          "max-w-full p-3 text-sm leading-6",
+          isPlainText
+            ? "whitespace-pre-wrap break-anywhere font-sans break-anywhere"
+            : "overflow-x-auto font-mono",
+        )}
+      >
         <code className={cn(className, isPlainText && "font-sans")}>
           {code}
         </code>
@@ -86,7 +94,9 @@ function withClass<Tag extends keyof React.JSX.IntrinsicElements>(
   Tag: Tag,
   classes: string,
 ) {
-  function Component(props: ComponentPropsWithoutRef<Tag> & { node?: unknown }) {
+  function Component(
+    props: ComponentPropsWithoutRef<Tag> & { node?: unknown },
+  ) {
     const { className, node, ...restProps } = props;
 
     void node;
@@ -101,10 +111,7 @@ function withClass<Tag extends keyof React.JSX.IntrinsicElements>(
 }
 
 const components = {
-  a: withClass(
-    "a",
-    "break-all text-primary underline underline-offset-2",
-  ),
+  a: withClass("a", "break-all text-primary underline underline-offset-2"),
   blockquote: withClass("blockquote", "border-l-2 border-primary pl-4"),
   code: Code,
   h1: withClass("h1", "text-2xl font-semibold"),

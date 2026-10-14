@@ -54,6 +54,7 @@ async function generateQwenAudioTts(
         ),
       ),
       cache: "no-store",
+      signal: input.signal,
     },
   );
   const payload = await readProviderJson(response);

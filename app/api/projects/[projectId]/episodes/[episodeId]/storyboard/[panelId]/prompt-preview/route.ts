@@ -4,6 +4,7 @@ import {
   ProjectAssetTaskError,
 } from "@/lib/media/project-asset-tasks";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
+import { productionRequestOptionsSchema, productionRequestErrorStatus } from "@/lib/production-configuration/execution";
 
 type Context = {
   params: Promise<{ projectId: string; episodeId: string; panelId: string }>;
@@ -18,6 +19,7 @@ export async function POST(request: Request, context: Context) {
   try {
     const mediaDefaults = await loadUserRuntimeSettings(user.id);
     const preview = await previewStoryboardPanelPrompt({
+      ...productionRequestOptionsSchema.parse(body),
       userId: user.id,
       projectId,
       episodeId,
@@ -35,6 +37,8 @@ export async function POST(request: Request, context: Context) {
     });
     return attachSessionCookie(Response.json({ preview }), sessionId);
   } catch (error) {
+    const configurationStatus = productionRequestErrorStatus(error);
+    if (configurationStatus) return attachSessionCookie(Response.json({ message: error instanceof Error ? error.message : "配置无效" }, { status: configurationStatus }), sessionId);
     if (error instanceof ProjectAssetTaskError)
       return attachSessionCookie(
         Response.json({ message: error.message }, { status: error.status }),

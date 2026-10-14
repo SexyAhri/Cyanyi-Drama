@@ -1,10 +1,13 @@
-import { DEFAULT_SOUND_POLICY, soundPolicyInstructions, type SoundPolicy } from "@/lib/production-configuration/contract";
+import { DEFAULT_SOUND_POLICY, soundPolicyInstructions, type SoundPolicy, type ConfiguredSpeechLine } from "@/lib/production-configuration/contract";
 import { currentProductionConfiguration } from "@/lib/production-configuration/context";
 
 export type VideoSpeechLine = {
   speaker: string;
   content: string;
   delivery: string;
+  direction?: string;
+  startSeconds?: number;
+  endSeconds?: number;
 };
 
 /** Compile approved sound without inventing spoken story text. */
@@ -22,9 +25,9 @@ export function lockVideoAudioPerformance(
 ) {
   const en = input.locale === "en";
   const policy = input.soundPolicy ?? currentProductionConfiguration()?.snapshot.sound ?? DEFAULT_SOUND_POLICY;
-  const lines = [...(input.voiceLines ?? [])];
-  const dialogue = input.lipSyncText;
-  const voiceover = input.voiceoverText;
+  const lines = [...(policy.speechLines ?? input.voiceLines ?? [])];
+  const dialogue = policy.speechLines ? undefined : input.lipSyncText;
+  const voiceover = policy.speechLines ? undefined : input.voiceoverText;
   const covered = (text: string, isDialogue: boolean) =>
     lines.some((line) => line.content.trim() === text.trim()) ||
     lines.filter((line) => (line.delivery === "dialogue") === isDialogue)
@@ -45,7 +48,7 @@ export function lockVideoAudioPerformance(
   const contract = /(?:\n|^)(?:【声音与台词】|\[Sound and speech\])\n[\s\S]*?(?:【声音与台词结束】|\[End sound and speech\])/gu;
   // Recover approved lines, including multiline dialogue, from standalone
   // canvas prompts when they are recompiled under another published policy.
-  if (!lines.length) for (const block of sanitized.match(contract) ?? []) {
+  if (!lines.length && !policy.speechLines) for (const block of sanitized.match(contract) ?? []) {
     const patterns = [
       /(?:^|\n)([^\n]+?)(逐字说出原文对白一次|以心声／内心独白逐字朗读原文一次|以画外音／旁白逐字朗读原文一次)：“([\s\S]*?)”。/gu,
       /(?:^|\n)([^\n]+?) (speaks the original dialogue|delivers inner monologue|delivers off-screen narration) exactly once: “([\s\S]*?)”\./gu,
@@ -56,7 +59,8 @@ export function lockVideoAudioPerformance(
   const sound = soundPolicyInstructions(policy, en ? "en" : "zh");
   const spoken = lines.filter((line) => policy.mode === "native" && line.content.trim() &&
     (line.delivery === "dialogue" ? policy.dialogue : line.delivery === "inner_monologue" ? policy.innerMonologue : policy.voiceover)).map((line) => {
-    const text = `“${line.content}”`;
+    const timing = soundCueTiming(line, en);
+    const text = `“${line.content}”${timing}${line.direction ? (en ? "; performance: " : "；表演要求：") + line.direction : ""}`;
     if (line.delivery === "dialogue")
       return en
         ? `${line.speaker} speaks the original dialogue exactly once: ${text}. Synchronize their mouth movements to their voice; listeners react without speaking.`
@@ -71,9 +75,21 @@ export function lockVideoAudioPerformance(
     base,
     en ? "[Sound and speech]" : "【声音与台词】",
     ...spoken,
+    ...(policy.mode === "native" && (policy.dialogue || policy.voiceover || policy.innerMonologue) ? (policy.voiceProfiles ?? []).map(profile =>
+      en ? `${profile.speaker}: language ${profile.language || "follow approved speech"}; voice and performance ${profile.direction || "keep consistent"}.`
+        : `${profile.speaker}：语言 ${profile.language || "沿用已确认台词"}；声音与表演 ${profile.direction || "保持一致"}。`,
+    ) : []),
+    ...(policy.mode === "native" && policy.effects ? (policy.effectCues ?? []).map(cue =>
+      (en ? "Action sound: " : "动作音效：") + cue.description + soundCueTiming(cue, en),
+    ) : []),
     sound,
     en ? "[End sound and speech]" : "【声音与台词结束】",
   ].filter(Boolean).join("\n");
+}
+
+function soundCueTiming(cue: Pick<ConfiguredSpeechLine, "startSeconds" | "endSeconds">, en: boolean) {
+  if (cue.startSeconds === undefined && cue.endSeconds === undefined) return "";
+  return en ? `; time ${cue.startSeconds ?? 0}s–${cue.endSeconds === undefined ? "shot end" : `${cue.endSeconds}s`}` : `；时间 ${cue.startSeconds ?? 0}秒–${cue.endSeconds === undefined ? "镜头结束" : `${cue.endSeconds}秒`}`;
 }
 
 /** Remove old generation policy while preserving actions and quoted speech. */

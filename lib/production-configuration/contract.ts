@@ -1,4 +1,32 @@
 import { z } from "zod";
+import { PRODUCTION_DEFAULTS_VERSION } from "./defaults-version";
+
+const soundTiming = {
+  startSeconds: z.number().finite().min(0).max(7200).optional(),
+  endSeconds: z.number().finite().min(0).max(7200).optional(),
+};
+function validSoundTiming(value: { startSeconds?: number; endSeconds?: number }) {
+  return value.endSeconds === undefined || value.startSeconds === undefined || value.endSeconds > value.startSeconds;
+}
+export const configuredSpeechLineSchema = z.object({
+  originLineId: z.string().min(1).max(200).optional(),
+  speaker: z.string().trim().min(1).max(120),
+  content: z.string().trim().min(1).max(4000),
+  delivery: z.enum(["dialogue", "voiceover", "inner_monologue"]),
+  direction: z.string().max(2000).optional(),
+  ...soundTiming,
+}).strict().refine(validSoundTiming, "结束时间必须晚于开始时间");
+export type ConfiguredSpeechLine = z.infer<typeof configuredSpeechLineSchema>;
+export const configuredVoiceProfileSchema = z.object({
+  speaker: z.string().trim().min(1).max(120),
+  language: z.string().max(120),
+  direction: z.string().max(2000),
+  voicePresetId: z.string().min(1).max(200).optional(),
+}).strict();
+export const configuredEffectCueSchema = z.object({
+  description: z.string().trim().min(1).max(2000),
+  ...soundTiming,
+}).strict().refine(validSoundTiming, "结束时间必须晚于开始时间");
 
 export const soundPolicySchema = z
   .object({
@@ -14,6 +42,9 @@ export const soundPolicySchema = z
     ambienceDirection: z.string().max(4000),
     effectsDirection: z.string().max(4000),
     musicDirection: z.string().max(4000),
+    speechLines: z.array(configuredSpeechLineSchema).max(100).optional(),
+    voiceProfiles: z.array(configuredVoiceProfileSchema).max(50).optional(),
+    effectCues: z.array(configuredEffectCueSchema).max(100).optional(),
   })
   .strict();
 export type SoundPolicy = z.infer<typeof soundPolicySchema>;
@@ -35,17 +66,51 @@ export const agentConfigurationSchema = z
   .object({
     name: z.string().max(120).optional(),
     responsibility: z.string().max(4000).optional(),
+    taskScope: z.string().max(4000).optional(),
     systemInstructions: z.string().max(16000).optional(),
+    styleRequirements: z.string().max(4000).optional(),
+    examples: z.string().max(12000).optional(),
     templateZh: z.string().max(60000).optional(),
     templateEn: z.string().max(60000).optional(),
+    acceptanceCriteria: z.string().max(4000).optional(),
+    stopConditions: z.string().max(4000).optional(),
+    qualityChecks: z.array(z.string().trim().min(1).max(500)).max(20).optional(),
     channelId: z.string().max(200).optional(),
     model: z.string().max(200).optional(),
+    fallbackChannelId: z.string().max(200).optional(),
+    fallbackModel: z.string().max(200).optional(),
+    contextScopes: z
+      .array(
+        z.enum([
+          "project_materials",
+          "current_episode",
+          "character_assets",
+          "selected_shot",
+        ]),
+      )
+      .max(4)
+      .optional(),
     temperature: z.number().min(0).max(2).optional(),
     maxCorrections: z.number().int().min(0).max(2).optional(),
     disabledOperations: z.array(z.string().max(100)).max(50).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) => Boolean(value.fallbackChannelId) === Boolean(value.fallbackModel),
+    "备用模型和渠道必须同时指定，或同时继承",
+  );
 export type AgentConfiguration = z.infer<typeof agentConfigurationSchema>;
+export const workflowTemplateStepPolicySchema = z.object({
+  key: z.string().trim().min(1).max(120),
+  enabled: z.boolean(),
+  dependsOn: z.array(z.string().trim().min(1).max(120)).max(64),
+  retryable: z.boolean(),
+  maxAttempts: z.number().int().min(1).max(10),
+}).strict();
+const workflowTemplatePoliciesSchema = z.record(
+  z.string().trim().min(1).max(120),
+  z.array(workflowTemplateStepPolicySchema).max(64),
+);
 export const workflowPolicySchema = z
   .object({
     retryMode: z.enum(["continue", "restart"]),
@@ -53,15 +118,21 @@ export const workflowPolicySchema = z
     transportAttempts: z.number().int().min(1).max(5),
     maxCorrections: z.number().int().min(0).max(2),
     concurrency: z.number().int().min(1).max(8),
+    templates: workflowTemplatePoliciesSchema.optional(),
   })
   .strict();
-export const DEFAULT_WORKFLOW_POLICY: z.infer<typeof workflowPolicySchema> = {
+export const resolvedWorkflowPolicySchema = workflowPolicySchema.extend({
+  templates: workflowTemplatePoliciesSchema.default({}),
+});
+export const DEFAULT_WORKFLOW_POLICY: z.infer<typeof resolvedWorkflowPolicySchema> = {
   retryMode: "restart",
   requestTimeoutSeconds: 600,
   transportAttempts: 1,
   maxCorrections: 0,
   concurrency: 2,
+  templates: {},
 };
+/** Historical frozen execution data. Live settings use managementConfigurationPatchSchema. */
 export const productionConfigurationPatchSchema = z
   .object({
     sound: soundPolicySchema.partial().optional(),
@@ -77,22 +148,25 @@ export type ProductionConfigurationPatch = z.infer<
 export type ProductionConfiguration = {
   sound: SoundPolicy;
   agents: Record<string, AgentConfiguration>;
-  workflow: z.infer<typeof workflowPolicySchema>;
+  workflow: z.infer<typeof resolvedWorkflowPolicySchema>;
 };
-export type ConfigurationScope = {
-  projectId?: string;
-  episodeId?: string;
-  panelId?: string;
-};
+export const configurationScopeSchema = z.object({
+  projectId: z.string().min(1).max(200).optional(),
+  episodeId: z.string().min(1).max(200).optional(),
+  panelId: z.string().min(1).max(200).optional(),
+}).strict();
+export type ConfigurationScope = z.infer<typeof configurationScopeSchema>;
 export type ProductionConfigurationSnapshot = ProductionConfiguration & {
+  defaultsVersion?: string;
   format: "production-configuration-v1";
   sources: Array<{ scopeKey: string; version: number; fields?: string[] }>;
 };
 export const configurationSnapshotSchema = z.object({
+  defaultsVersion: z.literal(PRODUCTION_DEFAULTS_VERSION).optional(),
   format: z.literal("production-configuration-v1"),
   sound: soundPolicySchema,
   agents: z.record(z.string(), agentConfigurationSchema),
-  workflow: workflowPolicySchema,
+  workflow: resolvedWorkflowPolicySchema,
   sources: z.array(
     z.object({
       scopeKey: z.string(),
@@ -120,11 +194,20 @@ export function mergeProductionConfigurations(
   const result: ProductionConfiguration = {
     sound: { ...DEFAULT_SOUND_POLICY },
     agents: {},
-    workflow: { ...DEFAULT_WORKFLOW_POLICY },
+    workflow: { ...DEFAULT_WORKFLOW_POLICY, templates: {} },
   };
   for (const patch of patches) {
     Object.assign(result.sound, patch.sound);
-    Object.assign(result.workflow, patch.workflow);
+    const workflowPatch = patch.workflow;
+    if (workflowPatch) {
+      const { templates, ...settings } = workflowPatch;
+      Object.assign(result.workflow, settings);
+      for (const [type, steps] of Object.entries(templates ?? {}))
+        result.workflow.templates[type] = steps.map((step) => ({
+          ...step,
+          dependsOn: [...step.dependsOn],
+        }));
+    }
     for (const [key, value] of Object.entries(patch.agents ?? {}))
       result.agents[key] = { ...result.agents[key], ...value };
   }

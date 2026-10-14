@@ -79,6 +79,8 @@ const copy = {
     shot: "镜头",
     range: "时间范围",
     media: "媒体类型",
+    image: "图片",
+    video: "视频",
     transition: "过渡",
     cut: "直接切换",
     fade: "淡入淡出",
@@ -118,6 +120,8 @@ const copy = {
     shot: "Shot",
     range: "Time range",
     media: "Media type",
+    image: "Image",
+    video: "Video",
     transition: "Transition",
     cut: "Cut",
     fade: "Fade in/out",
@@ -325,7 +329,12 @@ export function DeliveryWorkspace({
   async function controlTask(task: MediaTask, action: "cancel" | "retry") {
     setBusyTaskId(task.id);
     try {
-      await controlStudioMediaTask(task.id, action);
+      const result = await controlStudioMediaTask(task.id, action);
+      if (action === "cancel" && result.task.cancellationPolicy?.provider === "cancellation_unsupported")
+        toast.warning(locale === "en"
+          ? "Local task stopped. The provider job may continue; late results are discarded and provider charges may still apply."
+          : "本地任务已停止。模型服务端任务可能继续运行，迟到结果会丢弃，服务商费用仍可能产生。",
+        );
       await refreshAll();
     } catch (requestError) {
       toast.error(
@@ -537,7 +546,7 @@ export function DeliveryWorkspace({
                       </div>
                       <div className="py-3 pr-3">
                         <dt className="text-xs text-muted-foreground">{text.media}</dt>
-                        <dd className="mt-1 font-medium">{selectedTrack.type}</dd>
+                        <dd className="mt-1 font-medium">{selectedTrack.type === "image" ? text.image : text.video}</dd>
                       </div>
                       <div className="border-l py-3 pl-3">
                         <dt className="text-xs text-muted-foreground">{text.transition}</dt>

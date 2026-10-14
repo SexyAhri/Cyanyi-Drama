@@ -2,11 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import type { StudioMediaTask, WorkflowStepSummary } from "./types";
 import {
+  mediaTaskExecutionPhaseLabel,
   mediaTaskOperationLabel,
   workflowStepOperationLabel,
 } from "./workflow-labels";
 
 describe("studio operation labels", () => {
+  it("explains background queue and provider capacity waits", () => {
+    expect(mediaTaskExecutionPhaseLabel("zh-CN", "queued")).toBe("等待后台队列处理");
+    expect(mediaTaskExecutionPhaseLabel("zh-CN", "waiting_quota")).toBe("等待模型请求名额");
+    expect(mediaTaskExecutionPhaseLabel("en", "queued")).toBe("Waiting for background queue");
+  });
+
   it("names every writing step independently", () => {
     const steps = [
       { key: "parse", type: "parse_novel" },

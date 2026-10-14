@@ -9,6 +9,8 @@ import { EpisodeSplitError } from "./errors";
 
 export async function resolveEpisodeTextProvider(input: {
   userId: string;
+  projectId?: string;
+  episodeId?: string;
   channelId: string;
   model: string;
 }) {
@@ -33,10 +35,13 @@ export async function resolveEpisodeTextProvider(input: {
   if (!apiKeys.length) throw new EpisodeSplitError("分析渠道缺少 API Key");
   const runtimeSettings = await loadUserRuntimeSettings(input.userId);
   return {
+    billing: { userId: input.userId, projectId: input.projectId, episodeId: input.episodeId },
+    channelId: input.channelId,
     baseUrl: channel.baseUrl,
     apiKeys,
     model: input.model,
     provider: channel.providerKey,
+    supportsReferenceImages: storedReferenceImageCapability(configuredModel.capabilitiesJson),
     ...structuredRequestOptions(runtimeSettings),
     structuredOutputMode: supportsStoredStructuredOutputs(
       configuredModel.capabilitiesJson,
@@ -44,6 +49,16 @@ export async function resolveEpisodeTextProvider(input: {
       ? ("json_schema" as const)
       : ("json_object" as const),
   };
+}
+
+function storedReferenceImageCapability(value: string) {
+  try {
+    const capabilities: unknown = JSON.parse(value);
+    if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return false;
+    return (capabilities as { supportsReferenceImages?: unknown }).supportsReferenceImages === true;
+  } catch {
+    return false;
+  }
 }
 
 function parseApiKeys(value: string) {

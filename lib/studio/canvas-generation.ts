@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/server/prisma";
 import { listOwnedProjectMediaAssets } from "@/lib/assets/project-store";
 import {
+  canvasAssetSource,
   canvasConnectionError,
   compileCanvasInput,
   type CanvasCard,
@@ -29,18 +30,27 @@ export async function resolveCanvasGeneration(input: {
       item.purpose === "shot_video"
     )
       continue;
-    const problem = canvasConnectionError(
-      item.source,
-      input.node,
-      item.purpose,
-    );
-    if (problem) throw new Error(`${item.source.title}：${problem}`);
-    if (item.purpose === "context" || item.purpose === "dialogue") continue;
+    if (item.purpose === "context" || item.purpose === "dialogue") {
+      const problem = canvasConnectionError(item.source, input.node, item.purpose);
+      if (problem) throw new Error(`${item.source.title}：${problem}`);
+      continue;
+    }
     if (input.kind === "image" && item.purpose !== "reference")
       throw new Error(
         "图片生成不能使用视频首尾帧连线，请切换视频或修改连线用途",
       );
     let assetId = item.source.assetId;
+    if (!assetId && item.source.kind === "image") {
+      const ownOutput = await prisma.mediaAsset.findFirst({
+        where: { kind: "image", task: { userId: input.userId, projectId: input.projectId, episodeId: input.episodeId, targetType: "canvas_node", targetId: item.source.id, status: "succeeded" } },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { id: true },
+      });
+      assetId = ownOutput?.id;
+    }
+    if (!assetId) {
+      const entity = canvasAssetSource(item.source, input.document);
+      if (entity?.entityId) assetId = await resolveEntityImage(entity, input.userId, input.projectId);
+    }
     if (!assetId && item.source.panelId) {
       const panel = await prisma.storyboardPanel.findFirst({
         where: {
@@ -57,6 +67,10 @@ export async function resolveCanvasGeneration(input: {
     }
     if (!assetId)
       throw new Error(`${item.source.title}还没有可用图片，请先生成或选择版本`);
+    const problem = canvasConnectionError({ ...item.source, assetId }, input.node, item.purpose);
+    if (problem) throw new Error(`${item.source.title}：${problem}`);
+    // Freeze the resolved reference in this request, without changing the saved canvas.
+    item.source = { ...item.source, assetId };
     const role =
       item.purpose === "reference" ? "reference_image" : item.purpose;
     if (
@@ -83,4 +97,40 @@ export async function resolveCanvasGeneration(input: {
     };
   });
   return { ...compiled, references, referenceImages };
+}
+
+async function resolveEntityImage(entity: CanvasCard, userId: string, projectId: string) {
+  const mediaWhere = { kind: "image", task: { userId, projectId, status: "succeeded" } };
+  if (entity.kind === "character") {
+    const candidate = await prisma.characterAppearance.findFirst({
+      where: { characterId: entity.entityId, character: { projectId, project: { userId } }, imageAsset: mediaWhere },
+      orderBy: [{ selected: "desc" }, { imageAsset: { createdAt: "desc" } }, { id: "desc" }],
+      select: { imageAssetId: true },
+    });
+    return candidate?.imageAssetId ?? undefined;
+  }
+  if (entity.kind === "location") {
+    const location = await prisma.novelLocation.findFirst({
+      where: { id: entity.entityId, projectId, project: { userId } },
+      select: { selectedImageId: true, images: {
+        where: { imageAsset: mediaWhere },
+        orderBy: [{ selected: "desc" }, { imageAsset: { createdAt: "desc" } }, { id: "desc" }],
+        select: { id: true, imageAssetId: true, selected: true },
+      } },
+    });
+    const candidate = location?.images.find(image => image.id === location.selectedImageId)
+      ?? location?.images.find(image => image.selected) ?? location?.images[0];
+    return candidate?.imageAssetId ?? undefined;
+  }
+  if (entity.kind === "prop") {
+    const prop = await prisma.novelProp.findFirst({ where: { id: entity.entityId, projectId, project: { userId } }, select: { id: true } });
+    if (!prop) return;
+    const where = { ...mediaWhere, references: { some: { projectId, entityType: "prop", entityId: prop.id } } };
+    const selected = await prisma.mediaAsset.findFirst({
+      where: { ...where, references: { some: { ...where.references.some, role: "selected" } } },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { id: true },
+    });
+    const candidate = selected ?? await prisma.mediaAsset.findFirst({ where, orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { id: true } });
+    return candidate?.id;
+  }
 }

@@ -1,5 +1,7 @@
 # Cyanyi-Drama 全链路开发计划
 
+> 本文保留历史里程碑和部门设计。当前配置范围、计费规则和验收状态以 `production-configuration-workflow-plan.md` 与 `production-configuration-workflow-handoff.md` 为准；媒体接入说明已合并至 `media-integration.md`。
+
 ## 1. 开发目标
 
 在不照搬第三方 UI 或受限源码的前提下，使 Cyanyi-Drama 的影视生产工作流逐步达到同类成熟工具的行为能力，同时保留现有媒体任务 SSE、Fal/Vidu/百炼口型同步、音频合并和 Timeline Render，并为这些能力建设统一的生产工作台。
@@ -147,7 +149,7 @@ M5 复用了既有媒体任务、资产引用和模型能力数据结构，因�
 | 渲染归一化 | FFmpeg Render 与 Render API | 图片和不同编码、宽高比、帧率的视频先统一转码，再与 48kHz 双声道音轨合成 MP4 | 已完成 |
 | 系统回归 | M6 Tests | 覆盖计费重复结算、Trace 父子链、Canary 漂移、渲染参数和跨模块行为门禁 | 已完成 |
 
-M6 新增第 15 组非空迁移，为既有 Run、Step 和 Task 回填稳定 Trace/Span Hash，并为后续任务保留显式 Workflow 关联。用量记录增加唯一来源键，重复 Worker 回调和 Watchdog 对账不会重复扣费。渲染输出固定为 H.264、`yuv420p`、确定尺寸和帧率；当分镜没有视频时可使用选中图片按镜头时长补帧。完整接口和运维说明见 `docs/m6-quality-system.md`。
+M6 新增第 15 组非空迁移，为既有 Run、Step 和 Task 回填稳定 Trace/Span Hash，并为后续任务保留显式 Workflow 关联。用量记录增加唯一来源键，重复 Worker 回调和 Watchdog 对账不会重复扣费。渲染输出固定为 H.264、`yuv420p`、确定尺寸和帧率；当分镜没有视频时可使用选中图片按镜头时长补帧。当前接口说明见 `docs/media-integration.md`，钱包规则见 README。
 
 ## 8. M7 生产工作台与统一编排
 
@@ -338,7 +340,7 @@ M8 将现有六个功能页面升级为电影制作部门协作系统。Agent �
 ## 12. 每次提交前检查
 
 1. `pnpm exec prisma validate`
-2. 在一次性 MySQL 数据库执行全部 Migration，并检查 Schema Drift。
+2. 在一次性 PostgreSQL 数据库执行全部 Migration，并检查 Schema Drift；不要重置已有业务数据库。
 3. `pnpm exec tsc --noEmit --pretty false`
 4. `pnpm test`
 5. 对所有变更 TypeScript 文件执行 ESLint。

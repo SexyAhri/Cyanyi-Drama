@@ -13,6 +13,7 @@ import {
   SunMoon,
 } from "lucide-react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 
@@ -80,10 +81,36 @@ export function WorkspaceTopbar({
   const copy = getStudioCopy(locale);
   const shellCopy = getShellCopy(locale);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedSettingsTab = parseSettingsTab(searchParams.get("settings"));
   const runtime = useRuntimeConnection([]);
   const [settings, setSettings] = useState<ShellSettings>(() =>
     createDefaultShellSettings(""),
   );
+
+  useEffect(() => {
+    setSettingsOpen(Boolean(requestedSettingsTab));
+  }, [requestedSettingsTab]);
+
+  function updateSettingsQuery(open: boolean, tab = "preferences") {
+    setSettingsOpen(open);
+    const params = new URLSearchParams(searchParams.toString());
+    if (open) params.set("settings", tab);
+    else params.delete("settings");
+    router.replace(`${pathname}?${params}`, { scroll: false });
+  }
+
+  function changeSettingsOpen(open: boolean) {
+    updateSettingsQuery(open, requestedSettingsTab ?? "preferences");
+  }
+
+  function changeSettingsTab(tab: "preferences" | "runtime" | "account" | "agents" | "sound") {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("settings", tab);
+    router.replace(`${pathname}?${params}`, { scroll: false });
+  }
 
   useEffect(() => {
     const selectedModel = (modelId: string | null) =>
@@ -205,7 +232,7 @@ export function WorkspaceTopbar({
                 render={
                   <Button
                     aria-label={copy.settings}
-                    onClick={() => setSettingsOpen(true)}
+                    onClick={() => changeSettingsOpen(true)}
                     size="icon"
                     type="button"
                     variant="ghost"
@@ -284,7 +311,7 @@ export function WorkspaceTopbar({
             isRefreshing={isRefreshing}
             locale={locale}
             onLocaleChange={onLocaleChange}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={() => changeSettingsOpen(true)}
             onRefresh={onRefresh}
           />
           <AuthAccountMenu compact locale={locale} user={user} />
@@ -295,7 +322,7 @@ export function WorkspaceTopbar({
         copy={shellCopy}
         models={runtime.models}
         onModelsChange={runtime.addChannelModels}
-        onOpenChange={setSettingsOpen}
+        onOpenChange={changeSettingsOpen}
         onRuntimeConnectionChange={runtime.setConnection}
         onRuntimeConnectionClear={runtime.clearConnection}
         onSettingsChange={handleSettingsChange}
@@ -305,9 +332,18 @@ export function WorkspaceTopbar({
         settings={settings}
         showProjectVisualWorld
         productionScope={{ projectId, episodeId, panelId }}
+        initialTab={requestedSettingsTab ?? "preferences"}
+        onActiveTabChange={changeSettingsTab}
       />
     </>
   );
+}
+
+function parseSettingsTab(value: string | null): "preferences" | "runtime" | "account" | "agents" | "sound" | null {
+  if (value === "production") return "agents";
+  return value === "preferences" || value === "runtime" || value === "account" || value === "agents" || value === "sound"
+    ? value
+    : null;
 }
 
 function MobileWorkspaceActions({

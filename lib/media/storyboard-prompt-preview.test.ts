@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/server/prisma", () => ({
   prisma: {
+    project: { count: vi.fn().mockResolvedValue(1) },
+    episode: { count: vi.fn().mockResolvedValue(1) },
     channel: { findFirst: mocks.channelFindFirst },
     productionConfiguration: { findMany: mocks.configurationFindMany },
     projectConfig: { findUnique: mocks.projectConfigFindUnique },
@@ -27,6 +29,7 @@ vi.mock("@/lib/server/prisma", () => ({
     },
     mediaTask: { count: mocks.mediaTaskCount },
     storyboardPanel: {
+      count: vi.fn().mockResolvedValue(1),
       findFirst: mocks.storyboardPanelFindFirst,
       update: mocks.storyboardPanelUpdate,
     },
@@ -249,7 +252,13 @@ describe("storyboard prompt preview", () => {
       duration: "10s",
     };
     const preview = await previewStoryboardPanelPrompt({ ...input, kind: "video" });
-    await createStoryboardPanelVideoTask(input);
+    expect(preview.configurationHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(preview.requestHash).toMatch(/^[a-f0-9]{64}$/);
+    await createStoryboardPanelVideoTask({
+      ...input,
+      previewConfigurationHash: preview.configurationHash,
+      previewRequestHash: preview.requestHash,
+    });
 
     const task = mocks.taskCreate.mock.calls[0][0];
     expect(task.request).toMatchObject({
@@ -260,6 +269,9 @@ describe("storyboard prompt preview", () => {
       resolution: "1080p",
       videoMode: "reference",
     });
+    expect(task.request.ratio).toBe(preview.parameters?.ratio);
+    expect(task.request.resolution).toBe(preview.parameters?.resolution);
+    expect(preview.parameters?.durations).toEqual([task.request.duration]);
     expect(task.request.prompt).not.toContain("不生成可辨识人声");
     expect(task.request.prompt).toContain("我们走吧。");
     expect(task.request.prompt).toContain("心声／内心独白");
@@ -269,6 +281,35 @@ describe("storyboard prompt preview", () => {
     expect(task.request.referenceImages).toEqual([
       expect.objectContaining({ role: "first_frame" }),
     ]);
+  });
+
+  it("rejects a changed prompt after preview before persisting or queueing", async () => {
+    const input = {
+      userId: "user-1",
+      projectId: "project-1",
+      episodeId: "episode-1",
+      panelId: "panel-1",
+      channelId: "channel-1",
+      model: "video-model",
+      mode: "reference" as const,
+      prompt: "Previewed prompt",
+    };
+    mocks.storyboardPanelFindFirst.mockResolvedValue({
+      ...panel(),
+      imageAsset: { url: "data:image/png;base64,AQID", storageKey: null, mimeType: "image/png" },
+    });
+    const preview = await previewStoryboardPanelPrompt({ ...input, kind: "video" });
+
+    await expect(
+      createStoryboardPanelVideoTask({
+        ...input,
+        prompt: "Changed after preview",
+        previewConfigurationHash: preview.configurationHash,
+        previewRequestHash: preview.requestHash,
+      }),
+    ).rejects.toThrow("重新预览");
+    expect(mocks.taskCreate).not.toHaveBeenCalled();
+    expect(mocks.enqueueTask).not.toHaveBeenCalled();
   });
 
   it("shows the actual H3 15-second resolution instead of unsupported 1080p", async () => {
@@ -288,6 +329,8 @@ describe("storyboard prompt preview", () => {
   it("generates storyboard first frames in the configured video ratio", async () => {
     mocks.storyboardPanelFindFirst.mockResolvedValue({
       ...panel(),
+      imageAssetId: "existing-image",
+      videoAssetId: "existing-video",
       storyboard: {
         status: "ready",
         episode: panel().storyboard.episode,
@@ -313,6 +356,8 @@ describe("storyboard prompt preview", () => {
     });
 
     expect(mocks.taskCreate.mock.calls[0][0].request.ratio).toBe("16:9");
+    expect(mocks.taskCreate.mock.calls[0][0].request.deferredSelection).toBe(true);
+    expect(mocks.storyboardPanelUpdate).not.toHaveBeenCalled();
   });
 
   it("creates one persisted task per local video segment", async () => {
@@ -321,6 +366,8 @@ describe("storyboard prompt preview", () => {
     });
     mocks.storyboardPanelFindFirst.mockResolvedValue({
       ...panel(),
+      imageAssetId: "existing-image",
+      videoAssetId: "existing-video",
       description: "韩宇看向铁盒。韩子枫打开盒盖。古籍泛起微光。",
       durationSeconds: 18,
       videoPrompt:
@@ -356,6 +403,8 @@ describe("storyboard prompt preview", () => {
     expect(mocks.storyboardVideoSegmentUpsert).not.toHaveBeenCalled();
     expect(mocks.storyboardVideoSegmentDeleteMany).not.toHaveBeenCalled();
     expect(mocks.taskCreate.mock.calls.map(([task]) => task.request.videoSegmentIndex)).toEqual([0, 1]);
+    expect(mocks.taskCreate.mock.calls.every(([task]) => task.request.deferredSelection === true)).toBe(true);
+    expect(mocks.storyboardPanelUpdate).not.toHaveBeenCalled();
     expect(mocks.taskCreate.mock.calls[0][0].request.generationId).toBe(mocks.taskCreate.mock.calls[1][0].request.generationId);
   });
 });

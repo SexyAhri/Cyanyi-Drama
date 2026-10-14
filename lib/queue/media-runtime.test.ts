@@ -13,6 +13,7 @@ import {
   generateImage,
   isSourceMediaDownloadFailure,
   mediaAssetExtension,
+  shouldDeferGeneratedAssetSelection,
   shouldStripProviderVideoAudio,
 } from "./media-runtime";
 
@@ -21,6 +22,12 @@ beforeEach(() => {
 });
 
 describe("image generation runtime", () => {
+  it("keeps generated storyboard media as an unselected candidate until explicitly adopted", () => {
+    expect(shouldDeferGeneratedAssetSelection({ deferredSelection: true })).toBe(true);
+    expect(shouldDeferGeneratedAssetSelection({ canvasDeferredSelection: true })).toBe(true);
+    expect(shouldDeferGeneratedAssetSelection({})).toBe(false);
+  });
+
   it("distinguishes broken provider URLs from storage upload failures", () => {
     expect(
       isSourceMediaDownloadFailure(new Error("MEDIA_DOWNLOAD_FAILED:404")),

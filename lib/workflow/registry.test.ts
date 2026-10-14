@@ -3,6 +3,13 @@ import { describe, expect, it } from "vitest";
 import { getWorkflowTemplate } from "./registry";
 
 describe("workflow registry", () => {
+  it("keeps the shipped graph and independent template copies", () => {
+    const template = getWorkflowTemplate("episode-preproduction")!;
+    expect(template.steps[1].dependsOn).toEqual(["organize_production_script"]);
+    expect(template.steps[1].requiredArtifactTypes).toEqual(["production-script.scenes"]);
+    template.steps[1].dependsOn?.push("changed");
+    expect(getWorkflowTemplate("episode-preproduction")!.steps[1].dependsOn).toEqual(["organize_production_script"]);
+  });
   it("organizes an approved production script in one local step", () => {
     const template = getWorkflowTemplate("story-to-script");
 

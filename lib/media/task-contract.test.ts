@@ -4,6 +4,7 @@ import {
   createMediaTask,
   requestMediaTaskCancel,
   transitionMediaTask,
+  transitionMediaTaskExecutionPhase,
   updateMediaTaskProgress,
 } from "./task-contract";
 
@@ -82,6 +83,84 @@ describe("media task contract", () => {
     });
 
     expect(task.maxRetries).toBe(0);
+  });
+
+  it("records provider execution phases without changing coarse task status", () => {
+    let task = createMediaTask({
+      id: "task-phases",
+      kind: "video",
+      provider: "ark",
+      protocol: "volcengine-ark",
+      model: "video-model",
+      request: { prompt: "frozen input" },
+    });
+    task = transitionMediaTask(task, { type: "start" });
+    task = transitionMediaTaskExecutionPhase(task, "request_sent");
+    task = transitionMediaTaskExecutionPhase(task, "submitted", undefined, "provider-task-1");
+    task = transitionMediaTaskExecutionPhase(task, "generating");
+    task = transitionMediaTaskExecutionPhase(task, "downloading");
+    task = transitionMediaTaskExecutionPhase(task, "saving");
+    task = transitionMediaTaskExecutionPhase(task, "succeeded");
+
+    expect(task).toMatchObject({
+      status: "running",
+      executionPhase: "succeeded",
+      providerTaskId: "provider-task-1",
+      request: { prompt: "frozen input" },
+    });
+    expect(() => transitionMediaTaskExecutionPhase(task, "generating")).toThrow(
+      "MEDIA_TASK_INVALID_PHASE_TRANSITION:succeeded->generating",
+    );
+  });
+
+  it("records quota waits while resuming an existing provider task", () => {
+    let task = createMediaTask({
+      id: "task-quota-resume",
+      kind: "image",
+      provider: "ark",
+      protocol: "volcengine-ark",
+      model: "image-model",
+      request: {},
+    });
+    task = transitionMediaTask(task, { type: "start" });
+    task = transitionMediaTaskExecutionPhase(task, "request_sent");
+    task = transitionMediaTaskExecutionPhase(task, "submitted", undefined, "provider-task-3");
+    task = transitionMediaTaskExecutionPhase(task, "generating");
+    task = transitionMediaTaskExecutionPhase(task, "waiting_quota");
+    task = transitionMediaTaskExecutionPhase(task, "generating");
+
+    expect(task).toMatchObject({ status: "running", executionPhase: "generating", providerTaskId: "provider-task-3" });
+  });
+
+  it("rejects skipping execution phases while allowing persisted async recovery", () => {
+    const queued = createMediaTask({
+      id: "task-invalid-phase",
+      kind: "video",
+      provider: "ark",
+      protocol: "volcengine-ark",
+      model: "video-model",
+      request: {},
+    });
+    expect(() => transitionMediaTaskExecutionPhase(queued, "saving")).toThrow(
+      "MEDIA_TASK_INVALID_PHASE_TRANSITION:queued->saving",
+    );
+    const recovering = {
+      ...transitionMediaTaskExecutionPhase(
+        transitionMediaTaskExecutionPhase(
+          transitionMediaTask(queued, { type: "start" }),
+          "request_sent",
+        ),
+        "submitted",
+        "2026-10-14T00:00:00.000Z",
+        "provider-task-2",
+      ),
+      status: "queued" as const,
+    };
+    expect(transitionMediaTaskExecutionPhase(recovering, "generating")).toMatchObject({
+      status: "queued",
+      executionPhase: "generating",
+      providerTaskId: "provider-task-2",
+    });
   });
 
   it("tracks progress and requests cancellation without changing a running task", () => {

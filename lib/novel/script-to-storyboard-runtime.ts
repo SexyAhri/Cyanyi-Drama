@@ -26,6 +26,7 @@ import {
   compileAssetVisualProfile,
 } from "@/lib/assets/visual-profile";
 import { readProductionTemplate } from "@/lib/prompts/production-rules";
+import type { WorkflowRequestUpdate } from "@/lib/workflow/request-events";
 
 type ProductionClip = NonNullable<
   Awaited<ReturnType<typeof listProductionClips>>
@@ -51,6 +52,7 @@ export type ScriptToStoryboardRuntimeHooks = {
     refId: string,
     payload: unknown,
   ) => Promise<void>;
+  recordRequest?: (request: WorkflowRequestUpdate) => Promise<void>;
 };
 
 type SceneStoryboardContext = {
@@ -159,6 +161,7 @@ export async function buildEpisodeStoryboard(
           assertActive: hooks.assertActive,
           persistArtifact: hooks.persistArtifact,
           loadArtifact: hooks.loadArtifact,
+          recordRequest: hooks.recordRequest,
         })
       : null;
   const panels = director

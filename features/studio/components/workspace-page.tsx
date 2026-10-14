@@ -58,6 +58,7 @@ import {
   startStudioEpisodePreproduction,
 } from "../api";
 import { CanvasWorkspace } from "../canvas/canvas-workspace";
+import { switchCanvasEpisode } from "../canvas/canvas-episode-navigation";
 import { setStudioCacheScope } from "../request-cache";
 
 export function WorkspacePage({
@@ -131,6 +132,7 @@ export function WorkspacePage({
   }
 
   const requestedEpisodeId = searchParams.get("episode") ?? undefined;
+  const focusOperationId = searchParams.get("task") ?? searchParams.get("run") ?? undefined;
   const canvasOpen = searchParams.get("view") === "canvas";
   const inspectorVisible =
     activityOpen || (!canvasOpen && wideLayout && !inspectorCollapsed);
@@ -139,6 +141,9 @@ export function WorkspacePage({
     requestedStage && STUDIO_STAGE_IDS.includes(requestedStage)
       ? requestedStage
       : "writing";
+  useEffect(() => {
+    if (focusOperationId) setActivityOpen(true);
+  }, [focusOperationId]);
   const fixedHeightWorkspace = [
     "writing",
     "assets",
@@ -277,6 +282,8 @@ export function WorkspacePage({
       return;
     const params = new URLSearchParams(searchParams.toString());
     params.delete("view");
+    params.delete("task");
+    params.delete("run");
     if (input.episodeId) params.set("episode", input.episodeId);
     if (input.stageId) params.set("stage", input.stageId);
     router.replace(`${pathname}?${params}`, { scroll: false });
@@ -296,11 +303,24 @@ export function WorkspacePage({
     router.replace(`${pathname}?${params}`, { scroll: false });
   }
 
+  async function changeCanvasEpisode(episodeId: string) {
+    if (!snapshot?.project.episodes.some(episode => episode.id === episodeId) || episodeId === selectedEpisode?.id) return;
+    await switchCanvasEpisode(searchParams.toString(), episodeId,
+      async () => beforeCanvasLeave.current ? beforeCanvasLeave.current() : true,
+      query => {
+        setSelection(undefined);
+        setCanvasSelections([]);
+        router.replace(`${pathname}?${query}`, { scroll: false });
+      });
+  }
+
   async function openPanel(panelId: string) {
     if (beforeCanvasLeave.current && !(await beforeCanvasLeave.current()))
       return;
     const params = new URLSearchParams(searchParams.toString());
     params.delete("view");
+    params.delete("task");
+    params.delete("run");
     params.set("stage", "shots");
     params.set("panel", panelId);
     router.replace(`${pathname}?${params}`, { scroll: false });
@@ -489,6 +509,7 @@ export function WorkspacePage({
                 key={selectedEpisode.id}
                 projectId={projectId}
                 episodeId={selectedEpisode.id}
+                onSelectEpisode={changeCanvasEpisode}
                 imageModels={imageModels}
                 videoModels={videoModels}
                 lipSyncModels={lipSyncModels}
@@ -614,6 +635,10 @@ export function WorkspacePage({
                 onClick={() => {
                   setActivityOpen(false);
                   setInspectorCollapsed(true);
+                  const params = new URLSearchParams(searchParams.toString());
+                  params.delete("task");
+                  params.delete("run");
+                  router.replace(`${pathname}?${params}`, { scroll: false });
                 }}
               >
                 <X className="size-4" />
@@ -648,6 +673,7 @@ export function WorkspacePage({
                   !beforeCanvasLeave.current ||
                   (await beforeCanvasLeave.current())
                 }
+                focusOperationId={focusOperationId}
               />
             </div>
           </aside>

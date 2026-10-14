@@ -236,8 +236,17 @@ export function AudioWorkspace({
   const { confirm, confirmationDialog } = useStudioConfirmation(locale);
   const projectId = snapshot.project.id;
   const audioWorkflowRevision = snapshot.workflows
-    .filter((workflow) => workflow.episodeId === episode.id && ["voice-analysis", "voice-performance-design", "episode-preproduction"].includes(workflow.workflowType))
-    .map(getWorkflowContentRevision).join("|");
+    .filter(
+      (workflow) =>
+        workflow.episodeId === episode.id &&
+        [
+          "voice-analysis",
+          "voice-performance-design",
+          "episode-preproduction",
+        ].includes(workflow.workflowType),
+    )
+    .map(getWorkflowContentRevision)
+    .join("|");
   const [data, setData] = useState<AudioData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -382,11 +391,21 @@ export function AudioWorkspace({
   }
 
   async function analyze() {
-    if (lines.length && !await confirm({
-      title: locale === "en" ? "Reanalyze episode dialogue?" : "重新分析本集台词？",
-      description: locale === "en" ? "This uses the selected model’s tokens or credits. Changed dialogue may need new speech audio and a new audio selection." : "将消耗所选模型的 Token/额度。变动的台词需要重新制作声音，并重新核对音频采用。",
-      confirmLabel: locale === "en" ? "Reanalyze dialogue" : "确认并重新分析",
-    })) return;
+    if (
+      lines.length &&
+      !(await confirm({
+        title:
+          locale === "en"
+            ? "Reanalyze episode dialogue?"
+            : "重新分析本集台词？",
+        description:
+          locale === "en"
+            ? "This uses the selected model’s tokens or credits. Changed dialogue may need new speech audio and a new audio selection."
+            : "将消耗所选模型的 Token/额度。变动的台词需要重新制作声音，并重新核对音频采用。",
+        confirmLabel: locale === "en" ? "Reanalyze dialogue" : "确认并重新分析",
+      }))
+    )
+      return;
     const model = analysisModels.find((item) => item.id === analysisModelId);
     if (!model) return;
     await run(
@@ -402,11 +421,23 @@ export function AudioWorkspace({
   }
 
   async function designVoices() {
-    if (lines.length && lines.every(line => line.voiceProfilePrompt && line.emotionPrompt) && !await confirm({
-      title: locale === "en" ? "Redesign voice performances?" : "重新设计台词表演？",
-      description: locale === "en" ? "This uses the selected model’s tokens or credits and updates the existing voice performance design. Review the new design before generating speech." : "将消耗所选模型的 Token/额度，并更新已有配音表演设计。生成配音前请核对新的设计。",
-      confirmLabel: locale === "en" ? "Redesign performances" : "确认并重新设计",
-    })) return;
+    if (
+      lines.length &&
+      lines.every((line) => line.voiceProfilePrompt && line.emotionPrompt) &&
+      !(await confirm({
+        title:
+          locale === "en"
+            ? "Redesign voice performances?"
+            : "重新设计台词表演？",
+        description:
+          locale === "en"
+            ? "This uses the selected model’s tokens or credits and updates the existing voice performance design. Review the new design before generating speech."
+            : "将消耗所选模型的 Token/额度，并更新已有配音表演设计。生成配音前请核对新的设计。",
+        confirmLabel:
+          locale === "en" ? "Redesign performances" : "确认并重新设计",
+      }))
+    )
+      return;
     const model = analysisModels.find((item) => item.id === analysisModelId);
     if (!model || !lines.length) return;
     await run(
@@ -415,7 +446,11 @@ export function AudioWorkspace({
           channelId: model.channelId,
           model: model.modelId,
           locale: locale === "en" ? "en" : "zh",
-          options: { fillMissingVoiceDesign: lines.some(line => !line.voiceProfilePrompt || !line.emotionPrompt) },
+          options: {
+            fillMissingVoiceDesign: lines.some(
+              (line) => !line.voiceProfilePrompt || !line.emotionPrompt,
+            ),
+          },
         }),
       text.submitted,
       "design",
@@ -453,6 +488,20 @@ export function AudioWorkspace({
       text.submitted,
     );
   }
+  async function generateConfiguredSpeech() {
+    const model = audioModels.find((item) => item.id === audioModelId);
+    if (!model) return;
+    await run(
+      () =>
+        generateStudioVoiceLineBatch(projectId, episode.id, {
+          channelId: model.channelId,
+          model: model.modelId,
+          lineIds: [],
+          configuredSpeech: true,
+        }),
+      text.submitted,
+    );
+  }
 
   async function retryFailed() {
     const failed = latestFailedVoiceTasks(checkedIds, tasks);
@@ -480,7 +529,12 @@ export function AudioWorkspace({
   async function controlTask(task: MediaTask, action: "cancel" | "retry") {
     setBusyTaskId(task.id);
     try {
-      await controlStudioMediaTask(task.id, action);
+      const result = await controlStudioMediaTask(task.id, action);
+      if (action === "cancel" && result.task.cancellationPolicy?.provider === "cancellation_unsupported")
+        toast.warning(locale === "en"
+          ? "Local task stopped. The provider job may continue; late results are discarded and provider charges may still apply."
+          : "本地任务已停止。模型服务端任务可能继续运行，迟到结果会丢弃，服务商费用仍可能产生。",
+        );
       await refreshAll();
     } catch (requestError) {
       toast.error(
@@ -544,7 +598,12 @@ export function AudioWorkspace({
             {lines.length ? text.reanalyze : text.analyze}
           </Button>
           <Button
-            disabled={busy || !analysisModelId || !lines.length || data?.storyboard.storyboard?.status === "director_review_required"}
+            disabled={
+              busy ||
+              !analysisModelId ||
+              !lines.length ||
+              data?.storyboard.storyboard?.status === "director_review_required"
+            }
             onClick={() => void designVoices()}
             size="sm"
             variant={
@@ -569,8 +628,13 @@ export function AudioWorkspace({
           <VoicePresetDialog locale={locale} onCreate={createPreset} />
         </div>
       </header>
-      {data?.storyboard.storyboard?.status === "director_review_required" && <StoryboardReviewNotice projectId={projectId} episodeId={episode.id} locale={locale} />}
-
+      {data?.storyboard.storyboard?.status === "director_review_required" && (
+        <StoryboardReviewNotice
+          projectId={projectId}
+          episodeId={episode.id}
+          locale={locale}
+        />
+      )}
 
       {error ? (
         <div className="flex items-center justify-between gap-3 border-b py-3">
@@ -602,6 +666,35 @@ export function AudioWorkspace({
           className="mt-4 xl:flex xl:min-h-0 xl:flex-col xl:overflow-hidden"
           value="dialogue"
         >
+          <div className="mb-4 flex shrink-0 flex-col gap-3 rounded-lg border bg-muted/20 p-3 sm:flex-row sm:items-end">
+            <label className="grid min-w-0 flex-1 gap-1 text-xs font-medium">
+              {text.audioModel}
+              <ModelSelect
+                disabled={busy}
+                models={audioModels}
+                onChange={setAudioModelId}
+                placeholder={text.audioModel}
+                size="sm"
+                value={audioModelId}
+              />
+            </label>
+            <Button
+              className="min-h-10"
+              variant="outline"
+              disabled={busy || !audioModelId}
+              onClick={() => void generateConfiguredSpeech()}
+            >
+              <Volume2 className="size-4" />
+              {locale === "en"
+                ? "Generate confirmed configuration speech"
+                : "配音已发布的配置台词"}
+            </Button>
+          </div>
+          <p className="mb-3 shrink-0 text-xs text-muted-foreground">
+            {locale === "en"
+              ? "Uses speech, delivery and voice settings published for each shot; new speech is added to the voice list when you generate."
+              : "读取各镜头已发布的台词、声音类型和角色声音要求；新配置台词在生成时加入配音列表。"}
+          </p>
           {!lines.length ? (
             <div className="flex min-h-96 flex-col items-center justify-center gap-2 border-y text-center text-muted-foreground">
               <AudioLines className="size-6" />

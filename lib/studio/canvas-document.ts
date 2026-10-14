@@ -95,6 +95,16 @@ export type CanvasCard = CanvasDocument["nodes"][number];
 export type CanvasEdge = CanvasDocument["edges"][number];
 export type CanvasPurpose = z.infer<typeof canvasPurposeSchema>;
 
+/** Only production image branches inherit an entity; free experiment nodes stay independent. */
+export function canvasAssetSource(node: CanvasCard, document?: CanvasDocument): CanvasCard | undefined {
+  if (node.entityId && ["character", "location", "prop"].includes(node.kind)) return node;
+  if (node.kind !== "image" || node.episodeLayer !== "asset_image" || !document) return;
+  const parents = document.edges.filter(edge => edge.to === node.id)
+    .flatMap(edge => document.nodes.filter(source => source.id === edge.from && source.entityId && ["character", "location", "prop"].includes(source.kind)));
+  const unique = [...new Map(parents.map(parent => [`${parent.kind}:${parent.entityId}`, parent])).values()];
+  return unique.length === 1 ? unique[0] : undefined;
+}
+
 export function canvasEdgePurpose(
   edge: CanvasEdge,
   from: CanvasCard,

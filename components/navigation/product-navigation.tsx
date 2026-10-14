@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { ExecutionNotificationMenu } from "./execution-notification-menu";
 
 type ProductNavigationProps = {
   compact?: boolean;
@@ -66,6 +67,7 @@ export function ProductNavigation({
 
   return (
     <>
+      <ExecutionNotificationMenu locale={locale} />
       {!compact ? (
         <nav aria-label={copy.navigation} className="hidden items-center gap-1 lg:flex">
           {items.map((item) => {

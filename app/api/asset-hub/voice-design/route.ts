@@ -85,6 +85,8 @@ export async function POST(request: Request) {
     const previewUrl = result.audioBase64
       ? `data:audio/${result.responseFormat || "wav"};base64,${result.audioBase64}`
       : undefined;
+    const { settleMediaTaskProviderOutput } = await import("@/lib/billing/service");
+    await settleMediaTaskProviderOutput(user.id, task.id, previewUrl ? [{ id: result.voiceId, kind: "audio", url: previewUrl }] : []);
     const succeeded = transitionMediaTask(running, {
       type: "succeed",
       output: previewUrl

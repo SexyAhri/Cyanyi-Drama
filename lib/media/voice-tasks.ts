@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { prisma } from "@/lib/server/prisma";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
@@ -7,7 +7,9 @@ import { createDatabaseMediaTaskStore } from "./task-store";
 import { enqueuePersistedMediaTask } from "./task-submit";
 import { BillingError } from "@/lib/billing/service";
 import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
-import { resolveStoredMediaUrl } from "@/lib/storage";
+import { resolveProductionRequestConfiguration } from "@/lib/production-configuration/execution";
+import { currentProductionConfiguration } from "@/lib/production-configuration/context";
+import { configuredSpeechForLine } from "@/lib/production-configuration/sound-execution";
 
 export class VoiceTaskError extends Error {
   constructor(
@@ -18,7 +20,7 @@ export class VoiceTaskError extends Error {
   }
 }
 
-export async function createVoiceLineAudioTask(input: {
+export async function prepareVoiceLineAudioTask(input: {
   userId: string;
   projectId: string;
   episodeId: string;
@@ -26,6 +28,10 @@ export async function createVoiceLineAudioTask(input: {
   channelId: string;
   model: string;
   voice?: string;
+  idempotencyKey?: string;
+  executionVersion?: number;
+  regeneratedFromTaskId?: string;
+  expectedRequestHash?: string;
 }) {
   const channel = await prisma.channel.findFirst({
     where: accessibleChannelWhere(input.userId, input.channelId),
@@ -64,6 +70,7 @@ export async function createVoiceLineAudioTask(input: {
     },
     select: {
       id: true,
+      matchedPanelId: true,
       content: true,
       speaker: true,
       delivery: true,
@@ -76,40 +83,51 @@ export async function createVoiceLineAudioTask(input: {
           userId: true,
           projectId: true,
           providerVoiceId: true,
+          language: true,
+          description: true,
           sampleAsset: {
-            select: { url: true, storageKey: true, mimeType: true },
+            select: { url: true, storageKey: true, mimeType: true, task: { select: { userId: true } } },
           },
         },
       },
     },
   });
   if (!line) throw new VoiceTaskError("语音行不存在", 404);
-  if (!line.content.trim()) throw new VoiceTaskError("语音行内容不能为空", 400);
+  const current = currentProductionConfiguration();
+  const productionConfiguration = current?.userId === input.userId ? current.snapshot : await resolveProductionRequestConfiguration(input.userId, { projectId: input.projectId, episodeId: input.episodeId, panelId: line.matchedPanelId ?? undefined });
+  const speech = configuredSpeechForLine(productionConfiguration.sound, line);
+  if (!speech) throw new VoiceTaskError("当前发布配置已关闭该类型或移除该台词，请调整配置后重新生成", 400);
+  if (!speech.content.trim()) throw new VoiceTaskError("语音行内容不能为空", 400);
+  const profile = productionConfiguration.sound.voiceProfiles?.find(profile => profile.speaker === speech.speaker);
+  const preset = profile?.voicePresetId ? await prisma.voicePreset.findFirst({ where: { id: profile.voicePresetId, userId: input.userId, OR: [{ projectId: null }, { projectId: input.projectId }] }, select: { userId: true, projectId: true, providerVoiceId: true, language: true, description: true, sampleAsset: { select: { url: true, storageKey: true, mimeType: true, task: { select: { userId: true } } } } } }) : line.voicePreset;
+  if (profile?.voicePresetId && !preset) throw new VoiceTaskError("声音预设不存在或不属于此项目", 400);
   const voice = resolveVoiceTaskVoice({
     explicitVoice: input.voice,
-    lineSpeaker: line.speaker,
-    preset: line.voicePreset,
+    lineSpeaker: speech.speaker,
+    preset,
     projectId: input.projectId,
     userId: input.userId,
   });
   const sampleAsset =
-    line.voicePreset?.userId === input.userId &&
-    (line.voicePreset.projectId === null ||
-      line.voicePreset.projectId === input.projectId)
-      ? line.voicePreset.sampleAsset
+    preset?.userId === input.userId &&
+    (preset.projectId === null ||
+      preset.projectId === input.projectId)
+      ? preset.sampleAsset
       : null;
+  if (sampleAsset && sampleAsset.task.userId !== input.userId) throw new VoiceTaskError("参考声音素材无权访问", 400);
   const sampleUrl = sampleAsset?.storageKey
-    ? await resolveStoredMediaUrl(sampleAsset.storageKey)
+    ? `stored:${sampleAsset.storageKey}`
     : sampleAsset?.url;
   const instructions = buildVoiceInstructions({
-    speaker: line.speaker,
-    delivery: line.delivery,
-    voiceProfilePrompt: line.voiceProfilePrompt,
-    performancePrompt: line.emotionPrompt,
+    speaker: speech.speaker,
+    delivery: speech.delivery,
+    voiceProfilePrompt: [profile?.language || preset?.language, profile?.direction || preset?.description || line.voiceProfilePrompt, productionConfiguration.sound.voiceDirection].filter(Boolean).join("；"),
+    performancePrompt: "direction" in speech ? speech.direction || line.emotionPrompt : line.emotionPrompt,
     emotionStrength: line.emotionStrength,
   });
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
+    idempotencyKey: input.idempotencyKey,
     projectId: input.projectId,
     episodeId: input.episodeId,
     channelId: input.channelId,
@@ -120,8 +138,12 @@ export async function createVoiceLineAudioTask(input: {
     protocol: channel.protocol,
     model: input.model,
     request: {
-      input: line.content,
-      prompt: line.content,
+      input: speech.content,
+      prompt: speech.content,
+      productionConfiguration,
+      ...(input.executionVersion ? { executionVersion: input.executionVersion, regeneratedFromTaskId: input.regeneratedFromTaskId } : {}),
+      configuredSpeech: speech,
+      language: profile?.language || preset?.language || undefined,
       voice,
       responseFormat: "mp3",
       instructions,
@@ -131,12 +153,24 @@ export async function createVoiceLineAudioTask(input: {
       ...(sampleUrl
         ? {
             referenceAudios: [
-              { url: sampleUrl, mimeType: sampleAsset?.mimeType ?? undefined },
+              { url: sampleUrl, storageKey: sampleAsset?.storageKey ?? undefined, mimeType: sampleAsset?.mimeType ?? undefined },
             ],
           }
         : {}),
     },
   });
+  return { task, line: { id: line.id } };
+}
+
+export function voiceRequestFingerprint(request: Record<string, unknown>) {
+  const stable = { ...request };
+  delete stable.executionVersion; delete stable.regeneratedFromTaskId;
+  return createHash("sha256").update(JSON.stringify(stable)).digest("hex");
+}
+
+export async function createVoiceLineAudioTask(input: Parameters<typeof prepareVoiceLineAudioTask>[0]) {
+  const { task, line } = await prepareVoiceLineAudioTask(input);
+  if (input.expectedRequestHash && input.expectedRequestHash !== voiceRequestFingerprint(task.request)) throw new VoiceTaskError("台词或声音配置已变化，请重新预览后提交", 409);
   const store = createDatabaseMediaTaskStore(input.userId);
   await store.create(task);
   let queued;

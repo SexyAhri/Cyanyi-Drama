@@ -1,10 +1,24 @@
 "use client";
 
-import { useState } from "react";
-import { ProductionConfigurationPanel, type ProductionPanelStatus } from "@/features/production-configuration/panel";
+import { useEffect, useState } from "react";
+import {
+  ProductionConfigurationPanel,
+  type ProductionPanelStatus,
+} from "@/features/production-configuration/panel";
 import { productionCopy } from "@/features/production-configuration/copy";
+import { confirmConfigurationDiscard } from "@/features/production-configuration/confirmation";
+import { useStudioConfirmation } from "@/features/studio/components/use-studio-confirmation";
 import type { ConfigurationScope } from "@/lib/production-configuration/contract";
-import { RotateCcw, Save, Settings } from "lucide-react";
+import {
+  AudioLines,
+  Bot,
+  Network,
+  RotateCcw,
+  Save,
+  Settings,
+  SlidersHorizontal,
+  UserRound,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -37,7 +51,12 @@ import {
 } from "./runtime-settings-panel";
 import type { ShellSettings } from "./shell-settings";
 
-type SettingsTab = "preferences" | "runtime" | "account" | "production";
+export type SettingsTab =
+  | "preferences"
+  | "runtime"
+  | "account"
+  | "agents"
+  | "sound";
 
 type AgentSettingsDialogProps = {
   copy: ShellCopy;
@@ -54,6 +73,8 @@ type AgentSettingsDialogProps = {
   user?: ShellUser | null;
   showProjectVisualWorld?: boolean;
   productionScope?: ConfigurationScope;
+  initialTab?: SettingsTab;
+  onActiveTabChange?: (tab: SettingsTab) => void;
 };
 
 export function AgentSettingsDialog({
@@ -66,24 +87,36 @@ export function AgentSettingsDialog({
   user,
   showProjectVisualWorld = false,
   productionScope,
+  initialTab = "preferences",
+  onActiveTabChange,
 }: AgentSettingsDialogProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>("preferences");
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [runtimeStatus, setRuntimeStatus] =
     useState<RuntimeSettingsPanelStatus>({ loading: true, saving: false });
   const [accountStatus, setAccountStatus] =
     useState<AccountSettingsPanelStatus>({ loading: true, submitting: false });
   const runtimeBusy = runtimeStatus.loading || runtimeStatus.saving;
-  const [productionStatus, setProductionStatus] = useState<ProductionPanelStatus>({ dirty: false, busy: false });
+  const [productionStatus, setProductionStatus] =
+    useState<ProductionPanelStatus>({ dirty: false, busy: false });
   const configurationCopy = productionCopy[copy.locale];
-  function changeOpen(next: boolean) {
-    if (!next && activeTab === "production" && (productionStatus.busy || (productionStatus.dirty && !window.confirm(configurationCopy.discard)))) return;
+  const { confirm, confirmationDialog } = useStudioConfirmation(copy.locale);
+  const configurationActive = activeTab === "agents" || activeTab === "sound";
+  useEffect(() => {
+    if (open) setActiveTab(initialTab);
+  }, [initialTab, open]);
+  async function canLeaveConfiguration() {
+    if (!configurationActive) return true;
+    return confirmConfigurationDiscard(productionStatus, confirm, configurationCopy);
+  }
+  async function changeOpen(next: boolean) {
+    if (!next && !(await canLeaveConfiguration())) return;
     if (!next) setProductionStatus({ dirty: false, busy: false });
     onOpenChange(next);
   }
 
   return (
-    <Dialog onOpenChange={changeOpen} open={open}>
-      <DialogContent className="max-h-[92vh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-5xl">
+    <Dialog onOpenChange={(next) => void changeOpen(next)} open={open}>
+      <DialogContent className="h-[min(54rem,calc(100dvh-2rem))] w-[calc(100%-1.5rem)] max-w-[calc(100%-1.5rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:w-[calc(100%-3rem)] sm:max-w-[90rem]">
         <DialogHeader>
           <div className="flex items-center gap-3">
             <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground [&_svg]:size-4">
@@ -95,32 +128,85 @@ export function AgentSettingsDialog({
         </DialogHeader>
 
         <Tabs
-          className="flex min-h-0 w-full min-w-0 flex-col"
-          onValueChange={(value) => {
-            if (activeTab === "production" && value !== activeTab && (productionStatus.busy || (productionStatus.dirty && !window.confirm(configurationCopy.discard)))) return;
+          orientation="vertical"
+          className="grid min-h-0 w-full min-w-0 grid-cols-[3rem_minmax(0,1fr)] gap-3 sm:grid-cols-[10.5rem_minmax(0,1fr)] sm:gap-5"
+          onValueChange={async (value) => {
+            if (value === activeTab || !(await canLeaveConfiguration())) return;
             setProductionStatus({ dirty: false, busy: false });
             setActiveTab(value as SettingsTab);
+            onActiveTabChange?.(value as SettingsTab);
           }}
           value={activeTab}
         >
           <TabsList
-            className="min-w-0 max-w-full shrink-0 justify-start gap-5 overflow-x-auto border-b px-0 pb-0"
-            variant="line"
+            className="h-full min-h-0 w-full items-stretch justify-start gap-1 self-stretch overflow-y-auto rounded-xl border bg-muted/20 p-1.5 data-[orientation=vertical]:h-full sm:p-2"
+            aria-label={copy.settings}
           >
-            <TabsTrigger className="flex-none px-0 pb-3" value="preferences">
-              {copy.settingsPreferences}
-            </TabsTrigger>
-            <TabsTrigger className="flex-none px-0 pb-3" value="runtime">
-              {copy.settingsRuntime}
-            </TabsTrigger>
-            <TabsTrigger className="flex-none px-0 pb-3" value="account">
-              {copy.settingsAccount}
-            </TabsTrigger>
-            <TabsTrigger className="flex-none px-0 pb-3" value="production">{configurationCopy.title}</TabsTrigger>
+            {(
+              [
+                {
+                  value: "preferences",
+                  label: copy.settingsPreferences,
+                  Icon: SlidersHorizontal,
+                },
+                {
+                  value: "runtime",
+                  label: copy.settingsRuntime,
+                  Icon: Network,
+                },
+                {
+                  value: "account",
+                  label: copy.settingsAccount,
+                  Icon: UserRound,
+                },
+                {
+                  value: "agents",
+                  label: configurationCopy.agentManagementMenu,
+                  Icon: Bot,
+                },
+                {
+                  value: "sound",
+                  label: configurationCopy.mode,
+                  Icon: AudioLines,
+                },
+              ] as const
+            ).map(({ value, label, Icon }) => (
+              <TabsTrigger
+                key={value}
+                value={value}
+                aria-label={label}
+                title={label}
+                className="h-auto min-h-11 flex-none gap-2.5 px-2 py-2.5 text-left whitespace-normal data-active:bg-primary/10 data-active:text-primary data-[orientation=vertical]:justify-center sm:data-[orientation=vertical]:justify-start dark:data-active:bg-primary/10"
+              >
+                <Icon aria-hidden="true" className="size-4 shrink-0" />
+                <span className="hidden sm:block">{label}</span>
+              </TabsTrigger>
+            ))}
           </TabsList>
 
-          <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pt-4">
-            <TabsContent className="mt-0" value="production"><ProductionConfigurationPanel locale={copy.locale} models={models} scope={productionScope} onStatusChange={setProductionStatus} /></TabsContent>
+          <div
+            className={`min-h-0 min-w-0 overflow-x-hidden ${activeTab === "agents" ? "overflow-y-hidden" : "overflow-y-auto"}`}
+          >
+            <TabsContent className="mt-0 h-full min-h-0" value="agents">
+              <ProductionConfigurationPanel
+                key="agents"
+                section="agents"
+                locale={copy.locale}
+                models={models}
+                scope={productionScope}
+                onStatusChange={setProductionStatus}
+              />
+            </TabsContent>
+            <TabsContent className="mt-0" value="sound">
+              <ProductionConfigurationPanel
+                key="sound"
+                section="sound"
+                locale={copy.locale}
+                models={models}
+                scope={productionScope}
+                onStatusChange={setProductionStatus}
+              />
+            </TabsContent>
             <TabsContent className="mt-0 grid gap-3" value="preferences">
               <PreferencesSettingsPanel
                 copy={copy}
@@ -146,7 +232,6 @@ export function AgentSettingsDialog({
                 user={user}
               />
             </TabsContent>
-
           </div>
         </Tabs>
 
@@ -178,11 +263,16 @@ export function AgentSettingsDialog({
               {copy.settingsAccountRedirecting}
             </Button>
           ) : (
-            <Button onClick={() => changeOpen(false)} disabled={activeTab === "production" && productionStatus.busy} type="button">
+            <Button
+              onClick={() => void changeOpen(false)}
+              disabled={configurationActive && productionStatus.busy}
+              type="button"
+            >
               {copy.settingsFinish}
             </Button>
           )}
         </DialogFooter>
+        {confirmationDialog}
       </DialogContent>
     </Dialog>
   );

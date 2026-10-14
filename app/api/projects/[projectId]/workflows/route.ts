@@ -6,6 +6,8 @@ import {
 } from "@/lib/workflow/store";
 import { getWorkflowTemplate } from "@/lib/workflow/registry";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
+import { assertConfigurationScope, resolveProductionConfiguration } from "@/lib/production-configuration/store";
+import { productionConfigurationFingerprint } from "@/lib/production-configuration/execution";
 
 type Context = { params: Promise<{ projectId: string }> };
 
@@ -27,19 +29,12 @@ export async function POST(request: Request, context: Context) {
   const runtimeSettings = await loadUserRuntimeSettings(user.id);
   const workflowType =
     typeof body.workflowType === "string" ? body.workflowType.trim() : "";
+  const episodeId = typeof body.episodeId === "string" ? body.episodeId : undefined;
   const explicitSteps = Array.isArray(body.steps)
     ? body.steps.filter(isStep)
     : [];
   const template = workflowType ? getWorkflowTemplate(workflowType) : null;
-  const steps = (
-    explicitSteps.length ? explicitSteps : (template?.steps ?? [])
-  ).map((step) => ({
-    ...step,
-    maxAttempts: explicitSteps.length
-      ? (step.maxAttempts ?? runtimeSettings.workflowStepMaxAttempts)
-      : runtimeSettings.workflowStepMaxAttempts,
-  }));
-  if (!workflowType || !steps.length)
+  if (!workflowType || (!explicitSteps.length && !template))
     return attachSessionCookie(
       Response.json(
         { message: "workflowType 和 steps 是必填项" },
@@ -48,20 +43,37 @@ export async function POST(request: Request, context: Context) {
       sessionId,
     );
   let result;
+  let expectedConfigurationHash: string | undefined;
   try {
+    const productionConfiguration = template
+      ? await (async () => {
+          const scope = { projectId, ...(episodeId ? { episodeId } : {}) };
+          await assertConfigurationScope(user.id, scope);
+          return resolveProductionConfiguration(user.id, scope);
+        })()
+      : null;
+    if (productionConfiguration)
+      expectedConfigurationHash = productionConfigurationFingerprint(productionConfiguration);
+    const baseSteps = template ? template.steps : explicitSteps;
+    const steps = baseSteps.map((step) => ({
+      ...step,
+      maxAttempts: step.maxAttempts ?? runtimeSettings.workflowStepMaxAttempts,
+    }));
     result = await createOrReuseWorkflowRun({
       id: `workflow_${crypto.randomUUID()}`,
       userId: user.id,
       projectId,
-      episodeId:
-        typeof body.episodeId === "string" ? body.episodeId : undefined,
+      episodeId,
       workflowType,
       targetType:
         typeof body.targetType === "string" ? body.targetType : undefined,
       targetId: typeof body.targetId === "string" ? body.targetId : undefined,
       input: {
         ...(isRecord(body.input) ? body.input : {}),
-        ...(isRecord(body.input) &&
+        ...(productionConfiguration
+          ? { concurrency: productionConfiguration.workflow.concurrency }
+          : {}),
+        ...(!productionConfiguration && isRecord(body.input) &&
         typeof body.input.concurrency === "number" &&
         Number.isFinite(body.input.concurrency)
           ? {
@@ -73,6 +85,7 @@ export async function POST(request: Request, context: Context) {
           : {}),
       },
       steps,
+      ...(expectedConfigurationHash ? { expectedConfigurationHash } : {}),
     });
   } catch (error) {
     return attachSessionCookie(

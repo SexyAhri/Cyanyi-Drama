@@ -18,6 +18,7 @@ vi.mock("@/lib/storage", () => ({
 import { storeGeneratedMediaAsset } from "./generated-media-storage";
 
 beforeEach(() => {
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
 
@@ -51,11 +52,14 @@ describe("generated media storage", () => {
   });
 
   it("keeps the normal download path when stripping is not required", async () => {
-    mocks.downloadAndStoreMedia.mockResolvedValue(
-      "projects/p1/media/video/v2.mp4",
-    );
+    mocks.storeMediaBytes.mockResolvedValue("projects/p1/media/video/v2.mp4");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(Uint8Array.from([4, 5, 6]), {
+      status: 200,
+      headers: { "Content-Type": "video/mp4" },
+    })));
+    const phases: string[] = [];
 
-    await storeGeneratedMediaAsset({
+    const stored = await storeGeneratedMediaAsset({
       asset: {
         id: "video-2",
         kind: "video",
@@ -64,9 +68,40 @@ describe("generated media storage", () => {
       },
       storageKey: "projects/p1/media/video/v2.mp4",
       stripVideoAudio: false,
+      onExecutionPhase: async phase => { phases.push(phase); },
     });
 
-    expect(mocks.downloadAndStoreMedia).toHaveBeenCalledTimes(1);
+    expect(stored).toBe("projects/p1/media/video/v2.mp4");
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
+    expect(mocks.storeMediaBytes).toHaveBeenCalledWith(
+      Uint8Array.from([4, 5, 6]),
+      "projects/p1/media/video/v2.mp4",
+      "video/mp4",
+    );
+    expect(phases).toEqual(["downloading", "saving"]);
     expect(mocks.stripAudioFromVideoUrl).not.toHaveBeenCalled();
+  });
+
+  it("aborts a timed out provider-result download before saving", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("MEDIA_PHASE_TIMEOUT:downloading"));
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      if (init?.signal?.aborted) return Promise.reject(init.signal.reason);
+      return Promise.resolve(new Response(new Uint8Array([1]), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const phases: string[] = [];
+
+    await expect(storeGeneratedMediaAsset({
+      asset: { id: "video-3", kind: "video", url: "https://provider.test/slow.mp4", mimeType: "video/mp4" },
+      storageKey: "projects/p1/media/video/v3.mp4",
+      stripVideoAudio: false,
+      signal: controller.signal,
+      onExecutionPhase: async phase => { phases.push(phase); },
+    })).rejects.toThrow("MEDIA_PHASE_TIMEOUT:downloading");
+
+    expect(phases).toEqual(["downloading"]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(mocks.storeMediaBytes).not.toHaveBeenCalled();
   });
 });

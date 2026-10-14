@@ -26,7 +26,7 @@ export async function POST(request: Request, context: Context) {
   const { runId } = await context.params;
   const body = await readObject(request);
   const action = body.action as WorkflowAction | undefined;
-  if (!action || !["cancel", "retry", "pause", "resume"].includes(action))
+  if (!action || !["cancel", "retry", "pause", "resume", "continue"].includes(action))
     return attachSessionCookie(
       Response.json({ message: "不支持的工作流操作" }, { status: 400 }),
       sessionId,

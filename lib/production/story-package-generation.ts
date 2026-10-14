@@ -86,6 +86,7 @@ export async function generateAndSaveStoryPackage(input: {
 
   const provider = await resolveEpisodeTextProvider({
     userId: input.userId,
+    projectId: input.projectId,
     channelId: input.channelId,
     model: input.model,
   });

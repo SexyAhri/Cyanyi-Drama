@@ -1,7 +1,7 @@
 "use client";
 
 import { Clapperboard, ListChecks, WalletCards } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -36,6 +36,7 @@ export function StudioInspector({
   onSelectContext,
   onEditContext,
   beforeSend,
+  focusOperationId,
 }: {
   analysisModelId: string;
   context: StudioAgentContext;
@@ -48,10 +49,14 @@ export function StudioInspector({
   onSelectContext?: (selection: StudioSelectionContext) => void;
   onEditContext?: (selection: StudioSelectionContext) => void;
   beforeSend?: () => Promise<boolean>;
+  focusOperationId?: string;
 }) {
   const text = copy[locale];
-  const [activeTab, setActiveTab] = useState<InspectorTab>("agent");
+  const [activeTab, setActiveTab] = useState<InspectorTab>(focusOperationId ? "operations" : "agent");
   const [traceId, setTraceId] = useState("");
+  useEffect(() => {
+    if (focusOperationId) setActiveTab("operations");
+  }, [focusOperationId]);
   return (
     <>
       <Tabs
@@ -98,6 +103,7 @@ export function StudioInspector({
         <TabsContent className="min-h-0 border-t" value="operations">
           <OperationsPanel
             episodeId={context.episodeId}
+            focusOperationId={focusOperationId}
             locale={locale}
             onRefresh={onRefresh}
             onTrace={setTraceId}

@@ -1,19 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BillingError } from "@/lib/billing/service";
 
 import type { MediaTask } from "./task-contract";
 
 const mocks = vi.hoisted(() => ({
   appendEvent: vi.fn(),
   cancelMediaJob: vi.fn(),
+  claimFailedTaskForRetry: vi.fn(),
   enqueueMediaJob: vi.fn(),
   get: vi.fn(),
   requestCancel: vi.fn(),
   removeTerminal: vi.fn(),
+  reserveMediaTaskCharge: vi.fn(),
   settleMediaTaskCharge: vi.fn(),
   update: vi.fn(),
 }));
 
 vi.mock("@/lib/billing/service", () => ({
+  BillingError: class BillingError extends Error { status = 402; },
+  reserveMediaTaskCharge: mocks.reserveMediaTaskCharge,
   settleMediaTaskCharge: mocks.settleMediaTaskCharge,
 }));
 vi.mock("@/lib/queue/media-queue", () => ({
@@ -23,6 +28,7 @@ vi.mock("@/lib/queue/media-queue", () => ({
 vi.mock("./task-store", () => ({
   createDatabaseMediaTaskStore: () => ({
     appendEvent: mocks.appendEvent,
+    claimFailedTaskForRetry: mocks.claimFailedTaskForRetry,
     get: mocks.get,
     requestCancel: mocks.requestCancel,
     removeTerminal: mocks.removeTerminal,
@@ -35,6 +41,7 @@ import { controlMediaTask, deleteMediaTask } from "./task-actions";
 describe("media task actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.reserveMediaTaskCharge.mockResolvedValue(null);
   });
 
   it("rejects a task outside the expected project before changing state", async () => {
@@ -69,7 +76,14 @@ describe("media task actions", () => {
         taskId: current.id,
         userId: "user-1",
       }),
-    ).resolves.toBe(canceled);
+    ).resolves.toMatchObject({
+      ...canceled,
+      cancellationPolicy: {
+        provider: "not_submitted",
+        lateResult: "none",
+        providerMayStillCharge: false,
+      },
+    });
     expect(mocks.requestCancel).toHaveBeenCalledWith(current.id);
     expect(mocks.cancelMediaJob).toHaveBeenCalledWith(current.id);
     expect(mocks.settleMediaTaskCharge).toHaveBeenCalledWith(
@@ -85,7 +99,7 @@ describe("media task actions", () => {
       status: "failed",
     });
     mocks.get.mockResolvedValue(failed);
-    mocks.update.mockImplementation(async (value) => value);
+    mocks.claimFailedTaskForRetry.mockResolvedValue(true);
     mocks.enqueueMediaJob.mockResolvedValue({ id: "job-2" });
 
     const retried = await controlMediaTask({
@@ -101,7 +115,10 @@ describe("media task actions", () => {
       retryCount: 1,
       status: "queued",
     });
-    expect(mocks.update).toHaveBeenCalledTimes(1);
+    expect(mocks.claimFailedTaskForRetry).toHaveBeenCalledWith(
+      expect.objectContaining({ id: failed.id, status: "queued" }),
+      failed.updatedAt,
+    );
     expect(mocks.enqueueMediaJob).toHaveBeenCalledWith(
       expect.objectContaining({
         maxAttempts: 1,
@@ -110,6 +127,31 @@ describe("media task actions", () => {
         queueJobId: retried.queueJobId,
       }),
     );
+    expect(mocks.reserveMediaTaskCharge).toHaveBeenCalledWith("user-1", expect.objectContaining({ retryCount: 1 }));
+  });
+
+  it("does not reserve a new model charge when retry reuses a saved provider output", async () => {
+    const failed = { ...task({ status: "failed", retryCount: 1 }), hasSavedProviderOutput: true };
+    mocks.get.mockResolvedValue(failed);
+    mocks.claimFailedTaskForRetry.mockResolvedValue(true);
+    mocks.enqueueMediaJob.mockResolvedValue({ id: "job-3" });
+    await controlMediaTask({ action: "retry", taskId: failed.id, userId: "user-1" });
+    expect(mocks.reserveMediaTaskCharge).not.toHaveBeenCalled();
+  });
+
+  it("does not queue a retry when reservation fails due to the media budget", async () => {
+    const failed = task({ status: "failed" });
+    mocks.get.mockResolvedValue(failed);
+    mocks.claimFailedTaskForRetry.mockResolvedValue(true);
+    mocks.reserveMediaTaskCharge.mockRejectedValue(new BillingError("BILLING_MEDIA_BUDGET_EXCEEDED", 402));
+    mocks.update.mockImplementation(async (value) => value);
+    await expect(controlMediaTask({ action: "retry", taskId: failed.id, userId: "user-1" }))
+      .rejects.toMatchObject({ status: 402, message: "BILLING_MEDIA_BUDGET_EXCEEDED" });
+    expect(mocks.enqueueMediaJob).not.toHaveBeenCalled();
+    expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({
+      status: "failed",
+      error: expect.objectContaining({ code: "BILLING_MEDIA_BUDGET_EXCEEDED", retryable: false }),
+    }));
   });
 
   it("uses the new queue job when canceling a retried task", async () => {
@@ -122,6 +164,7 @@ describe("media task actions", () => {
 
   it("keeps retry actionable when queue submission fails", async () => {
     mocks.get.mockResolvedValue(task({ status: "failed" }));
+    mocks.claimFailedTaskForRetry.mockResolvedValue(true);
     mocks.update.mockImplementation(async value => value);
     mocks.enqueueMediaJob.mockRejectedValueOnce(new Error("Redis unavailable"));
     await expect(controlMediaTask({ action: "retry", taskId: "task-1", userId: "user-1" }))
@@ -129,6 +172,16 @@ describe("media task actions", () => {
     expect(mocks.update).toHaveBeenLastCalledWith(expect.objectContaining({
       status: "failed", error: { code: "QUEUE_ENQUEUE_FAILED", message: "Redis unavailable", retryable: true },
     }));
+  });
+
+  it("only enqueues a retry after atomically claiming the still-failed task", async () => {
+    mocks.get.mockResolvedValue(task({ status: "failed" }));
+    mocks.claimFailedTaskForRetry.mockResolvedValue(false);
+
+    await expect(controlMediaTask({ action: "retry", taskId: "task-1", userId: "user-1" }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(mocks.enqueueMediaJob).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
   });
 
   it("allows another explicit retry after the stored retry count is exhausted", async () => {
@@ -139,7 +192,7 @@ describe("media task actions", () => {
       status: "failed",
     });
     mocks.get.mockResolvedValue(failed);
-    mocks.update.mockImplementation(async (value) => value);
+    mocks.claimFailedTaskForRetry.mockResolvedValue(true);
     mocks.enqueueMediaJob.mockResolvedValue({ id: failed.id });
 
     await expect(

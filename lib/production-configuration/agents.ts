@@ -5,6 +5,7 @@ import {
   type RenderedPrompt,
 } from "@/lib/prompts";
 import {
+  PRODUCTION_AGENT_CONTRACTS,
   readProductionTemplate,
   type ProductionPromptTask,
 } from "@/lib/prompts/production-rules";
@@ -12,6 +13,7 @@ import type {
   ProductionConfigurationSnapshot,
   ProductionConfigurationPatch,
 } from "./contract";
+import { validateAgentTemplateVariables } from "./template-variables";
 
 const productionTasks: ProductionPromptTask[] = [
   "storyboard-generation",
@@ -28,6 +30,12 @@ export function getConfigurationAgentCatalog() {
       id,
       name: entry.agent.id,
       responsibility: entry.agent.responsibility,
+      taskScope: entry.agent.contextPolicy.scope,
+      acceptanceCriteria: entry.agent.successCriteria.join("\n"),
+      stopConditions: entry.agent.stopRules.join("\n"),
+      styleRequirements: "",
+      examples: "",
+      qualityChecks: [...entry.agent.qualityGates],
       variables: [...entry.variables],
       templateZh: getPromptTemplate(id as keyof typeof PROMPT_CATALOG, "zh"),
       templateEn: getPromptTemplate(id as keyof typeof PROMPT_CATALOG, "en"),
@@ -36,13 +44,54 @@ export function getConfigurationAgentCatalog() {
     ...productionTasks.map((task) => ({
       id: `production_${task}`,
       name: task,
-      responsibility: "执行制作任务，并遵守当前输入和输出合同。",
+      responsibility: PRODUCTION_AGENT_CONTRACTS[task].responsibility,
+      taskScope: PRODUCTION_AGENT_CONTRACTS[task].taskScope,
+      acceptanceCriteria: PRODUCTION_AGENT_CONTRACTS[task].acceptanceCriteria.join("\n"),
+      stopConditions: PRODUCTION_AGENT_CONTRACTS[task].stopConditions,
+      styleRequirements: "",
+      examples: "",
+      qualityChecks: [...PRODUCTION_AGENT_CONTRACTS[task].qualityChecks],
       variables: ["task_snapshot"],
       templateZh: `${readProductionTemplate(task)}\n\n{{task_snapshot}}`,
       templateEn: `${readProductionTemplate(task)}\n\n{{task_snapshot}}`,
       tools: [] as string[],
     })),
   ];
+}
+
+export function getConfiguredAgentForPrompt(
+  prompt: RenderedPrompt,
+  configuration: ProductionConfigurationSnapshot,
+) {
+  const taskAgent = configuration.agents[prompt.agentId];
+  const promptAgent = configuration.agents[prompt.id];
+  if (taskAgent && promptAgent) {
+    const merged = { ...promptAgent, ...taskAgent };
+    for (const key of [
+      "responsibility",
+      "taskScope",
+      "systemInstructions",
+      "acceptanceCriteria",
+      "stopConditions",
+      "styleRequirements",
+      "examples",
+    ] as const) {
+      const values = [promptAgent[key], taskAgent[key]]
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value));
+      if (values.length) merged[key] = [...new Set(values)].join("\n\n");
+    }
+    if (promptAgent.qualityChecks || taskAgent.qualityChecks) {
+      merged.qualityChecks = [
+        ...new Set([
+          ...(promptAgent.qualityChecks ?? []),
+          ...(taskAgent.qualityChecks ?? []),
+        ]),
+      ];
+    }
+    return merged;
+  }
+  return taskAgent ?? promptAgent;
 }
 export function validateConfigurationAgents(
   patch: ProductionConfigurationPatch,
@@ -55,6 +104,17 @@ export function validateConfigurationAgents(
       throw new AgentConfigurationError(
         `${id}：模型和渠道必须同时指定，或同时继承`,
       );
+    if (Boolean(agent.fallbackChannelId) !== Boolean(agent.fallbackModel))
+      throw new AgentConfigurationError(
+        `${id}：备用模型和渠道必须同时指定，或同时继承`,
+      );
+    if (
+      agent.channelId &&
+      agent.model &&
+      agent.fallbackChannelId === agent.channelId &&
+      agent.fallbackModel === agent.model
+    )
+      throw new AgentConfigurationError(`${id}：备用模型必须与主模型不同`);
     const unknownTools = agent.disabledOperations?.filter(
       (tool) => !entry.tools.includes(tool),
     );
@@ -62,31 +122,15 @@ export function validateConfigurationAgents(
       throw new AgentConfigurationError(
         `${id}：未实现的操作 ${unknownTools.join("、")}`,
       );
-    for (const template of [agent.templateZh, agent.templateEn]) {
-      if (!template?.trim()) continue;
-      const variables = new Set(
-        Array.from(
-          template.matchAll(/\{\{([A-Za-z0-9_]+)\}\}/g),
-          (match) => match[1],
-        ),
-      );
-      const unknown = [...variables].filter(
-        (key) => !entry.variables.includes(key),
-      );
-      const missing = entry.variables.filter((key) => !variables.has(key));
-      if (unknown.length || missing.length)
-        throw new AgentConfigurationError(
-          `${id}：${unknown.length ? `未知变量 ${unknown.join("、")}` : ""}${missing.length ? ` 缺少变量 ${missing.join("、")}` : ""}`,
-        );
-    }
   }
+  const templateError = validateAgentTemplateVariables(patch.agents ?? {}, catalog);
+  if (templateError) throw new AgentConfigurationError(templateError);
 }
 export function applyConfiguredAgentPrompt(
   prompt: RenderedPrompt,
   configuration: ProductionConfigurationSnapshot,
 ): RenderedPrompt {
-  const agent =
-    configuration.agents[prompt.agentId] ?? configuration.agents[prompt.id];
+  const agent = getConfiguredAgentForPrompt(prompt, configuration);
   if (!agent) return prompt;
   const template = prompt.locale === "en" ? agent.templateEn : agent.templateZh;
   let text = prompt.text;
@@ -107,7 +151,13 @@ export function applyConfiguredAgentPrompt(
   const systemText = [
     prompt.systemText,
     agent.responsibility,
+    agent.taskScope,
     agent.systemInstructions,
+    agent.acceptanceCriteria,
+    agent.stopConditions,
+    agent.styleRequirements,
+    agent.examples,
+    ...(agent.qualityChecks ?? []),
   ]
     .filter(Boolean)
     .join("\n\n");

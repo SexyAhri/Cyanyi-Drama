@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { decryptSecret } from "@/lib/server/crypto";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { prisma } from "@/lib/server/prisma";
@@ -19,6 +20,9 @@ import {
   normalizeCharacterAnalysisEvidence,
   normalizeLocationPropAnalysisEvidence,
 } from "@/lib/prompts/validators";
+import { trackWorkflowRequest, type WorkflowRequestUpdate } from "@/lib/workflow/request-events";
+import { chunkSource, mapSourceTasks, sourceAnalysisConcurrency, sourceFingerprint } from "@/lib/episodes/long-source";
+import { mergeCanonicalSummary } from "@/lib/assets/canonical-summary";
 import {
   listNovelCharacters,
   listNovelLocations,
@@ -67,6 +71,7 @@ export type NovelParseRuntimeHooks = {
     refId: string,
     payload: unknown,
   ) => Promise<void>;
+  recordRequest?: (request: WorkflowRequestUpdate) => Promise<void>;
 };
 
 export async function parseNovelAndPersist(
@@ -90,6 +95,8 @@ export async function parseNovelAndPersist(
   let locations: Awaited<ReturnType<typeof upsertNovelLocations>> = null;
   let props: Awaited<ReturnType<typeof upsertProductionProps>> = null;
   const parsed = await requestNovelParse(userId, input, sourceText, {
+    assertActive: hooks?.assertActive ?? (async () => {}),
+    persistArtifact: hooks?.persistArtifact,
     onCharacters: async (data, trace) => {
       characters = await persistAnalysisPart({
         hooks,
@@ -133,6 +140,7 @@ export async function parseNovelAndPersist(
       );
       if (failed) throw failed.reason;
     },
+    recordRequest: hooks?.recordRequest,
   });
   if (!characters || !locations || !props)
     throw new Error("NOVEL_PARSE_PERSIST_FAILED");
@@ -179,6 +187,8 @@ async function requestNovelParse(
   input: NovelParseInput,
   sourceText: string,
   callbacks?: {
+    assertActive: () => Promise<void>;
+    persistArtifact?: (artifactType: string, refId: string, payload: unknown) => Promise<void>;
     onCharacters: (
       data: NovelParseOutput["characters"],
       trace: PromptExecutionTrace,
@@ -190,6 +200,7 @@ async function requestNovelParse(
       },
       trace: PromptExecutionTrace,
     ) => Promise<void>;
+    recordRequest?: (request: WorkflowRequestUpdate) => Promise<void>;
   },
 ) {
   const channel = await prisma.channel.findFirst({
@@ -220,6 +231,8 @@ async function requestNovelParse(
   const locale = input.locale ?? "zh";
   const provider = {
     baseUrl: channel.baseUrl,
+    billing: { userId, projectId: input.projectId, episodeId: input.episodeId },
+    channelId: input.channelId,
     apiKeys,
     model: input.model,
     temperature: 0.2,
@@ -230,61 +243,118 @@ async function requestNovelParse(
       ? ("json_schema" as const)
       : ("json_object" as const),
   };
-  const analysis = await Promise.allSettled([
-    requestOpenAiStructured({
-      ...provider,
-      prompt: renderPrompt({
-        id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
-        locale,
-        variables: {
-          source_text: sourceText,
-          character_library: JSON.stringify(characterLibrary),
-        },
-      }),
-      schema: characterAnalysisSchema,
-    }).then(async (result) => {
-      const data = normalizeCharacterAnalysisEvidence(result.data, sourceText);
-      await callbacks?.onCharacters(data.characters, result.trace);
-      return { ...result, data };
-    }),
-    requestOpenAiStructured({
-      ...provider,
-      prompt: renderPrompt({
-        id: PROMPT_IDS.STORY_LOCATION_PROP_ANALYSIS,
-        locale,
-        variables: {
-          source_text: sourceText,
-          location_library: JSON.stringify(locationLibrary),
-          prop_library: JSON.stringify(propLibrary),
-        },
-      }),
-      schema: locationPropAnalysisSchema,
-    }).then(async (result) => {
-      const data = normalizeLocationPropAnalysisEvidence(
-        result.data,
-        sourceText,
-      );
-      await callbacks?.onAssets(data, result.trace);
-      return { ...result, data };
-    }),
+  const chunks = chunkSource(sourceText);
+  const jobs = chunks.flatMap((chunk) => [
+    { kind: "characters" as const, chunk },
+    { kind: "assets" as const, chunk },
   ]);
-  const failed = analysis.find(
-    (result): result is PromiseRejectedResult => result.status === "rejected",
-  );
-  if (failed) throw failed.reason;
-  if (
-    analysis[0].status !== "fulfilled" ||
-    analysis[1].status !== "fulfilled"
-  )
-    throw new Error("NOVEL_ANALYSIS_INCOMPLETE");
-  const characterResult = analysis[0].value;
-  const assetResult = analysis[1].value;
+  const analysis = await mapSourceTasks(jobs, sourceAnalysisConcurrency(), async (job) => {
+    await callbacks?.assertActive();
+    const { chunk } = job;
+    const sourceRange = { start: chunk.start, end: chunk.end };
+    const targetId = `${input.episodeId}:${chunk.start}:${chunk.end}`;
+    const requestId = randomUUID();
+    if (job.kind === "characters") {
+      const relevantCharacters = characterLibrary.filter((character) =>
+        chunk.text.includes(character.name) || character.aliases.some((alias) => chunk.text.includes(alias)),
+      );
+      const requestInput = { episodeId: input.episodeId, sourceRange, sourceText: chunk.text, characterLibrary: relevantCharacters };
+      const result = await trackWorkflowRequest({
+        recordRequest: callbacks?.recordRequest,
+        request: { requestId, requestType: "novel_character_analysis_chunk", targetType: "episode_characters_chunk", targetId,
+          provider: input.channelId, model: input.model,
+          inputHash: sourceFingerprint({ sourceText: chunk.text, sourceRange, characterLibrary: relevantCharacters, model: input.model, channel: input.channelId }),
+          input: requestInput },
+        execute: async () => {
+          const response = await requestOpenAiStructured({
+            ...provider,
+            prompt: renderPrompt({ id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS, locale,
+              variables: { source_text: chunk.text, character_library: JSON.stringify(relevantCharacters) } }),
+            schema: characterAnalysisSchema,
+          });
+          const data = normalizeCharacterAnalysisEvidence(response.data, chunk.text);
+          await callbacks?.persistArtifact?.("prompt.trace", requestId, response.trace);
+          return { result: { ...response, data }, artifactRefs: [`analysis.characters:${input.episodeId}`, `prompt.trace:${requestId}`] };
+        },
+      });
+      return { kind: job.kind, data: result.data.characters, trace: result.trace };
+    }
+
+    const relevantLocations = locationLibrary.filter((location) => chunk.text.includes(location.name));
+    const relevantProps = propLibrary.filter((prop) => chunk.text.includes(prop.name));
+    const requestInput = { episodeId: input.episodeId, sourceRange, sourceText: chunk.text,
+      locationLibrary: relevantLocations, propLibrary: relevantProps };
+    const result = await trackWorkflowRequest({
+      recordRequest: callbacks?.recordRequest,
+      request: { requestId, requestType: "novel_location_prop_analysis_chunk", targetType: "episode_locations_props_chunk", targetId,
+        provider: input.channelId, model: input.model,
+        inputHash: sourceFingerprint({ sourceText: chunk.text, sourceRange, locationLibrary: relevantLocations, propLibrary: relevantProps, model: input.model, channel: input.channelId }),
+        input: requestInput },
+      execute: async () => {
+        const response = await requestOpenAiStructured({
+          ...provider,
+          prompt: renderPrompt({ id: PROMPT_IDS.STORY_LOCATION_PROP_ANALYSIS, locale,
+            variables: { source_text: chunk.text, location_library: JSON.stringify(relevantLocations), prop_library: JSON.stringify(relevantProps) } }),
+          schema: locationPropAnalysisSchema,
+        });
+        const data = normalizeLocationPropAnalysisEvidence(response.data, chunk.text);
+        await callbacks?.persistArtifact?.("prompt.trace", requestId, response.trace);
+        return { result: { ...response, data }, artifactRefs: [`analysis.locations:${input.episodeId}`, `analysis.props:${input.episodeId}`, `prompt.trace:${requestId}`] };
+      },
+    });
+    return { kind: job.kind, data: result.data, trace: result.trace };
+  });
+
+  const characterChunks = analysis.filter((item): item is Extract<typeof item, { kind: "characters" }> => item.kind === "characters");
+  const assetChunks = analysis.filter((item): item is Extract<typeof item, { kind: "assets" }> => item.kind === "assets");
+  const characters = mergeCharacterAnalysis(characterChunks.map((item) => item.data));
+  const locations = mergeSummaryAnalysis(assetChunks.map((item) => item.data.locations));
+  const props = mergeSummaryAnalysis(assetChunks.map((item) => item.data.props));
+  const characterTrace = characterChunks[0]?.trace;
+  const assetTrace = assetChunks[0]?.trace;
+  if (!characterTrace || !assetTrace) throw new Error("NOVEL_ANALYSIS_INCOMPLETE");
+  await callbacks?.onCharacters(characters, characterTrace);
+  await callbacks?.onAssets({ locations, props }, assetTrace);
   return {
-    characters: characterResult.data.characters,
-    locations: assetResult.data.locations,
-    props: assetResult.data.props,
-    promptTraces: [characterResult.trace, assetResult.trace],
+    characters,
+    locations,
+    props,
+    promptTraces: analysis.map((item) => item.trace),
   } satisfies NovelParseOutput;
+}
+
+function mergeCharacterAnalysis(groups: Array<Array<NovelParseOutput["characters"][number]>>) {
+  const merged = new Map<string, NovelParseOutput["characters"][number]>();
+  for (const group of groups) for (const item of group) {
+    const previous = merged.get(item.name);
+    if (!previous) {
+      merged.set(item.name, { ...item, aliases: [...new Set(item.aliases ?? [])], evidence: [...new Set(item.evidence)].slice(0, 12) });
+      continue;
+    }
+    merged.set(item.name, {
+      ...previous,
+      ...item,
+      aliases: [...new Set([...(previous.aliases ?? []), ...(item.aliases ?? [])])],
+      profile: { ...(previous.profile ?? {}), ...(item.profile ?? {}) },
+      introduction: mergeCanonicalSummary(previous.introduction, item.introduction),
+      evidence: [...new Set([...previous.evidence, ...item.evidence])].slice(0, 12),
+    });
+  }
+  return [...merged.values()];
+}
+
+function mergeSummaryAnalysis<T extends { name: string; summary?: string | null; evidence: string[] }>(groups: Array<T[]>) {
+  const merged = new Map<string, T>();
+  for (const group of groups) for (const item of group) {
+    const previous = merged.get(item.name);
+    merged.set(item.name, previous ? {
+      ...previous,
+      ...item,
+      summary: mergeCanonicalSummary(previous.summary, item.summary),
+      evidence: [...new Set([...previous.evidence, ...item.evidence])].slice(0, 12),
+    } : { ...item, evidence: [...new Set(item.evidence)].slice(0, 12) });
+  }
+  return [...merged.values()];
 }
 
 function parseApiKeys(value: string) {

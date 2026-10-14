@@ -16,11 +16,31 @@ export type MediaTaskStatus =
   | "failed"
   | "canceled";
 
+export type MediaTaskExecutionPhase =
+  | "queued"
+  | "waiting_quota"
+  | "connecting"
+  | "request_sent"
+  | "submitted"
+  | "generating"
+  | "downloading"
+  | "saving"
+  | "succeeded"
+  | "failed"
+  | "canceled";
+
 export type MediaTaskError = {
   code?: string;
+  failureStage?: "generation" | "result_storage";
   message: string;
   retryable: boolean;
   providerStatus?: number | string;
+};
+
+export type MediaTaskCancellationPolicy = {
+  provider: "not_submitted" | "cancellation_unsupported";
+  lateResult: "none" | "discard";
+  providerMayStillCharge: boolean;
 };
 
 export type MediaAsset = {
@@ -56,6 +76,7 @@ export type MediaTask = {
   protocol: ChannelProtocol;
   model: string;
   request: Record<string, unknown>;
+  hasSavedProviderOutput?: boolean;
   output?: MediaAsset[];
   error?: MediaTaskError;
   providerTaskId?: string;
@@ -63,6 +84,7 @@ export type MediaTask = {
   maxRetries: number;
   progress: number;
   progressMessage?: string;
+  executionPhase?: MediaTaskExecutionPhase;
   queueJobId?: string;
   cancelRequestedAt?: string;
   heartbeatAt?: string;
@@ -70,6 +92,7 @@ export type MediaTask = {
   updatedAt: string;
   startedAt?: string;
   completedAt?: string;
+  cancellationPolicy?: MediaTaskCancellationPolicy;
 };
 
 export type MediaTaskEvent =
@@ -93,7 +116,9 @@ export type MediaTaskEventRecord = {
     | "failed"
     | "billing_settlement_failed"
     | "cancel_requested"
-    | "canceled";
+    | "canceled"
+    | "phase_changed";
+  executionPhase?: MediaTaskExecutionPhase;
   status?: MediaTaskStatus;
   progress?: number;
   message?: string;
@@ -146,6 +171,7 @@ export function createMediaTask(input: {
     retryCount: 0,
     maxRetries: Math.max(0, input.maxRetries ?? 0),
     progress: 0,
+    executionPhase: "queued",
     createdAt: now,
     updatedAt: now,
   };
@@ -167,6 +193,54 @@ export function updateMediaTaskProgress(
     progressMessage: message,
     heartbeatAt: at,
     updatedAt: at,
+  };
+}
+
+const allowedExecutionPhaseTransitions: Record<
+  MediaTaskExecutionPhase,
+  MediaTaskExecutionPhase[]
+> = {
+  queued: ["waiting_quota", "connecting", "canceled", "failed"],
+  waiting_quota: ["queued", "connecting", "request_sent", "submitted", "generating", "downloading", "saving", "canceled", "failed"],
+  connecting: ["waiting_quota", "request_sent", "downloading", "saving", "failed", "canceled"],
+  request_sent: ["waiting_quota", "submitted", "generating", "downloading", "saving", "failed", "canceled"],
+  submitted: ["waiting_quota", "generating", "downloading", "saving", "failed", "canceled"],
+  generating: ["waiting_quota", "downloading", "saving", "failed", "canceled"],
+  downloading: ["waiting_quota", "saving", "failed", "canceled"],
+  saving: ["waiting_quota", "downloading", "succeeded", "failed", "canceled"],
+  succeeded: [],
+  failed: ["queued"],
+  canceled: [],
+};
+
+export function transitionMediaTaskExecutionPhase(
+  task: MediaTask,
+  executionPhase: MediaTaskExecutionPhase,
+  at = new Date().toISOString(),
+  providerTaskId?: string,
+): MediaTask {
+  const currentPhase = task.executionPhase ?? "queued";
+  if (executionPhase === currentPhase) {
+    return {
+      ...task,
+      ...(providerTaskId ? { providerTaskId } : {}),
+    };
+  }
+  if (!allowedExecutionPhaseTransitions[currentPhase].includes(executionPhase))
+    throw new Error(
+      `MEDIA_TASK_INVALID_PHASE_TRANSITION:${currentPhase}->${executionPhase}`,
+    );
+  if (
+    !["queued", "running", "failed"].includes(task.status) &&
+    executionPhase !== "canceled"
+  )
+    throw new Error(`MEDIA_TASK_PHASE_INVALID_STATUS:${task.status}`);
+  return {
+    ...task,
+    executionPhase,
+    ...(providerTaskId ? { providerTaskId } : {}),
+    updatedAt: at,
+    heartbeatAt: at,
   };
 }
 
@@ -196,6 +270,7 @@ export function transitionMediaTask(
     return {
       ...task,
       status: "running",
+      executionPhase: (task.executionPhase ?? "queued") === "queued" ? "connecting" : task.executionPhase,
       progress: Math.max(task.progress, 1),
       startedAt: task.startedAt ?? at,
       heartbeatAt: at,
@@ -210,6 +285,7 @@ export function transitionMediaTask(
     return {
       ...task,
       status: "succeeded",
+      executionPhase: "succeeded",
       progress: 100,
       progressMessage: undefined,
       output: event.output,
@@ -225,6 +301,7 @@ export function transitionMediaTask(
     return {
       ...task,
       status: "failed",
+      executionPhase: "failed",
       error: event.error,
       completedAt: at,
       heartbeatAt: at,
@@ -237,6 +314,7 @@ export function transitionMediaTask(
     return {
       ...task,
       status: "canceled",
+      executionPhase: "canceled",
       progressMessage: undefined,
       completedAt: at,
       heartbeatAt: at,
@@ -248,6 +326,7 @@ export function transitionMediaTask(
   return {
     ...task,
     status: "queued",
+    executionPhase: "queued",
     progressMessage: undefined,
     cancelRequestedAt: undefined,
     retryCount: task.retryCount + 1,

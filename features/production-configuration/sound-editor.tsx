@@ -1,22 +1,95 @@
 "use client";
-import { Textarea } from "@/components/ui/textarea";
-import { ConfigurationField, selectClass } from "./fields";
-import type { ProductionCopy } from "./copy";
-import type { SoundPolicy } from "@/lib/production-configuration/contract";
 
-export function SoundEditor({ sound, patch, onChange, source, copy }: {
-  sound: SoundPolicy; patch: Partial<SoundPolicy>; onChange: (patch: Partial<SoundPolicy>) => void; source: (field: string) => string; copy: ProductionCopy;
+import { useId } from "react";
+import { AudioLines, MicVocal, VolumeX } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import type { SoundPolicy } from "@/lib/production-configuration/contract";
+import { ConfigurationField } from "./fields";
+import { ConfigurationHelp } from "./field-help";
+import type { ProductionCopy } from "./copy";
+
+export function SoundEditor({
+  sound,
+  patch,
+  onChange,
+  source,
+  copy,
+}: {
+  sound: SoundPolicy;
+  patch: Pick<Partial<SoundPolicy>, "mode">;
+  onChange: (patch: Pick<Partial<SoundPolicy>, "mode">) => void;
+  source: (field: string) => string;
+  copy: ProductionCopy;
 }) {
-  function change<K extends keyof SoundPolicy>(key: K, value: SoundPolicy[K]) { onChange({ ...patch, [key]: value }); }
-  const field = (key: keyof SoundPolicy, child: React.ReactNode) => <ConfigurationField key={key} label={copy[key]} copy={copy} source={source(`sound.${key}`)} overridden={key in patch} onInherit={() => { const next = { ...patch }; delete next[key]; onChange(next); }}>{child}</ConfigurationField>;
-  return <div className="space-y-5">
-    {field("mode", <select aria-label={copy.mode} className={selectClass} value={sound.mode} onChange={e => change("mode", e.target.value as SoundPolicy["mode"])}>{(["native", "post", "silent"] as const).map(mode => <option key={mode} value={mode}>{copy[mode]}</option>)}</select>)}
-    <div className="grid gap-4 sm:grid-cols-2">{(["dialogue", "voiceover", "innerMonologue", "ambience", "effects"] as const).map(key => field(key, <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sound[key]} onChange={e => change(key, e.target.checked)} />{copy[key]}</label>))}</div>
-    <div className="grid gap-4 sm:grid-cols-2">
-      {field("music", <select aria-label={copy.music} className={selectClass} value={sound.music} onChange={e => change("music", e.target.value as SoundPolicy["music"])}><option value="off">{copy.off}</option><option value="designed">{copy.designed}</option><option value="post">{copy.musicPost}</option></select>)}
-      {field("subtitles", <select aria-label={copy.subtitles} className={selectClass} value={sound.subtitles} onChange={e => change("subtitles", e.target.value as SoundPolicy["subtitles"])}><option value="post">{copy.subtitlesPost}</option><option value="model">{copy.subtitlesModel}</option><option value="off">{copy.subtitlesOff}</option></select>)}
+  const modeId = useId();
+  return (
+    <div className="rounded-xl border bg-card p-4 sm:p-5">
+      <ConfigurationField
+        label={copy.mode}
+        source={source("sound.mode")}
+        overridden={"mode" in patch}
+        onInherit={() => {
+          onChange({});
+        }}
+        copy={copy}
+        help={
+          <ConfigurationHelp label={copy.soundHelpLabel}>
+            {copy.soundHelp}
+          </ConfigurationHelp>
+        }
+      >
+        <RadioGroup
+          aria-label={copy.mode}
+          value={sound.mode}
+          onValueChange={(value) => {
+            if (value === "native" || value === "post" || value === "silent")
+              onChange({ mode: value });
+          }}
+          className="gap-3 lg:grid-cols-3"
+        >
+          {(
+            [
+              {
+                value: "native",
+                Icon: AudioLines,
+                description: copy.soundModeNativeHelp,
+              },
+              {
+                value: "post",
+                Icon: MicVocal,
+                description: copy.soundModePostHelp,
+              },
+              {
+                value: "silent",
+                Icon: VolumeX,
+                description: copy.soundModeSilentHelp,
+              },
+            ] as const
+          ).map(({ value, Icon, description }) => (
+            <label
+              key={value}
+              htmlFor={`${modeId}-${value}`}
+              className={`flex min-h-32 cursor-pointer items-start gap-3 rounded-xl border p-4 transition-colors ${sound.mode === value ? "border-primary bg-primary/5" : "bg-background hover:bg-muted/50"}`}
+            >
+              <RadioGroupItem
+                id={`${modeId}-${value}`}
+                value={value}
+                className="mt-1"
+              />
+              <span className="min-w-0">
+                <Icon
+                  aria-hidden="true"
+                  className="mb-3 size-5 text-muted-foreground"
+                />
+                <span className="block text-sm font-medium">{copy[value]}</span>
+                <span className="mt-2 block text-xs leading-relaxed text-muted-foreground">
+                  {description}
+                </span>
+              </span>
+            </label>
+          ))}
+        </RadioGroup>
+      </ConfigurationField>
     </div>
-    <div className="grid gap-4 sm:grid-cols-2">{(["voiceDirection", "ambienceDirection", "effectsDirection", "musicDirection"] as const).map(key => field(key, <Textarea aria-label={copy[key]} maxLength={4000} value={sound[key]} onChange={e => change(key, e.target.value)} />))}</div>
-    <p className="text-xs leading-relaxed text-muted-foreground">{copy.soundHelp}</p>
-  </div>;
+  );
 }

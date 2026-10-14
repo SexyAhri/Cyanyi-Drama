@@ -8,11 +8,50 @@ import type {
 } from "../types";
 import {
   buildShotMediaCandidates,
+  latestShotBatchProgress,
   latestPanelTasks,
   nextStoryboardPanel,
+  shotCandidateSnapshot,
 } from "./shot-view-model";
 
 describe("shot view model", () => {
+  it("exposes each saved result's frozen prompt, model, parameters, and configuration sources", () => {
+    const candidate = buildShotMediaCandidates(
+      createPanel({ imageAssetId: "asset-1" }),
+      "image",
+      [asset("asset-1", "panel-1")],
+      [{
+        ...task("task-1", "panel-1", "succeeded", "asset-1"),
+        provider: "provider-a",
+        model: "image-v2",
+        request: {
+          prompt: "Frozen image prompt",
+          inputHash: "input-hash",
+          configurationHash: "configuration-hash",
+          ratio: "16:9",
+          resolution: "1080p",
+          productionConfiguration: {
+            format: "production-configuration-v1",
+            sources: [{ scopeKey: "project:project-1", version: 4 }],
+          },
+          referenceImages: [{ url: "https://private.test/signed" }],
+        },
+      }],
+    )[0];
+
+    expect(shotCandidateSnapshot(candidate)).toEqual({
+      taskId: "task-1",
+      provider: "provider-a",
+      model: "image-v2",
+      prompt: "Frozen image prompt",
+      inputHash: "input-hash",
+      configurationHash: "configuration-hash",
+      configurationSources: [{ scopeKey: "project:project-1", version: 4 }],
+      parameters: { ratio: "16:9", resolution: "1080p" },
+    });
+    expect(JSON.stringify(shotCandidateSnapshot(candidate))).not.toContain("private.test");
+  });
+
   it("scopes candidates to the panel and marks the persisted baseline", () => {
     const panel = createPanel({ imageAssetId: "asset-1" });
     const candidates = buildShotMediaCandidates(
@@ -28,6 +67,17 @@ describe("shot view model", () => {
       selected: true,
       url: "https://media.test/asset-1.png",
     });
+  });
+
+  it("keeps a prior adopted result active beside a newer successful candidate", () => {
+    const candidates = buildShotMediaCandidates(
+      createPanel({ imageAssetId: "asset-old" }),
+      "image",
+      [asset("asset-old", "panel-1"), asset("asset-new", "panel-1")],
+      [task("task-new", "panel-1", "succeeded", "asset-new")],
+    );
+    expect(candidates.find((candidate) => candidate.assetId === "asset-old")?.selected).toBe(true);
+    expect(candidates.find((candidate) => candidate.assetId === "asset-new")?.selected).toBe(false);
   });
 
   it("hides empty completed tasks after their assets are deleted", () => {
@@ -117,6 +167,47 @@ describe("shot view model", () => {
       "other",
       "new",
     ]);
+  });
+
+  it("summarizes the latest batch without mixing unrelated episodes or kinds", () => {
+    const make = (
+      id: string,
+      status: MediaTask["status"],
+      batchId: string,
+      createdAt: string,
+      kind: MediaTask["kind"] = "image",
+      episodeId = "episode-1",
+    ): MediaTask => ({
+      ...task(id, "panel-1", status, undefined, createdAt),
+      batchId,
+      episodeId,
+      kind,
+    });
+    const tasks = [
+      make("old-success", "succeeded", "storyboard_batch_old", "2026-08-26T01:00:00Z"),
+      make("new-success", "succeeded", "storyboard_batch_new", "2026-08-26T02:00:00Z"),
+      make("new-failure", "failed", "storyboard_batch_new", "2026-08-26T02:01:00Z"),
+      make("new-pending", "running", "storyboard_batch_new", "2026-08-26T02:02:00Z"),
+      {
+        ...make("scheduled-retry", "failed", "storyboard_batch_new", "2026-08-26T02:02:30Z"),
+        error: { message: "temporary timeout", retryable: true },
+        progressMessage: "Retrying task",
+      },
+      make("foreign", "failed", "storyboard_batch_new", "2026-08-26T02:03:00Z", "image", "episode-2"),
+      make("video", "failed", "storyboard_video_batch_new", "2026-08-26T02:04:00Z", "video"),
+    ];
+
+    expect(latestShotBatchProgress(tasks, "episode-1", "image")).toEqual({
+      batchId: "storyboard_batch_new",
+      kind: "image",
+      succeeded: 1,
+      failed: 1,
+      pending: 2,
+      canceled: 0,
+      total: 4,
+    });
+    expect(latestShotBatchProgress(tasks, "episode-1", "video")?.failed).toBe(1);
+    expect(latestShotBatchProgress([], "episode-1", "image")).toBeUndefined();
   });
 
   it("resolves only an explicitly linked next panel", () => {

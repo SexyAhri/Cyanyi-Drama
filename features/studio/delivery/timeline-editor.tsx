@@ -26,6 +26,7 @@ import {
 const copy = {
   "zh-CN": {
     video: "画面",
+    image: "图片",
     audio: "镜头音频",
     subtitles: "字幕",
     shotDuration: "镜头时长",
@@ -39,6 +40,7 @@ const copy = {
   },
   en: {
     video: "Video",
+    image: "Image",
     audio: "Clip audio",
     subtitles: "Subtitles",
     shotDuration: "Shot duration",
@@ -128,7 +130,7 @@ export function TimelineEditor({
                     {String(index + 1).padStart(2, "0")}
                   </span>
                   <span className="block truncate text-[10px] opacity-70">
-                    {track.duration.toFixed(1)}s · {track.type}
+                    {track.duration.toFixed(1)}s · {track.type === "image" ? text.image : text.video}
                   </span>
                 </span>
                 {track.transition === "fade" ? (

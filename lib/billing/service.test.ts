@@ -121,4 +121,26 @@ describe("billing reconciliation", () => {
     expect(mocks.balanceTransaction.create).toHaveBeenCalledTimes(1);
     expect(mocks.usageCost.upsert).toHaveBeenCalledTimes(1);
   });
+
+  it("settles measured fractional minutes and releases the unused reservation", async () => {
+    mocks.balanceFreeze.findFirst.mockResolvedValue({ id: "f", status: "pending", requestId: "r", amount: new Prisma.Decimal(5), metadata: JSON.stringify({ meteredDuration: true, components: [{ unit: "minute", unitPrice: "0.3", quantity: 1 / 60 }] }) });
+    mocks.balanceFreeze.updateMany.mockResolvedValue({ count: 1 });
+    mocks.mediaTask.findFirst.mockResolvedValue({ id: "t", projectId: "p", kind: "audio", model: "audio", retryCount: 0, payload: { request: { input: "你好" } } });
+    mocks.userBalance.update.mockResolvedValue({ balance: new Prisma.Decimal("4.925") });
+    await settleMediaTaskCharge("u", "t", true, 15);
+    const debit = mocks.userBalance.update.mock.calls[0][0].data;
+    expect(debit.balance.decrement.toString()).toBe("0.075");
+    expect(debit.frozenAmount.decrement.toString()).toBe("5");
+    expect(mocks.usageCost.upsert.mock.calls[0][0].create).toMatchObject({ quantity: 0.25, unit: "minute" });
+  });
+
+  it("charges generated output even when later delivery fails", async () => {
+    mocks.balanceFreeze.findFirst.mockResolvedValue({ id: "f", status: "pending", amount: new Prisma.Decimal(1), metadata: JSON.stringify({ components: [{ unit: "image", quantity: 1 }] }) });
+    mocks.balanceFreeze.updateMany.mockResolvedValue({ count: 1 });
+    mocks.mediaTask.findFirst.mockResolvedValue({ id: "t", projectId: null, kind: "image", model: "image", payload: { providerOutput: [{ id: "a", kind: "image", url: "fixture" }] } });
+    mocks.userBalance.update.mockResolvedValue({ balance: new Prisma.Decimal(9) });
+    await settleMediaTaskCharge("u", "t", false);
+    expect(mocks.balanceTransaction.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "charge" }) }));
+    expect(mocks.usageCost.upsert.mock.calls[0][0].create).toMatchObject({ projectId: null, quantity: 1, unit: "image" });
+  });
 });

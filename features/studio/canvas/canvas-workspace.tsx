@@ -51,7 +51,7 @@ import { PanelEditorDialog } from "../storyboard/panel-editor-dialog";
 import { getStudioModelName } from "../components/model-select";
 import { peekStudioCache } from "../request-cache";
 import { useStudioCacheRevision } from "../hooks/use-studio-cache-revision";
-import { getTaskOutputRevision, getAssetCatalogWorkflowRevision } from "../stage-state";
+import { getTaskOutputRevision, getWorkflowOutputRevision } from "../stage-state";
 import { useCanvasConnections } from "./use-canvas-connections";
 import { useCanvasDocument } from "./use-canvas-document";
 import {
@@ -79,6 +79,7 @@ import {
   canvasBaselineTargets,
   isReusableCanvasBranch,
   canvasCardSummary,
+  canvasImageAvailability,
 } from "./canvas-view-model";
 import type { CanvasCard, CanvasDocument, CanvasPurpose } from "./types";
 
@@ -89,6 +90,9 @@ type Review = {
   model?: StudioModelOption;
   prompt: string;
   finalPrompt?: string;
+  configurationHash?: string;
+  requestHash?: string;
+  productionParameters?: unknown;
   inputSignature: string;
   references: string[];
   key: string;
@@ -112,6 +116,7 @@ export function CanvasWorkspace({
   onOpenStage,
   onOpenPanel,
   registerBeforeLeave,
+  onSelectEpisode,
 }: {
   projectId: string;
   episodeId: string;
@@ -129,11 +134,12 @@ export function CanvasWorkspace({
   onOpenStage: (stage: StudioStageId) => void;
   onOpenPanel: (panelId: string) => void;
   registerBeforeLeave: (handler: (() => Promise<boolean>) | undefined) => void;
+  onSelectEpisode: (episodeId: string) => Promise<void>;
 }) {
   const url = `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/canvas`;
   const state = useCanvasDocument(url);
   const cacheRevision = useStudioCacheRevision();
-  const assetRevision = `${getTaskOutputRevision(snapshot.tasks)}|${getAssetCatalogWorkflowRevision(snapshot.workflows)}`;
+  const assetRevision = `${getTaskOutputRevision(snapshot.tasks)}|${getWorkflowOutputRevision(snapshot.workflows)}`;
   const lastAssetRevision = useRef<string | undefined>(undefined);
   const { document, current, replace } = state;
   const arrowId = `canvas-arrow-${useId().replace(/:/g, "")}`;
@@ -354,7 +360,7 @@ export function CanvasWorkspace({
   }
   function createBranch(source: CanvasCard, kind: "image" | "video") {
     if (busyRef.current) return;
-    const media = nodeMedia(source, catalog, panels);
+    const media = nodeMedia(source, catalog, panels, current.current);
     const hasImage = media?.kind === "image";
     const linkedAsset = linkedCanvasAsset(source, catalog);
     const assetPrompt = linkedAsset?.generationPrompt;
@@ -373,7 +379,7 @@ export function CanvasWorkspace({
       ["character", "location", "prop"].includes(source.kind) &&
       Boolean(source.entityId);
     const branchSource =
-      media?.kind === "image"
+      media?.kind === "image" && !linkedAsset
         ? { ...source, assetId: media.id }
         : assetOnlySource && assetPrompt
           ? { ...source, text: source.text || assetPrompt }
@@ -409,7 +415,7 @@ export function CanvasWorkspace({
         ? "first_frame"
         : "reference"
       : "context";
-    const error = canvasConnectionError(branchSource, target, purpose);
+    const error = canvasConnectionError(hasImage ? { ...branchSource, assetId: media.id } : branchSource, target, purpose);
     if (error) {
       toast.error(error);
       return;
@@ -514,7 +520,8 @@ export function CanvasWorkspace({
         current.current.nodes.find((node) => node.id === fromId),
       to = current.current.nodes.find((node) => node.id === toId);
     if (!from || !to) return "节点不存在";
-    const error = canvasConnectionError(from, to, purpose);
+    const preview = nodeMedia(from, catalog, panels, current.current);
+    const error = canvasConnectionError(preview?.kind === "image" ? { ...from, assetId: preview.id } : from, to, purpose);
     if (error) return error;
     if (
       current.current.edges.some(
@@ -535,13 +542,13 @@ export function CanvasWorkspace({
   const connections = useCanvasConnections(container, current, (from, to) => {
     if (busyRef.current) return;
     let source = current.current.nodes.find((node) => node.id === from)!;
-    const preview = nodeMedia(source, catalog, panels);
+    const preview = nodeMedia(source, catalog, panels, current.current);
     const hasImage = preview?.kind === "image";
     const isProjectAsset =
       ["character", "location", "prop"].includes(source.kind) &&
       Boolean(source.entityId);
     const assetPrompt = linkedCanvasAsset(source, catalog)?.generationPrompt;
-    if (!source.assetId && hasImage) {
+    if (!source.assetId && hasImage && !isProjectAsset) {
       source = { ...source, assetId: preview.id };
     } else if (isProjectAsset && assetPrompt && !source.text.trim()) {
       source = { ...source, text: assetPrompt };
@@ -608,8 +615,10 @@ export function CanvasWorkspace({
             const data = await response.json();
             throw new Error(data.message ?? "画布素材同步失败");
           }
-        }) : Promise.resolve()).then(() => loadStudioAssetCatalog(projectId, abort.signal)),
-      loadStudioStoryboard(projectId, episodeId, abort.signal),
+        }).catch(error => {
+          if (!abort.signal.aborted) toast.error(error instanceof Error ? error.message : "画布素材同步失败");
+        }) : Promise.resolve()).then(() => loadStudioAssetCatalog(projectId, abort.signal, true)),
+      loadStudioStoryboard(projectId, episodeId, abort.signal, true),
     ]).then((results) => {
       if (abort.signal.aborted) return;
       const [assets, shots] = results;
@@ -691,6 +700,12 @@ export function CanvasWorkspace({
     replace(arranged);
     requestAnimationFrame(() => showEpisodeStart(arranged));
   }
+  useEffect(() => {
+    if (state.loading || busy || !layoutInitialized.current || document.layoutMode !== "episode" || !catalog || !panels.length) return;
+    const graph = currentEpisodeGraph();
+    if (graph && needsEpisodeCanvasLayout(current.current, graph))
+      replace(arrangeEpisodeCausalGraph(graph, panels, locale));
+  }, [state.loading, busy, document, catalog, panels, currentEpisodeGraph, current, replace, locale]);
   useEffect(() => {
     if (
       state.loading ||
@@ -934,7 +949,7 @@ export function CanvasWorkspace({
     busyRef.current = true;
     setBusy(true);
     try {
-      const fresh = await loadStudioAssetCatalog(projectId);
+      const fresh = await loadStudioAssetCatalog(projectId, undefined, true);
       const target = canvasBaselineTargets(active, current.current, fresh, panels)
         .find((item) => item.entity.id === entityId);
       if (!target) throw new Error(locale === "en" ? "This image is no longer an asset candidate" : "此图片已不在资产候选中，请刷新后重试");
@@ -955,7 +970,7 @@ export function CanvasWorkspace({
   }
   async function applyMedia() {
     if (!active?.panelId) return;
-    const media = nodeMedia(active, catalog, panels);
+    const media = nodeMedia(active, catalog, panels, current.current);
     if (!media || !["image", "video"].includes(media.kind)) {
       toast.error("请选择图片或视频结果");
       return;
@@ -1128,6 +1143,12 @@ export function CanvasWorkspace({
           if (!response.ok) item.error = data.message ?? "审核失败";
           else {
             item.finalPrompt = data.preview?.finalPrompt ?? data.prompt;
+            item.configurationHash = data.preview?.configurationHash ?? data.configurationHash;
+            item.requestHash = data.preview?.requestHash ?? data.requestHash;
+            item.productionParameters = data.preview?.parameters ?? data.parameters;
+            const capabilities = data.preview?.capabilities ?? data.capabilities;
+            if (capabilities) item.references.push(locale === "en" ? `Native audio: ${capabilities.nativeAudio}; audio control: ${capabilities.audioControl}; reference audio limit: ${capabilities.maxReferenceAudios}. Exact speech, voice and subtitles are prompt constraints.` : `原生声音：${capabilities.nativeAudio === "supported" ? "支持" : capabilities.nativeAudio === "unsupported" ? "不支持" : "未知"}；音频控制：${capabilities.audioControl === "native_parameter" ? "原生参数" : "提示词约束"}；参考音频上限：${capabilities.maxReferenceAudios}。精确台词、音色与字幕为提示词要求。`);
+            if (data.issues?.length) item.references.push(...data.issues.map((issue: { message: string }) => issue.message));
             if (data.preview?.sources)
               item.references.push(
                 ...data.preview.sources
@@ -1232,6 +1253,8 @@ export function CanvasWorkspace({
               channelId: item.model!.channelId,
               model: item.model!.modelId,
               idempotencyKey: item.key,
+              previewConfigurationHash: item.configurationHash,
+              previewRequestHash: item.requestHash,
             }),
           });
           const data = await response.json();
@@ -1408,6 +1431,9 @@ export function CanvasWorkspace({
     }
   }
   const toolbarProps: CanvasToolbarProps = {
+    episodes: snapshot.project.episodes,
+    episodeId,
+    onSelectEpisode,
     locale,
     tool,
     busy,
@@ -1791,8 +1817,9 @@ export function CanvasWorkspace({
                         ?.title,
                   )
                   .filter((title): title is string => !!title)}
-                media={nodeMedia(node, catalog, panels)}
-                task={canvasNodeTask(node, snapshot.tasks)}
+                media={nodeMedia(node, catalog, panels, document)}
+                task={canvasNodeTask(node, snapshot.tasks, catalog, document)}
+                imageAvailability={canvasImageAvailability(node, catalog, document, locale)}
                 selected={selected.has(node.id)}
                 connecting={connections.source === node.id}
                 target={connections.target === node.id}
@@ -1966,6 +1993,7 @@ export function CanvasWorkspace({
                     {item.finalPrompt ?? item.prompt}
                   </p>
                 </details>
+                {item.productionParameters ? <details className="mt-2"><summary className="cursor-pointer rounded py-2 text-xs font-medium focus-visible:outline-2 focus-visible:outline-ring">{locale === "en" ? "Actual request parameters" : "实际请求参数"}</summary><pre className="mt-2 whitespace-pre-wrap break-all rounded-md border p-3 text-xs">{JSON.stringify(item.productionParameters, null, 2)}</pre></details> : null}
                 {item.error && (
                   <p role="alert" className="mt-2 text-xs text-destructive">
                     {item.error}

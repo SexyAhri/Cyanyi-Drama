@@ -1,6 +1,7 @@
 import type { ChannelProtocol } from "@/lib/agent/provider-types";
 import type { ProductionConfigurationSnapshot } from "@/lib/production-configuration/contract";
 import type { MediaAsset } from "@/lib/media/task-contract";
+import type { MediaTaskExecutionPhase } from "@/lib/media/task-contract";
 import type { OpenAiCompatibleMediaTemplate } from "@/lib/providers/openai-compatible-media-template";
 
 export type MediaReferenceImage = {
@@ -13,6 +14,7 @@ export type MediaReferenceImage = {
 
 export type MediaReferenceAudio = {
   url: string;
+  storageKey?: string;
   mimeType?: string;
 };
 
@@ -47,6 +49,13 @@ export type MediaProviderRequest = {
   audioMode?: "full" | "ambient_only" | "none";
   productionConfiguration?: ProductionConfigurationSnapshot;
   panelId?: string;
+  sourceRevision?: {
+    panelId?: string;
+    targetType?: string;
+    targetId?: string;
+    revisionVersion?: number;
+    fingerprint: string;
+  };
 };
 
 export type GenerateProviderMediaInput = {
@@ -56,6 +65,9 @@ export type GenerateProviderMediaInput = {
   apiKey: string;
   model: string;
   mediaTaskId?: string;
+  signal?: AbortSignal;
+  onExecutionPhase?: (phase: MediaTaskExecutionPhase) => Promise<void>;
+  onProviderTaskId?: (providerTaskId: string) => Promise<void>;
   kind: "image" | "video" | "audio";
   request: MediaProviderRequest;
   mediaTemplate?: OpenAiCompatibleMediaTemplate;
@@ -71,9 +83,11 @@ export type GenerateProviderLipSyncInput = {
   imageUrl?: string;
   audioUrl: string;
   durationSeconds?: number;
+  signal?: AbortSignal;
 };
 
 export type MediaProviderAdapter = {
   generate(input: GenerateProviderMediaInput): Promise<MediaAsset[]>;
+  resume?(input: GenerateProviderMediaInput, providerTaskId: string): Promise<MediaAsset[]>;
   lipSync?(input: GenerateProviderLipSyncInput): Promise<MediaAsset[]>;
 };

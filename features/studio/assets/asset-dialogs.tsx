@@ -194,7 +194,16 @@ export function GenerateAssetDialog({
               .join("\n"),
           })),
         });
-        toast.success(copy.batchGenerated.replace("{count}", String(result.count)));
+        if (result.summary?.failedToSubmit) {
+          toast.warning(
+            copy.batchSubmissionPartial
+              .replace("{submitted}", String(result.count))
+              .replace("{failed}", String(result.summary.failedToSubmit))
+              .replace("{message}", result.failures?.[0]?.message ?? copy.actionFailed),
+          );
+        } else {
+          toast.success(copy.batchGenerated.replace("{count}", String(result.count)));
+        }
       }
       setOpen(false);
       setPrompt("");

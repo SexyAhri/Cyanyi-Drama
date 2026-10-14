@@ -1,8 +1,70 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/server/prisma";
 import { compactMediaTaskOutput, compactMediaTaskRequest } from "./public-media";
-import type { MediaTask } from "./task-contract";
-import type { MediaTaskEventRecord, MediaTaskStatus } from "./task-contract";
+import { hasPersistedProviderOutput, mergePersistedMediaTaskPayload } from "./task-payload";
+import type { MediaAsset, MediaTask } from "./task-contract";
+import { transitionMediaTaskExecutionPhase, type MediaTaskEventRecord, type MediaTaskExecutionPhase, type MediaTaskStatus } from "./task-contract";
+import { currentProductionConfiguration } from "@/lib/production-configuration/context";
+import { resolveProductionRequestConfiguration } from "@/lib/production-configuration/execution";
+import { configurationSnapshotSchema } from "@/lib/production-configuration/contract";
+import { assertConfigurationScope, resolveProductionConfiguration } from "@/lib/production-configuration/store";
+import { captureMediaTargetSourceRevision } from "./target-source-revision";
+
+async function attachTaskConfiguration(userId: string, task: { projectId?: string | null; episodeId?: string | null; targetType?: string | null; targetId?: string | null }, request: Record<string, unknown>) {
+  let projectId = task.projectId ?? undefined;
+  const episodeId = task.episodeId ?? undefined;
+  if (episodeId && !projectId) {
+    const episode = await prisma.episode.findFirst({ where: { id: episodeId, project: { userId } }, select: { projectId: true } });
+    if (!episode) throw new Error("MEDIA_TASK_EPISODE_NOT_FOUND");
+    projectId = episode.projectId;
+  }
+  let panelId = task.targetType === "storyboard_panel" ? task.targetId ?? undefined : undefined;
+  if (task.targetType === "voice_line" && task.targetId) {
+    const line = await prisma.voiceLine.findFirst({ where: { id: task.targetId, episode: { projectId, project: { userId } } }, select: { matchedPanelId: true } });
+    if (!line) throw new Error("MEDIA_TASK_VOICE_LINE_NOT_FOUND");
+    panelId = line.matchedPanelId ?? undefined;
+  }
+  const parsed = configurationSnapshotSchema.safeParse(request.productionConfiguration);
+  if (request.productionConfiguration !== undefined && !parsed.success) throw new Error("MEDIA_TASK_CONFIGURATION_INVALID");
+  const current = currentProductionConfiguration();
+  const snapshot = parsed.success ? parsed.data : current?.userId === userId ? current.snapshot : await resolveProductionRequestConfiguration(userId, { projectId, episodeId, panelId });
+  const result: Record<string, unknown> = { ...request, productionConfiguration: snapshot };
+  const sourceRevision = await captureMediaTargetSourceRevision({
+    userId,
+    projectId: projectId ?? null,
+    episodeId: episodeId ?? null,
+    targetType: task.targetType ?? null,
+    targetId: task.targetId ?? null,
+    revisionVersion: 2,
+    request,
+  });
+  if (sourceRevision) result.sourceRevision = sourceRevision;
+  if (episodeId && projectId && ["merge_episode_audio", "render_timeline"].includes(String(request.operation)) && !request.panelSoundConfigurations) {
+    result.panelSoundConfigurations = await prisma.$transaction(async tx => {
+      await assertConfigurationScope(userId, { projectId, episodeId }, tx);
+      const panels = await tx.storyboardPanel.findMany({ where: { storyboard: { projectId, episodeId } }, select: { id: true } });
+      return Object.fromEntries(await Promise.all(panels.map(async panel => [panel.id, current?.userId === userId ? snapshot : await resolveProductionConfiguration(userId, { projectId, episodeId, panelId: panel.id }, tx)])));
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+  }
+  return result;
+}
+
+/** Legacy tasks acquire their first snapshot with a compare-and-set; retries keep it. */
+export async function fixMediaTaskConfiguration(task: { id: string; updatedAt: Date; projectId: string | null; episodeId: string | null; targetType: string | null; targetId: string | null; payload: unknown }, request: Record<string, unknown>, userId: string) {
+  if (request.productionConfiguration !== undefined) {
+    configurationSnapshotSchema.parse(request.productionConfiguration);
+    return request;
+  }
+  const fixed = await attachTaskConfiguration(userId, task, request);
+  const payload = task.payload && typeof task.payload === "object" && !Array.isArray(task.payload) ? task.payload : {};
+  const updated = await prisma.mediaTask.updateMany({ where: { id: task.id, userId, updatedAt: task.updatedAt }, data: { payload: toJsonValue({ ...payload, request: compactMediaTaskRequest(fixed) }) } });
+  if (updated.count) return fixed;
+  const latest = await prisma.mediaTask.findFirst({ where: { id: task.id, userId }, select: { payload: true } });
+  const savedRequest = (latest?.payload as { request?: Record<string, unknown> } | undefined)?.request;
+  if (!savedRequest?.productionConfiguration) throw new Error("MEDIA_TASK_SNAPSHOT_CONFLICT: 请重试以固定任务配置");
+  configurationSnapshotSchema.parse(savedRequest.productionConfiguration);
+  return savedRequest;
+}
 
 export interface MediaTaskStore {
   create(task: MediaTask): Promise<MediaTask>;
@@ -10,6 +72,7 @@ export interface MediaTaskStore {
   get(id: string): Promise<MediaTask | null>;
   removeTerminal(id: string): Promise<boolean>;
   update(task: MediaTask): Promise<MediaTask>;
+  claimFailedTaskForRetry(task: MediaTask, expectedUpdatedAt: string): Promise<boolean>;
   requestCancel(id: string): Promise<MediaTask | null>;
   appendEvent(
     event: Omit<MediaTaskEventRecord, "id" | "createdAt">,
@@ -34,12 +97,14 @@ export async function appendMediaTaskEvent(
 export function createDatabaseMediaTaskStore(userId: string): MediaTaskStore {
   return {
     async create(task) {
+      task.request = await attachTaskConfiguration(userId, task, task.request);
       await prisma.mediaTask.create({ data: toCreateData(userId, task) });
       await this.appendEvent({
         taskId: task.id,
         type: "created",
         status: task.status,
         progress: task.progress,
+        executionPhase: task.executionPhase ?? "queued",
       });
       return task;
     },
@@ -60,19 +125,49 @@ export function createDatabaseMediaTaskStore(userId: string): MediaTaskStore {
       return result.count > 0;
     },
     async update(task) {
+      const persisted = await prisma.mediaTask.findFirst({ where: { id: task.id, userId }, select: { payload: true } });
+      const savedRequest = (persisted?.payload as { request?: Record<string, unknown> } | undefined)?.request;
+      if (savedRequest?.productionConfiguration) task.request = { ...task.request, productionConfiguration: savedRequest.productionConfiguration, ...(savedRequest.panelSoundConfigurations ? { panelSoundConfigurations: savedRequest.panelSoundConfigurations } : {}) };
       await prisma.mediaTask.updateMany({
         where: { id: task.id, userId },
-        data: toUpdateData(task),
+        data: toUpdateData(task, persisted?.payload),
       });
       await this.appendEvent({
         taskId: task.id,
         type: eventTypeForTask(task),
         status: task.status,
         progress: task.progress,
+        executionPhase: task.executionPhase,
         message: task.progressMessage,
         payload: task.error ? { error: task.error } : undefined,
       });
       return task;
+    },
+    async claimFailedTaskForRetry(task, expectedUpdatedAt) {
+      const persisted = await prisma.mediaTask.findFirst({
+        where: { id: task.id, userId, status: "failed", updatedAt: new Date(expectedUpdatedAt) },
+        select: { payload: true },
+      });
+      if (!persisted) return false;
+      const result = await prisma.mediaTask.updateMany({
+        where: {
+          id: task.id,
+          userId,
+          status: "failed",
+          updatedAt: new Date(expectedUpdatedAt),
+        },
+        data: toUpdateData(task, persisted.payload),
+      });
+      if (!result.count) return false;
+      await this.appendEvent({
+        taskId: task.id,
+        type: "queued",
+        status: "queued",
+        progress: task.progress,
+        executionPhase: "queued",
+        message: "Manual retry claimed",
+      });
+      return true;
     },
     async requestCancel(id) {
       const current = await prisma.mediaTask.findFirst({ where: { id, userId } });
@@ -81,8 +176,12 @@ export function createDatabaseMediaTaskStore(userId: string): MediaTaskStore {
       const updated = await prisma.mediaTask.updateMany({
         where: { id, userId, status: current.status },
         data: current.status === "queued"
-          ? { status: "canceled", cancelRequestedAt: now, completedAt: now, updatedAt: now, progressMessage: null }
-          : { cancelRequestedAt: now, updatedAt: now, progressMessage: "Cancellation requested" },
+          ? { status: "canceled", executionPhase: "canceled", cancelRequestedAt: now, completedAt: now, updatedAt: now, progressMessage: null }
+          : {
+              cancelRequestedAt: now,
+              updatedAt: now,
+              progressMessage: "Cancellation requested. Local execution will stop; provider-side work may continue, late results are discarded, and provider charges may still apply.",
+            },
       });
       if (!updated.count) return null;
       const task = await prisma.mediaTask.findFirst({ where: { id, userId } });
@@ -92,9 +191,12 @@ export function createDatabaseMediaTaskStore(userId: string): MediaTaskStore {
         type: "cancel_requested",
         status: task.status as MediaTaskStatus,
         progress: task.progress,
+        message: task.status === "running"
+          ? "Local execution will stop; provider-side work may continue, late results are discarded, and provider charges may still apply."
+          : "Task canceled before provider submission.",
       });
       if (task.status === "canceled") {
-        await this.appendEvent({ taskId: id, type: "canceled", status: "canceled", progress: task.progress });
+        await this.appendEvent({ taskId: id, type: "canceled", status: "canceled", progress: task.progress, executionPhase: "canceled" });
       }
       return fromRow(task);
     },
@@ -105,6 +207,7 @@ export function createDatabaseMediaTaskStore(userId: string): MediaTaskStore {
           type: event.type,
           status: event.status,
           progress: event.progress,
+          executionPhase: event.executionPhase,
           message: event.message,
           payload: event.payload ? toJsonValue(event.payload) : undefined,
         },
@@ -115,6 +218,7 @@ export function createDatabaseMediaTaskStore(userId: string): MediaTaskStore {
         type: row.type as MediaTaskEventRecord["type"],
         status: row.status as MediaTaskStatus | undefined,
         progress: row.progress ?? undefined,
+        executionPhase: row.executionPhase as MediaTaskExecutionPhase | undefined,
         message: row.message ?? undefined,
         payload: row.payload as Record<string, unknown> | undefined,
         createdAt: row.createdAt.toISOString(),
@@ -132,6 +236,7 @@ export function createDatabaseMediaTaskStore(userId: string): MediaTaskStore {
         type: row.type as MediaTaskEventRecord["type"],
         status: row.status as MediaTaskStatus | undefined,
         progress: row.progress ?? undefined,
+        executionPhase: row.executionPhase as MediaTaskExecutionPhase | undefined,
         message: row.message ?? undefined,
         payload: row.payload as Record<string, unknown> | undefined,
         createdAt: row.createdAt.toISOString(),
@@ -194,6 +299,7 @@ function toCreateData(userId: string, task: MediaTask) {
     maxRetries: task.maxRetries,
     progress: task.progress,
     progressMessage: task.progressMessage ?? null,
+    executionPhase: task.executionPhase ?? (task.status === "running" ? "connecting" : task.status),
     queueJobId: task.queueJobId ?? null,
     cancelRequestedAt: task.cancelRequestedAt
       ? new Date(task.cancelRequestedAt)
@@ -206,7 +312,7 @@ function toCreateData(userId: string, task: MediaTask) {
   };
 }
 
-function toUpdateData(task: MediaTask) {
+function toUpdateData(task: MediaTask, currentPayload?: unknown) {
   return {
     idempotencyKey: task.idempotencyKey ?? null,
     projectId: task.projectId ?? null,
@@ -217,15 +323,13 @@ function toUpdateData(task: MediaTask) {
     targetId: task.targetId ?? null,
     status: task.status,
     providerTaskId: task.providerTaskId ?? null,
-    payload: toJsonValue({
-      request: compactMediaTaskRequest(task.request),
-      output: task.output ? compactMediaTaskOutput(task.output) : null,
-    }),
+    payload: toJsonValue(mergePersistedMediaTaskPayload({ currentPayload, request: task.request, output: task.output })),
     error: toNullableJson(task.error),
     retryCount: task.retryCount,
     maxRetries: task.maxRetries,
     progress: task.progress,
     progressMessage: task.progressMessage ?? null,
+    executionPhase: task.executionPhase ?? (task.status === "running" ? "connecting" : task.status),
     queueJobId: task.queueJobId ?? null,
     cancelRequestedAt: task.cancelRequestedAt
       ? new Date(task.cancelRequestedAt)
@@ -279,12 +383,14 @@ function fromRow(row: MediaTaskRow): MediaTask {
     model: row.model,
     providerTaskId: row.providerTaskId ?? undefined,
     request: payload.request ?? {},
+    hasSavedProviderOutput: hasPersistedProviderOutput(row.payload),
     output: payload.output ?? undefined,
     error: row.error as MediaTask["error"] | undefined,
     retryCount: row.retryCount,
     maxRetries: row.maxRetries,
     progress: row.progress,
     progressMessage: row.progressMessage ?? undefined,
+    executionPhase: (row.executionPhase || legacyExecutionPhase(row.status)) as MediaTaskExecutionPhase,
     queueJobId: row.queueJobId ?? undefined,
     cancelRequestedAt: row.cancelRequestedAt?.toISOString(),
     heartbeatAt: row.heartbeatAt?.toISOString(),
@@ -293,4 +399,133 @@ function fromRow(row: MediaTaskRow): MediaTask {
     startedAt: row.startedAt?.toISOString(),
     completedAt: row.completedAt?.toISOString(),
   };
+}
+
+function legacyExecutionPhase(status: string): MediaTaskExecutionPhase {
+  if (["succeeded", "failed", "canceled"].includes(status))
+    return status as MediaTaskExecutionPhase;
+  return status === "running" ? "connecting" : "queued";
+}
+
+/** Persist a validated worker/provider phase and its event without changing the task's coarse status. */
+export async function recordMediaTaskExecutionPhase(input: {
+  userId: string;
+  taskId: string;
+  phase: MediaTaskExecutionPhase;
+  message?: string;
+  providerTaskId?: string;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const row = await tx.mediaTask.findFirst({
+      where: { id: input.taskId, userId: input.userId },
+    });
+    if (!row) throw new Error("MEDIA_TASK_NOT_FOUND");
+    const task = fromRow(row);
+    const next = transitionMediaTaskExecutionPhase(
+      task,
+      input.phase,
+      new Date().toISOString(),
+      input.providerTaskId,
+    );
+    if (next.executionPhase === task.executionPhase && next.providerTaskId === task.providerTaskId)
+      return task;
+    const updated = await tx.mediaTask.updateMany({
+      where: {
+        id: input.taskId,
+        userId: input.userId,
+        status: row.status,
+        executionPhase: row.executionPhase,
+        updatedAt: row.updatedAt,
+      },
+      data: {
+        executionPhase: next.executionPhase,
+        ...(input.providerTaskId ? { providerTaskId: input.providerTaskId } : {}),
+        ...(input.message ? { progressMessage: input.message } : {}),
+        updatedAt: new Date(next.updatedAt),
+        heartbeatAt: new Date(next.heartbeatAt ?? next.updatedAt),
+      },
+    });
+    if (!updated.count) {
+      const raced = await tx.mediaTask.findFirst({
+        where: { id: input.taskId, userId: input.userId },
+      });
+      if (
+        raced?.executionPhase === input.phase &&
+        (!input.providerTaskId || raced.providerTaskId === input.providerTaskId)
+      )
+        return fromRow(raced);
+      throw new Error("MEDIA_TASK_PHASE_CONFLICT");
+    }
+    if (next.executionPhase !== task.executionPhase)
+      await tx.mediaTaskEvent.create({
+        data: {
+          taskId: input.taskId,
+          type: "phase_changed",
+          status: row.status,
+          progress: row.progress,
+          executionPhase: next.executionPhase,
+          message: input.message,
+          payload: input.providerTaskId ? toJsonValue({ providerTaskId: input.providerTaskId }) : undefined,
+        },
+      });
+    const fresh = await tx.mediaTask.findFirst({
+      where: { id: input.taskId, userId: input.userId },
+    });
+    if (!fresh) throw new Error("MEDIA_TASK_NOT_FOUND");
+    return fromRow(fresh);
+  });
+}
+
+/** Persist provider output before attempting to download or save it so those
+ * delivery steps can be retried without issuing another paid generation call. */
+export async function persistMediaTaskProviderOutput(input: {
+  userId: string;
+  taskId: string;
+  output: MediaAsset[];
+}) {
+  if (!input.output.length) throw new Error("MEDIA_PROVIDER_OUTPUT_EMPTY");
+  return prisma.$transaction(async (tx) => {
+    const row = await tx.mediaTask.findFirst({
+      where: { id: input.taskId, userId: input.userId },
+    });
+    if (!row) throw new Error("MEDIA_TASK_NOT_FOUND");
+    if (row.status !== "running") throw new Error("MEDIA_TASK_NOT_RUNNING");
+    const task = fromRow(row);
+    const now = new Date().toISOString();
+    const next = transitionMediaTaskExecutionPhase(task, "downloading", now);
+    const existingPayload =
+      row.payload && typeof row.payload === "object" && !Array.isArray(row.payload)
+        ? (row.payload as Record<string, unknown>)
+        : {};
+    const updated = await tx.mediaTask.updateMany({
+      where: {
+        id: input.taskId,
+        userId: input.userId,
+        status: "running",
+        executionPhase: row.executionPhase,
+        updatedAt: row.updatedAt,
+      },
+      data: {
+        payload: toJsonValue({ ...existingPayload, providerOutput: input.output }),
+        executionPhase: "downloading",
+        progressMessage: "Provider result received; saving output",
+        updatedAt: new Date(now),
+        heartbeatAt: new Date(now),
+      },
+    });
+    if (!updated.count) throw new Error("MEDIA_TASK_PHASE_CONFLICT");
+    if (next.executionPhase !== task.executionPhase)
+      await tx.mediaTaskEvent.create({
+        data: {
+          taskId: input.taskId,
+          type: "phase_changed",
+          status: "running",
+          progress: row.progress,
+          executionPhase: "downloading",
+          message: "Provider result received; saving output",
+          payload: toJsonValue({ outputCount: input.output.length }),
+        },
+      });
+    return { ...task, executionPhase: "downloading" as const, updatedAt: now };
+  });
 }

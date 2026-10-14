@@ -15,8 +15,9 @@ export async function enqueuePersistedMediaTask(
   const store = createDatabaseMediaTaskStore(userId);
   let chargeReserved = false;
   try {
+    await store.update({ ...task, executionPhase: "waiting_quota" });
     chargeReserved = !!(await reserveMediaTaskCharge(userId, task));
-    const queued = { ...task, queueJobId: task.id };
+    const queued = { ...task, executionPhase: "queued" as const, queueJobId: task.id };
     await store.update(queued);
     await enqueueMediaJob({
       taskId: task.id,
@@ -24,6 +25,7 @@ export async function enqueuePersistedMediaTask(
       projectId: task.projectId,
       episodeId: task.episodeId,
       channelId: task.channelId,
+      priorityClass: task.batchId ? "batch" : "interactive",
       kind: task.kind,
       maxAttempts: 1,
     });
@@ -36,6 +38,7 @@ export async function enqueuePersistedMediaTask(
     const failed: MediaTask = {
       ...task,
       status: "failed",
+      executionPhase: "failed",
       error: {
         code: billingError
           ? error.message

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { Prisma } from "@prisma/client";
+import { z } from "zod";
 
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
@@ -10,7 +11,10 @@ import { prisma } from "@/lib/server/prisma";
 
 import { EpisodeSplitError } from "./errors";
 import { resolveEpisodeTextProvider } from "./provider";
-import { chunkSource, mapSourceTasks, sourceAnalysisConcurrency, sourceFingerprint, type SourceTaskHooks } from "./long-source";
+import { chunkSource, mapSourceTasks, sourceAnalysisConcurrency, type SourceTaskHooks } from "./long-source";
+import { currentProductionConfiguration } from "@/lib/production-configuration/context";
+import { workflowCacheFingerprint } from "@/lib/workflow/cache-fingerprint";
+import { recordWorkflowArtifactReuse } from "@/lib/workflow/request-events";
 import type { PromptExecutionTrace } from "@/lib/llm/openai-structured";
 
 export { EpisodeSplitError } from "./errors";
@@ -164,29 +168,82 @@ export async function splitEpisodesWithAi(input: {
   const results = await mapSourceTasks(chunks, sourceAnalysisConcurrency(), async chunk => {
     await input.hooks?.assertActive();
     await input.hooks?.reportProgress?.(`正在规划分集，第 ${chunk.index + 1} 段（原文 ${chunk.start}-${chunk.end}）`);
-    const key = sourceFingerprint({ text: chunk.text, start: chunk.start, model: input.model, channelId: input.channelId, version: 1 });
+    const prompt = renderPrompt({
+      id: PROMPT_IDS.EPISODE_SPLIT,
+      locale: input.locale,
+      variables: { source_text: chunk.text },
+    });
+    const key = workflowCacheFingerprint({
+      source: { projectId: input.projectId, sourceRange: { start: chunk.start, end: chunk.end }, text: chunk.text },
+      prompt,
+      promptVersion: "episode-split-v2",
+      channelId: input.channelId,
+      model: input.model,
+      agentConfiguration: currentProductionConfiguration()?.snapshot ?? null,
+      parameters: {
+        temperature: 0.2,
+        stream: false,
+        structuredOutputMode: provider.structuredOutputMode,
+        schema: z.toJSONSchema(episodeSplitSchema),
+      },
+    });
     const cached = await input.hooks?.loadArtifact("episode.split-chunk", key) as {
       boundaries?: unknown; trace?: PromptExecutionTrace;
     } | null;
     const parsed = episodeSplitSchema.safeParse(cached?.boundaries);
-    const result = parsed.success && cached?.trace ? { data: parsed.data, trace: cached.trace } : await requestOpenAiStructured({
-    ...provider,
-    prompt: renderPrompt({
-      id: PROMPT_IDS.EPISODE_SPLIT,
-      locale: input.locale,
-      variables: { source_text: chunk.text },
-    }),
-    schema: episodeSplitSchema,
-    validate: (data) => validateAiBoundaries(data.episodes, chunk.text),
-    temperature: 0.2,
-    stream: false,
-  });
-    await input.hooks?.assertActive();
-    if (!(parsed.success && cached?.trace)) {
-      await input.hooks?.persistArtifact("episode.split-chunk", key, { boundaries: result.data, trace: result.trace });
+    const cachedIsValid = parsed.success && Boolean(cached?.trace) &&
+      validateAiBoundaries(parsed.data.episodes, chunk.text).length === 0;
+    const requestId = randomUUID();
+    const requestBase = {
+      requestId,
+      requestType: "episode_scene_split_chunk",
+      targetType: "scene_split_chunk",
+      targetId: key,
+      provider: input.channelId,
+      model: input.model,
+      inputHash: key,
+      cacheVersion: "workflow-cache-v2",
+      promptVersion: String(prompt.version),
+      promptVersionHash: prompt.versionHash,
+    };
+    let result: { data: z.infer<typeof episodeSplitSchema>; trace: PromptExecutionTrace };
+    if (cachedIsValid && parsed.success && cached?.trace) {
+      result = { data: parsed.data, trace: cached!.trace! };
+      await recordWorkflowArtifactReuse({
+        recordRequest: input.hooks?.recordRequest,
+        request: {
+          ...requestBase,
+          input: { projectId: input.projectId, sourceRange: { start: chunk.start, end: chunk.end }, text: chunk.text },
+        },
+        artifactRefs: [`episode.split-chunk:${key}`],
+        reuseReason: "cache_fingerprint_match",
+      });
     }
+    else {
+      await input.hooks?.recordRequest?.({
+        ...requestBase,
+        status: "running",
+        input: { projectId: input.projectId, sourceRange: { start: chunk.start, end: chunk.end }, text: chunk.text },
+      });
+      try {
+        result = await requestOpenAiStructured({
+          ...provider,
+          prompt,
+          schema: episodeSplitSchema,
+          validate: (data) => validateAiBoundaries(data.episodes, chunk.text),
+          temperature: 0.2,
+          stream: false,
+        });
+        await input.hooks?.persistArtifact("episode.split-chunk", key, { boundaries: result.data, trace: result.trace });
+        await input.hooks?.recordRequest?.({ ...requestBase, status: "succeeded", artifactRefs: [`episode.split-chunk:${key}`] });
+      } catch (error) {
+        await input.hooks?.recordRequest?.({ ...requestBase, status: "failed", error: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
+    }
+    await input.hooks?.assertActive();
     const drafts = resolveAiEpisodeBoundaries(result.data.episodes, chunk.text);
-    return { chunk, drafts, trace: result.trace, reused: parsed.success && Boolean(cached?.trace) };
+    return { chunk, drafts, trace: result.trace, reused: cachedIsValid };
   });
   const episodes: EpisodeSplitDraft[] = [];
   for (const { chunk, drafts } of results) {

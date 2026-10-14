@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
-import type { MediaAsset } from "@/lib/media/task-contract";
+import type { MediaAsset, MediaTaskExecutionPhase } from "@/lib/media/task-contract";
 import { fetchWithProviderRetry } from "@/lib/providers/http";
 import { providerErrorMessage } from "@/lib/providers/media/shared";
 
@@ -146,6 +146,9 @@ export async function executeOpenAiCompatibleMediaTemplate(input: {
   kind: "image" | "video";
   request: Record<string, unknown>;
   template: OpenAiCompatibleMediaTemplate;
+  signal?: AbortSignal;
+  onExecutionPhase?: (phase: MediaTaskExecutionPhase) => Promise<void>;
+  onProviderTaskId?: (providerTaskId: string) => Promise<void>;
   sleep?: (milliseconds: number) => Promise<void>;
 }): Promise<MediaAsset[]> {
   const template = parseOpenAiCompatibleMediaTemplate(
@@ -162,6 +165,7 @@ export async function executeOpenAiCompatibleMediaTemplate(input: {
     apiKey: input.apiKey,
     endpoint: template.create,
     variables,
+    signal: input.signal,
   });
   if (!created.response.ok)
     throw new Error(templateProviderError(template, created.payload, created.response.status));
@@ -190,6 +194,8 @@ export async function executeOpenAiCompatibleMediaTemplate(input: {
 
   const taskId = stringValue(readJsonPath(created.payload, template.response.taskIdPath));
   if (!taskId) throw new Error("OPENAI_COMPAT_TEMPLATE_TASK_ID_MISSING");
+  await input.onProviderTaskId?.(taskId);
+  await input.onExecutionPhase?.("submitted");
   variables.task_id = taskId;
   const polling = template.polling ?? {
     intervalMs: 3_000,
@@ -203,6 +209,7 @@ export async function executeOpenAiCompatibleMediaTemplate(input: {
     ((milliseconds: number) =>
       new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
   const startedAt = Date.now();
+  await input.onExecutionPhase?.("generating");
   while (Date.now() - startedAt <= polling.timeoutMs) {
     await sleep(polling.intervalMs);
     const statusResult = await requestEndpoint({
@@ -210,6 +217,7 @@ export async function executeOpenAiCompatibleMediaTemplate(input: {
       apiKey: input.apiKey,
       endpoint: template.status!,
       variables,
+      signal: input.signal,
     });
     if (!statusResult.response.ok)
       throw new Error(
@@ -243,11 +251,13 @@ export async function executeOpenAiCompatibleMediaTemplate(input: {
         });
       if (!template.content)
         throw new Error("OPENAI_COMPAT_TEMPLATE_OUTPUT_MISSING");
+      await input.onExecutionPhase?.("downloading");
       const content = await requestEndpoint({
         baseUrl: input.baseUrl,
         apiKey: input.apiKey,
         endpoint: template.content,
         variables,
+        signal: input.signal,
       });
       if (!content.response.ok)
         throw new Error(
@@ -303,6 +313,7 @@ async function requestEndpoint(input: {
   apiKey: string;
   endpoint: TemplateEndpoint;
   variables: TemplateVariables;
+  signal?: AbortSignal;
 }) {
   const url = resolveEndpointUrl(
     input.baseUrl,
@@ -323,6 +334,7 @@ async function requestEndpoint(input: {
     headers,
     ...(body !== undefined ? { body } : {}),
     cache: "no-store",
+    signal: input.signal,
   });
   const text = await response.text();
   let payload: unknown = null;

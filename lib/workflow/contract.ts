@@ -26,6 +26,7 @@ export type WorkflowStepInput = {
   type: string;
   dependsOn?: string[];
   artifactTypes?: string[];
+  requiredArtifactTypes?: string[];
   retryable?: boolean;
   failureMode?: "fail_run";
   input?: Record<string, unknown>;
@@ -43,6 +44,7 @@ export type WorkflowRunDefinition = {
   input?: Record<string, unknown>;
   steps: WorkflowStepInput[];
   maxAttempts?: number;
+  expectedConfigurationHash?: string;
 };
 
 export function assertUniqueStepKeys(steps: WorkflowStepInput[]) {

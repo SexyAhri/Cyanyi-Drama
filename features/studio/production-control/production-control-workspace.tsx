@@ -49,6 +49,7 @@ import {
   transitionStudioDeliverable,
 } from "../api";
 import { VersionHistory } from "../post/post-ui";
+import { MediaBudgetPanel } from "./media-budget-panel";
 import { productionLabel } from "../production/copy";
 import type {
   ProductionDeliverableCatalog,
@@ -386,6 +387,7 @@ export function ProductionControlWorkspace({
             <Metric label={text.forecast} value={money(draft.budget.currency, actual)} />
             <Metric label={text.variance} value={money(draft.budget.currency, variance)} warning={variance < 0} />
           </div>
+          <MediaBudgetPanel locale={locale} projectId={projectId} />
           <DepartmentBoard locale={locale} rows={departmentRows} text={text} />
         </TabsContent>
 

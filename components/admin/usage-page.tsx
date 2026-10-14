@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, Search } from "lucide-react";
 
+import { billingActionLabel } from "@/lib/billing/display";
 import { AdminPage } from "@/components/admin/admin-page";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +34,7 @@ type UsageCost = {
   unit: string;
   cost: string;
   createdAt: string;
-  project: { id: string; name: string };
+  project: { id: string; name: string } | null;
   user: { id: string; displayName: string; email: string | null };
 };
 
@@ -114,7 +115,7 @@ export function UsagePage() {
           <SelectContent>
             <SelectItem value="all">全部类型</SelectItem>
             {(payload?.filters.apiTypes ?? []).map((item) => (
-              <SelectItem key={item} value={item}>{item}</SelectItem>
+              <SelectItem key={item} value={item}>{typeLabel(item)}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -154,12 +155,12 @@ export function UsagePage() {
                   <TableCell className="text-muted-foreground">{formatDate(cost.createdAt)}</TableCell>
                   <TableCell>
                     <p className="font-medium">{cost.user.displayName}</p>
-                    <p className="max-w-56 truncate text-xs text-muted-foreground" title={cost.project.name}>{cost.project.name}</p>
+                    <p className="max-w-56 truncate text-xs text-muted-foreground" title={(cost.project?.name ?? "独立对话")}>{(cost.project?.name ?? "独立对话")}</p>
                   </TableCell>
-                  <TableCell><Badge variant="outline">{cost.apiType}</Badge></TableCell>
+                  <TableCell><Badge variant="outline">{typeLabel(cost.apiType)}</Badge></TableCell>
                   <TableCell className="max-w-64 truncate" title={cost.model}>{cost.model}</TableCell>
-                  <TableCell>{cost.action}</TableCell>
-                  <TableCell>{cost.quantity} {cost.unit}</TableCell>
+                  <TableCell>{billingActionLabel(cost.action)}</TableCell>
+                  <TableCell>{cost.quantity} {unitLabel(cost.unit)}</TableCell>
                   <TableCell className="text-right font-mono">¥ {cost.cost}</TableCell>
                 </TableRow>
               ))
@@ -190,3 +191,6 @@ function formatDate(value: string) {
     minute: "2-digit",
   }).format(new Date(value));
 }
+
+function typeLabel(value: string) { return ({ text: "文本对话", image: "图片", video: "视频", audio: "配音", lipsync: "口型同步", voicedesign: "音色设计" } as Record<string, string>)[value] ?? "其他"; }
+function unitLabel(value: string) { return ({ request: "次", image: "张", second: "秒", minute: "分钟", character: "字符", "1k_character": "千字符", task: "任务", mixed: "组合用量", tokens: "令牌" } as Record<string, string>)[value] ?? "用量"; }

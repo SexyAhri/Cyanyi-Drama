@@ -6,7 +6,38 @@ import {
   generateStudioAssetVisualProfile,
   updateStudioEpisodeAudioTrack,
   uploadStudioEpisodeAudioTrack,
+  loadStudioAssetCatalog,
+  loadStudioStoryboard,
 } from "./api";
+import { invalidateStudioCache, setStudioCacheScope } from "./request-cache";
+
+describe("workflow output catalog refresh", () => {
+  afterEach(() => { invalidateStudioCache(undefined, true); vi.unstubAllGlobals(); });
+  it("refreshes every shared catalog page and storyboard after output changes", async () => {
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("document", { documentElement: { lang: "zh-CN" } });
+    setStudioCacheScope("catalog-refresh-test");
+    invalidateStudioCache(undefined, true);
+    let version = "old";
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async input => {
+      const url = String(input);
+      const body = url.endsWith("/characters") ? { characters: [] }
+        : url.endsWith("/locations") ? { locations: [] }
+          : url.endsWith("/props") ? { props: [] }
+            : url.endsWith("/storyboard") ? { storyboard: { version } }
+              : { assets: [{ id: url.includes("cursor=") ? `${version}-page2` : version }], nextCursor: url.includes("cursor=") ? null : "second" };
+      return Response.json(body);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    expect((await loadStudioAssetCatalog("project-cache")).assets.map(asset => asset.id)).toEqual(["old", "old-page2"]);
+    await loadStudioStoryboard("project-cache", "episode");
+    version = "new";
+    expect((await loadStudioAssetCatalog("project-cache")).assets[0].id).toBe("old");
+    expect((await loadStudioAssetCatalog("project-cache", undefined, true)).assets.map(asset => asset.id)).toEqual(["new", "new-page2"]);
+    expect((await loadStudioStoryboard("project-cache", "episode", undefined, true)).storyboard).toMatchObject({ version: "new" });
+    expect(fetchMock.mock.calls.slice(-6).every(([, init]) => init?.cache === "no-store")).toBe(true);
+  });
+});
 
 describe("studio adaptation stream", () => {
   afterEach(() => vi.unstubAllGlobals());

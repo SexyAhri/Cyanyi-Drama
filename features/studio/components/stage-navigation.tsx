@@ -85,6 +85,22 @@ export function StageNavigation({
               </span>
               <Icon className="size-4" />
               <span>{label.short}</span>
+              {stage.totalTasks > 0 ? (
+                <span
+                  aria-label={stageProgressLabel(stage, locale) ?? undefined}
+                  className="inline-flex shrink-0 items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal tabular-nums text-foreground"
+                  title={stageProgressLabel(stage, locale) ?? undefined}
+                >
+                  <span aria-hidden="true">
+                    {stage.completedTasks}/{stage.totalTasks}
+                  </span>
+                  {stage.failedTasks > 0 ? (
+                    <span aria-hidden="true" className="text-destructive">
+                      +{stage.failedTasks}!
+                    </span>
+                  ) : null}
+                </span>
+              ) : null}
               <StatusIndicator
                 compact
                 locale={locale}
@@ -96,6 +112,16 @@ export function StageNavigation({
       </div>
     </nav>
   );
+}
+
+export function stageProgressLabel(
+  stage: StudioStageState,
+  locale: "en" | "zh-CN",
+) {
+  if (stage.totalTasks <= 0) return null;
+  return locale === "en"
+    ? `${stage.completedTasks} of ${stage.totalTasks} complete${stage.failedTasks ? `, ${stage.failedTasks} failed or blocked` : ""}`
+    : `已完成 ${stage.completedTasks}/${stage.totalTasks} 项${stage.failedTasks ? `，失败或阻塞 ${stage.failedTasks} 项` : ""}`;
 }
 
 export function getStageNavigationTarget(

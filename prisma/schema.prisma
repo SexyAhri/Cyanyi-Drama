@@ -18,15 +18,15 @@ enum ChannelScope {
 }
 
 model User {
-  id                             String                   @id @default(uuid())
-  email                          String?                  @unique
-  passwordHash                   String?                  @map("password_hash")
-  emailVerifiedAt                DateTime?                @map("email_verified_at")
-  displayName                    String                   @map("display_name")
-  anonymous                      Boolean                  @default(false)
-  role                           UserRole                 @default(USER)
-  createdAt                      DateTime                 @default(now()) @map("created_at")
-  updatedAt                      DateTime                 @updatedAt @map("updated_at")
+  id                             String                          @id @default(uuid())
+  email                          String?                         @unique
+  passwordHash                   String?                         @map("password_hash")
+  emailVerifiedAt                DateTime?                       @map("email_verified_at")
+  displayName                    String                          @map("display_name")
+  anonymous                      Boolean                         @default(false)
+  role                           UserRole                        @default(USER)
+  createdAt                      DateTime                        @default(now()) @map("created_at")
+  updatedAt                      DateTime                        @updatedAt @map("updated_at")
   sessions                       Session[]
   channels                       Channel[]
   projects                       Project[]
@@ -41,13 +41,16 @@ model User {
   balanceFreezes                 BalanceFreeze[]
   balanceTransactions            BalanceTransaction[]
   usageCosts                     UsageCost[]
-  productionDeliverables         ProductionDeliverable[]  @relation("ProductionDeliverableOwner")
-  approvedProductionDeliverables ProductionDeliverable[]  @relation("ProductionDeliverableApprover")
-  productionApprovalDecisions    ProductionApprovalGate[] @relation("ProductionApprovalDecider")
+  mediaBudgets                   MediaBudget[]
+  productionDeliverables         ProductionDeliverable[]         @relation("ProductionDeliverableOwner")
+  approvedProductionDeliverables ProductionDeliverable[]         @relation("ProductionDeliverableApprover")
+  productionApprovalDecisions    ProductionApprovalGate[]        @relation("ProductionApprovalDecider")
   runtimeSettings                UserRuntimeSettings?
   productionConfigurations       ProductionConfiguration[]
   externalIdentities             ExternalIdentity[]
   paymentOrders                  PaymentOrder[]
+  executionNotifications         ExecutionNotification[]
+  executionNotificationPreference ExecutionNotificationPreference?
 
   @@map("users")
 }
@@ -75,6 +78,43 @@ model UserRuntimeSettings {
   @@map("user_runtime_settings")
 }
 
+model ExecutionNotificationPreference {
+  id               String   @id @default(uuid())
+  userId           String   @unique @map("user_id")
+  completedEnabled Boolean  @default(true) @map("completed_enabled")
+  partialFailureEnabled Boolean @default(true) @map("partial_failure_enabled")
+  actionRequiredEnabled Boolean @default(true) @map("action_required_enabled")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("execution_notification_preferences")
+}
+
+model ExecutionNotification {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  projectId   String?  @map("project_id")
+  runId       String?  @map("run_id")
+  mediaTaskId String?  @map("media_task_id")
+  kind        String   @db.VarChar(32)
+  dedupeKey   String   @map("dedupe_key") @db.VarChar(191)
+  titleZh     String   @map("title_zh") @db.VarChar(240)
+  titleEn     String   @map("title_en") @db.VarChar(240)
+  bodyZh      String   @map("body_zh") @db.Text
+  bodyEn      String   @map("body_en") @db.Text
+  href        String   @db.Text
+  readAt      DateTime? @map("read_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, readAt, createdAt])
+  @@index([projectId, createdAt])
+  @@map("execution_notifications")
+}
+
 model ProductionConfiguration {
   id          String    @id @default(uuid())
   userId      String    @map("user_id")
@@ -83,7 +123,6 @@ model ProductionConfiguration {
   version     Int       @default(0)
   draft       Json      @default("{}")
   published   Json?
-  history     Json      @default("[]")
   publishedAt DateTime? @map("published_at")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -245,7 +284,9 @@ model Project {
   assetReferences        AssetReference[]
   workflowRuns           WorkflowRun[]
   usageCosts             UsageCost[]
+  mediaBudgets           MediaBudget[]
   productionDeliverables ProductionDeliverable[]
+  executionNotifications ExecutionNotification[]
 
   @@index([userId, updatedAt])
   @@map("projects")
@@ -309,11 +350,11 @@ model Episode {
 }
 
 model CreativeCanvas {
-  episodeId String @id @map("episode_id")
-  document Json
-  revision Int @default(0)
+  episodeId String   @id @map("episode_id")
+  document  Json
+  revision  Int      @default(0)
   updatedAt DateTime @updatedAt @map("updated_at")
-  episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
 
   @@map("creative_canvases")
 }
@@ -395,6 +436,7 @@ model MediaTask {
   maxRetries        Int              @default(0) @map("max_retries")
   progress          Int              @default(0)
   progressMessage   String?          @map("progress_message") @db.Text
+  executionPhase    String           @default("queued") @map("execution_phase") @db.VarChar(32)
   queueJobId        String?          @map("queue_job_id")
   cancelRequestedAt DateTime?        @map("cancel_requested_at")
   heartbeatAt       DateTime?        @map("heartbeat_at")
@@ -422,15 +464,16 @@ model MediaTask {
 }
 
 model MediaTaskEvent {
-  id        String    @id @default(uuid())
-  taskId    String    @map("task_id")
-  type      String
-  status    String?
-  progress  Int?
-  message   String?   @db.Text
-  payload   Json?
-  createdAt DateTime  @default(now()) @map("created_at")
-  task      MediaTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  id             String    @id @default(uuid())
+  taskId         String    @map("task_id")
+  type           String
+  status         String?
+  progress       Int?
+  executionPhase String?   @map("execution_phase") @db.VarChar(32)
+  message        String?   @db.Text
+  payload        Json?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  task           MediaTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@index([taskId, createdAt])
   @@map("media_task_events")
@@ -1212,12 +1255,12 @@ model BalanceTransaction {
 
 model UsageCost {
   id             String   @id @default(uuid())
-  projectId      String   @map("project_id")
+  projectId      String?  @map("project_id")
   userId         String   @map("user_id")
   apiType        String   @map("api_type")
   model          String
   action         String
-  quantity       Int
+  quantity       Decimal  @db.Decimal(18, 6)
   unit           String
   cost           Decimal  @db.Decimal(18, 6)
   sourceType     String?  @map("source_type") @db.VarChar(64)
@@ -1226,7 +1269,7 @@ model UsageCost {
   metadata       String?  @db.Text
   createdAt      DateTime @default(now()) @map("created_at")
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([apiType])
@@ -1235,6 +1278,26 @@ model UsageCost {
   @@index([userId])
   @@index([sourceType, sourceId])
   @@map("usage_costs")
+}
+
+model MediaBudget {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  projectId String   @map("project_id")
+  scopeType String   @map("scope_type") @db.VarChar(24)
+  scopeId   String   @map("scope_id") @db.VarChar(191)
+  limit     Decimal  @db.Decimal(18, 6)
+  unit      String   @default("credit") @db.VarChar(32)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, scopeType, scopeId])
+  @@index([userId, projectId])
+  @@index([projectId, scopeType])
+  @@map("media_budgets")
 }
 
 // === Workflow Checkpoint & Step Attempts ===

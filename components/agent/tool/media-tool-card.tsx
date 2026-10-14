@@ -55,7 +55,9 @@ export function MediaToolCard({
   if (!media) return null;
 
   const label = media.kind === "image" ? "图片" : "视频";
-  const canUseAsReference = Boolean(media.referenceImage && onUseAsReferenceImage);
+  const canUseAsReference = Boolean(
+    media.referenceImage && onUseAsReferenceImage,
+  );
   const failed = media.lifecycle === "error" || media.lifecycle === "denied";
 
   function handleUseAsReference() {
@@ -85,7 +87,9 @@ export function MediaToolCard({
         <LoaderCircle className="size-4 shrink-0 animate-spin motion-reduce:animate-none" />
         <span>
           {media.safetyRetry ? "已调整描述，" : ""}
-          {media.lifecycle === "running" ? `正在生成${label}…` : `等待${label}生成…`}
+          {media.lifecycle === "running"
+            ? `正在生成${label}…`
+            : `等待${label}生成…`}
         </span>
       </div>
     );
@@ -96,8 +100,10 @@ export function MediaToolCard({
       <figure className="group/media relative w-fit max-w-full">
         {media.safetyRetry && !hideProcessDetails ? (
           <details className="mb-2 text-xs leading-relaxed text-muted-foreground">
-            <summary className="cursor-pointer">首次尝试被安全检查拦截，已调整描述并重新生成</summary>
-            <p className="mt-1 whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-2">
+            <summary className="cursor-pointer">
+              首次尝试被安全检查拦截，已调整描述并重新生成
+            </summary>
+            <p className="mt-1 whitespace-pre-wrap break-anywhere rounded-lg bg-muted/50 p-2">
               {media.safetyRetry.revisedPrompt}
             </p>
           </details>
@@ -143,15 +149,27 @@ export function MediaToolCard({
 
         <figcaption className="mt-2 flex min-h-9 items-center justify-between gap-3">
           <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            {media.kind === "image" ? <ImageIcon className="size-3.5" /> : <Video className="size-3.5" />}
+            {media.kind === "image" ? (
+              <ImageIcon className="size-3.5" />
+            ) : (
+              <Video className="size-3.5" />
+            )}
             {label}已生成
           </span>
           <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-background/90 p-0.5 shadow-xs">
             {media.kind === "image" && media.previewSrc ? (
-              <MediaAction label="放大预览" onClick={() => setPreviewOpen(true)} icon={Maximize2} />
+              <MediaAction
+                label="放大预览"
+                onClick={() => setPreviewOpen(true)}
+                icon={Maximize2}
+              />
             ) : null}
             {canUseAsReference ? (
-              <MediaAction label="设为参考图" onClick={handleUseAsReference} icon={ImagePlus} />
+              <MediaAction
+                label="设为参考图"
+                onClick={handleUseAsReference}
+                icon={ImagePlus}
+              />
             ) : null}
             {media.assetUrl ? (
               <Tooltip>
@@ -159,7 +177,10 @@ export function MediaToolCard({
                   render={
                     <a
                       aria-label="下载"
-                      className={cn(buttonVariants({ size: "icon-sm", variant: "ghost" }), "text-muted-foreground hover:text-foreground")}
+                      className={cn(
+                        buttonVariants({ size: "icon-sm", variant: "ghost" }),
+                        "text-muted-foreground hover:text-foreground",
+                      )}
                       download={assetDownloadFilename(
                         media.assetUrl,
                         toolCall.id,
@@ -189,7 +210,11 @@ export function MediaToolCard({
           {media.kind === "image" && media.previewSrc ? (
             <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-4 sm:p-8">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img alt="生成图片预览" className="size-full object-contain" src={media.previewSrc} />
+              <img
+                alt="生成图片预览"
+                className="size-full object-contain"
+                src={media.previewSrc}
+              />
             </div>
           ) : null}
         </DialogContent>
@@ -241,16 +266,20 @@ function MediaFailure({
 }) {
   const label = kind === "image" ? "图片" : "视频";
   const denied = lifecycle === "denied";
-  const summary = denied
-    ? `${label}生成已取消`
-    : friendlyError(error, label);
+  const summary = denied ? `${label}生成已取消` : friendlyError(error, label);
 
   return (
     <Collapsible className="w-full min-w-0 max-w-[628px]">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1">
-        <div aria-live="polite" className="flex min-w-0 items-start gap-2 text-sm text-muted-foreground" role="status">
+        <div
+          aria-live="polite"
+          className="flex min-w-0 items-start gap-2 text-sm text-muted-foreground"
+          role="status"
+        >
           <AlertCircle className="mt-0.5 size-4 shrink-0 text-destructive" />
-          <span>{safetyRetry ? `调整描述后仍未生成${label}。${summary}` : summary}</span>
+          <span>
+            {safetyRetry ? `调整描述后仍未生成${label}。${summary}` : summary}
+          </span>
         </div>
         {error && !denied ? (
           <CollapsibleTrigger className="group inline-flex shrink-0 items-center gap-1 rounded-sm py-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -261,13 +290,15 @@ function MediaFailure({
       </div>
       {error && !denied ? (
         <CollapsibleContent>
-          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words border-l-2 border-border pl-4 font-sans text-xs leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-anywhere border-l-2 border-border pl-4 font-sans text-xs leading-6 text-muted-foreground [overflow-wrap:anywhere]">
             {error}
           </pre>
           {safetyRetry ? (
             <div className="mt-2 border-l-2 border-border pl-4 text-xs leading-6 text-muted-foreground">
               <p>本次使用的提示词</p>
-              <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{safetyRetry.revisedPrompt}</p>
+              <p className="whitespace-pre-wrap break-anywhere [overflow-wrap:anywhere]">
+                {safetyRetry.revisedPrompt}
+              </p>
             </div>
           ) : null}
         </CollapsibleContent>
@@ -279,15 +310,27 @@ function MediaFailure({
 function friendlyError(error: string | undefined, label: string) {
   if (!error) return `${label}生成失败，请重试。`;
   const message = error.toLowerCase();
-  if (/401|403|unauthori[sz]ed|forbidden|invalid.api.key|鉴权|密钥|权限/.test(message))
+  if (
+    /401|403|unauthori[sz]ed|forbidden|invalid.api.key|鉴权|密钥|权限/.test(
+      message,
+    )
+  )
     return `${label}生成失败，请检查模型服务的密钥或权限。`;
   if (/429|rate.limit|quota|余额|额度|限流/.test(message))
     return `${label}生成失败，服务额度或请求频率已达上限。`;
   if (/timeout|timed.out|超时/.test(message))
     return `${label}生成超时，请稍后重试。`;
-  if (/参考.*(?:拒绝|安全|违规)|input(?:image|video)sensitivecontentdetected/.test(message))
+  if (
+    /参考.*(?:拒绝|安全|违规)|input(?:image|video)sensitivecontentdetected/.test(
+      message,
+    )
+  )
     return "参考素材未通过模型服务的安全检查，请更换素材后重试。";
-  if (/content.policy|safety|sensitivecontentdetected|moderation|内容审核|安全检查|安全策略|被拒绝/.test(message))
+  if (
+    /content.policy|safety|sensitivecontentdetected|moderation|内容审核|安全检查|安全策略|被拒绝/.test(
+      message,
+    )
+  )
     return `${label}生成被模型服务拒绝，请调整描述后重试。`;
   if (/network|fetch.failed|econn|连接失败|网络/.test(message))
     return `${label}生成失败，暂时无法连接模型服务。`;
@@ -302,8 +345,14 @@ function imageExtension(format?: string) {
     : "png";
 }
 
-function assetDownloadFilename(url: string, fallbackId: string, extension: string) {
-  const encodedId = /\/api\/media\/assets\/([^/?]+)\/content(?:[?#]|$)/.exec(url)?.[1];
+function assetDownloadFilename(
+  url: string,
+  fallbackId: string,
+  extension: string,
+) {
+  const encodedId = /\/api\/media\/assets\/([^/?]+)\/content(?:[?#]|$)/.exec(
+    url,
+  )?.[1];
   let assetId = fallbackId;
   if (encodedId) {
     try {

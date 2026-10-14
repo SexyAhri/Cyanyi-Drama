@@ -12,6 +12,9 @@ vi.mock("@/lib/llm/openai-structured", () => ({ requestOpenAiStructured }));
 vi.mock("@/lib/server/crypto", () => ({
   decryptSecret: () => '["test-key"]',
 }));
+vi.mock("@/lib/media/asset-dependencies", () => ({
+  markAssetDependentPanelsStale: vi.fn().mockResolvedValue({ panelIds: [], episodeIds: [] }),
+}));
 vi.mock("@/lib/settings/runtime-store", () => ({
   loadUserRuntimeSettings: vi.fn().mockResolvedValue({
     structuredRequestTimeoutSeconds: 600,

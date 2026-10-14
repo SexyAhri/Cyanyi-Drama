@@ -7,6 +7,7 @@ import {
   sanitizeCanonicalSummary,
 } from "@/lib/assets/canonical-summary";
 import { prisma } from "@/lib/server/prisma";
+import { markAssetDependentPanelsStale, type ChangedProjectAsset } from "@/lib/media/asset-dependencies";
 import type {
   CharacterAppearanceRecord,
   LocationImageRecord,
@@ -54,6 +55,7 @@ export async function upsertNovelCharacters(
 ) {
   if (!(await ownsProject(userId, projectId))) return null;
   const result = [] as NovelCharacterRecord[];
+  const changedAssets: ChangedProjectAsset[] = [];
   for (const item of input) {
     const name = item.name.trim();
     if (!name) continue;
@@ -76,7 +78,9 @@ export async function upsertNovelCharacters(
       include: characterInclude,
     });
     result.push(toCharacter(row));
+    changedAssets.push({ kind: "character", name, fields: ["profile", "aliases", "introduction"] });
   }
+  await markAssetDependentPanelsStale(prisma, { userId, projectId, assets: changedAssets });
   return result;
 }
 
@@ -98,6 +102,7 @@ export async function upsertNovelLocations(
 ) {
   if (!(await ownsProject(userId, projectId))) return null;
   const result = [] as NovelLocationRecord[];
+  const changedAssets: ChangedProjectAsset[] = [];
   for (const item of input) {
     const name = item.name.trim();
     if (!name) continue;
@@ -124,7 +129,9 @@ export async function upsertNovelLocations(
       include: locationInclude,
     });
     result.push(toLocation(row));
+    changedAssets.push({ kind: "location", name, fields: ["summary"] });
   }
+  await markAssetDependentPanelsStale(prisma, { userId, projectId, assets: changedAssets });
   return result;
 }
 

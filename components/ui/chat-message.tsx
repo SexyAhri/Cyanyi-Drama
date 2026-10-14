@@ -15,12 +15,13 @@ import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
 import { cn } from "@/lib/utils";
 
 const chatBubbleVariants = cva(
-  "group/message relative min-w-0 max-w-full break-words rounded-md px-3 py-3 text-sm leading-6 [overflow-wrap:anywhere] sm:max-w-[70%]",
+  "group/message relative min-w-0 max-w-full break-anywhere rounded-md px-3 py-3 text-sm leading-6 [overflow-wrap:anywhere] sm:max-w-[70%]",
   {
     variants: {
       isUser: {
         true: "bg-primary text-primary-foreground",
-        false: "w-full rounded-none bg-transparent px-0 py-0 text-foreground sm:max-w-[628px]",
+        false:
+          "w-full rounded-none bg-transparent px-0 py-0 text-foreground sm:max-w-[628px]",
       },
       animation: {
         none: "",
@@ -258,7 +259,9 @@ function AssistantText({
 
   return (
     <div className="group/message-row flex w-full min-w-0 max-w-full flex-col items-start">
-      {leadingContent ? <div className="mb-4 w-full min-w-0 max-w-[628px]">{leadingContent}</div> : null}
+      {leadingContent ? (
+        <div className="mb-4 w-full min-w-0 max-w-157">{leadingContent}</div>
+      ) : null}
       {hasPrimaryContent ? (
         <Bubble animation={animation} isUser={false}>
           {content.trim() ? (
@@ -271,7 +274,7 @@ function AssistantText({
       {supplementalContent ? (
         <div
           className={cn(
-            "w-full min-w-0 max-w-[628px] space-y-3",
+            "w-full min-w-0 max-w-157 space-y-3",
             hasPrimaryContent && "mt-3",
           )}
         >
@@ -464,7 +467,8 @@ function ToolCall({
             >
               <Ban className="h-4 w-4" />
               <span>
-                Cancelled <span className="font-mono">{invocation.toolName}</span>
+                Cancelled{" "}
+                <span className="font-mono">{invocation.toolName}</span>
               </span>
             </div>
           );

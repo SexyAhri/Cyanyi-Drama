@@ -7,6 +7,9 @@ import {
   ProjectAssetTaskError,
 } from "@/lib/media/project-asset-tasks";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
+import { submitBatchItems } from "@/lib/media/batch-submission";
+import { preflightStoryboardBatch } from "@/lib/media/storyboard-batch-preflight";
+import { getMediaBudgetSummary, setMediaBudgetLimit } from "@/lib/billing/media-budget";
 
 type Context = {
   params: Promise<{ projectId: string; episodeId: string }>;
@@ -24,7 +27,8 @@ export async function POST(request: Request, context: Context) {
     ? body.items.filter(isPanelItem)
     : [];
 
-  if (!channelId || !model || items.length === 0) {
+  const batchBudgetLimit = budgetLimit(body.batchBudgetLimit);
+  if (!channelId || !model || items.length === 0 || items.length !== (Array.isArray(body.items) ? body.items.length : 0) || items.length > 50 || batchBudgetLimit === false) {
     return attachSessionCookie(
       Response.json(
         { message: "channelId、model 和 items 是必填项" },
@@ -35,11 +39,27 @@ export async function POST(request: Request, context: Context) {
   }
 
   const batchId = `storyboard_batch_${randomUUID()}`;
-  const results: Array<{ item: PanelItem; task: unknown; panel: unknown }> = [];
   const mediaDefaults = await loadUserRuntimeSettings(user.id);
-  for (const item of items.slice(0, 50)) {
-    try {
-      const result = await createStoryboardPanelImageTask({
+  const preflight = await preflightStoryboardBatch({
+    userId: user.id,
+    projectId,
+    episodeId,
+    channelId,
+    model,
+    kind: "image",
+    items,
+    batchBudgetLimit,
+    mediaDefaults,
+  });
+  if (preflight.blockers.length) {
+    return attachSessionCookie(Response.json({ message: "批量生成预检发现阻塞项", preflight }, { status: 409 }), sessionId);
+  }
+  if (batchBudgetLimit !== undefined && batchBudgetLimit !== null) {
+    await setMediaBudgetLimit({ userId: user.id, projectId, scope: { type: "batch", id: batchId }, limit: batchBudgetLimit });
+  }
+  const submitted = await submitBatchItems(
+    items.slice(0, 50),
+    async (item) => createStoryboardPanelImageTask({
         userId: user.id,
         projectId,
         episodeId,
@@ -54,24 +74,32 @@ export async function POST(request: Request, context: Context) {
         iteration: parseGenerationIterationDiagnostics(
           item.iteration ?? body.iteration,
         ),
-      });
-      results.push({ item, ...result });
-    } catch (error) {
-      if (error instanceof ProjectAssetTaskError) {
-        return attachSessionCookie(
-          Response.json(
-            { message: error.message, item },
-            { status: error.status },
-          ),
-          sessionId,
-        );
-      }
-      throw error;
-    }
-  }
+      }),
+    (error) =>
+      error instanceof ProjectAssetTaskError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : "图片任务提交失败",
+  );
+  const results = submitted.results.map(({ item, value }) => ({ item, ...value }));
+  const budget = await getMediaBudgetSummary({ userId: user.id, projectId, scope: { type: "batch", id: batchId } });
 
   return attachSessionCookie(
-    Response.json({ batchId, count: results.length, results }, { status: 202 }),
+    Response.json(
+      {
+        batchId,
+        budget,
+        ...(results.length === 0 && submitted.failures.length
+          ? { message: submitted.failures[0].message }
+          : {}),
+        count: results.length,
+        results,
+        failures: submitted.failures,
+        summary: submitted.summary,
+      },
+      { status: results.length ? 202 : 400 },
+    ),
     sessionId,
   );
 }
@@ -88,6 +116,14 @@ function isPanelItem(value: unknown): value is PanelItem {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function budgetLimit(value: unknown): string | number | null | undefined | false {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+  if (typeof value === "string" && /^\d+(\.\d{1,6})?$/.test(value) && value.length <= 32) return value;
+  return false;
 }
 
 async function readObject(request: Request) {

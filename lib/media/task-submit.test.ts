@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MediaTask } from "./task-contract";
+import { BillingError } from "@/lib/billing/service";
 
 const mocks = vi.hoisted(() => ({
   enqueueMediaJob: vi.fn(),
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/billing/service", () => ({
+  BillingError: class BillingError extends Error { status = 402; },
   reserveMediaTaskCharge: mocks.reserveMediaTaskCharge,
   settleMediaTaskCharge: mocks.settleMediaTaskCharge,
 }));
@@ -44,15 +46,29 @@ describe("media task submission", () => {
 
     const queued = await enqueuePersistedMediaTask("user-1", task());
 
-    expect(callOrder).toEqual(["reserve", "persist", "enqueue"]);
-    expect(mocks.update).toHaveBeenCalledOnce();
-    expect(mocks.update).toHaveBeenCalledWith(
+    expect(callOrder).toEqual(["persist", "reserve", "persist", "enqueue"]);
+    expect(mocks.update).toHaveBeenCalledTimes(2);
+    expect(mocks.update).toHaveBeenNthCalledWith(1,
+      expect.objectContaining({ executionPhase: "waiting_quota", status: "queued" }),
+    );
+    expect(mocks.update).toHaveBeenNthCalledWith(2,
       expect.objectContaining({ queueJobId: "task-1", status: "queued" }),
     );
     expect(mocks.enqueueMediaJob).toHaveBeenCalledWith(
       expect.objectContaining({ maxAttempts: 1 }),
     );
     expect(queued.queueJobId).toBe("task-1");
+  });
+
+  it("fails without enqueueing when the budget blocks a reservation", async () => {
+    mocks.reserveMediaTaskCharge.mockRejectedValue(new BillingError("BILLING_MEDIA_BUDGET_EXCEEDED", 402));
+    await expect(enqueuePersistedMediaTask("user-1", task())).rejects.toThrow("BILLING_MEDIA_BUDGET_EXCEEDED");
+    expect(mocks.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      status: "failed",
+      executionPhase: "failed",
+      error: { code: "BILLING_MEDIA_BUDGET_EXCEEDED", message: "BILLING_MEDIA_BUDGET_EXCEEDED", retryable: false },
+    }));
+    expect(mocks.enqueueMediaJob).not.toHaveBeenCalled();
   });
 });
 

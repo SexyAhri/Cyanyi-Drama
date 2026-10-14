@@ -337,6 +337,7 @@ function sameVoiceLineContract(
 
 async function resolveVoiceDesignProvider(input: {
   userId: string;
+  projectId?: string;
   channelId: string;
   model: string;
 }) {
@@ -358,6 +359,8 @@ async function resolveVoiceDesignProvider(input: {
   const settings = await loadUserRuntimeSettings(input.userId);
   return {
     baseUrl: channel.baseUrl,
+    billing: { userId: input.userId, projectId: input.projectId },
+    channelId: input.channelId,
     apiKeys,
     model: input.model,
     ...structuredRequestOptions(settings),

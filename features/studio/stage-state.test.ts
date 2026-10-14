@@ -73,6 +73,19 @@ describe("studio stage state", () => {
     expect(stages[2].status).toBe("running");
   });
 
+  it("counts persisted workflow steps and partial failures for stage progress", () => {
+    const storyboard = {
+      ...workflow("script-to-storyboard", "running", "2026-08-26T02:00:00Z"),
+      steps: [
+        { id: "a", key: "a", type: "a", status: "succeeded", attempt: 1, index: 0, maxAttempts: 3, retryable: true },
+        { id: "b", key: "b", type: "b", status: "failed", attempt: 1, index: 1, maxAttempts: 3, retryable: true },
+        { id: "c", key: "c", type: "c", status: "pending", attempt: 0, index: 2, maxAttempts: 3, retryable: true },
+      ],
+    };
+    expect(getStudioStageStates(snapshot({ novelText: "第一章", workflows: [storyboard] }), "episode-1")[2])
+      .toMatchObject({ completedTasks: 1, failedTasks: 1, totalTasks: 3, status: "running" });
+  });
+
   it("surfaces an active adaptation as writing work before local placement", () => {
     const workflows = [
       workflow("episode-adaptation", "running", "2026-08-26T02:00:00Z"),

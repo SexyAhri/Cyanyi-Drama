@@ -8,6 +8,10 @@ import { buildAssetGenerationPrompt } from "@/lib/assets/generation-prompt";
 import { prisma } from "@/lib/server/prisma";
 import { canvasDocumentSchema } from "./canvas-document";
 import { Prisma } from "@prisma/client";
+import {
+  DEFAULT_STUDIO_AGENT_CONTEXT_SCOPES,
+  type StudioAgentContextScope,
+} from "./agent-context-policy";
 
 function readJson(value: string | null) {
   try {
@@ -23,6 +27,7 @@ export async function loadAgentProjectContext(input: {
   episodeId?: string;
   selectionId?: string;
   request: string;
+  contextScopes?: readonly StudioAgentContextScope[];
   detailIds?: string[];
   artStyle?: string;
 }) {
@@ -30,14 +35,20 @@ export async function loadAgentProjectContext(input: {
     projectId: input.projectId,
     project: { userId: input.userId },
   };
-  const episodeIndexRows = await prisma.episode.findMany({ where: owned,
-    orderBy: { episodeNumber: "asc" }, take: 500, select: { id: true, name: true, episodeNumber: true,
+  const scopes = new Set(input.contextScopes ?? DEFAULT_STUDIO_AGENT_CONTEXT_SCOPES);
+  const includeMaterials = scopes.has("project_materials");
+  const includeEpisode = scopes.has("current_episode") && Boolean(input.episodeId);
+  const includeAssets = scopes.has("character_assets");
+  const includeSelectedShot = scopes.has("selected_shot") && Boolean(input.selectionId || input.detailIds?.length);
+  const episodeIndexRows = scopes.has("current_episode") ? await prisma.episode.findMany({
+    where: { ...owned, ...(input.episodeId ? { id: input.episodeId } : {}) },
+    orderBy: { episodeNumber: "asc" }, take: input.episodeId ? 1 : 500, select: { id: true, name: true, episodeNumber: true,
       activeSourceKind: true, _count: { select: { clips: true, voiceLines: true } },
       clips: { where: { screenplay: null }, take: 1, select: { id: true } },
-      storyboard: { select: { _count: { select: { panels: true } } } } } });
-  const detailIds = input.detailIds ?? [];
-  const matchingIds = episodeIndexRows.filter(item => item.id === input.episodeId || detailIds.includes(item.id) ||
-    input.request.includes(item.name) || input.request.includes(`第${item.episodeNumber}集`)).map(item => item.id);
+      storyboard: { select: { _count: { select: { panels: true } } } } } }) : [];
+  const detailIds = includeSelectedShot
+    ? [...new Set([...(input.detailIds ?? []), ...(input.selectionId ? [input.selectionId] : [])])]
+    : [];
   const [
     episodes,
     characters,
@@ -48,14 +59,9 @@ export async function loadAgentProjectContext(input: {
     media,
     manuscripts,
   ] = await Promise.all([
-    prisma.episode.findMany({
-      where: { ...owned, OR: [
-        { id: { in: [...matchingIds, ...(input.episodeId ? [input.episodeId] : [])] } },
-        { sourceVersions: { some: { id: { in: detailIds } } } },
-        { storyboard: { panels: { some: { id: { in: detailIds } } } } },
-        { voiceLines: { some: { id: { in: detailIds } } } },
-      ] },
-      take: 8,
+    includeEpisode ? prisma.episode.findMany({
+      where: { ...owned, id: input.episodeId },
+      take: 1,
       orderBy: { episodeNumber: "asc" },
       select: {
         id: true,
@@ -78,6 +84,7 @@ export async function loadAgentProjectContext(input: {
             version: true,
             status: true,
             panels: {
+              where: { id: { in: detailIds } },
               take: 100,
               orderBy: { panelIndex: "asc" },
               select: {
@@ -131,11 +138,11 @@ export async function loadAgentProjectContext(input: {
         },
         canvas: { select: { revision: true, document: true } },
       },
-    }),
-    listNovelCharacters(input.userId, input.projectId),
-    listNovelLocations(input.userId, input.projectId),
-    listProductionProps(input.userId, input.projectId),
-    prisma.voicePreset.findMany({
+    }) : Promise.resolve([]),
+    includeAssets ? listNovelCharacters(input.userId, input.projectId) : Promise.resolve([]),
+    includeAssets ? listNovelLocations(input.userId, input.projectId) : Promise.resolve([]),
+    includeAssets ? listProductionProps(input.userId, input.projectId) : Promise.resolve([]),
+    includeAssets ? prisma.voicePreset.findMany({
       where: {
         userId: input.userId,
         OR: [{ projectId: input.projectId }, { projectId: null }],
@@ -147,8 +154,8 @@ export async function loadAgentProjectContext(input: {
         language: true,
         gender: true,
       },
-    }),
-    prisma.productionDeliverable.findMany({
+    }) : Promise.resolve([]),
+    includeMaterials ? prisma.productionDeliverable.findMany({
       where: { projectId: input.projectId, userId: input.userId },
       orderBy: { updatedAt: "desc" },
       take: 100,
@@ -160,8 +167,8 @@ export async function loadAgentProjectContext(input: {
         status: true,
         version: true,
       },
-    }),
-    prisma.mediaAsset.findMany({
+    }) : Promise.resolve([]),
+    includeAssets ? prisma.mediaAsset.findMany({
       where: { task: { userId: input.userId, projectId: input.projectId } },
       orderBy: { createdAt: "desc" },
       take: 200,
@@ -182,8 +189,8 @@ export async function loadAgentProjectContext(input: {
           },
         },
       },
-    }),
-    prisma.manuscript.findMany({
+    }) : Promise.resolve([]),
+    includeMaterials ? prisma.manuscript.findMany({
       where: owned,
       take: 50,
       orderBy: { createdAt: "desc" },
@@ -195,18 +202,27 @@ export async function loadAgentProjectContext(input: {
         sourceFileName: true,
         charCount: true,
       },
-    }),
+    }) : Promise.resolve([]),
   ]);
   const sourcePresence = episodeIndexRows.length ? await prisma.$queryRaw<Array<{ id: string; present: boolean }>>(Prisma.sql`
     SELECT id, COALESCE(length(trim(novel_text)) > 0, false) AS present FROM episodes
     WHERE id IN (${Prisma.join(episodeIndexRows.map(item => item.id))})`) : [];
-  const originalPlans = await prisma.$queryRaw<Array<{ id: string; title: string; episodeIds: string[]; outlines: unknown }>>(Prisma.sql`
+  const originalPlans = includeMaterials ? await prisma.$queryRaw<Array<{ id: string; title: string; episodeIds: string[]; outlines: unknown }>>(Prisma.sql`
     SELECT id, title, payload->'adoption'->'episodeIds' AS "episodeIds", payload->'storyPackage'->'episodeOutlines' AS outlines
     FROM production_deliverables WHERE project_id = ${input.projectId} AND user_id = ${input.userId}
       AND status IN ('approved', 'locked') AND superseded_at IS NULL AND payload->>'packageFormat' = 'cyanyi-story-package-v1'
-      AND payload->'adoption' IS NOT NULL ORDER BY updated_at DESC LIMIT 5`);
-  const requestedDeliverables = deliverables.filter(item => detailIds.includes(item.id) || input.request.includes(item.title) ||
-    /世界观|制作规范|world|bible/i.test(input.request)).slice(0, 8).map(item => item.id);
+      AND payload->'adoption' IS NOT NULL ORDER BY updated_at DESC LIMIT 5`) : [];
+  const requestedDeliverables = includeMaterials
+    ? deliverables
+        .filter(
+          (item) =>
+            detailIds.includes(item.id) ||
+            input.request.includes(item.title) ||
+            /世界观|制作规范|world|bible/i.test(input.request),
+        )
+        .slice(0, 8)
+        .map((item) => item.id)
+    : [];
   const deliverablePayloads = requestedDeliverables.length ? await prisma.$queryRaw<Array<{ id: string; payload: unknown }>>(Prisma.sql`
     SELECT id, CASE WHEN payload->>'packageFormat' = 'cyanyi-manuscript-dossier-v1'
       THEN jsonb_build_object('packageFormat', payload->'packageFormat', 'summary', payload->'summary',
@@ -215,12 +231,23 @@ export async function loadAgentProjectContext(input: {
   const episodeTexts = episodes.length ? await prisma.$queryRaw<Array<{ id: string; text: string | null; length: number }>>(Prisma.sql`
     SELECT id, substring(novel_text from 1 for 12000) AS text, char_length(novel_text)::int AS length
     FROM episodes WHERE id IN (${Prisma.join(episodes.map(item => item.id))})`) : [];
-  const requestedSourceIds = episodes.flatMap(item => item.sourceVersions.filter((source, index) =>
-    detailIds.includes(source.id) || (index < 3 && /原文|稿件|版本|source|version/i.test(input.request))).map(source => source.id));
+  const requestedSourceIds = includeMaterials
+    ? episodes.flatMap((item) =>
+        item.sourceVersions
+          .filter(
+            (source, index) =>
+              detailIds.includes(source.id) ||
+              (index < 3 && /原文|稿件|版本|source|version/i.test(input.request)),
+          )
+          .map((source) => source.id),
+      )
+    : [];
   const sourceTexts = requestedSourceIds.length ? await prisma.$queryRaw<Array<{ id: string; text: string; length: number }>>(Prisma.sql`
     SELECT id, substring(content from 1 for 12000) AS text, char_length(content)::int AS length
     FROM episode_source_versions WHERE id IN (${Prisma.join(requestedSourceIds)})`) : [];
-  const requestedManuscripts = manuscripts.filter(item => detailIds.includes(item.id) || input.request.includes(item.title)).map(item => item.id);
+  const requestedManuscripts = includeMaterials
+    ? manuscripts.filter(item => detailIds.includes(item.id) || input.request.includes(item.title)).map(item => item.id)
+    : [];
   const manuscriptTexts = requestedManuscripts.length ? await prisma.$queryRaw<Array<{ id: string; text: string; length: number }>>(Prisma.sql`
     SELECT id, substring(source_text from 1 for 12000) AS text, char_length(source_text)::int AS length
     FROM manuscripts WHERE id IN (${Prisma.join(requestedManuscripts)})`) : [];
@@ -391,8 +418,14 @@ export async function loadAgentProjectContext(input: {
         canvas: canvas.success
           ? {
               revision: item.canvas!.revision,
-              nodes: canvas.data.nodes,
-              edges: canvas.data.edges,
+              nodes: canvas.data.nodes.filter(
+                (node) =>
+                  detailIds.includes(node.id) ||
+                  (node.panelId ? detailIds.includes(node.panelId) : false),
+              ),
+              edges: canvas.data.edges.filter((edge) =>
+                detailIds.includes(edge.from) || detailIds.includes(edge.to),
+              ),
             }
           : null,
       };

@@ -10,13 +10,33 @@ vi.mock("@/lib/queue/workflow-queue", () => ({ enqueueWorkflowJob: vi.fn() }));
 vi.mock("@/lib/settings/runtime-store", () => ({ loadUserRuntimeSettings: vi.fn() }));
 
 import { analyzeManuscript, manuscriptAnalysisConcurrency, type ManuscriptNotes } from "./manuscript-analysis";
-import { chunkSource, sourceFingerprint } from "./long-source";
+import { chunkSource } from "./long-source";
+import { workflowCacheFingerprint } from "@/lib/workflow/cache-fingerprint";
+import { PROMPT_IDS, renderPrompt } from "@/lib/prompts";
+import { ManuscriptNotesSchema } from "./source-notes-schema";
+import { z } from "zod";
 
 const input = {
   userId: "user", projectId: "project", manuscriptId: "manuscript", sourceHash: "hash",
   channelId: "channel", model: "test", locale: "zh" as const,
 };
 const notes = (summary: string): ManuscriptNotes => ({ summary, characters: [], locations: [], props: [], rules: [] });
+function cacheKey(ref: string, text: string) {
+  const prompt = renderPrompt({ id: PROMPT_IDS.SOURCE_NOTES, locale: input.locale, variables: {
+    source_text: text,
+    output_schema: JSON.stringify(z.toJSONSchema(ManuscriptNotesSchema)),
+    extraction_task: "提取本段明确发生的事件及人物、场景、道具、世界规则。概要以约 600 字为目标，实体详情约 100 字，包含短引用；关键事实需要时可用结构允许的完整长度。",
+  } });
+  return workflowCacheFingerprint({
+    source: { manuscriptId: input.manuscriptId, sourceHash: input.sourceHash, ref, text },
+    prompt,
+    promptVersion: "source-notes-v2",
+    channelId: input.channelId,
+    model: input.model,
+    agentConfiguration: null,
+    parameters: { temperature: 0.2, timeoutMs: 120_000, stream: false, schema: z.toJSONSchema(ManuscriptNotesSchema) },
+  });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -31,7 +51,7 @@ describe("parallel manuscript analysis", () => {
     const sourceText = Array.from({ length: 8 }, (_, index) => `SEGMENT${index}`.padEnd(12_000, "文")).join("");
     mocks.manuscript.mockResolvedValue({ id: "manuscript", sourceHash: "hash", sourceText, title: "原著" });
     const chunks = chunkSource(sourceText);
-    const key = sourceFingerprint({ ref: "0:12000", text: chunks[0].text, model: "test", channel: "channel", version: 1 });
+    const key = cacheKey("0:12000", chunks[0].text);
     const artifacts = new Map<string, unknown>([[`manuscript.chunk:${key}`, notes("cached-first")]]);
     const requests: number[] = [];
     const merges: string[][] = [];
@@ -54,11 +74,13 @@ describe("parallel manuscript analysis", () => {
       return { data: notes("merged"), trace: { model: "test" } };
     });
     const reportProgress = vi.fn<(message: string) => Promise<void>>(async () => {});
+    const recordRequest = vi.fn(async () => {});
     const result = await analyzeManuscript(input, {
       assertActive: async () => {},
       loadArtifact: async (type, ref) => artifacts.get(`${type}:${ref}`) ?? null,
       persistArtifact: async (type, ref, data) => { artifacts.set(`${type}:${ref}`, data); },
       reportProgress,
+      recordRequest,
     });
     expect(result).toEqual({ deliverableId: "deliverable", chunkCount: 8 });
     expect(requests.sort()).toEqual([1, 2, 3, 4, 5, 6, 7]);
@@ -68,6 +90,11 @@ describe("parallel manuscript analysis", () => {
     const progress = reportProgress.mock.calls.map(call => call[0]);
     expect(progress.filter(message => message.startsWith("已提取"))).toEqual(
       Array.from({ length: 8 }, (_, index) => `已提取原著资料 ${index + 1}/8（3 路并发）`));
+    expect(recordRequest).toHaveBeenCalledWith(expect.objectContaining({
+      status: "succeeded", reused: true, reuseReason: "cache_fingerprint_match",
+      cacheVersion: "workflow-cache-v2", promptVersion: expect.any(String),
+      artifactRefs: [`manuscript.chunk:${key}`],
+    }));
   });
 
   it("uses a bounded concurrency setting", () => {
@@ -86,19 +113,24 @@ describe("parallel manuscript analysis", () => {
   it("reuses a previous run's valid notes without calling the model and copies the checkpoint", async () => {
     const sourceText = "原著正文";
     mocks.manuscript.mockResolvedValue({ id: "manuscript", sourceHash: "hash", sourceText, title: "原著" });
-    const refId = sourceFingerprint({ ref: `0:${sourceText.length}`, text: sourceText, model: "test", channel: "channel", version: 1 });
+    const refId = cacheKey(`0:${sourceText.length}`, sourceText);
     mocks.artifacts.mockResolvedValue([{ artifactType: "manuscript.chunk", refId, payload: notes("已有依据") }]);
     const persistArtifact = vi.fn(async () => {});
-    await analyzeManuscript(input, { assertActive: async () => {}, loadArtifact: async () => null, persistArtifact });
+    const recordRequest = vi.fn(async () => {});
+    await analyzeManuscript(input, { assertActive: async () => {}, loadArtifact: async () => null, persistArtifact, recordRequest });
     expect(mocks.request).not.toHaveBeenCalled();
     expect(persistArtifact).toHaveBeenCalledWith("manuscript.chunk", refId, notes("已有依据"));
     expect(mocks.artifacts.mock.calls[0][0].where.run).toMatchObject({ userId: "user", projectId: "project", targetId: "manuscript", input: { path: ["sourceHash"], equals: "hash" } });
+    expect(recordRequest).toHaveBeenCalledWith(expect.objectContaining({
+      status: "succeeded", reused: true, reuseReason: "previous_validated_artifact",
+      artifactRefs: [`manuscript.chunk:${refId}`],
+    }));
   });
 
   it("calls the model on explicit restart even if older runs contain valid notes", async () => {
     const sourceText = "原著正文";
     mocks.manuscript.mockResolvedValue({ id: "manuscript", sourceHash: "hash", sourceText, title: "原著" });
-    const refId = sourceFingerprint({ ref: `0:${sourceText.length}`, text: sourceText, model: "test", channel: "channel", version: 1 });
+    const refId = cacheKey(`0:${sourceText.length}`, sourceText);
     mocks.artifacts.mockResolvedValue([{ artifactType: "manuscript.chunk", refId, payload: notes("旧结果") }]);
     mocks.request.mockResolvedValue({ data: notes("新结果"), trace: { model: "test" } });
     await analyzeManuscript(input, {

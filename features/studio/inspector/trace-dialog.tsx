@@ -30,10 +30,14 @@ import type {
 import { StatusIndicator } from "../components/status-indicator";
 import {
   buildTraceRows,
+  formatElapsedDuration,
   localizedTraceAttributes,
   traceEventDisplayStatus,
   traceEventLabel,
   traceEventSourceLabel,
+  traceAgentLabel,
+  traceArtifactLabel,
+  traceConfigurationSources,
   traceSpanKindLabel,
   traceSpanLabel,
 } from "./inspector-view-model";
@@ -42,7 +46,15 @@ const copy = {
   "zh-CN": {
     attributes: "属性",
     completed: "完成时间",
+    duration: "耗时",
     events: "事件",
+    agent: "执行 Agent",
+    modelChannel: "模型 / 渠道",
+    promptVersion: "提示词版本",
+    configurationSources: "配置来源版本",
+    noConfigurationSources: "未记录配置覆盖来源",
+    savedArtifacts: "已记录产物",
+    relatedObject: "关联对象",
     kind: "类型",
     loadFailed: "Trace 载入失败",
     loading: "正在载入 Trace",
@@ -56,7 +68,15 @@ const copy = {
   en: {
     attributes: "Attributes",
     completed: "Completed",
+    duration: "Duration",
     events: "Events",
+    agent: "Agent",
+    modelChannel: "Model / channel",
+    promptVersion: "Prompt version",
+    configurationSources: "Configuration source versions",
+    noConfigurationSources: "No configuration overrides recorded",
+    savedArtifacts: "Recorded artifacts",
+    relatedObject: "Related object",
     kind: "Kind",
     loadFailed: "Unable to load trace",
     loading: "Loading trace",
@@ -138,6 +158,9 @@ export function TraceDialog({
     for (const event of trace?.events ?? []) latest.set(event.spanId, event.id);
     return latest;
   }, [trace?.events]);
+  const savedArtifactCount = trace?.events.filter(
+    (event) => event.type === "artifact_committed" && event.artifactType,
+  ).length ?? 0;
 
   return (
     <Dialog onOpenChange={onOpenChange} open={Boolean(traceId)}>
@@ -232,6 +255,9 @@ export function TraceDialog({
             >
               {trace.events.length ? (
                 <div className="divide-y">
+                  <p className="sticky top-0 z-10 border-b bg-background/95 px-5 py-2 text-xs text-muted-foreground backdrop-blur">
+                    {text.savedArtifacts}: {savedArtifactCount}
+                  </p>
                   {trace.events.map((event) => {
                     const displayStatus = traceEventDisplayStatus(
                       event,
@@ -245,7 +271,7 @@ export function TraceDialog({
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start gap-2">
                               <p className="min-w-0 flex-1 truncate text-xs font-medium">
-                                {traceEventLabel(event.type, locale)}
+                                {traceEventLabel(event.type, locale, event.message)}
                               </p>
                               {displayStatus ? (
                                 <StatusIndicator
@@ -261,6 +287,16 @@ export function TraceDialog({
                               <p className="mt-1 text-xs leading-5 text-muted-foreground">
                                 {event.message}
                               </p>
+                            ) : null}
+                            {event.type === "artifact_committed" && event.artifactType ? (
+                              <div className="mt-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                                <p className="font-medium">{traceArtifactLabel(event.artifactType, locale)}</p>
+                                {event.artifactRefId ? (
+                                  <p className="mt-1 break-all text-muted-foreground">
+                                    {text.relatedObject}: <span className="font-mono">{event.artifactRefId}</span>
+                                  </p>
+                                ) : null}
+                              </div>
                             ) : null}
                             <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground/75">
                               {traceEventSourceLabel(event.source, locale)} ·{" "}
@@ -329,7 +365,48 @@ function SpanDetails({
             span.completedAt ? formatStudioDate(locale, span.completedAt) : "-"
           }
         />
+        <Detail
+          label={text.duration}
+          value={formatElapsedDuration(span.startedAt, span.completedAt, locale)}
+        />
       </dl>
+      {span.kind === "prompt" ? (
+        <section aria-label={text.agent} className="mt-4 rounded-lg border bg-muted/20 p-3">
+          <h4 className="text-xs font-semibold">{text.agent}</h4>
+          <dl className="mt-3 grid gap-x-5 gap-y-3 text-xs sm:grid-cols-2">
+            <Detail
+              label={text.agent}
+              value={typeof span.attributes.agentId === "string"
+                ? traceAgentLabel(span.attributes.agentId, locale)
+                : "-"}
+            />
+            <Detail
+              label={text.modelChannel}
+              value={[span.attributes.model, span.attributes.channelName ?? span.attributes.channelId]
+                .filter((value): value is string => typeof value === "string" && Boolean(value))
+                .join(" · ") || "-"}
+            />
+            <Detail
+              label={text.promptVersion}
+              value={typeof span.attributes.promptVersion === "string" || typeof span.attributes.promptVersion === "number"
+                ? String(span.attributes.promptVersion)
+                : "-"}
+            />
+          </dl>
+          <div className="mt-3 border-t pt-3 text-xs">
+            <p className="text-muted-foreground">{text.configurationSources}</p>
+            {traceConfigurationSources(span.attributes.configurationSources, locale).length ? (
+              <ul className="mt-1 space-y-1">
+                {traceConfigurationSources(span.attributes.configurationSources, locale).map((source) => (
+                  <li className="break-all font-mono" key={source}>{source}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1 text-muted-foreground">{text.noConfigurationSources}</p>
+            )}
+          </div>
+        </section>
+      ) : null}
       <h4 className="mt-4 text-xs font-semibold">{text.attributes}</h4>
       <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap wrap-break-word rounded-md bg-muted/50 p-3 font-mono text-[11px] leading-5">
         {JSON.stringify(localizedTraceAttributes(span.attributes, locale), null, 2)}

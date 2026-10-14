@@ -1,4 +1,4 @@
-import type { MediaTaskKind } from "@/lib/media/task-contract";
+import type { MediaTaskExecutionPhase, MediaTaskKind } from "@/lib/media/task-contract";
 
 import type {
   StudioLocale,
@@ -141,6 +141,42 @@ export function workflowLabel(locale: StudioLocale, value: string) {
   return (
     lookup(labels[locale].workflows, value) ?? labels[locale].generationTask
   );
+}
+
+const executionPhaseLabels: Record<StudioLocale, Record<MediaTaskExecutionPhase, string>> = {
+  "zh-CN": {
+    queued: "等待后台队列处理",
+    waiting_quota: "等待模型请求名额",
+    connecting: "连接服务中",
+    request_sent: "请求已发送",
+    submitted: "服务端任务已受理",
+    generating: "模型生成中",
+    downloading: "下载结果中",
+    saving: "保存产物中",
+    succeeded: "已完成",
+    failed: "失败",
+    canceled: "已取消",
+  },
+  en: {
+    queued: "Waiting for background queue",
+    waiting_quota: "Waiting for model capacity",
+    connecting: "Connecting",
+    request_sent: "Request sent",
+    submitted: "Provider task accepted",
+    generating: "Generating",
+    downloading: "Downloading result",
+    saving: "Saving output",
+    succeeded: "Complete",
+    failed: "Failed",
+    canceled: "Canceled",
+  },
+};
+
+export function mediaTaskExecutionPhaseLabel(
+  locale: StudioLocale,
+  phase?: MediaTaskExecutionPhase,
+) {
+  return executionPhaseLabels[locale][phase ?? "queued"];
 }
 
 export function workflowStepLabel(locale: StudioLocale, value: string) {

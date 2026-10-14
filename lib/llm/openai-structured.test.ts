@@ -7,6 +7,7 @@ import {
   buildStructuredResponseFormat,
   requestOpenAiStructured,
 } from "./openai-structured";
+import { StructuredOutputError } from "./structured-output";
 
 const schema = z.object({ value: z.number() }).strict();
 
@@ -120,8 +121,53 @@ describe("OpenAI structured requests", () => {
         outputTokens: 4,
         totalTokens: 16,
       },
+      characterUsage: { inputCharacters: expect.any(Number), outputCharacters: expect.any(Number), totalCharacters: expect.any(Number) },
+      requestCount: 1,
     });
     expect(result.trace.outputHash).toHaveLength(64);
+  });
+
+  it("keeps a safe token and output-hash trace when model output fails JSON validation", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse("plain text that is not JSON", {
+        prompt_tokens: 25,
+        completion_tokens: 7,
+        total_tokens: 32,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    let failure: unknown;
+    try {
+      await requestOpenAiStructured({
+        baseUrl: "https://provider.test/v1",
+        apiKeys: ["test-key"],
+        model: "test-model",
+        channelId: "channel-1",
+        prompt: renderPrompt({
+          id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS,
+          variables: { source_text: "source", character_library: "[]" },
+        }),
+        schema,
+        stream: false,
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(StructuredOutputError);
+    expect(failure).toMatchObject({
+      code: "STRUCTURED_SCHEMA_INVALID",
+      executionTrace: {
+        model: "test-model",
+        channelId: "channel-1",
+        correctionAttempts: 0,
+        tokenUsage: { inputTokens: 25, outputTokens: 7, totalTokens: 32 },
+      },
+    });
+    expect((failure as StructuredOutputError).executionTrace?.outputHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify((failure as StructuredOutputError).executionTrace)).not.toContain(
+      "plain text that is not JSON",
+    );
   });
 
   it("supports non-streaming structured responses", async () => {

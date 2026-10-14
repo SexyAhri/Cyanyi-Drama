@@ -6,6 +6,7 @@ import {
   type ProjectAssetTarget,
 } from "@/lib/media/project-asset-tasks";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
+import { submitBatchItems } from "@/lib/media/batch-submission";
 
 type Context = { params: Promise<{ projectId: string }> };
 
@@ -36,12 +37,11 @@ export async function POST(request: Request, context: Context) {
     );
   }
 
-  const results: Array<{ item: BatchItem; task: unknown; entity: unknown }> = [];
   const batchId = `asset_batch_${randomUUID()}`;
   const mediaDefaults = await loadUserRuntimeSettings(user.id);
-  for (const item of items.slice(0, 50)) {
-    try {
-      const result = await createProjectImageTask({
+  const submitted = await submitBatchItems(
+    items.slice(0, 50),
+    async (item) => createProjectImageTask({
         userId: user.id,
         projectId,
         batchId,
@@ -54,24 +54,30 @@ export async function POST(request: Request, context: Context) {
         resolution: stringValue(body.resolution) || undefined,
         mediaDefaults,
         useSelectedReference: body.useSelectedReference !== false,
-      });
-      results.push({ item, ...result });
-    } catch (error) {
-      if (error instanceof ProjectAssetTaskError) {
-        return attachSessionCookie(
-          Response.json(
-            { message: error.message, item },
-            { status: error.status },
-          ),
-          sessionId,
-        );
-      }
-      throw error;
-    }
-  }
+      }),
+    (error) =>
+      error instanceof ProjectAssetTaskError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : "资产图片任务提交失败",
+  );
+  const results = submitted.results.map(({ item, value }) => ({ item, ...value }));
 
   return attachSessionCookie(
-    Response.json({ batchId, count: results.length, results }, { status: 202 }),
+    Response.json(
+      {
+        batchId,
+        ...(results.length === 0 && submitted.failures.length
+          ? { message: submitted.failures[0].message }
+          : {}),
+        count: results.length,
+        results,
+        failures: submitted.failures,
+        summary: submitted.summary,
+      },
+      { status: results.length ? 202 : 400 },
+    ),
     sessionId,
   );
 }

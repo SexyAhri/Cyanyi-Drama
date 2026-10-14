@@ -135,8 +135,7 @@ function createStudioToolRegistry(locale: StudioLocale): ToolRegistry {
               : "根据当前设定生成完整策划包和第一集正文。"
             : description,
         showArgs:
-          name === "revise_screenplay" ||
-          name === "update_canvas_prompt",
+          name === "revise_screenplay" || name === "update_canvas_prompt",
         ...(name.startsWith("start_")
           ? {
               hideProcessDetails: true,
@@ -159,7 +158,7 @@ function createStudioToolRegistry(locale: StudioLocale): ToolRegistry {
                 locale === "en" ? "Live package output" : "策划包实时输出",
               renderProgress: ({ text }: { text: string }) => (
                 <div className="space-y-2">
-                  <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/60 p-3 font-mono text-[11px] leading-relaxed">
+                  <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-anywhere rounded-md bg-muted/60 p-3 font-mono text-[11px] leading-relaxed">
                     {text}
                   </pre>
                 </div>
@@ -209,7 +208,8 @@ export function AgentPanel({
   const text = directorAssistantCopy[locale];
   const [input, setInput] = useState("");
   const [scriptBrief, setScriptBrief] = useState("");
-  const [productionOptions, setProductionOptions] = useState<StudioProductionOptions>({});
+  const [productionOptions, setProductionOptions] =
+    useState<StudioProductionOptions>({});
   const [preparing, setPreparing] = useState(false);
   const submitting = useRef(false);
   const settingsId = useId();
@@ -247,19 +247,41 @@ export function AgentPanel({
     reset();
     setHistoryProject(null);
     try {
-      const saved: unknown = JSON.parse(localStorage.getItem(`studio:chat:${contextKey}`) ?? "[]");
-      if (Array.isArray(saved)) loadMessages(saved.slice(-100).flatMap(item => {
-        if (!item || typeof item.id !== "string" || (item.role !== "user" && item.role !== "assistant") || typeof item.content !== "string") return [];
-        const metadata = item.metadata && typeof item.metadata === "object" ? item.metadata : null;
-        const productionOptions = getStoredProductionOptions(metadata?.productionOptions);
-        return [{
-          id: item.id,
-          role: item.role,
-          content: item.content.slice(0, 16000),
-          ...(productionOptions ? { metadata: { productionOptions } } : {}),
-        }];
-      }));
-    } catch { /* Browser storage may be unavailable. */ }
+      const saved: unknown = JSON.parse(
+        localStorage.getItem(`studio:chat:${contextKey}`) ?? "[]",
+      );
+      if (Array.isArray(saved))
+        loadMessages(
+          saved.slice(-100).flatMap((item) => {
+            if (
+              !item ||
+              typeof item.id !== "string" ||
+              (item.role !== "user" && item.role !== "assistant") ||
+              typeof item.content !== "string"
+            )
+              return [];
+            const metadata =
+              item.metadata && typeof item.metadata === "object"
+                ? item.metadata
+                : null;
+            const productionOptions = getStoredProductionOptions(
+              metadata?.productionOptions,
+            );
+            return [
+              {
+                id: item.id,
+                role: item.role,
+                content: item.content.slice(0, 16000),
+                ...(productionOptions
+                  ? { metadata: { productionOptions } }
+                  : {}),
+              },
+            ];
+          }),
+        );
+    } catch {
+      /* Browser storage may be unavailable. */
+    }
     setHistoryProject(contextKey);
     setProductionOptions({});
     setInput("");
@@ -272,10 +294,14 @@ export function AgentPanel({
     if (historyProject !== contextKey || busy) return;
     try {
       const messages = agent.messages
-        .filter(message => message.role === "user" || message.role === "assistant")
+        .filter(
+          (message) => message.role === "user" || message.role === "assistant",
+        )
         .slice(-100)
         .map(({ id, role, content, metadata }) => {
-          const productionOptions = getStoredProductionOptions(metadata?.productionOptions);
+          const productionOptions = getStoredProductionOptions(
+            metadata?.productionOptions,
+          );
           return {
             id,
             role,
@@ -283,8 +309,13 @@ export function AgentPanel({
             ...(productionOptions ? { metadata: { productionOptions } } : {}),
           };
         });
-      localStorage.setItem(`studio:chat:${contextKey}`, JSON.stringify(messages));
-    } catch { /* Keep the current chat usable when storage is full. */ }
+      localStorage.setItem(
+        `studio:chat:${contextKey}`,
+        JSON.stringify(messages),
+      );
+    } catch {
+      /* Keep the current chat usable when storage is full. */
+    }
   }, [agent.messages, busy, contextKey, historyProject]);
   useEffect(() => {
     if (followTail.current && scrollPane.current)
@@ -349,9 +380,12 @@ export function AgentPanel({
           studioContext: context,
           productionOptions,
           conversation: history
-            .filter(message => message.role === "user" || message.role === "assistant")
+            .filter(
+              (message) =>
+                message.role === "user" || message.role === "assistant",
+            )
             .slice(-12)
-            .map(message => ({
+            .map((message) => ({
               role: message.role,
               content: message.content.slice(0, 4000),
             })),
@@ -373,9 +407,7 @@ export function AgentPanel({
     const message = value.trim();
     if (!message || busy || submitting.current) return;
     const activeBrief = scriptBrief;
-    const content = activeBrief
-      ? `${activeBrief}\n\n${message}`
-      : message;
+    const content = activeBrief ? `${activeBrief}\n\n${message}` : message;
     submitting.current = true;
     setPreparing(true);
     try {
@@ -392,7 +424,16 @@ export function AgentPanel({
           locale,
           studioContext: context,
           productionOptions,
-          conversation: agent.messages.filter(message => message.role === "user" || message.role === "assistant").slice(-12).map(message => ({ role: message.role, content: message.content.slice(0, 4000) })),
+          conversation: agent.messages
+            .filter(
+              (message) =>
+                message.role === "user" || message.role === "assistant",
+            )
+            .slice(-12)
+            .map((message) => ({
+              role: message.role,
+              content: message.content.slice(0, 4000),
+            })),
           studioAgentModel: selectedModel
             ? {
                 channelId: selectedModel.channelId,
@@ -559,17 +600,33 @@ export function AgentPanel({
             </span>
             {context.stageId === "writing" && context.view !== "canvas" ? (
               <>
-                <h3 className="text-base font-semibold">{locale === "en" ? "Start with a trending idea" : "从爆款题材开始"}</h3>
+                <h3 className="text-base font-semibold">
+                  {locale === "en"
+                    ? "Start with a trending idea"
+                    : "从爆款题材开始"}
+                </h3>
                 <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {SCRIPT_TRENDING_TOPICS.map((topic, index) => (
                     <button
                       className="flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2.5 text-left text-xs transition-colors hover:border-foreground/25 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       key={topic.title}
-                      onClick={() => setComposerDraft(locale === "en" ? `I'd like to create a short drama inspired by ${trendingTitle(topic.title)}.` : `我想创作一部${topic.title}：${topic.idea}`)}
+                      onClick={() =>
+                        setComposerDraft(
+                          locale === "en"
+                            ? `I'd like to create a short drama inspired by ${trendingTitle(topic.title)}.`
+                            : `我想创作一部${topic.title}：${topic.idea}`,
+                        )
+                      }
                       type="button"
                     >
-                      <span className="font-mono text-[10px] text-muted-foreground">#{index + 1}</span>
-                      <span className="truncate">{locale === "en" ? trendingTitle(topic.title) : topic.title}</span>
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        #{index + 1}
+                      </span>
+                      <span className="truncate">
+                        {locale === "en"
+                          ? trendingTitle(topic.title)
+                          : topic.title}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -641,7 +698,7 @@ export function AgentPanel({
           </p>
         )}
         <div className="rounded-2xl border bg-muted/25 p-1 transition-shadow focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15">
-          {(
+          {
             <div className="flex min-w-0 flex-wrap items-center gap-2 px-2 pt-1.5">
               <ScriptSetupDialog
                 locale={locale}
@@ -656,15 +713,31 @@ export function AgentPanel({
                 }}
                 projectArtStyle={snapshot.project.config.artStyle}
               />
-              <SplitNovelDialog locale={locale} models={models} onCompleted={onRefresh} projectId={snapshot.project.id}
-                trigger={<Button size="sm" variant="ghost" className="h-7 px-2 text-xs">{locale === "en" ? "Import novel" : "上传小说"}</Button>} />
+              <SplitNovelDialog
+                locale={locale}
+                models={models}
+                onCompleted={onRefresh}
+                projectId={snapshot.project.id}
+                trigger={
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs"
+                  >
+                    {locale === "en" ? "Import novel" : "上传小说"}
+                  </Button>
+                }
+              />
               {scriptBrief && (
-                <span className="min-w-0 truncate text-[10px] text-muted-foreground" title={scriptBrief}>
+                <span
+                  className="min-w-0 truncate text-[10px] text-muted-foreground"
+                  title={scriptBrief}
+                >
                   {scriptBrief.split("\n").slice(1).join(" · ")}
                 </span>
               )}
             </div>
-          )}
+          }
           <Textarea
             ref={composer}
             aria-label={text.ask}
@@ -743,7 +816,7 @@ export function AgentPanel({
               <summary className="cursor-pointer text-muted-foreground">
                 {text.errorDetails}
               </summary>
-              <p className="mt-2 max-h-28 overflow-y-auto whitespace-pre-wrap break-words leading-5 text-muted-foreground">
+              <p className="mt-2 max-h-28 overflow-y-auto whitespace-pre-wrap break-anywhere leading-5 text-muted-foreground">
                 {agent.error.message}
               </p>
             </details>
@@ -756,14 +829,14 @@ export function AgentPanel({
 
 function trendingTitle(title: string) {
   const labels: Record<string, string> = {
-    "玄幻修仙逆袭": "Fantasy cultivation comeback",
-    "现实职场成长": "Workplace growth",
-    "末世生存基建": "Post-apocalyptic survival",
-    "非遗国潮视觉": "Intangible heritage and culture",
-    "古代女频甜宠": "Historical romance",
-    "规则怪谈悬疑": "Rules-based mystery",
-    "重生复仇爽剧": "Rebirth revenge drama",
-    "仙门团宠日常": "Cultivation found family",
+    玄幻修仙逆袭: "Fantasy cultivation comeback",
+    现实职场成长: "Workplace growth",
+    末世生存基建: "Post-apocalyptic survival",
+    非遗国潮视觉: "Intangible heritage and culture",
+    古代女频甜宠: "Historical romance",
+    规则怪谈悬疑: "Rules-based mystery",
+    重生复仇爽剧: "Rebirth revenge drama",
+    仙门团宠日常: "Cultivation found family",
   };
   return labels[title] ?? title;
 }
@@ -775,10 +848,7 @@ function getStoredProductionOptions(value: unknown) {
     : null;
 }
 
-function findPreviousUserMessage(
-  messages: AgentMessage[],
-  messageId: string,
-) {
+function findPreviousUserMessage(messages: AgentMessage[], messageId: string) {
   const targetIndex = messages.findIndex((message) => message.id === messageId);
   if (targetIndex < 0) return null;
   for (let index = targetIndex - 1; index >= 0; index -= 1) {

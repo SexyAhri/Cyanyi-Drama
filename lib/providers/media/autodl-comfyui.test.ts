@@ -101,6 +101,32 @@ describe("AutoDL ComfyUI media provider", () => {
     });
   });
 
+  it("persists the accepted provider task id and resumes polling without resubmitting", async () => {
+    fetchWithProviderRetry.mockResolvedValueOnce(
+      Response.json({ code: "Success", data: { status: "SUCCESS", results: [{ url: "https://cdn.test/recovered.mp4", type: "video", file_type: "mp4" }] } }),
+    );
+    const phases: string[] = [];
+    const result = await autoDlComfyUiMediaProvider.resume!(
+      {
+        protocol: "autodl-comfyui",
+        providerKey: "autodl",
+        baseUrl: "https://autodl.art/api/v1",
+        apiKey: "token-value",
+        model: "minimax_h3_lightx2v_v5_15s",
+        kind: "video",
+        request: { prompt: "frozen input" },
+        onExecutionPhase: async phase => { phases.push(phase); },
+      },
+      "provider-task-recovered",
+    );
+
+    expect(fetchWithProviderRetry).toHaveBeenCalledOnce();
+    expect(fetchWithProviderRetry.mock.calls[0][0]).toContain("result/provider-task-recovered");
+    expect(fetchWithProviderRetry.mock.calls[0][1].method).toBe("GET");
+    expect(phases).toEqual(["generating"]);
+    expect(result[0]).toMatchObject({ url: "https://cdn.test/recovered.mp4", metadata: { providerTaskId: "provider-task-recovered" } });
+  });
+
   it("maps IndexTTS2 reference voice and emotion fields", async () => {
     fetchWithProviderRetry
       .mockResolvedValueOnce(

@@ -155,6 +155,8 @@ export async function analyzeEpisodeVoices(input: VoiceAnalyzeInput) {
     try {
       const analyzed = await requestVoiceAnalysis({
         baseUrl: channel.baseUrl,
+        billing: { userId: input.userId, projectId: input.projectId, episodeId: input.episodeId },
+        channelId: input.channelId,
         apiKeys: keys,
         model: input.model,
         locale: input.locale ?? "zh",
@@ -499,6 +501,8 @@ function escapeRegex(value: string) {
 }
 
 function requestVoiceAnalysis(input: {
+  billing?: import("@/lib/billing/context").ModelBillingIdentity;
+  channelId?: string;
   baseUrl: string;
   apiKeys: string[];
   model: string;
@@ -512,6 +516,8 @@ function requestVoiceAnalysis(input: {
   maxTransportAttempts?: number;
 }) {
   return requestOpenAiStructured({
+    billing: input.billing,
+    channelId: input.channelId,
     baseUrl: input.baseUrl,
     apiKeys: input.apiKeys,
     model: input.model,

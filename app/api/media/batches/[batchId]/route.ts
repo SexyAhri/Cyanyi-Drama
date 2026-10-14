@@ -1,6 +1,5 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { createDatabaseMediaTaskStore } from "@/lib/media/task-store";
-import { cancelMediaJob } from "@/lib/queue/media-queue";
 import { controlMediaTask } from "@/lib/media/task-actions";
 
 type Context = { params: Promise<{ batchId: string }> };
@@ -39,10 +38,16 @@ export async function POST(request: Request, context: Context) {
     const updated = [];
     for (const task of tasks) {
       if (task.status !== "queued" && task.status !== "running") continue;
-      const canceled = await store.requestCancel(task.id);
-      if (canceled) {
-        await cancelMediaJob(task.queueJobId ?? task.id).catch(() => undefined);
+      try {
+        const canceled = await controlMediaTask({
+          action: "cancel",
+          taskId: task.id,
+          userId: user.id,
+          projectId: task.projectId,
+        });
         updated.push(canceled);
+      } catch {
+        // Another worker or cancellation request may have changed this item; keep processing the batch.
       }
     }
     return attachSessionCookie(

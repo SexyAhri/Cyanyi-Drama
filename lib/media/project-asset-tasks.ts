@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { resolveProductionConfiguration } from "@/lib/production-configuration/store";
 import { soundPolicyAudioMode, soundPolicyInstructions } from "@/lib/production-configuration/contract";
+import { resolveProductionRequestConfiguration, productionConfigurationFingerprint, assertPreviewConfiguration, mediaRequestPreviewFingerprint, assertPreviewRequest } from "@/lib/production-configuration/execution";
+import type { ProductionConfigurationSnapshot } from "@/lib/production-configuration/contract";
+import { resolveVideoProductionCapabilities, videoProductionIssues, normalizeVideoProductionParameters, type VideoProductionCapabilities } from "./video-production-capabilities";
+import { resolveVideoVoiceReferences } from "./video-voice-references";
 
 import { prisma } from "@/lib/server/prisma";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
@@ -18,7 +21,7 @@ import {
 } from "@/lib/assets/project-store";
 import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
 import type { ChannelProtocol } from "@/lib/agent/provider-types";
-import type { MediaReferenceImage } from "@/lib/providers/media/types";
+import type { MediaReferenceImage, MediaReferenceAudio } from "@/lib/providers/media/types";
 import { sanitizeMediaPrompt } from "@/lib/media/provider-prompt-safety";
 import {
   applyProjectArtStyle,
@@ -320,6 +323,10 @@ export async function createStoryboardPanelImageTask(input: {
 }
 
 export async function createStoryboardPanelVideoTask(input: {
+  executionVersion?: number;
+  regeneratedFromTaskId?: string;
+  previewConfigurationHash?: string;
+  previewRequestHash?: string;
   idempotencyKey?: string;
   canvasNodeId?: string;
   userId: string;
@@ -399,7 +406,8 @@ export async function createStoryboardPanelVideoTask(input: {
   });
   if (!panel) throw new ProjectAssetTaskError("分镜格不存在", 404);
   assertStoryboardApprovedForMedia(panel.storyboard.status);
-  const productionConfiguration = await resolveProductionConfiguration(input.userId, input);
+  const productionConfiguration = await resolveProductionRequestConfiguration(input.userId, input);
+  assertPreviewConfiguration(productionConfiguration, input.previewConfigurationHash);
   const rawBasePrompt =
     input.prompt?.trim() ||
     (input.mode === "first-last"
@@ -424,6 +432,10 @@ export async function createStoryboardPanelVideoTask(input: {
     protocol: channel.protocol,
     capabilities: parseStoredJsonValue(selectedModel.capabilitiesJson, {}),
   });
+  const productionCapabilities = resolveVideoProductionCapabilities({ model: input.model, protocol: channel.protocol, capabilities: parseStoredJsonValue(selectedModel.capabilitiesJson, {}) });
+  const blockers = videoProductionIssues(productionCapabilities, productionConfiguration.sound).filter(issue => issue.blocking);
+  if (blockers.length) throw new ProjectAssetTaskError(blockers.map(issue => issue.message).join("；"), 400);
+  const referenceAudios = await resolveVideoVoiceReferences(input.userId, productionConfiguration.sound, productionCapabilities);
   if (input.mode === "first-last" && limits.maxReferenceImages < 2)
     throw new ProjectAssetTaskError(
       "当前视频模型不支持同时提交首帧和尾帧",
@@ -537,6 +549,7 @@ export async function createStoryboardPanelVideoTask(input: {
   );
   const generationId = input.idempotencyKey ?? randomUUID();
   const tasks = segments.map((segment) => {
+    const parameters = normalizeVideoProductionParameters({ model: input.model, protocol: channel.protocol as ChannelProtocol, capabilities: productionCapabilities, ratio: input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9", resolution: input.resolution ?? input.mediaDefaults?.videoGenerationResolution ?? "1080p", durationSeconds: segment.durationSeconds, mode: input.mode, referenceAudioCount: referenceAudios.length });
     const segmentId = storyboardVideoSegmentId(panel.id, segment.index);
     return createMediaTask({
       id: `media_task_${randomUUID()}`,
@@ -555,18 +568,17 @@ export async function createStoryboardPanelVideoTask(input: {
         prompt: segment.prompt,
         deferredSelection: true,
         generationId,
+        ...(input.executionVersion ? { executionVersion: input.executionVersion, regeneratedFromTaskId: input.regeneratedFromTaskId } : {}),
         ...(input.canvasNodeId ? {canvasNodeId:input.canvasNodeId,canvasDeferredSelection:true,canvasGenerationId:input.idempotencyKey} : {}),
         ...(input.iteration ? { generationIteration: input.iteration } : {}),
-        ratio:
-          input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9",
-        resolution:
-          input.resolution ??
-          input.mediaDefaults?.videoGenerationResolution ??
-          "1080p",
-        duration: `${segment.durationSeconds}s`,
+        ratio: parameters.ratio,
+        resolution: parameters.resolution,
+        duration: parameters.duration,
         format: "mp4",
         audioMode: soundPolicyAudioMode(productionConfiguration.sound),
         productionConfiguration,
+        productionCapabilities,
+        ...(referenceAudios.length ? { referenceAudios } : {}),
         videoMode: input.mode ?? "reference",
         videoSegmentId: segmentId,
         videoSegmentIndex: segment.index,
@@ -580,6 +592,7 @@ export async function createStoryboardPanelVideoTask(input: {
     });
   });
   const store = createDatabaseMediaTaskStore(input.userId);
+  assertPreviewRequest(mediaRequestPreviewFingerprint(tasks), input.previewRequestHash);
   for (const task of tasks) await store.create(task);
   const queued = [];
   for (const task of tasks)
@@ -590,7 +603,7 @@ export async function createStoryboardPanelVideoTask(input: {
     panel: {
       id: panel.id,
       referenceCount: selectedReferences.length,
-      referenceAudioCount: 0,
+      referenceAudioCount: referenceAudios.length,
       segmentCount: segments.length,
       segments: segments.map((segment) => ({
         index: segment.index,
@@ -603,6 +616,11 @@ export async function createStoryboardPanelVideoTask(input: {
 }
 
 export type StoryboardPromptPreview = {
+  capabilities?: VideoProductionCapabilities;
+  productionConfiguration?: ProductionConfigurationSnapshot;
+  configurationHash?: string;
+  requestHash?: string;
+  parameters?: Record<string, unknown>;
   basePrompt: string;
   compiledPrompt: string;
   finalPrompt: string;
@@ -719,11 +737,15 @@ export async function previewStoryboardPanelPrompt(input: {
     });
 
   if (input.kind === "video") {
-    const productionConfiguration = await resolveProductionConfiguration(input.userId, input);
+    const productionConfiguration = await resolveProductionRequestConfiguration(input.userId, input);
     const audioMode = soundPolicyAudioMode(productionConfiguration.sound);
     const compiledPrompt = basePrompt ? lockVideoAudioPerformance(basePrompt, { ...panel, soundPolicy: productionConfiguration.sound }) : "";
     let limits = { maxDurationSeconds: 10, maxReferenceImages: 1 };
     let outputResolution = input.resolution ?? input.mediaDefaults?.videoGenerationResolution ?? "1080p";
+    let productionCapabilities: VideoProductionCapabilities | undefined;
+    let referenceAudioCount = 0;
+    let previewAudios: MediaReferenceAudio[] = [];
+    let videoProtocol: ChannelProtocol | undefined;
     if (input.channelId && input.model) {
       const channel = await prisma.channel.findFirst({
         where: accessibleChannelWhere(input.userId, input.channelId),
@@ -745,6 +767,13 @@ export async function previewStoryboardPanelPrompt(input: {
             {},
           ),
         });
+      if (channel && isMediaChannelProtocol(channel.protocol)) {
+        videoProtocol = channel.protocol;
+        productionCapabilities = resolveVideoProductionCapabilities({ model: input.model, protocol: channel.protocol, capabilities: parseStoredJsonValue(channel.models?.[0]?.capabilitiesJson, {}) });
+        issues.push(...videoProductionIssues(productionCapabilities, productionConfiguration.sound));
+        try { previewAudios = await resolveVideoVoiceReferences(input.userId, productionConfiguration.sound, productionCapabilities); referenceAudioCount = previewAudios.length; }
+        catch (error) { issues.push({ blocking: true, code: "voice_reference_unavailable", message: error instanceof Error ? error.message : "参考音频不可用" }); }
+      }
       if (channel?.protocol === "autodl-comfyui") {
         const workflow = getAutoDlWorkflow(input.model);
         if (workflow) outputResolution = autoDlResolution(workflow, input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9", outputResolution);
@@ -761,6 +790,15 @@ export async function previewStoryboardPanelPrompt(input: {
       maxDurationSeconds: limits.maxDurationSeconds,
       prompt: compiledPrompt,
     });
+    let actualDurations = segments.map(segment => `${segment.durationSeconds}s`);
+    if (productionCapabilities && videoProtocol && input.model) {
+      try {
+        const normalized = segments.map(segment => normalizeVideoProductionParameters({ model: input.model!, protocol: videoProtocol!, capabilities: productionCapabilities!, ratio: input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9", resolution: outputResolution, durationSeconds: segment.durationSeconds, mode: input.mode, referenceAudioCount }));
+        actualDurations = normalized.map(item => item.duration);
+        outputResolution = normalized[0].resolution;
+        if (normalized.some((item, index) => item.durationSeconds !== segments[index].durationSeconds)) issues.push({ blocking: false, code: "model_minimum_duration", message: `模型最短片段为 ${productionCapabilities.minDurationSeconds} 秒；实际请求：${actualDurations.join(" + ")}` });
+      } catch (error) { issues.push({ blocking: true, code: "unsupported_parameters", message: error instanceof Error ? error.message : "模型参数不支持" }); }
+    }
     if (input.mode === "first-last" && segments.length > 1)
       issues.push({
         blocking: true,
@@ -774,6 +812,7 @@ export async function previewStoryboardPanelPrompt(input: {
         message: "当前视频模型不支持同时提交首帧和尾帧",
       });
     let referenceCount = 0;
+    const previewReferences: MediaReferenceImage[] = [];
     const sources: StoryboardPromptPreview["sources"] = [
       {
         key: "submission_mode",
@@ -801,6 +840,10 @@ export async function previewStoryboardPanelPrompt(input: {
         lastFramePanelId: input.lastFramePanelId,
       });
       const lastFrameUrl = input.canvasReferences?.find(ref => ref.role === "last_frame")?.url ?? await mediaAssetUrl(lastFrame?.imageAsset);
+      const firstExplicit = input.canvasReferences?.find(ref => ref.role === "first_frame");
+      const lastExplicit = input.canvasReferences?.find(ref => ref.role === "last_frame");
+      if (firstFrameUrl) previewReferences.push({ url: firstFrameUrl, storageKey: firstExplicit?.storageKey ?? panel.imageAsset?.storageKey ?? undefined, role: "first_frame" });
+      if (lastFrameUrl) previewReferences.push({ url: lastFrameUrl, storageKey: lastExplicit?.storageKey ?? lastFrame?.imageAsset?.storageKey ?? undefined, role: "last_frame" });
       if (!firstFrameUrl || !lastFrameUrl)
         issues.push({
           blocking: true,
@@ -816,6 +859,7 @@ export async function previewStoryboardPanelPrompt(input: {
       });
     } else {
       const firstFrameUrl = input.canvasReferences?.find(ref => ref.role === "first_frame")?.url ?? await mediaAssetUrl(panel.imageAsset);
+      if (firstFrameUrl) previewReferences.push({ url: firstFrameUrl, storageKey: input.canvasReferences?.find(ref => ref.role === "first_frame")?.storageKey ?? panel.imageAsset?.storageKey ?? undefined, role: "first_frame" });
       if (!firstFrameUrl && !input.canvasReferences?.length)
         issues.push({
           blocking: true,
@@ -832,6 +876,7 @@ export async function previewStoryboardPanelPrompt(input: {
       });
     }
     if (input.canvasReferences?.length) {
+      for (const ref of input.canvasReferences) if (!previewReferences.some(item => item.url === ref.url && item.role === ref.role)) previewReferences.push(ref);
       const references = [...input.canvasReferences];
       const defaultFirst = await mediaAssetUrl(panel.imageAsset);
       if (defaultFirst && !references.some(ref => ref.role === "first_frame"))
@@ -863,6 +908,18 @@ export async function previewStoryboardPanelPrompt(input: {
       finalPrompt: compiledPrompt,
       issues,
       kind: "video",
+      productionConfiguration,
+      capabilities: productionCapabilities,
+      configurationHash: productionConfigurationFingerprint(productionConfiguration),
+      requestHash: input.model ? mediaRequestPreviewFingerprint(segments.map((segment, index) => ({ model: input.model!, channelId: input.channelId, request: { prompt: segment.prompt, productionConfiguration, ratio: input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9", resolution: outputResolution, duration: actualDurations[index], videoMode: input.mode ?? "reference", audioMode, referenceImages: previewReferences.slice(0, limits.maxReferenceImages), referenceAudios: previewAudios } }))) : undefined,
+      parameters: {
+        channelId: input.channelId, model: input.model,
+        ratio: input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9",
+        resolution: outputResolution, audioMode, referenceAudioCount,
+        audioControl: productionCapabilities?.audioControl,
+        durations: actualDurations,
+        videoMode: input.mode ?? "reference", format: "mp4",
+      },
       submissionMode: segments.length === 1 ? "compiled" : "segmented",
       referenceCount,
       maxDurationSeconds: limits.maxDurationSeconds,

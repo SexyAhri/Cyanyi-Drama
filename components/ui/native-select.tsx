@@ -120,7 +120,7 @@ function NativeSelect({
               disabled={choice.disabled}
               className="min-w-0 text-xs leading-5"
             >
-              <span className="min-w-0 flex-1 whitespace-normal break-words">
+              <span className="min-w-0 flex-1 whitespace-normal break-anywhere">
                 {choice.label}
               </span>
             </SelectItem>

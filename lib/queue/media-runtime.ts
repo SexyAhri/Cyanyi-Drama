@@ -18,7 +18,7 @@ import {
   composeAudioTimeline,
   probeAudioUrlDuration,
 } from "@/lib/providers/local/ffmpeg-audio";
-import { planPanelDialogue } from "@/lib/media/dialogue-timeline";
+import { planConfiguredSpeechTiming } from "@/lib/media/configured-speech-timing";
 import { sanitizeMediaProviderRequest } from "@/lib/media/provider-prompt-safety";
 import { resolveStoredReferenceImages } from "@/lib/media/reference-inputs";
 import { renderTimelineVideo } from "@/lib/providers/local/ffmpeg-render";
@@ -36,26 +36,56 @@ import {
   generateProviderLipSync,
   generateProviderMedia,
   isMediaChannelProtocol,
+  resumeProviderMedia,
 } from "@/lib/providers/media/registry";
-import type { MediaProviderRequest as TaskRequest } from "@/lib/providers/media/types";
+import type { MediaProviderRequest as TaskRequest, GenerateProviderMediaInput } from "@/lib/providers/media/types";
+import type { MediaTaskExecutionPhase } from "@/lib/media/task-contract";
+import { configurationSnapshotSchema } from "@/lib/production-configuration/contract";
+import { mediaConfigurationChanges } from "@/lib/production-configuration/invalidation";
+import { configuredSpeechForLine, requestSoundPolicy } from "@/lib/production-configuration/sound-execution";
+import { fixMediaTaskConfiguration, persistMediaTaskProviderOutput, recordMediaTaskExecutionPhase } from "@/lib/media/task-store";
+import { storyboardSourceFingerprint, storyboardSourceRevisionMatches } from "@/lib/media/storyboard-source-revision";
+import { captureMediaTargetSourceRevision } from "@/lib/media/target-source-revision";
+import { mediaTaskRecoveryMode, restoreCheckpointedMediaOutput } from "./media-task-recovery";
+import { createMediaPhaseDeadline } from "./media-phase-timeout";
+import { withProviderCapacity } from "./provider-capacity";
+import { settleMediaTaskProviderOutput } from "@/lib/billing/service";
 
-export async function processQueuedMediaTask(taskId: string, userId: string) {
+export async function processQueuedMediaTask(
+  taskId: string,
+  userId: string,
+  cancellationSignal?: AbortSignal,
+) {
   const task = await prisma.mediaTask.findFirst({
     where: { id: taskId, userId },
   });
   if (!task) throw new Error("MEDIA_TASK_NOT_FOUND");
+  if (task.status !== "running") return false;
   if (!task.channelId) throw new Error("MEDIA_TASK_CHANNEL_REQUIRED");
-  if (task.cancelRequestedAt || task.status === "canceled") return false;
+  if (task.cancelRequestedAt) return false;
 
   const channel = await prisma.channel.findFirst({
     where: accessibleChannelWhere(userId, task.channelId),
   });
   if (!channel) throw new Error("MEDIA_TASK_CHANNEL_NOT_FOUND");
   const payload = task.payload as { request?: TaskRequest };
-  const request = payload.request ?? {};
-  const resolvedRequest = await resolveStoredReferenceImages(request, userId);
+  const request = await fixMediaTaskConfiguration(task, payload.request ?? {}, userId) as TaskRequest;
+  const deadline = createMediaPhaseDeadline(process.env, cancellationSignal);
+  deadline.setPhase((task.executionPhase ?? "connecting") as MediaTaskExecutionPhase);
+  const reportPhase = async (phase: MediaTaskExecutionPhase, providerTaskId?: string) => {
+    deadline.setPhase(phase);
+    return recordMediaTaskExecutionPhase({ userId, taskId: task.id, phase, providerTaskId });
+  };
+  const initialPhase = (task.executionPhase ?? "queued") as MediaTaskExecutionPhase;
+  await reportPhase(["queued", "waiting_quota"].includes(initialPhase) ? "connecting" : initialPhase);
+  let output: MediaAsset[] | undefined = restoreCheckpointedMediaOutput(
+    (task.payload as { providerOutput?: unknown } | null)?.providerOutput,
+    task.kind as MediaTaskKind,
+  ) ?? undefined;
+  const resolvedRequest = output ? request : await deadline.run(resolveStoredReferenceImages(request, userId));
   const providerRequest = { ...resolvedRequest };
   delete (providerRequest as Record<string, unknown>).canvasAssetTargets;
+  delete (providerRequest as Record<string, unknown>).sourceRevision;
   const outboundRequest = sanitizeMediaProviderRequest(
     providerRequest,
     task.kind === "video" ? "video" : task.kind === "audio" ? "audio" : "image",
@@ -64,11 +94,10 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
     typeof (request as Record<string, unknown>).operation === "string"
       ? (request as Record<string, unknown>).operation
       : undefined;
-  let output: MediaAsset[] | undefined;
-  if (operation === "merge_episode_audio") {
-    output = await mergeEpisodeAudio(task.episodeId, task.projectId, userId);
+  if (!output && operation === "merge_episode_audio") {
+    output = await mergeEpisodeAudio(task.episodeId, task.projectId, userId, request);
   }
-  if (operation === "lip_sync") {
+  if (!output && operation === "lip_sync") {
     output = await performLipSync(
       task.episodeId,
       task.projectId,
@@ -79,7 +108,7 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
       userId,
     );
   }
-  if (operation === "render_timeline") {
+  if (!output && operation === "render_timeline") {
     output = await renderEpisodeTimeline(
       task.episodeId,
       task.projectId,
@@ -109,25 +138,48 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
   let lastError: unknown;
   for (const apiKey of apiKeys) {
     try {
-      output =
-        output ??
-        (task.kind === "image" || task.kind === "video" || task.kind === "audio"
-          ? await generateProviderMedia({
-              protocol: mediaProtocol!,
-              providerKey: channel.providerKey,
-              baseUrl: channel.baseUrl,
-              apiKey,
-              model: task.model,
-              mediaTaskId: task.id,
-              kind: task.kind,
-              request: outboundRequest,
-              mediaTemplate,
-            })
-          : (() => {
-              throw new Error(
-                `MEDIA_WORKER_HANDLER_NOT_IMPLEMENTED:${task.kind}`,
-              );
-            })());
+      if (!output) {
+        if (task.kind !== "image" && task.kind !== "video" && task.kind !== "audio")
+          throw new Error(`MEDIA_WORKER_HANDLER_NOT_IMPLEMENTED:${task.kind}`);
+        const mediaInput: GenerateProviderMediaInput = {
+          protocol: mediaProtocol!,
+          providerKey: channel.providerKey,
+          baseUrl: channel.baseUrl,
+          apiKey,
+          model: task.model,
+          mediaTaskId: task.id,
+          kind: task.kind,
+          request: outboundRequest,
+          mediaTemplate,
+          signal: deadline.signal,
+          onExecutionPhase: async (phase) => { await reportPhase(phase); },
+          onProviderTaskId: async (providerTaskId) => { await reportPhase("submitted", providerTaskId); },
+        };
+        const phase = (task.executionPhase ?? "queued") as MediaTaskExecutionPhase;
+        const recoveryMode = mediaTaskRecoveryMode({
+          hasProviderOutput: Boolean(output),
+          providerTaskId: task.providerTaskId,
+          executionPhase: phase,
+          protocol: channel.protocol,
+        });
+        output = await withProviderCapacity({
+          channelId: task.channelId,
+          model: task.model,
+          providerKey: channel.providerKey,
+          protocol: channel.protocol,
+          countRequest: recoveryMode !== "resume_provider",
+          signal: deadline.signal,
+          onWaiting: async () => { await reportPhase("waiting_quota"); },
+        }, async (capacitySignal) => {
+          if (recoveryMode === "resume_provider") {
+            await reportPhase(phase === "waiting_quota" || phase === "queued" ? "submitted" : phase);
+            return deadline.run(resumeProviderMedia({ ...mediaInput, signal: capacitySignal }, task.providerTaskId!));
+          }
+          await reportPhase("connecting");
+          await reportPhase("request_sent");
+          return deadline.run(generateProviderMedia({ ...mediaInput, signal: capacitySignal }));
+        });
+      }
       break;
     } catch (error) {
       lastError = error;
@@ -138,11 +190,16 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
       ? lastError
       : new Error(String(lastError ?? "MEDIA_PROVIDER_FAILED"));
   }
+  // Model output is billable even if later validation, downloading or saving fails.
+  await persistMediaTaskProviderOutput({ userId, taskId: task.id, output });
+  await settleMediaTaskProviderOutput(userId, task.id, output);
   const stripProviderAudio = shouldStripProviderVideoAudio({
     kind: task.kind,
     targetType: task.targetType,
     request,
   });
+  const snapshot = configurationSnapshotSchema.safeParse(request.productionConfiguration);
+  const validateVideo = task.kind === "video" && ["storyboard_panel", "canvas_node"].includes(task.targetType ?? "") && snapshot.success;
   if (stripProviderAudio)
     output = output.map((asset) =>
       asset.kind === "video"
@@ -163,20 +220,36 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
   const latestTask = await prisma.mediaTask.findFirst({
     where: { id: task.id, userId, status: "running" },
   });
-  if (!latestTask || latestTask.cancelRequestedAt) return false;
+  if (!latestTask || latestTask.cancelRequestedAt) { deadline.close(); return false; }
+
+  deadline.setPhase("downloading");
+  await deadline.run(persistMediaTaskProviderOutput({ userId, taskId: task.id, output }));
 
   const storedAssets = await Promise.all(
     output.map(async (asset) => {
       const storageKey = `projects/${task.projectId ?? "global"}/media/${asset.kind}/${asset.id}.${mediaAssetExtension(asset)}`;
       let storedKey: string | null = null;
+      let storagePhase: "downloading" | "saving" | undefined;
       try {
-        storedKey = await storeGeneratedMediaAsset({
+        storedKey = await deadline.run(storeGeneratedMediaAsset({
           asset,
           storageKey,
           stripVideoAudio: stripProviderAudio,
-        });
+          signal: deadline.signal,
+          onExecutionPhase: async phase => {
+            storagePhase = phase;
+            await reportPhase(phase);
+          },
+          ...(validateVideo ? { videoValidation: {
+            requireAudio: request.audioMode === "full" || request.audioMode === "ambient_only",
+            expectedDurationSeconds: typeof request.duration === "string" ? Number.parseFloat(request.duration) : undefined,
+          } } : {}),
+        }));
       } catch (error) {
-        if (stripProviderAudio || isSourceMediaDownloadFailure(error))
+        if (validateVideo || stripProviderAudio || isSourceMediaDownloadFailure(error) ||
+            storagePhase === "saving" ||
+            (error instanceof Error && error.message.startsWith("MEDIA_PHASE_TIMEOUT:")) ||
+            (error instanceof Error && error.message.startsWith("MEDIA_TASK_")))
           throw error;
       }
       return {
@@ -189,41 +262,107 @@ export async function processQueuedMediaTask(taskId: string, userId: string) {
       };
     }),
   );
-  await prisma.mediaTask.update({
-    where: { id: task.id },
-    data: {
-      status: "succeeded",
-      progress: 100,
-      progressMessage: null,
-      payload: JSON.parse(
-        JSON.stringify({
-          request: compactMediaTaskRequest(request),
-          output: compactMediaTaskOutput(output),
-        }),
-      ),
-      error: Prisma.DbNull,
-      completedAt: new Date(),
-      updatedAt: new Date(),
-      assets: {
-        createMany: {
-          data: storedAssets,
-        },
+  const configurationChanges = await mediaConfigurationChanges(prisma, userId, task, request);
+  const sourceRevision = request.sourceRevision as { targetType?: string; targetId?: string; panelId?: string; revisionVersion?: number; fingerprint?: string } | undefined;
+  const sourceRevisionTargetType = sourceRevision?.targetType ?? (sourceRevision?.panelId ? "storyboard_panel" : undefined);
+  const sourceRevisionTargetId = sourceRevision?.targetId ?? sourceRevision?.panelId;
+  const expectedSourceFingerprint = sourceRevision?.fingerprint;
+  let currentSourceFingerprint: string | undefined;
+  let newerExecutionExists = false;
+  if (sourceRevisionTargetType && sourceRevisionTargetId && expectedSourceFingerprint) {
+    if (sourceRevision?.targetType) {
+      currentSourceFingerprint = (await captureMediaTargetSourceRevision({
+        userId,
+        projectId: task.projectId,
+        episodeId: task.episodeId,
+        targetType: sourceRevisionTargetType,
+        targetId: sourceRevisionTargetId,
+        revisionVersion: sourceRevision.revisionVersion ?? 1,
+        request,
+      }))?.fingerprint;
+    } else if (sourceRevisionTargetType === "storyboard_panel") {
+      // Compatibility for tasks created before the richer source snapshot was stored.
+      const panel = await prisma.storyboardPanel.findFirst({ where: { id: sourceRevisionTargetId, storyboard: { project: { userId } } }, select: {
+        clipId: true, description: true, videoPrompt: true, voiceoverText: true, lipSyncText: true,
+        clip: { select: { content: true, screenplay: true } },
+        voiceLines: { orderBy: { lineIndex: "asc" }, select: { speaker: true, content: true, delivery: true } },
+      } });
+      if (panel) currentSourceFingerprint = storyboardSourceFingerprint({
+        clipId: panel.clipId, clipContent: panel.clip?.content ?? null, screenplay: panel.clip?.screenplay ?? null,
+        description: panel.description, videoPrompt: panel.videoPrompt, voiceoverText: panel.voiceoverText,
+        lipSyncText: panel.lipSyncText, voiceLines: panel.voiceLines,
+      });
+    }
+  }
+  if (task.targetType && task.targetId) {
+    newerExecutionExists = Boolean(await prisma.mediaTask.findFirst({
+      where: {
+        userId,
+        id: { not: task.id },
+        targetType: task.targetType,
+        targetId: task.targetId,
+        kind: task.kind,
+        createdAt: { gt: task.createdAt },
+        status: { in: ["queued", "running", "succeeded"] },
       },
-    },
+      select: { id: true },
+    }));
+  }
+  const freshness = storyboardSourceRevisionMatches({
+    expected: expectedSourceFingerprint,
+    current: currentSourceFingerprint,
+    publishedConfigurationChanged: configurationChanges.length > 0,
+    newerExecutionExists,
   });
-  await linkGeneratedAsset(task, userId, output[0], request);
-  if (task.targetType === "canvas_node" && task.kind === "image" && task.projectId) {
+  const sourceChanged = Boolean(expectedSourceFingerprint && currentSourceFingerprint !== expectedSourceFingerprint);
+  const staleFields = [...configurationChanges, ...(sourceChanged ? freshness.fields.filter(field => field.startsWith("source.")) : []), ...(newerExecutionExists ? ["newer_execution"] : [])];
+  if (staleFields.length) {
+    const reason = sourceChanged ? "storyboard_source_changed" : newerExecutionExists ? "superseded_by_newer_execution" : "published_configuration_changed";
+    for (const asset of output) asset.metadata = { ...asset.metadata, productionConfigurationStale: { fields: staleFields, reason, updatedAt: new Date().toISOString() } };
+    for (const stored of storedAssets) stored.metadataJson = JSON.stringify(mediaAssetMetadata(output.find(asset => asset.id === stored.id)!));
+  }
+  const completedAt = new Date();
+  const finalized = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.mediaTask.updateMany({
+      where: { id: task.id, userId, status: "running", cancelRequestedAt: null },
+      data: {
+        status: "succeeded",
+        executionPhase: "succeeded",
+        progress: 100,
+        progressMessage: null,
+        payload: JSON.parse(
+          JSON.stringify({
+            request: compactMediaTaskRequest(request),
+            output: compactMediaTaskOutput(output),
+          }),
+        ),
+        error: Prisma.DbNull,
+        completedAt,
+        updatedAt: completedAt,
+      },
+    });
+    if (!claimed.count) return false;
+    await tx.mediaAsset.createMany({
+      data: storedAssets.map((asset) => ({ ...asset, taskId: task.id })),
+    });
+    await tx.mediaTaskEvent.create({
+      data: {
+        taskId: task.id,
+        type: "succeeded",
+        status: "succeeded",
+        progress: 100,
+        executionPhase: "succeeded",
+      },
+    });
+    return true;
+  });
+  if (!finalized) { deadline.close(); return false; }
+  if (!staleFields.length) await linkGeneratedAsset(task, userId, output[0], request);
+  if (!staleFields.length && task.targetType === "canvas_node" && task.kind === "image" && task.projectId) {
     for (const asset of output.slice(1))
       await linkCanvasGeneratedImage(task, userId, task.projectId, asset, request);
   }
-  await prisma.mediaTaskEvent.create({
-    data: {
-      taskId: task.id,
-      type: "succeeded",
-      status: "succeeded",
-      progress: 100,
-    },
-  });
+  deadline.close();
   return true;
 }
 
@@ -277,6 +416,10 @@ export function mediaAssetMetadata(
   };
 }
 
+export function shouldDeferGeneratedAssetSelection(request: Record<string, unknown>) {
+  return request.canvasDeferredSelection === true || request.deferredSelection === true;
+}
+
 async function findMediaTemplate(
   channelId: string,
   model: string,
@@ -310,6 +453,7 @@ async function mergeEpisodeAudio(
   episodeId: string | null,
   projectId: string | null,
   userId: string,
+  request: TaskRequest,
 ) {
   if (!episodeId || !projectId) throw new Error("AUDIO_MERGE_EPISODE_REQUIRED");
   const [panels, voiceLines] = await Promise.all([
@@ -326,9 +470,12 @@ async function mergeEpisodeAudio(
           select: {
             id: true,
             lineIndex: true,
+            content: true,
+            speaker: true,
+            delivery: true,
             durationSeconds: true,
             audioAsset: {
-              select: { url: true, storageKey: true, mimeType: true },
+              select: { url: true, storageKey: true, mimeType: true, task: { select: { payload: true } } },
             },
           },
         },
@@ -337,13 +484,13 @@ async function mergeEpisodeAudio(
     prisma.voiceLine.findMany({
       where: { episodeId, episode: { projectId, project: { userId } } },
       orderBy: { lineIndex: "asc" },
-      select: { id: true, lineIndex: true, matchedPanelId: true },
+      select: { id: true, lineIndex: true, matchedPanelId: true, speaker: true, content: true, delivery: true },
     }),
   ]);
   if (!panels.length) throw new Error("AUDIO_MERGE_PANELS_EMPTY");
   assertVoiceLinePanelCoverage({
     panelIds: panels.map((panel) => panel.id),
-    lines: voiceLines,
+    lines: voiceLines.filter(line => requestSoundPolicy(request, line.matchedPanelId ?? undefined).mode === "post" && configuredSpeechForLine(requestSoundPolicy(request, line.matchedPanelId ?? undefined), line)),
   });
   const clips: Array<{
     url: string;
@@ -354,12 +501,20 @@ async function mergeEpisodeAudio(
   let timelineCursor = 0;
   let lineCount = 0;
   for (const panel of panels) {
+    const policy = requestSoundPolicy(request, panel.id);
+    if (policy.mode !== "post") { timelineCursor += panel.durationSeconds ?? 1; continue; }
     const resolvedLines: Array<{
       id: string;
       durationSeconds: number;
       url: string;
+      startSeconds?: number;
+      endSeconds?: number;
     }> = [];
     for (const line of panel.voiceLines) {
+      const speech = configuredSpeechForLine(policy, line);
+      if (!speech) continue;
+      const audioRequest = (line.audioAsset?.task.payload as { request?: Record<string, unknown> } | undefined)?.request;
+      if (audioRequest && audioRequest.input !== speech.content) throw new Error(`AUDIO_MERGE_SPEECH_CHANGED:${line.lineIndex}: 请先按当前台词重新配音`);
       const url =
         line.audioAsset?.storageKey
           ? await resolveStoredMediaInput(
@@ -370,23 +525,20 @@ async function mergeEpisodeAudio(
       if (!url) throw new Error(`AUDIO_MERGE_INPUT_MISSING:${line.lineIndex}`);
       const durationSeconds =
         line.durationSeconds ?? (await probeAudioUrlDuration(url));
-      resolvedLines.push({ id: line.id, durationSeconds, url });
+      resolvedLines.push({ id: line.id, durationSeconds, url, ...("startSeconds" in speech ? { startSeconds: speech.startSeconds } : {}), ...("endSeconds" in speech ? { endSeconds: speech.endSeconds } : {}) });
       if (line.durationSeconds === null)
         await prisma.voiceLine.update({
           where: { id: line.id },
           data: { durationSeconds },
         });
     }
-    const plan = planPanelDialogue({
-      lineDurations: resolvedLines.map((line) => line.durationSeconds),
-      requestedDurationSeconds: panel.durationSeconds ?? 1,
-    });
+    const plan = planConfiguredSpeechTiming(resolvedLines, panel.durationSeconds ?? 1);
     resolvedLines.forEach((line, index) => {
       clips.push({
         url: line.url,
         startSeconds: timelineCursor + plan.timings[index].startSeconds,
         durationSeconds: plan.timings[index].durationSeconds,
-        playbackRate: plan.playbackRate,
+        playbackRate: plan.timings[index].playbackRate,
       });
     });
     if (panel.durationSeconds !== plan.durationSeconds)
@@ -551,6 +703,7 @@ async function renderEpisodeTimeline(
   if (!episodeId || !projectId)
     throw new Error("TIMELINE_RENDER_EPISODE_REQUIRED");
   await assertEpisodeTimelineCurrent(userId, projectId, episodeId);
+  const soundPolicy = requestSoundPolicy(request);
 
   const [storyboard, editorProject, voiceLines, episodeAudioTracks] =
     await Promise.all([
@@ -590,6 +743,7 @@ async function renderEpisodeTimeline(
           lineIndex: true,
           speaker: true,
           content: true,
+          delivery: true,
           matchedPanelId: true,
           durationSeconds: true,
         },
@@ -626,9 +780,16 @@ async function renderEpisodeTimeline(
     ),
   );
   if (!sequence.length) throw new Error("TIMELINE_RENDER_TRACKS_INVALID");
-  assertTimelineSubtitleCoverage({
+  const effectiveVoiceLines = voiceLines.flatMap(line => {
+    const speech = configuredSpeechForLine(requestSoundPolicy(request, line.matchedPanelId ?? undefined), line, true);
+    return speech ? [{ ...line, speaker: speech.speaker, content: speech.content, delivery: speech.delivery, ...("startSeconds" in speech ? { startSeconds: speech.startSeconds } : {}), ...("endSeconds" in speech ? { endSeconds: speech.endSeconds } : {}) }] : [];
+  });
+  const subtitleLines = effectiveVoiceLines.filter(line => requestSoundPolicy(request, line.matchedPanelId ?? undefined).subtitles === "post");
+  const postVoiceLines = effectiveVoiceLines.filter(line => requestSoundPolicy(request, line.matchedPanelId ?? undefined).mode === "post");
+  const nativeVoiceLines = effectiveVoiceLines.filter(line => requestSoundPolicy(request, line.matchedPanelId ?? undefined).mode === "native");
+  if (subtitleLines.length) assertTimelineSubtitleCoverage({
     timelinePanelIds: sequence.map((track) => track.panelId ?? track.id),
-    lines: voiceLines,
+    lines: subtitleLines,
   });
   const resolvedTracks: Array<{
     track: (typeof sequence)[number];
@@ -681,7 +842,11 @@ async function renderEpisodeTimeline(
     transitionDurationSeconds: track.transitionDuration,
   }));
 
-  const renderAudioTracks = episodeAudioTracks.map((track) => {
+  const renderAudioTracks = episodeAudioTracks.filter(track => soundPolicy.mode !== "silent" && (
+    track.trackType === "music" ? soundPolicy.music === "post" || soundPolicy.mode === "post" && soundPolicy.music === "designed"
+      : track.trackType === "ambience" ? soundPolicy.mode === "post" && soundPolicy.ambience
+        : track.trackType === "sfx" ? soundPolicy.mode === "post" && soundPolicy.effects : postVoiceLines.length > 0
+  )).map((track) => {
     const source = storedAssetSource(track.asset);
     if (!source)
       throw new Error(`TIMELINE_RENDER_AUDIO_TRACK_MISSING:${track.id}`);
@@ -707,19 +872,24 @@ async function renderEpisodeTimeline(
     (track) => track.kind === "dialogue",
   );
   assertTimelineDialogueAudioCoverage(
-    voiceLines.length,
+    postVoiceLines.length,
     dialogueSource?.storageKey ?? dialogueSource?.url,
-    voiceLines.every((line) => resolvedTracks.some(({ panel, source, isImage, track }) => panel.id === line.matchedPanelId && source && !isImage && track.volume !== 0)),
+    false,
   );
 
-  const subtitles = buildTimelineSubtitles(voiceLines, sequence);
+  assertTimelineDialogueAudioCoverage(nativeVoiceLines.length, undefined, nativeVoiceLines.every(line => resolvedTracks.some(({ panel, source, isImage, track }) => panel.id === line.matchedPanelId && source && !isImage && track.volume !== 0)));
+  const subtitles = buildTimelineSubtitles(subtitleLines, sequence);
+  const selectedAudioTracks = renderAudioTracks;
 
   const specification = normalizeRenderSpecification(
     request as Record<string, unknown>,
   );
   const rendered = await renderTimelineVideo({
-    segments: segments.map((segment, index) => ({ ...segment, requiresAudio: !dialogueSource && voiceLines.some((line) => line.matchedPanelId === resolvedTracks[index].panel.id) })),
-    audioTracks: renderAudioTracks,
+    segments: segments.map((segment, index) => ({ ...segment,
+      volume: requestSoundPolicy(request, resolvedTracks[index].panel.id).mode === "native" ? segment.volume : 0,
+      requiresAudio: nativeVoiceLines.some((line) => line.matchedPanelId === resolvedTracks[index].panel.id),
+    })),
+    audioTracks: selectedAudioTracks,
     subtitles,
     specification,
   });
@@ -750,7 +920,7 @@ export function shouldStripProviderVideoAudio(input: {
 }) {
   return (
     input.kind === "video" &&
-    input.targetType === "storyboard_panel" &&
+    ["storyboard_panel", "canvas_node"].includes(input.targetType ?? "") &&
     input.request.audioMode === "none"
   );
 }
@@ -1008,7 +1178,7 @@ async function linkGeneratedAsset(
         });
     });
   } else if (task.targetType === "storyboard_panel") {
-    if ((request as Record<string, unknown>).canvasDeferredSelection === true || (request as Record<string, unknown>).deferredSelection === true) return;
+    if (shouldDeferGeneratedAssetSelection(request as Record<string, unknown>)) return;
     const segmentId = stringField(request, "videoSegmentId");
     const segmentIndex = numberField(request, "videoSegmentIndex");
     if (task.kind === "video" && segmentId) {

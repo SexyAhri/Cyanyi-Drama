@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
+import { reserveModelRequestCharge, settleModelRequestCharge, type ModelChargeReceipt } from "@/lib/billing/model-charge";
+import type { ModelBillingIdentity } from "@/lib/billing/context";
+import { inputCharacterCount } from "@/lib/billing/usage";
 import { configureProductionRequest } from "@/lib/production-configuration/request";
 import { currentProductionConfiguration } from "@/lib/production-configuration/context";
+import type { ProductionFallbackProvider } from "@/lib/production-configuration/request";
 
 import { z } from "zod";
 
@@ -8,6 +12,7 @@ import { fetchWithProviderRetry } from "@/lib/providers/http";
 import type { RenderedPrompt } from "@/lib/prompts";
 import {
   generateStructuredOutput,
+  StructuredOutputError,
   type StructuredMessage,
   type StructuredValidationIssue,
 } from "./structured-output";
@@ -20,6 +25,12 @@ export type PromptTokenUsage = {
   totalTokens: number;
 };
 
+export type PromptCharacterUsage = {
+  inputCharacters: number;
+  outputCharacters: number;
+  totalCharacters: number;
+};
+
 export type PromptExecutionTrace = {
   promptId: string;
   agentId: string;
@@ -27,18 +38,29 @@ export type PromptExecutionTrace = {
   promptVersionHash: string;
   systemHash: string;
   model: string;
+  channelId?: string;
+  fallbackUsed?: boolean;
+  fallbackReason?: string;
+  fallbackPriceCompatibility?: "same" | "different" | "unknown";
   structuredOutputMode: StructuredOutputMode;
   repaired: boolean;
   correctionAttempts: number;
   tokenUsage: PromptTokenUsage | null;
+  characterUsage: PromptCharacterUsage;
+  requestCount: number;
+  billing: ModelChargeReceipt[];
   outputHash: string;
   configurationSources?: Array<{ scopeKey: string; version: number }>;
 };
 
 export async function requestOpenAiText(input: {
+  billing?: ModelBillingIdentity;
+  provider?: string;
   baseUrl: string;
   apiKeys: string[];
   model: string;
+  channelId?: string;
+  fallbackProvider?: ProductionFallbackProvider;
   prompt: RenderedPrompt;
   imageUrls?: string[];
   temperature?: number;
@@ -49,24 +71,53 @@ export async function requestOpenAiText(input: {
   onTextDelta?: (delta: string) => void;
 }) {
   input = await configureProductionRequest(input);
-  const response = await requestText({
+  let activeProvider: ProductionFallbackProvider = {
+    provider: input.provider,
+    channelId: input.channelId ?? "",
     baseUrl: input.baseUrl,
-    apiKey: input.apiKeys[0],
+    apiKeys: input.apiKeys,
     model: input.model,
-    messages: [
-      ...(input.prompt.systemText
-        ? [{ role: "system" as const, content: input.prompt.systemText }]
-        : []),
-      { role: "user", content: input.prompt.text },
-    ],
+  };
+  let fallbackUsed = false;
+  let fallbackReason: string | undefined;
+  let outputReceived = false;
+  const messages = [
+    ...(input.prompt.systemText
+      ? [{ role: "system" as const, content: input.prompt.systemText }]
+      : []),
+    { role: "user" as const, content: input.prompt.text },
+  ];
+  const send = (provider: typeof activeProvider) => requestText({
+    billing: input.billing,
+    channelId: provider.channelId,
+    provider: provider.provider,
+    action: input.prompt.id,
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKeys[0],
+    model: provider.model,
+    messages,
     imageUrls: input.imageUrls,
     temperature: input.temperature,
     timeoutMs: input.timeoutMs,
     stream: input.stream,
     maxTransportAttempts: input.maxTransportAttempts,
     onOutputStart: input.onOutputStart,
-    onTextDelta: input.onTextDelta,
+    onTextDelta: (delta) => {
+      if (delta) outputReceived = true;
+      input.onTextDelta?.(delta);
+    },
   });
+  let response: Awaited<ReturnType<typeof send>>;
+  try {
+    response = await send(activeProvider);
+  } catch (error) {
+    if (!canUseFallback(error, input.fallbackProvider, outputReceived)) throw error;
+    assertFallbackCanPreserveInputs(input.fallbackProvider, input.imageUrls);
+    fallbackUsed = true;
+    fallbackReason = fallbackFailureReason(error);
+    activeProvider = input.fallbackProvider;
+    response = await send(activeProvider);
+  }
   const outputText = response.text.trim();
   if (!outputText) throw new Error("STRUCTURED_PROVIDER_TEXT_MISSING");
   const trace: PromptExecutionTrace = {
@@ -75,11 +126,22 @@ export async function requestOpenAiText(input: {
     promptVersion: input.prompt.version,
     promptVersionHash: input.prompt.versionHash,
     systemHash: input.prompt.systemHash,
-    model: input.model,
+    model: activeProvider.model,
+    channelId: activeProvider.channelId,
+    fallbackUsed,
+    fallbackReason,
+    fallbackPriceCompatibility: fallbackUsed ? input.fallbackProvider?.priceCompatibility : undefined,
     structuredOutputMode: "text",
     repaired: false,
     correctionAttempts: 0,
     tokenUsage: response.tokenUsage,
+    characterUsage: {
+      inputCharacters: messages.reduce((total, message) => total + inputCharacterCount(message.content), 0),
+      outputCharacters: inputCharacterCount(outputText),
+      totalCharacters: messages.reduce((total, message) => total + inputCharacterCount(message.content), 0) + inputCharacterCount(outputText),
+    },
+    requestCount: 1,
+    billing: response.billing ? [response.billing] : [],
     outputHash: sha256(outputText),
     configurationSources: currentProductionConfiguration()?.snapshot.sources,
   };
@@ -87,9 +149,13 @@ export async function requestOpenAiText(input: {
 }
 
 export async function requestOpenAiStructured<T>(input: {
+  billing?: ModelBillingIdentity;
+  provider?: string;
   baseUrl: string;
   apiKeys: string[];
   model: string;
+  channelId?: string;
+  fallbackProvider?: ProductionFallbackProvider;
   prompt: RenderedPrompt;
   schema: z.ZodType<T>;
   validate?: (data: T) => StructuredValidationIssue[];
@@ -105,15 +171,28 @@ export async function requestOpenAiStructured<T>(input: {
   onTextDelta?: (delta: string) => void;
 }) {
   input = await configureProductionRequest(input);
+  let activeProvider: ProductionFallbackProvider = {
+    provider: input.provider,
+    channelId: input.channelId ?? "",
+    baseUrl: input.baseUrl,
+    apiKeys: input.apiKeys,
+    model: input.model,
+    structuredOutputMode: input.structuredOutputMode,
+  };
+  let fallbackUsed = false;
+  let fallbackReason: string | undefined;
+  let outputReceived = false;
   let tokenUsage: PromptTokenUsage | null = null;
   let apiKeyIndex = 0;
-  const responseFormat = buildStructuredResponseFormat({
-    mode: input.structuredOutputMode ?? "json_object",
-    schema: input.schema,
-    name: input.prompt.id,
-  });
-  const structuredOutputMode = responseFormat.type;
-  const result = await generateStructuredOutput({
+  let structuredOutputMode: StructuredOutputMode = "json_object";
+  let requestCount = 0;
+  let inputCharacters = 0;
+  let outputCharacters = 0;
+  const billing: ModelChargeReceipt[] = [];
+  let lastOutputText: string | undefined;
+  let result: Awaited<ReturnType<typeof generateStructuredOutput<T>>>;
+  try {
+    result = await generateStructuredOutput({
     schema: input.schema,
     prompt: input.prompt.text,
     systemPrompt: input.prompt.systemText,
@@ -124,48 +203,95 @@ export async function requestOpenAiStructured<T>(input: {
       Math.min(2, Math.floor(input.maxCorrectionAttempts ?? 0)),
     ),
     request: async (messages) => {
-      let lastError: unknown;
-      const maxApiKeyAttempts = 1;
-      for (let offset = 0; offset < maxApiKeyAttempts; offset += 1) {
-        const candidateIndex = (apiKeyIndex + offset) % input.apiKeys.length;
-        try {
-          const response = await requestText({
-            baseUrl: input.baseUrl,
-            apiKey: input.apiKeys[candidateIndex],
-            model: input.model,
-            messages,
-            responseFormat,
-            imageUrls: input.imageUrls,
-            temperature: input.temperature,
-            timeoutMs: input.timeoutMs,
-            stream: input.stream,
-            maxTransportAttempts: input.maxTransportAttempts,
-            onOutputStart: input.onOutputStart,
-            onTextDelta: input.onTextDelta,
-          });
-          apiKeyIndex = candidateIndex;
-          tokenUsage = addTokenUsage(tokenUsage, response.tokenUsage);
-          return response.text;
-        } catch (error) {
-          lastError = error;
-        }
+      requestCount += 1;
+      inputCharacters += messages.reduce((total, message) => total + inputCharacterCount(message.content), 0);
+      const send = async (provider: ProductionFallbackProvider) => {
+        const responseFormat = buildStructuredResponseFormat({
+          mode: provider.structuredOutputMode ?? "json_object",
+          schema: input.schema,
+          name: input.prompt.id,
+        });
+        structuredOutputMode = responseFormat.type;
+        const candidateIndex = apiKeyIndex % provider.apiKeys.length;
+        const response = await requestText({
+          billing: input.billing,
+          channelId: provider.channelId,
+          provider: provider.provider,
+          action: input.prompt.id,
+          baseUrl: provider.baseUrl,
+          apiKey: provider.apiKeys[candidateIndex],
+          model: provider.model,
+          messages,
+          responseFormat,
+          imageUrls: input.imageUrls,
+          temperature: input.temperature,
+          timeoutMs: input.timeoutMs,
+          stream: input.stream,
+          maxTransportAttempts: input.maxTransportAttempts,
+          onOutputStart: input.onOutputStart,
+          onTextDelta: (delta) => {
+            if (delta) outputReceived = true;
+            input.onTextDelta?.(delta);
+          },
+        });
+        apiKeyIndex = candidateIndex;
+        tokenUsage = addTokenUsage(tokenUsage, response.tokenUsage);
+        lastOutputText = response.text;
+        outputCharacters += inputCharacterCount(response.text);
+        if (response.billing) billing.push(response.billing);
+        return response.text;
+      };
+      try {
+        return await send(activeProvider);
+      } catch (error) {
+        if (!canUseFallback(error, input.fallbackProvider, outputReceived)) throw error;
+        assertFallbackCanPreserveInputs(input.fallbackProvider, input.imageUrls);
+        fallbackUsed = true;
+        fallbackReason = fallbackFailureReason(error);
+        activeProvider = input.fallbackProvider;
+        return send(activeProvider);
       }
-      throw lastError instanceof Error
-        ? lastError
-        : new Error("STRUCTURED_PROVIDER_REQUEST_FAILED");
     },
-  });
+    });
+  } catch (error) {
+    if (error instanceof StructuredOutputError) {
+      error.executionTrace = {
+        promptId: input.prompt.id,
+        agentId: input.prompt.agentId,
+        promptVersion: input.prompt.version,
+        promptVersionHash: input.prompt.versionHash,
+        model: activeProvider.model,
+        channelId: activeProvider.channelId,
+        structuredOutputMode,
+        correctionAttempts: Math.max(0, requestCount - 1),
+        tokenUsage,
+        characterUsage: { inputCharacters, outputCharacters, totalCharacters: inputCharacters + outputCharacters },
+        requestCount,
+        billing,
+        ...(lastOutputText ? { outputHash: sha256(lastOutputText) } : {}),
+        configurationSources: currentProductionConfiguration()?.snapshot.sources,
+      };
+    }
+    throw error;
+  }
   const trace: PromptExecutionTrace = {
     promptId: input.prompt.id,
     agentId: input.prompt.agentId,
     promptVersion: input.prompt.version,
     promptVersionHash: input.prompt.versionHash,
     systemHash: input.prompt.systemHash,
-    model: input.model,
+    model: activeProvider.model,
+    channelId: activeProvider.channelId,
+    fallbackUsed,
+    fallbackReason,
+    fallbackPriceCompatibility: fallbackUsed ? input.fallbackProvider?.priceCompatibility : undefined,
     structuredOutputMode,
     repaired: result.repaired,
     correctionAttempts: result.correctionAttempts,
     tokenUsage,
+    characterUsage: { inputCharacters, outputCharacters, totalCharacters: inputCharacters + outputCharacters },
+    requestCount,
+    billing,
     outputHash: sha256(result.outputText),
     configurationSources: currentProductionConfiguration()?.snapshot.sources,
   };
@@ -179,6 +305,10 @@ export async function requestOpenAiStructured<T>(input: {
 }
 
 async function requestText(input: {
+  billing?: ModelBillingIdentity;
+  channelId?: string;
+  provider?: string;
+  action: string;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -220,6 +350,10 @@ async function requestText(input: {
 }
 
 async function requestTextAttempt(input: {
+  billing?: ModelBillingIdentity;
+  channelId?: string;
+  provider?: string;
+  action: string;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -237,6 +371,10 @@ async function requestTextAttempt(input: {
   let response: Response;
   let responseText: string;
   const startedAt = Date.now();
+  const charge = await reserveModelRequestCharge({ identity: input.billing, channelId: input.channelId,
+    provider: input.provider, model: input.model, capability: "text", action: input.action,
+    usage: { requests: 1, inputCharacters: input.messages.reduce((total, message) => total + inputCharacterCount(message.content), 0) },
+  });
   try {
     response = await fetchWithProviderRetry(
       `${input.baseUrl.replace(/\/+$/, "")}/chat/completions`,
@@ -264,6 +402,7 @@ async function requestTextAttempt(input: {
       { maxAttempts: 1 },
     );
   } catch (error) {
+    await settleModelRequestCharge(charge, false);
     throw buildProviderRequestError({
       error,
       stage: "request",
@@ -279,6 +418,7 @@ async function requestTextAttempt(input: {
         : undefined,
     );
   } catch (error) {
+    await settleModelRequestCharge(charge, false);
     throw buildProviderRequestError({
       error,
       stage: "response_body",
@@ -287,20 +427,23 @@ async function requestTextAttempt(input: {
     });
   }
   const payload = parseJsonText(responseText);
-  if (!response.ok)
+  if (!response.ok) {
+    await settleModelRequestCharge(charge, false);
     throw new Error(
       `STRUCTURED_PROVIDER_FAILED:${response.status}:${providerMessage(payload)}`,
     );
+  }
+  let parsed: { text: string; tokenUsage: PromptTokenUsage | null };
   try {
-    if (isEventStreamResponse(response, responseText))
-      return parseOpenAiEventStream(responseText);
-    const text = extractText(payload);
-    input.onTextDelta?.(text);
-    return {
-      text,
-      tokenUsage: normalizeTokenUsage(payload),
-    };
+    if (isRecord(payload) && payload.error)
+      throw new Error(`STRUCTURED_PROVIDER_FAILED:200:${providerMessage(payload)}`);
+    if (isEventStreamResponse(response, responseText)) {
+      parsed = parseOpenAiEventStream(responseText);
+    } else {
+      parsed = { text: extractText(payload), tokenUsage: normalizeTokenUsage(payload) };
+    }
   } catch (error) {
+    await settleModelRequestCharge(charge, false);
     if (
       error instanceof Error &&
       error.message === "STRUCTURED_PROVIDER_TEXT_MISSING"
@@ -313,6 +456,10 @@ async function requestTextAttempt(input: {
       );
     throw error;
   }
+  // Settlement failures retain the successful-response marker for reconciliation.
+  const billing = await settleModelRequestCharge(charge, true);
+  if (!isEventStreamResponse(response, responseText)) input.onTextDelta?.(parsed.text);
+  return { ...parsed, billing };
 }
 
 function isTimeoutError(error: unknown) {
@@ -336,6 +483,36 @@ export function isRetryableStructuredProviderError(error: unknown) {
       error.message,
     )
   );
+}
+
+function canUseFallback(
+  error: unknown,
+  fallback: ProductionFallbackProvider | undefined,
+  outputReceived: boolean,
+): fallback is ProductionFallbackProvider {
+  return Boolean(
+    fallback?.apiKeys.length &&
+      !outputReceived &&
+      isRetryableStructuredProviderError(error),
+  );
+}
+
+function assertFallbackCanPreserveInputs(
+  fallback: ProductionFallbackProvider,
+  imageUrls: string[] | undefined,
+) {
+  if (imageUrls?.length && fallback.supportsReferenceImages !== true)
+    throw new Error("PRODUCTION_FALLBACK_INCOMPATIBLE:REFERENCE_IMAGES");
+}
+
+function fallbackFailureReason(error: unknown) {
+  if (!(error instanceof Error)) return "transient_provider_failure";
+  const status = error.message.match(/^STRUCTURED_PROVIDER_FAILED:(\d+):/);
+  if (status) return `http_${status[1]}`;
+  if (/TIMEOUT|timed out|TimeoutError/i.test(error.message)) return "timeout";
+  if (/TRANSPORT|fetch failed|ECONNRESET|ETIMEDOUT|socket/i.test(error.message))
+    return "transport";
+  return "transient_provider_failure";
 }
 
 function isRetryableTextTransportError(error: unknown) {

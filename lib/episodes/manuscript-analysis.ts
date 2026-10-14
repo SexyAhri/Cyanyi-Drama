@@ -8,10 +8,13 @@ import { createOrReuseWorkflowRun } from "@/lib/workflow/store";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { resolveEpisodeTextProvider } from "./provider";
-import { chunkSource, mapSourceTasks, sourceAnalysisConcurrency, sourceFingerprint, type SourceTaskHooks } from "./long-source";
+import { chunkSource, mapSourceTasks, sourceAnalysisConcurrency, type SourceTaskHooks } from "./long-source";
 import { parseNovelStructure } from "./novel-volumes";
 
 import { ManuscriptNotesSchema } from "./source-notes-schema";
+import { currentProductionConfiguration } from "@/lib/production-configuration/context";
+import { workflowCacheFingerprint } from "@/lib/workflow/cache-fingerprint";
+import { recordWorkflowArtifactReuse } from "@/lib/workflow/request-events";
 export { ManuscriptNotesSchema } from "./source-notes-schema";
 export type ManuscriptNotes = z.infer<typeof ManuscriptNotesSchema>;
 export type ManuscriptDossier = {
@@ -82,28 +85,83 @@ export async function analyzeManuscript(input: {
   };
   async function extract(type: string, ref: string, text: string, merge = false) {
     await hooks.assertActive();
-    const key = sourceFingerprint({ ref, text, model: input.model, channel: input.channelId, version: 1 });
+    const prompt = renderPrompt({ id: PROMPT_IDS.SOURCE_NOTES, locale: input.locale, variables: {
+      source_text: text, output_schema: JSON.stringify(z.toJSONSchema(ManuscriptNotesSchema)),
+      extraction_task: merge ? "合并有序原著资料，保留关键事件与人物、场景、道具及世界规则。" :
+        "提取本段明确发生的事件及人物、场景、道具、世界规则。概要以约 600 字为目标，实体详情约 100 字，包含短引用；关键事实需要时可用结构允许的完整长度。",
+    } });
+    const key = workflowCacheFingerprint({
+      source: { manuscriptId: input.manuscriptId, sourceHash: input.sourceHash, ref, text },
+      prompt,
+      promptVersion: "source-notes-v2",
+      channelId: input.channelId,
+      model: input.model,
+      agentConfiguration: currentProductionConfiguration()?.snapshot ?? null,
+      parameters: {
+        temperature: 0.2,
+        timeoutMs: 120_000,
+        stream: false,
+        structuredOutputMode: provider.structuredOutputMode,
+        schema: z.toJSONSchema(ManuscriptNotesSchema),
+      },
+    });
+    const requestId = randomUUID();
+    const requestType = merge ? "manuscript_merge" : "manuscript_chunk";
+    const requestBase = {
+      requestId,
+      requestType,
+      targetType: merge ? "manuscript_merge_group" : "manuscript_chunk",
+      targetId: key,
+      provider: input.channelId,
+      model: input.model,
+      inputHash: key,
+      cacheVersion: "workflow-cache-v2",
+      promptVersion: String(prompt.version),
+      promptVersionHash: prompt.versionHash,
+    };
+    const requestInput = { manuscriptId: input.manuscriptId, sourceHash: input.sourceHash, ref, text };
     const cached = ManuscriptNotesSchema.safeParse(await hooks.loadArtifact(type, key));
-    if (cached.success) return { notes: cached.data, artifactRef: key };
+    if (cached.success) {
+      await recordWorkflowArtifactReuse({
+        recordRequest: hooks.recordRequest,
+        request: { ...requestBase, input: requestInput },
+        artifactRefs: [`${type}:${key}`],
+        reuseReason: "cache_fingerprint_match",
+      });
+      return { notes: cached.data, artifactRef: key };
+    }
     const reused = ManuscriptNotesSchema.safeParse(reusable.get(`${type}:${key}`));
     if (reused.success) {
       await hooks.persistArtifact(type, key, reused.data);
+      await recordWorkflowArtifactReuse({
+        recordRequest: hooks.recordRequest,
+        request: { ...requestBase, input: requestInput },
+        artifactRefs: [`${type}:${key}`],
+        reuseReason: "previous_validated_artifact",
+      });
       return { notes: reused.data, artifactRef: key };
     }
-    const result = await requestOpenAiStructured({ ...provider, schema: ManuscriptNotesSchema,
-      timeoutMs: 120_000, temperature: 0.2,
-      // This background task only consumes completed JSON and gains nothing from a long-lived SSE connection.
-      stream: false,
-      prompt: renderPrompt({ id: PROMPT_IDS.SOURCE_NOTES, locale: input.locale, variables: {
-        source_text: text, output_schema: JSON.stringify(z.toJSONSchema(ManuscriptNotesSchema)),
-        extraction_task: merge ? "合并有序原著资料，保留关键事件与人物、场景、道具及世界规则。" :
-          "提取本段明确发生的事件及人物、场景、道具、世界规则。概要以约 600 字为目标，实体详情约 100 字，包含短引用；关键事实需要时可用结构允许的完整长度。",
-      } }),
+    await hooks.recordRequest?.({
+      ...requestBase,
+      status: "running",
+      input: requestInput,
     });
-    await hooks.assertActive();
-    await hooks.persistArtifact(type, key, result.data);
-    await hooks.persistArtifact("prompt.trace", key, result.trace);
-    return { notes: result.data, artifactRef: key };
+    try {
+      const result = await requestOpenAiStructured({ ...provider, schema: ManuscriptNotesSchema,
+        timeoutMs: 120_000, temperature: 0.2,
+        // This background task only consumes completed JSON and gains nothing from a long-lived SSE connection.
+        stream: false,
+        prompt,
+      });
+      await hooks.assertActive();
+      await hooks.persistArtifact(type, key, result.data);
+      await hooks.persistArtifact("prompt.trace", key, result.trace);
+      await hooks.recordRequest?.({ ...requestBase, status: "succeeded", artifactRefs: [`${type}:${key}`, `prompt.trace:${key}`] });
+      return { notes: result.data, artifactRef: key };
+    } catch (error) {
+      await hooks.recordRequest?.({ ...requestBase, status: "failed", error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
   }
   const sourceChunks = chunkSource(manuscript.sourceText);
   let completedChunks = 0;

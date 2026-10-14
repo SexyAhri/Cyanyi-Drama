@@ -24,6 +24,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import type { MediaTask } from "@/lib/media/task-contract";
 import type { StoryboardPromptPreview } from "@/lib/media/project-asset-tasks";
 
@@ -31,6 +32,7 @@ import {
   generateStudioPanelBatch,
   generateStudioPanelImage,
   generateStudioPanelVideo,
+  preflightStudioPanelBatch,
   previewStudioPanelPrompt,
 } from "../api";
 import { ModelSelect } from "../components/model-select";
@@ -40,6 +42,7 @@ import type {
   StudioModelOption,
   StudioStoryboardPanel,
 } from "../types";
+import type { StudioMediaBudgetSummary } from "../api";
 import { nextStoryboardPanel, type ShotMediaKind } from "./shot-view-model";
 
 type VideoMode = "reference" | "first-last";
@@ -63,6 +66,19 @@ const promptCopy = {
     modelLimit: "模型单次上限",
     segment: "片段",
     generationRequests: "实际生成请求",
+    providerCostUnknown:
+      "未接入渠道方报价，渠道费用未知；以下金额仅为平台配置的额度占用",
+    quotaKnown: "本平台可用余额 / 本批预计冻结",
+    quotaSufficient: "余额可用",
+    quotaInsufficient: "余额不足，不能提交",
+    quotaUnknown: "未配置计费价格，平台费用未知",
+    providerQuotaUnknown: "渠道方余额无法预查；排队名额会在 worker 执行时获取",
+    batchBudget: "本批最高额度（可选）",
+    projectBudget:
+      "项目预算：上限 {limit} · 已用 {actual} · 冻结 {reserved} · 剩余 {remaining}",
+    batchBudgetResult:
+      " · 本批额度：已用 {actual} / 冻结 {reserved} / 剩余 {remaining}",
+    preflightFailed: "批量预检失败，请重试后再提交",
   },
   en: {
     finalPrompt: "Final provider prompt",
@@ -82,6 +98,20 @@ const promptCopy = {
     modelLimit: "Model limit per request",
     segment: "Segment",
     generationRequests: "Generation requests",
+    providerCostUnknown:
+      "Provider pricing is unavailable; provider cost is unknown. The amount below is only the configured platform credit hold.",
+    quotaKnown: "Available credits / estimated batch hold",
+    quotaSufficient: "Credits available",
+    quotaInsufficient: "Insufficient credits; submission blocked",
+    quotaUnknown: "No billing price configured; platform charge is unknown",
+    providerQuotaUnknown:
+      "Provider balance cannot be checked here; worker acquires capacity at execution",
+    batchBudget: "Batch credit cap (optional)",
+    projectBudget:
+      "Project budget: cap {limit} · spent {actual} · held {reserved} · remaining {remaining}",
+    batchBudgetResult:
+      " · Batch credits: spent {actual} / held {reserved} / remaining {remaining}",
+    preflightFailed: "Batch preflight failed. Retry before submitting.",
   },
 } as const;
 
@@ -146,7 +176,14 @@ export function PanelGenerationDialog({
       !selectedModel.maxDurationSeconds ||
       panel.durationSeconds <= selectedModel.maxDurationSeconds;
     if (supportsBothFrames && fitsDuration) setMode("first-last");
-  }, [open, kind, canUseFirstLast, panel.id, panel.durationSeconds, selectedModel]);
+  }, [
+    open,
+    kind,
+    canUseFirstLast,
+    panel.id,
+    panel.durationSeconds,
+    selectedModel,
+  ]);
 
   useEffect(() => {
     if (!open) return;
@@ -164,6 +201,8 @@ export function PanelGenerationDialog({
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
+    setPreview(null);
+    setPreviewLoading(true);
     const timeout = window.setTimeout(async () => {
       setPreviewLoading(true);
       setPreviewError("");
@@ -208,8 +247,7 @@ export function PanelGenerationDialog({
     projectId,
     prompt,
     promptText.previewFailed,
-    selectedModel?.channelId,
-    selectedModel?.modelId,
+    selectedModel,
   ]);
 
   async function submit() {
@@ -225,6 +263,8 @@ export function PanelGenerationDialog({
         });
       } else {
         await generateStudioPanelVideo(projectId, episodeId, panel.id, {
+          previewConfigurationHash: preview?.configurationHash,
+          previewRequestHash: preview?.requestHash,
           channelId: model.channelId,
           model: model.modelId,
           mode,
@@ -243,7 +283,13 @@ export function PanelGenerationDialog({
   }
 
   return (
-    <Dialog onOpenChange={setOpen} open={open}>
+    <Dialog
+      onOpenChange={(next) => {
+        if (isSubmitting) return;
+        setOpen(next);
+      }}
+      open={open}
+    >
       <DialogTrigger render={trigger} />
       <DialogContent className="max-h-[calc(100dvh-1rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-lg p-0 sm:max-h-[min(90dvh,44rem)] sm:max-w-lg">
         <DialogHeader className="border-b px-4 py-4">
@@ -297,7 +343,9 @@ export function PanelGenerationDialog({
         <DialogFooter className="m-0 min-h-16 rounded-none border-t bg-background px-4 py-3">
           <Button
             disabled={isSubmitting}
-            onClick={() => setOpen(false)}
+            onClick={() => {
+              setOpen(false);
+            }}
             type="button"
             variant="outline"
           >
@@ -307,6 +355,8 @@ export function PanelGenerationDialog({
             disabled={
               isSubmitting ||
               previewLoading ||
+              !preview ||
+              Boolean(previewError) ||
               !modelId ||
               Boolean(preview?.issues.some((issue) => issue.blocking))
             }
@@ -361,6 +411,23 @@ export function BatchGenerationDialog({
   const [preflight, setPreflight] = useState<
     Record<string, StoryboardPromptPreview | null>
   >({});
+  const [preflightIssues, setPreflightIssues] = useState<
+    Record<string, Array<{ blocking: boolean; code: string; message: string }>>
+  >({});
+  const [preflightError, setPreflightError] = useState("");
+  const [globalPreflightIssues, setGlobalPreflightIssues] = useState<
+    Array<{ blocking: boolean; code: string; message: string }>
+  >([]);
+  const [quota, setQuota] = useState<{
+    status: "sufficient" | "insufficient" | "unknown";
+    availableCredits: string | null;
+    estimatedCredits: string | null;
+    providerBalance: "unavailable";
+  } | null>(null);
+  const [requestCount, setRequestCount] = useState(0);
+  const [batchBudgetLimit, setBatchBudgetLimit] = useState("");
+  const [projectBudget, setProjectBudget] =
+    useState<StudioMediaBudgetSummary | null>(null);
   const [preflightLoading, setPreflightLoading] = useState(false);
   const selectedModel = models.find((model) => model.id === modelId);
   const firstLastPanels = useMemo(
@@ -377,33 +444,49 @@ export function BatchGenerationDialog({
       kind === "video" && mode === "first-last" ? firstLastPanels : panels,
     [firstLastPanels, kind, mode, panels],
   );
-  const activePanelIds = new Set(
-    tasks
-      .filter(
-        (task) =>
-          task.kind === kind &&
-          task.targetType === "storyboard_panel" &&
-          ["queued", "running"].includes(task.status),
-      )
-      .map((task) => task.targetId),
+  const activePanelIds = useMemo(
+    () =>
+      new Set(
+        tasks
+          .filter(
+            (task) =>
+              task.kind === kind &&
+              task.targetType === "storyboard_panel" &&
+              ["queued", "running"].includes(task.status),
+          )
+          .map((task) => task.targetId),
+      ),
+    [kind, tasks],
   );
-  const completedPanelIds = new Set(
-    panels.flatMap((panel) => {
-      const assetId =
-        kind === "image" ? panel.imageAssetId : panel.videoAssetId;
-      const videoComplete =
-        kind === "video" && panel.videoSegments.length
-          ? panel.videoSegments.every((segment) => segment.videoAssetId)
-          : Boolean(assetId);
-      return kind === "video" ? (videoComplete ? [panel.id] : []) : assetId ? [panel.id] : [];
-    }),
+  const completedPanelIds = useMemo(
+    () =>
+      new Set(
+        panels.flatMap((panel) => {
+          const assetId =
+            kind === "image" ? panel.imageAssetId : panel.videoAssetId;
+          const videoComplete =
+            kind === "video" && panel.videoSegments.length
+              ? panel.videoSegments.every((segment) => segment.videoAssetId)
+              : Boolean(assetId);
+          return kind === "video"
+            ? videoComplete
+              ? [panel.id]
+              : []
+            : assetId
+              ? [panel.id]
+              : [];
+        }),
+      ),
+    [kind, panels],
   );
   const readyTargets = modeTargets.filter(
     (panel) =>
       !activePanelIds.has(panel.id) &&
       !(skipCompleted && completedPanelIds.has(panel.id)) &&
       preflight[panel.id] &&
-      !preflight[panel.id]?.issues.some((issue) => issue.blocking),
+      !(preflightIssues[panel.id] ?? preflight[panel.id]?.issues ?? []).some(
+        (issue) => issue.blocking,
+      ),
   );
   const skippedCount = modeTargets.filter(
     (panel) => skipCompleted && completedPanelIds.has(panel.id),
@@ -411,17 +494,25 @@ export function BatchGenerationDialog({
   const activeCount = modeTargets.filter((panel) =>
     activePanelIds.has(panel.id),
   ).length;
+  const preflightTargets = useMemo(
+    () =>
+      modeTargets.filter(
+        (panel) =>
+          !activePanelIds.has(panel.id) &&
+          !(skipCompleted && completedPanelIds.has(panel.id)),
+      ),
+    [activePanelIds, completedPanelIds, modeTargets, skipCompleted],
+  );
   const blockedCount = modeTargets.filter(
     (panel) =>
       !activePanelIds.has(panel.id) &&
       !(skipCompleted && completedPanelIds.has(panel.id)) &&
-      preflight[panel.id]?.issues.some((issue) => issue.blocking),
+      (!preflight[panel.id] ||
+        (preflightIssues[panel.id] ?? preflight[panel.id]?.issues ?? []).some(
+          (issue) => issue.blocking,
+        )),
   ).length;
-  const plannedSegmentCount = modeTargets.reduce(
-    (total, panel) => total + (preflight[panel.id]?.segments?.length ?? 0),
-    0,
-  );
-  const plannedDuration = modeTargets.reduce(
+  const plannedDuration = readyTargets.reduce(
     (total, panel) =>
       total +
       (preflight[panel.id]?.segments?.reduce(
@@ -444,39 +535,81 @@ export function BatchGenerationDialog({
   }, [firstLastPanels.length, mode]);
 
   useEffect(() => {
-    if (!open || !modeTargets.length) return;
+    if (!open) return;
+    if (!preflightTargets.length) {
+      setPreflight({});
+      setPreflightIssues({});
+      setQuota(null);
+      setRequestCount(0);
+      return;
+    }
     const controller = new AbortController();
     setPreflightLoading(true);
-    void Promise.all(
-      modeTargets.map(async (panel) => {
-        try {
-          const result = await previewStudioPanelPrompt(
-            projectId,
-            episodeId,
-            panel.id,
-            {
-              kind,
-              mode,
-              channelId: selectedModel?.channelId,
-              model: selectedModel?.modelId,
-              lastFramePanelId:
-                mode === "first-last"
-                  ? nextStoryboardPanel(panel, allPanels)?.id
-                  : undefined,
-            },
-            controller.signal,
-          );
-          return [panel.id, result.preview] as const;
-        } catch {
-          return [panel.id, null] as const;
-        }
-      }),
-    ).then((entries) => {
-      if (!controller.signal.aborted) {
-        setPreflight(Object.fromEntries(entries));
-        setPreflightLoading(false);
-      }
-    });
+    setPreflight({});
+    setPreflightIssues({});
+    setPreflightError("");
+    setGlobalPreflightIssues([]);
+    setQuota(null);
+    setRequestCount(0);
+    setProjectBudget(null);
+    if (!selectedModel) {
+      setPreflightError(promptText.preflightFailed);
+      setPreflightLoading(false);
+      return () => controller.abort();
+    }
+    void preflightStudioPanelBatch(
+      projectId,
+      episodeId,
+      {
+        channelId: selectedModel.channelId,
+        model: selectedModel.modelId,
+        kind,
+        mode,
+        batchBudgetLimit: batchBudgetLimit.trim()
+          ? batchBudgetLimit.trim()
+          : null,
+        items: preflightTargets.map((panel) => ({
+          panelId: panel.id,
+          mode: kind === "video" ? mode : undefined,
+          lastFramePanelId:
+            kind === "video" && mode === "first-last"
+              ? nextStoryboardPanel(panel, allPanels)?.id
+              : undefined,
+        })),
+      },
+      controller.signal,
+    )
+      .then(({ preflight: result }) => {
+        if (controller.signal.aborted) return;
+        setPreflight(
+          Object.fromEntries(
+            result.items.map((item) => [item.panelId, item.preview]),
+          ),
+        );
+        setPreflightIssues(
+          Object.fromEntries(
+            result.items.map((item) => [item.panelId, item.issues]),
+          ),
+        );
+        setQuota(result.quota);
+        setRequestCount(result.requestCount);
+        setProjectBudget(result.projectBudget);
+        const itemIssueKeys = new Set(
+          result.items.flatMap((item) =>
+            item.issues.map((issue) => issue.code),
+          ),
+        );
+        setGlobalPreflightIssues(
+          result.blockers.filter((issue) => !itemIssueKeys.has(issue.code)),
+        );
+      })
+      .catch(() => {
+        if (!controller.signal.aborted)
+          setPreflightError(promptText.preflightFailed);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setPreflightLoading(false);
+      });
     return () => controller.abort();
   }, [
     allPanels,
@@ -484,10 +617,13 @@ export function BatchGenerationDialog({
     kind,
     mode,
     modeTargets,
+    preflightTargets,
     open,
     projectId,
-    selectedModel?.channelId,
-    selectedModel?.modelId,
+    selectedModel,
+    batchBudgetLimit,
+    promptText.preflightFailed,
+    skipCompleted,
   ]);
 
   async function submit() {
@@ -496,11 +632,20 @@ export function BatchGenerationDialog({
     setIsSubmitting(true);
     try {
       const result = await generateStudioPanelBatch(projectId, episodeId, {
+        batchBudgetLimit: batchBudgetLimit.trim()
+          ? batchBudgetLimit.trim()
+          : null,
         channelId: model.channelId,
         model: model.modelId,
         kind,
         mode,
         items: readyTargets.map((panel) => ({
+          previewConfigurationHash:
+            kind === "video"
+              ? preflight[panel.id]?.configurationHash
+              : undefined,
+          previewRequestHash:
+            kind === "video" ? preflight[panel.id]?.requestHash : undefined,
           panelId: panel.id,
           mode: kind === "video" ? mode : undefined,
           lastFramePanelId:
@@ -509,9 +654,27 @@ export function BatchGenerationDialog({
               : undefined,
         })),
       });
-      toast.success(
-        copy.batchGenerated.replace("{count}", String(result.count)),
-      );
+      if (result.summary?.failedToSubmit) {
+        toast.warning(
+          copy.batchSubmissionPartial
+            .replace("{submitted}", String(result.count))
+            .replace("{failed}", String(result.summary.failedToSubmit))
+            .replace(
+              "{message}",
+              result.failures?.[0]?.message ?? copy.actionFailed,
+            ),
+        );
+      } else {
+        toast.success(
+          copy.batchGenerated.replace("{count}", String(result.count)) +
+            (result.budget?.configured
+              ? promptText.batchBudgetResult
+                  .replace("{actual}", result.budget.actual)
+                  .replace("{reserved}", result.budget.reserved)
+                  .replace("{remaining}", result.budget.remaining ?? "0")
+              : ""),
+        );
+      }
       setOpen(false);
       await onCompleted();
     } catch (error) {
@@ -522,7 +685,13 @@ export function BatchGenerationDialog({
   }
 
   return (
-    <Dialog onOpenChange={setOpen} open={open}>
+    <Dialog
+      onOpenChange={(next) => {
+        if (isSubmitting) return;
+        setOpen(next);
+      }}
+      open={open}
+    >
       <DialogTrigger render={trigger} />
       <DialogContent className="rounded-lg sm:max-w-md">
         <DialogHeader>
@@ -559,14 +728,6 @@ export function BatchGenerationDialog({
                 mode={mode}
                 onChange={setMode}
               />
-              <p className="flex items-center justify-between border-y py-2 text-xs">
-                <span className="text-muted-foreground">
-                  {promptText.generationRequests}
-                </span>
-                <span className="font-mono font-medium">
-                  {plannedSegmentCount} · {plannedDuration}s
-                </span>
-              </p>
             </>
           ) : null}
           <label className="flex items-center gap-2 text-sm font-medium">
@@ -585,7 +746,7 @@ export function BatchGenerationDialog({
           {blockedCount ? (
             <div className="max-h-36 overflow-y-auto border-b pb-3">
               {modeTargets.flatMap((panel) =>
-                (preflight[panel.id]?.issues ?? [])
+                (preflightIssues[panel.id] ?? preflight[panel.id]?.issues ?? [])
                   .filter((issue) => issue.blocking)
                   .map((issue) => (
                     <p
@@ -600,11 +761,86 @@ export function BatchGenerationDialog({
               )}
             </div>
           ) : null}
+          {preflightError ? (
+            <p className="text-xs text-destructive" role="alert">
+              {preflightError}
+            </p>
+          ) : null}
+          {globalPreflightIssues.map((issue) => (
+            <p
+              className="text-xs text-destructive"
+              key={issue.code}
+              role="alert"
+            >
+              {issue.message}
+            </p>
+          ))}
+          {quota ? (
+            <div
+              className={
+                quota.status === "insufficient"
+                  ? "space-y-1 border-b pb-3 text-xs text-destructive"
+                  : "space-y-1 border-b pb-3 text-xs text-muted-foreground"
+              }
+              role={quota.status === "insufficient" ? "alert" : undefined}
+            >
+              <p>
+                {quota.status === "insufficient"
+                  ? promptText.quotaInsufficient
+                  : quota.status === "unknown"
+                    ? promptText.quotaUnknown
+                    : promptText.quotaSufficient}
+              </p>
+              {quota.availableCredits !== null &&
+              quota.estimatedCredits !== null ? (
+                <p>
+                  {promptText.quotaKnown}: {quota.availableCredits} /{" "}
+                  {quota.estimatedCredits}
+                </p>
+              ) : null}
+              <p>{promptText.providerCostUnknown}</p>
+              <p>{promptText.providerQuotaUnknown}</p>
+            </div>
+          ) : null}
+          <label className="grid gap-1.5 text-xs font-medium">
+            {promptText.batchBudget}
+            <Input
+              disabled={isSubmitting}
+              inputMode="decimal"
+              min="0"
+              onChange={(event) => setBatchBudgetLimit(event.target.value)}
+              placeholder={
+                locale === "en" ? "Blank means unlimited" : "留空不单独限制本批"
+              }
+              type="number"
+              value={batchBudgetLimit}
+            />
+          </label>
+          {projectBudget?.configured ? (
+            <p className="text-xs leading-5 text-muted-foreground">
+              {promptText.projectBudget
+                .replace("{limit}", projectBudget.limit ?? "—")
+                .replace("{actual}", projectBudget.actual)
+                .replace("{reserved}", projectBudget.reserved)
+                .replace("{remaining}", projectBudget.remaining ?? "0")}
+            </p>
+          ) : null}
+          <p className="flex items-center justify-between border-y py-2 text-xs">
+            <span className="text-muted-foreground">
+              {promptText.generationRequests}
+            </span>
+            <span className="font-mono font-medium">
+              {requestCount}
+              {kind === "video" ? ` · ${plannedDuration}s` : ""}
+            </span>
+          </p>
         </div>
         <DialogFooter className="rounded-b-lg">
           <Button
             disabled={isSubmitting}
-            onClick={() => setOpen(false)}
+            onClick={() => {
+              setOpen(false);
+            }}
             type="button"
             variant="outline"
           >
@@ -614,6 +850,9 @@ export function BatchGenerationDialog({
             disabled={
               isSubmitting ||
               preflightLoading ||
+              Boolean(preflightError) ||
+              globalPreflightIssues.some((issue) => issue.blocking) ||
+              quota?.status === "insufficient" ||
               !modelId ||
               !readyTargets.length
             }
@@ -714,6 +953,71 @@ function PromptPreview({
                   .join("\n\n")
               : preview.finalPrompt}
           </pre>
+          {preview.parameters && (
+            <pre className="whitespace-pre-wrap break-anywhere rounded border p-3 text-xs break-anywhere">
+              {JSON.stringify(preview.parameters, null, 2)}
+            </pre>
+          )}
+          {preview.capabilities && (
+            <dl className="grid gap-3 rounded border bg-muted/20 p-3 text-xs sm:grid-cols-2">
+              <div>
+                <dt className="text-muted-foreground">
+                  {locale === "en" ? "Native audio" : "原生声音"}
+                </dt>
+                <dd>
+                  {preview.capabilities.nativeAudio === "supported"
+                    ? locale === "en"
+                      ? "Supported"
+                      : "支持"
+                    : preview.capabilities.nativeAudio === "unsupported"
+                      ? locale === "en"
+                        ? "Unsupported"
+                        : "不支持"
+                      : locale === "en"
+                        ? "Not verified"
+                        : "能力尚未确认"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">
+                  {locale === "en" ? "Audio control" : "声音控制方式"}
+                </dt>
+                <dd>
+                  {preview.capabilities.audioControl === "native_parameter"
+                    ? locale === "en"
+                      ? "Native audio parameter"
+                      : "原生音频参数"
+                    : locale === "en"
+                      ? "Prompt requirement; inspect output"
+                      : "提示词要求，需检查实际输出"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">
+                  {locale === "en" ? "Reference audio" : "参考音频"}
+                </dt>
+                <dd>
+                  {preview.capabilities.referenceAudio
+                    ? `${preview.capabilities.maxReferenceAudios} ${locale === "en" ? "maximum" : "个以内"}`
+                    : locale === "en"
+                      ? "Not supported by this adapter"
+                      : "当前渠道未接线支持"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">
+                  {locale === "en"
+                    ? "Speech, voice, lip sync and rendered subtitles"
+                    : "台词、音色、口型与模型内字幕"}
+                </dt>
+                <dd>
+                  {locale === "en"
+                    ? "Prompt requirements; exact results are not guaranteed"
+                    : "提示词约束，不能保证精确结果"}
+                </dd>
+              </div>
+            </dl>
+          )}
           {preview.safetyRewrites.length ? (
             <div className="text-xs">
               <p className="font-medium">{text.safety}</p>

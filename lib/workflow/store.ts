@@ -8,12 +8,18 @@ import {
 import { prisma } from "@/lib/server/prisma";
 import { resolveProductionConfiguration } from "@/lib/production-configuration/store";
 import { configurationSnapshotSchema } from "@/lib/production-configuration/contract";
+import { assertPreviewConfiguration } from "@/lib/production-configuration/execution";
 import {
   assertWorkflowAction,
   assertWorkflowDefinition,
   type WorkflowRunDefinition,
   type WorkflowRunStatus,
 } from "./contract";
+import {
+  downstreamRetryStepKeys,
+  workflowRetryStepKeys,
+} from "./retry-scope";
+import { getWorkflowTemplate } from "./registry";
 
 const include = {
   steps: { orderBy: { stepIndex: "asc" as const } },
@@ -29,6 +35,7 @@ const summarySelect = {
   projectId: true,
   episodeId: true,
   workflowType: true,
+  workflowVersion: true,
   input: true,
   targetType: true,
   targetId: true,
@@ -47,6 +54,7 @@ const summarySelect = {
       status: true,
       attempt: true,
       maxAttempts: true,
+      dependsOn: true,
       retryable: true,
       error: true,
       startedAt: true,
@@ -106,7 +114,27 @@ export async function createOrReuseWorkflowRun(
     projectId: definition.projectId, episodeId: definition.episodeId ?? undefined,
     ...(targetType === "storyboard_panel" && definition.episodeId ? { panelId: targetId } : {}),
   });
+  const normalizedWorkflowType = definition.workflowType.trim();
+  const registeredTemplate = getWorkflowTemplate(normalizedWorkflowType);
+  const executionSteps = definition.steps;
+  assertWorkflowDefinition(executionSteps);
+  const orchestrationSnapshot = registeredTemplate
+    ? {
+        templateType: registeredTemplate.type,
+        templateVersion: registeredTemplate.version,
+        steps: executionSteps.map((step) => ({
+          key: step.key,
+          type: step.type,
+          dependsOn: [...(step.dependsOn ?? [])],
+          artifactTypes: [...(step.artifactTypes ?? [])],
+          requiredArtifactTypes: [...(registeredTemplate.steps.find((templateStep) => templateStep.key === step.key)?.requiredArtifactTypes ?? [])],
+          retryable: step.retryable ?? true,
+          maxAttempts: step.maxAttempts ?? definition.maxAttempts ?? 3,
+        })),
+      }
+    : undefined;
   const requestedConcurrency = workflowInput.concurrency;
+  assertPreviewConfiguration(productionConfiguration, definition.expectedConfigurationHash);
   const concurrency = typeof requestedConcurrency === "number" && Number.isFinite(requestedConcurrency)
     ? Math.max(1, Math.min(8, Math.floor(requestedConcurrency)))
     : productionConfiguration.workflow.concurrency;
@@ -122,12 +150,18 @@ export async function createOrReuseWorkflowRun(
         projectId: definition.projectId,
         episodeId: definition.episodeId ?? null,
         workflowType: definition.workflowType.trim(),
+        workflowVersion: registeredTemplate?.version ?? 1,
         targetType,
         targetId,
         activeDedupeKey,
-        input: toJson({ ...workflowInput, concurrency, productionConfiguration }),
+        input: toJson({
+          ...workflowInput,
+          concurrency,
+          productionConfiguration,
+          ...(orchestrationSnapshot ? { orchestrationSnapshot } : {}),
+        }),
         steps: {
-          create: definition.steps.map((step, index) => {
+          create: executionSteps.map((step, index) => {
             const stepId = randomUUID();
             const trace = createWorkflowStepTraceContext({
               runId: definition.id,
@@ -159,9 +193,10 @@ export async function createOrReuseWorkflowRun(
             type: "created",
             status: "queued",
             payload: toJson({
-              stepCount: definition.steps.length,
+              stepCount: executionSteps.length,
               targetType,
               targetId,
+              ...(workflowInput.regeneratedFromRunId ? { resetKeys: executionSteps.map(step => step.key), retryMode: "restart" } : {}),
             }),
           },
         },
@@ -234,9 +269,10 @@ export async function listWorkflowRuns(
   userId: string,
   projectId: string,
   limit = 50,
+  episodeId?: string,
 ) {
   const rows = await prisma.workflowRun.findMany({
-    where: { userId, projectId },
+    where: { userId, projectId, ...(episodeId ? { episodeId } : {}) },
     orderBy: { createdAt: "desc" },
     take: Math.min(Math.max(limit, 1), 100),
     include,
@@ -393,14 +429,19 @@ export async function requestWorkflowCancel(userId: string, runId: string) {
   return row ? toRun(row) : null;
 }
 
-export async function retryWorkflowRun(userId: string, runId: string) {
+export async function retryWorkflowRun(userId: string, runId: string, mode?: "continue" | "restart") {
   const current = await prisma.workflowRun.findFirst({
     where: { id: runId, userId },
     include: { steps: true },
   });
   if (!current || !["failed", "blocked"].includes(current.status)) return null;
-  const resetKeys = resolveRetryStepKeys(current.steps);
-  const retryMode = getRetryMode(current.input);
+  const resetKeys = workflowRetryStepKeys(current.steps.map((step) => ({
+    stepKey: step.stepKey,
+    stepIndex: step.stepIndex,
+    status: step.status,
+    dependsOn: parseStringArray(step.dependsOn),
+  })));
+  const retryMode = mode ?? getRetryMode(current.input);
   const activeDedupeKey = buildRunDedupeKey(current);
   if (await hasConflictingActiveRun(runId, activeDedupeKey)) return null;
   const resetStepIds = current.steps
@@ -461,6 +502,7 @@ export async function retryWorkflowStep(
   userId: string,
   runId: string,
   stepKey: string,
+  mode?: "continue" | "restart",
 ) {
   const current = await prisma.workflowRun.findFirst({
     where: { id: runId, userId },
@@ -469,8 +511,11 @@ export async function retryWorkflowStep(
   if (!current || ["running", "canceled"].includes(current.status)) return null;
   const target = current.steps.find((step) => step.stepKey === stepKey);
   if (!target || !isWorkflowStepManuallyRetryable(target)) return null;
-  const retryMode = getRetryMode(current.input);
-  const resetKeys = resolveDownstreamStepKeys(current.steps, stepKey);
+  const retryMode = mode ?? getRetryMode(current.input);
+  const resetKeys = downstreamRetryStepKeys(current.steps.map((step) => ({
+    stepKey: step.stepKey,
+    dependsOn: parseStringArray(step.dependsOn),
+  })), stepKey);
   const activeDedupeKey = buildRunDedupeKey(current);
   if (await hasConflictingActiveRun(runId, activeDedupeKey)) return null;
   const resetStepIds = current.steps
@@ -544,72 +589,6 @@ export function isWorkflowStepManuallyRetryable(step: {
   return step.retryable && step.attempt < step.maxAttempts;
 }
 
-function resolveRetryStepKeys(
-  steps: Array<{
-    stepKey: string;
-    stepIndex: number;
-    status: string;
-    dependsOn: Prisma.JsonValue | null;
-  }>,
-) {
-  const reset = new Set(
-    steps
-      .filter((step) => step.status !== "succeeded")
-      .map((step) => step.stepKey),
-  );
-  // A queue/finalization failure may leave every step completed. Rerun the last
-  // step rather than immediately marking the run completed without execution.
-  if (!reset.size && steps.length) {
-    const last = steps.reduce((left, right) =>
-      left.stepIndex > right.stepIndex ? left : right);
-    reset.add(last.stepKey);
-  }
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const step of steps) {
-      const dependencies = Array.isArray(step.dependsOn)
-        ? step.dependsOn.filter(
-            (item): item is string => typeof item === "string",
-          )
-        : [];
-      if (
-        !reset.has(step.stepKey) &&
-        dependencies.some((key) => reset.has(key))
-      ) {
-        reset.add(step.stepKey);
-        changed = true;
-      }
-    }
-  }
-  return Array.from(reset);
-}
-
-function resolveDownstreamStepKeys(
-  steps: Array<{
-    stepKey: string;
-    dependsOn: Prisma.JsonValue | null;
-  }>,
-  stepKey: string,
-) {
-  const reset = new Set([stepKey]);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const step of steps) {
-      const dependencies = parseStringArray(step.dependsOn);
-      if (
-        !reset.has(step.stepKey) &&
-        dependencies.some((key) => reset.has(key))
-      ) {
-        reset.add(step.stepKey);
-        changed = true;
-      }
-    }
-  }
-  return Array.from(reset);
-}
-
 type Row = Prisma.WorkflowRunGetPayload<{ include: typeof include }>;
 type SummaryRow = Prisma.WorkflowRunGetPayload<{
   select: typeof summarySelect;
@@ -624,6 +603,7 @@ function toRunSummary(row: SummaryRow) {
     projectId: row.projectId,
     episodeId: row.episodeId ?? undefined,
     workflowType: row.workflowType,
+    workflowVersion: row.workflowVersion,
     execution:
       row.workflowType === "story-to-script"
         ? input?.channelId && input?.model
@@ -645,6 +625,7 @@ function toRunSummary(row: SummaryRow) {
       status: step.status,
       attempt: step.attempt,
       maxAttempts: step.maxAttempts,
+      dependsOn: parseStringArray(step.dependsOn),
       retryable: step.retryable,
       error: step.error as Record<string, unknown> | undefined,
       startedAt: step.startedAt?.toISOString(),

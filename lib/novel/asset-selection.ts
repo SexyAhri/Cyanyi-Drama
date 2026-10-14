@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/server/prisma";
+import { markAssetDependentPanelsStale } from "@/lib/media/asset-dependencies";
 
 export type SelectableAssetType =
   | "character"
@@ -25,7 +26,7 @@ export async function selectProjectAsset(input: {
           project: { userId: input.userId },
         },
       },
-      select: { id: true, characterId: true, imageAssetId: true },
+      select: { id: true, characterId: true, imageAssetId: true, character: { select: { name: true } } },
     });
     if (!appearance || !appearance.imageAssetId) return null;
     const assetId = appearance.imageAssetId;
@@ -58,6 +59,11 @@ export async function selectProjectAsset(input: {
         },
         update: {},
       });
+    });
+    await markAssetDependentPanelsStale(prisma, {
+      userId: input.userId,
+      projectId: input.projectId,
+      assets: [{ kind: "character", name: appearance.character.name, fields: ["selected_reference"] }],
     });
     return { entityType: "character_appearance", entityId: appearance.id };
   }
@@ -246,6 +252,10 @@ export async function selectProjectAsset(input: {
       select: { id: true },
     });
     if (!asset) return null;
+    const prop = await prisma.novelProp.findFirst({
+      where: { id: input.targetId, projectId: input.projectId, project: { userId: input.userId } },
+      select: { name: true },
+    });
     await prisma.$transaction(async (tx) => {
       await tx.assetReference.deleteMany({
         where: {
@@ -266,6 +276,11 @@ export async function selectProjectAsset(input: {
         },
       });
     });
+    await markAssetDependentPanelsStale(prisma, {
+      userId: input.userId,
+      projectId: input.projectId,
+      assets: prop ? [{ kind: "prop", name: prop.name, fields: ["selected_reference"] }] : [],
+    });
     return {
       entityType: "prop",
       entityId: input.targetId,
@@ -282,7 +297,7 @@ export async function selectProjectAsset(input: {
         project: { userId: input.userId },
       },
     },
-    select: { id: true, locationId: true, imageAssetId: true },
+    select: { id: true, locationId: true, imageAssetId: true, location: { select: { name: true } } },
   });
   if (!image || !image.imageAssetId) return null;
   const assetId = image.imageAssetId;
@@ -319,6 +334,11 @@ export async function selectProjectAsset(input: {
       },
       update: {},
     });
+  });
+  await markAssetDependentPanelsStale(prisma, {
+    userId: input.userId,
+    projectId: input.projectId,
+    assets: [{ kind: "location", name: image.location.name, fields: ["selected_reference"] }],
   });
   return { entityType: "location_image", entityId: image.id };
 }

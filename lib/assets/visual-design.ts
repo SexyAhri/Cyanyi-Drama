@@ -3,6 +3,7 @@ import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import { decryptSecret } from "@/lib/server/crypto";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { prisma } from "@/lib/server/prisma";
+import { markAssetDependentPanelsStale } from "@/lib/media/asset-dependencies";
 import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { getProjectArtStyleDirective } from "@/lib/projects/art-style";
@@ -269,6 +270,7 @@ async function loadVisualDesignContext(input: {
 }
 
 async function persistVisualProfile(input: {
+  userId: string;
   projectId: string;
   targetType: VisualDesignTargetType;
   targetId: string;
@@ -292,26 +294,41 @@ async function persistVisualProfile(input: {
     ...(input.promptTrace ? { promptTrace: input.promptTrace } : {}),
   };
   const data = { visualProfileJson: JSON.stringify(profile) };
-  if (input.targetType === "character")
+  let assetName: string | undefined;
+  if (input.targetType === "character") {
+    const asset = await prisma.novelCharacter.findFirst({ where: { id: input.targetId, projectId: input.projectId }, select: { name: true } });
+    assetName = asset?.name;
     await prisma.novelCharacter.updateMany({
       where: { id: input.targetId, projectId: input.projectId },
       data,
     });
-  else if (input.targetType === "location")
+  } else if (input.targetType === "location") {
+    const asset = await prisma.novelLocation.findFirst({ where: { id: input.targetId, projectId: input.projectId }, select: { name: true } });
+    assetName = asset?.name;
     await prisma.novelLocation.updateMany({
       where: { id: input.targetId, projectId: input.projectId },
       data,
     });
-  else
+  } else {
+    const asset = await prisma.novelProp.findFirst({ where: { id: input.targetId, projectId: input.projectId }, select: { name: true } });
+    assetName = asset?.name;
     await prisma.novelProp.updateMany({
       where: { id: input.targetId, projectId: input.projectId },
       data,
+    });
+  }
+  if (assetName)
+    await markAssetDependentPanelsStale(prisma, {
+      userId: input.userId,
+      projectId: input.projectId,
+      assets: [{ kind: input.targetType, name: assetName, fields: ["visual_profile"] }],
     });
   return profile;
 }
 
 async function resolveDesignProvider(input: {
   userId: string;
+  projectId?: string;
   channelId: string;
   model: string;
 }) {
@@ -334,6 +351,8 @@ async function resolveDesignProvider(input: {
   const runtimeSettings = await loadUserRuntimeSettings(input.userId);
   return {
     baseUrl: channel.baseUrl,
+    billing: { userId: input.userId, projectId: input.projectId },
+    channelId: input.channelId,
     apiKeys,
     model: input.model,
     ...structuredRequestOptions(runtimeSettings),

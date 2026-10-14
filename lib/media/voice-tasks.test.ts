@@ -39,6 +39,8 @@ import {
   createVoiceLineAudioTask,
   resolveVoiceTaskVoice,
 } from "./voice-tasks";
+import { mergeProductionConfigurations } from "@/lib/production-configuration/contract";
+vi.mock("@/lib/production-configuration/execution", () => ({ resolveProductionRequestConfiguration: vi.fn(async () => ({ ...mergeProductionConfigurations([]), format: "production-configuration-v1", sources: [] })) }));
 
 beforeEach(() => {
   vi.clearAllMocks();

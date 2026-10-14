@@ -77,9 +77,9 @@ export const PROMPT_CANARY_MANIFEST = {
   "asset_visual_extraction:en":
     "5c1acc32f9496f0f6f0c9932546a1c21eb5b11b3ed3432a60f31d524b61dd8c7",
   "asset_visual_design:zh":
-    "97c5bd3d6a81cc4ee1aed5c7b071a84eadf18e0289290c8d420f083c2d979383",
+    "b7ad6d95c76eae01e278cc17a4246c5f14ea3ffe4939380596830864b73bb44e",
   "asset_visual_design:en":
-    "ff5f8df9a05477ce21e49da982cd2c8dfd79ea82854cd32dceda2bd5c409d870",
+    "44e5f0551f6fe2229adb7a615d8ec4985e88f2f363fc976c3bb594c9487b6a23",
   "storyboard_media_prompt_design:zh":
     "1d544a0281a7fa331f9c703d3db8af201791d27510b745f68c787943d297e10e",
   "storyboard_media_prompt_design:en":
@@ -93,9 +93,9 @@ export const PROMPT_CANARY_MANIFEST = {
   "episode_split:en":
     "f04153d11057bbd8800178d4a310074e9c1a4e7ed937c9fcc9c6b9faeefbdcfb",
   "episode_adaptation:zh":
-    "b4639ae37a408aae1c2418f69c2cf0598d6e656024eb6d95c50bc01b44cbc95c",
+    "cc62e8c8d3a1b4b1878e288adadb90766312259f97114eedd0882c56863446f0",
   "episode_adaptation:en":
-    "1280f946dce22da85052612c7ad391c10cdd275bec52cc48ce07e8998f5cc07d",
+    "918448d9c71d83ffd9f146fc7ff313a086b65003767bbe352d2bfc0451112e36",
   "story_package_generation:zh":
     "01acf828333ae13d66f31b846a03f92fffb512a2c7b1f1e6f49f1768163adfa7",
   "story_package_generation:en":

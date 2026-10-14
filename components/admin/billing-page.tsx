@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { LoaderCircle, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { LoaderCircle, Pencil, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { AdminPage } from "@/components/admin/admin-page";
@@ -33,6 +33,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { CAPABILITY_BILLING_UNITS } from "@/lib/billing/pricing-contract";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type User = { id: string; displayName: string; email: string | null };
@@ -79,6 +80,7 @@ export function BillingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [priceSaving, setPriceSaving] = useState(false);
+  const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
   const [creditOpen, setCreditOpen] = useState(false);
   const [creditSaving, setCreditSaving] = useState(false);
   const [priceDraft, setPriceDraft] = useState({
@@ -104,6 +106,19 @@ export function BillingPage() {
       ),
     [channels],
   );
+  const editingPrice = editingPriceId
+    ? prices.find((item) => item.id === editingPriceId)
+    : undefined;
+  const availablePriceModelOptions = editingPrice &&
+    !modelOptions.some((item) => item.provider === editingPrice.provider && item.model === editingPrice.model)
+    ? [...modelOptions, {
+        key: priceDraft.modelKey,
+        provider: editingPrice.provider,
+        model: editingPrice.model,
+        capability: editingPrice.capability,
+        label: `${editingPrice.model} · ${editingPrice.provider}`,
+      }]
+    : modelOptions;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -131,7 +146,7 @@ export function BillingPage() {
   }, [load]);
 
   async function savePrice() {
-    const selected = modelOptions.find((item) => item.key === priceDraft.modelKey);
+    const selected = availablePriceModelOptions.find((item) => item.key === priceDraft.modelKey);
     if (!selected) return toast.error("请选择已配置的模型");
     setPriceSaving(true);
     try {
@@ -145,18 +160,30 @@ export function BillingPage() {
             capability: priceDraft.capability,
             unit: priceDraft.unit,
             unitPrice: priceDraft.unitPrice,
-            active: true,
+            active: editingPrice?.active ?? true,
           }),
         }),
       );
       const saved = payload.price as Price;
       setPrices((current) => [...current.filter((item) => item.id !== saved.id), saved]);
-      toast.success("模型价格已保存");
+      if (editingPriceId) cancelPriceEdit();
+      toast.success(editingPriceId ? "模型价格已更新" : "模型价格已保存");
     } catch (saveError) {
       toast.error(saveError instanceof Error ? saveError.message : "价格保存失败");
     } finally {
       setPriceSaving(false);
     }
+  }
+
+  function editPrice(price: Price) {
+    const draft = createModelPriceEditDraft(price, modelOptions);
+    setEditingPriceId(price.id);
+    setPriceDraft(draft);
+  }
+
+  function cancelPriceEdit() {
+    setEditingPriceId(null);
+    setPriceDraft({ modelKey: "", capability: "image", unit: "image", unitPrice: "0" });
   }
 
   async function deletePrice(id: string) {
@@ -213,27 +240,31 @@ export function BillingPage() {
 
         <TabsContent className="mt-5 grid gap-5" value="prices">
           <div className="grid items-end gap-3 border-b pb-5 lg:grid-cols-[minmax(0,2fr)_1fr_1fr_1fr_auto]">
-            <SelectField label="模型" onChange={(value) => {
+            <SelectField disabled={Boolean(editingPriceId)} label="模型" onChange={(value) => {
               const option = modelOptions.find((item) => item.key === value);
               const capability = option?.capability || priceDraft.capability;
               setPriceDraft((current) => ({ ...current, modelKey: value, capability, unit: defaultUnit(capability) }));
-            }} options={modelOptions.map((item) => ({ label: item.label, value: item.key }))} placeholder="选择模型" value={priceDraft.modelKey} />
-            <SelectField label="能力" onChange={(value) => setPriceDraft((current) => ({ ...current, capability: value, unit: defaultUnit(value) }))} options={["text", "image", "video", "audio", "lipsync", "voicedesign"].map(toOption)} value={priceDraft.capability} />
-            <SelectField label="计费方式" onChange={(value) => setPriceDraft((current) => ({ ...current, unit: value }))} options={[{ label: "每次请求", value: "request" }, { label: "每张图片", value: "image" }, { label: "每秒", value: "second" }, { label: "每分钟", value: "minute" }, { label: "每千字符", value: "1k_character" }]} value={priceDraft.unit} />
+            }} options={availablePriceModelOptions.map((item) => ({ label: item.label, value: item.key }))} placeholder="选择模型" value={priceDraft.modelKey} />
+            <SelectField disabled={Boolean(editingPriceId)} label="能力" onChange={(value) => setPriceDraft((current) => ({ ...current, capability: value, unit: defaultUnit(value) }))} options={["text", "image", "video", "audio", "lipsync", "voicedesign"].map(value => ({ value, label: capabilityLabel(value) }))} value={priceDraft.capability} />
+            <p className="text-xs text-muted-foreground sm:col-span-2">千字符按每次请求输入字符向上取整；分钟按秒数除以 60。零单价为免费，无有效价格将阻止模型调用。多个有效计费方式会累计计价。</p>
+            <SelectField disabled={Boolean(editingPriceId)} label="计费方式" onChange={(value) => setPriceDraft((current) => ({ ...current, unit: value }))} options={(CAPABILITY_BILLING_UNITS[priceDraft.capability] ?? []).map(value => ({ value, label: unitLabel(value) }))} value={priceDraft.unit} />
             <Field label="单价" onChange={(value) => setPriceDraft((current) => ({ ...current, unitPrice: value }))} type="number" value={priceDraft.unitPrice} />
-            <Button disabled={priceSaving} onClick={() => void savePrice()}>
-              {priceSaving ? <LoaderCircle className="animate-spin" /> : <Plus />}保存价格
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button disabled={priceSaving} onClick={() => void savePrice()}>
+                {priceSaving ? <LoaderCircle className="animate-spin" /> : editingPriceId ? <Save /> : <Plus />}{editingPriceId ? "更新价格" : "保存价格"}
+              </Button>
+              {editingPriceId ? <Button disabled={priceSaving} onClick={cancelPriceEdit} variant="outline"><X />取消</Button> : null}
+            </div>
           </div>
           <DataTable empty="尚未配置模型价格" headers={["模型", "供应商", "能力", "计费方式", "单价", ""]}>
             {prices.map((price) => (
               <TableRow key={price.id}>
                 <TableCell className="max-w-72 truncate" title={price.model}>{price.model}</TableCell>
                 <TableCell>{price.provider}</TableCell>
-                <TableCell><Badge variant="outline">{price.capability}</Badge></TableCell>
+                <TableCell><Badge variant="outline">{capabilityLabel(price.capability)}</Badge></TableCell>
                 <TableCell>{unitLabel(price.unit)}</TableCell>
                 <TableCell className="font-mono">¥ {price.unitPrice}</TableCell>
-                <TableCell className="text-right"><Button aria-label="删除价格" onClick={() => void deletePrice(price.id)} size="icon-sm" variant="ghost"><Trash2 /></Button></TableCell>
+                <TableCell><PriceRowActions disabled={Boolean(editingPriceId)} model={price.model} onDelete={() => void deletePrice(price.id)} onEdit={() => editPrice(price)} /></TableCell>
               </TableRow>
             ))}
           </DataTable>
@@ -293,6 +324,38 @@ export function BillingPage() {
   );
 }
 
+export function createModelPriceEditDraft(
+  price: Price,
+  modelOptions: Array<{ key: string; provider: string; model: string }>,
+) {
+  const option = modelOptions.find((item) => item.provider === price.provider && item.model === price.model);
+  return {
+    modelKey: option?.key ?? JSON.stringify(["price", price.id]),
+    capability: price.capability,
+    unit: price.unit,
+    unitPrice: price.unitPrice,
+  };
+}
+
+export function PriceRowActions({
+  disabled,
+  model,
+  onDelete,
+  onEdit,
+}: {
+  disabled: boolean;
+  model: string;
+  onDelete: () => void;
+  onEdit: () => void;
+}) {
+  return (
+    <div className="flex justify-end gap-1">
+      <Button aria-label={`编辑 ${model} 价格`} disabled={disabled} onClick={onEdit} size="icon-sm" title="编辑价格" variant="ghost"><Pencil /></Button>
+      <Button aria-label="删除价格" disabled={disabled} onClick={onDelete} size="icon-sm" variant="ghost"><Trash2 /></Button>
+    </div>
+  );
+}
+
 function DataTable({ children, empty, headers }: React.PropsWithChildren<{ empty: string; headers: string[] }>) {
   const hasRows = Array.isArray(children) ? children.length > 0 : Boolean(children);
   return (
@@ -300,8 +363,8 @@ function DataTable({ children, empty, headers }: React.PropsWithChildren<{ empty
   );
 }
 
-function SelectField({ label, onChange, options, placeholder, value }: { label: string; onChange: (value: string) => void; options: Array<{ label: string; value: string }>; placeholder?: string; value: string }) {
-  return <div className="grid min-w-0 gap-1.5"><Label>{label}</Label><Select onValueChange={(next) => next && onChange(next)} value={value || null}><SelectTrigger className="w-full"><SelectValue>{options.find((option) => option.value === value)?.label ?? placeholder}</SelectValue></SelectTrigger><SelectContent>{options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div>;
+function SelectField({ disabled, label, onChange, options, placeholder, value }: { disabled?: boolean; label: string; onChange: (value: string) => void; options: Array<{ label: string; value: string }>; placeholder?: string; value: string }) {
+  return <div className="grid min-w-0 gap-1.5"><Label>{label}</Label><Select disabled={disabled} onValueChange={(next) => next && onChange(next)} value={value || null}><SelectTrigger className="w-full"><SelectValue>{options.find((option) => option.value === value)?.label ?? placeholder}</SelectValue></SelectTrigger><SelectContent>{options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div>;
 }
 
 function Field({ label, onChange, type = "text", value }: { label: string; onChange: (value: string) => void; type?: string; value: string }) {
@@ -317,9 +380,10 @@ function stripChannelSuffix(name: string, channel: string) {
   return name.endsWith(suffix) ? name.slice(0, -suffix.length) : name;
 }
 
-function toOption(value: string) { return { label: value, value }; }
 function defaultUnit(capability: string) { return capability === "image" ? "image" : capability === "video" || capability === "lipsync" ? "second" : capability === "audio" ? "minute" : "request"; }
-function unitLabel(unit: string) { return ({ request: "每次请求", image: "每张图片", second: "每秒", minute: "每分钟", "1k_character": "每千字符" } as Record<string, string>)[unit] ?? unit; }
+function unitLabel(unit: string) { return ({ request: "每次请求", image: "每张图片", second: "每秒", minute: "每分钟", character: "每字符", "1k_character": "每千字符" } as Record<string, string>)[unit] ?? unit; }
 function transactionLabel(type: string) { return ({ charge: "扣费", credit: "入账", release: "释放冻结" } as Record<string, string>)[type] ?? type; }
 function formatDate(value: string) { return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
 async function readJson(response: Response) { const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>; if (!response.ok) throw new Error(typeof payload.message === "string" ? payload.message : "请求失败"); return payload; }
+
+function capabilityLabel(value: string) { return ({ text: "文本对话", image: "图片生成", video: "视频生成", audio: "语音合成", lipsync: "口型同步", voicedesign: "音色设计" } as Record<string, string>)[value] ?? "其他能力"; }

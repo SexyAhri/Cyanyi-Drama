@@ -58,11 +58,11 @@ export function cachedStudioRequest<T>(url: string, load: () => Promise<T>, sign
   const key = keyFor(url);
   const entry = entries.get(key);
   if (!force && entry && entry.freshUntil > Date.now()) return Promise.resolve(entry.value as T);
-  let work = pending.get(key) as Promise<T> | undefined;
+  let work = force ? undefined : pending.get(key) as Promise<T> | undefined;
   if (!work) {
     const capturedGeneration = generation;
     work = load().then(value => {
-      if (capturedGeneration === generation) writeStudioCache(url, value);
+      if (capturedGeneration === generation && pending.get(key) === work) writeStudioCache(url, value);
       return value;
     }).finally(() => { if (pending.get(key) === work) pending.delete(key); });
     pending.set(key, work);

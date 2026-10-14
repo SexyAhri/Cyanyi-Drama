@@ -16,9 +16,13 @@ import { createDatabaseMediaTaskStore } from "@/lib/media/task-store";
 import { enqueuePersistedMediaTask } from "@/lib/media/task-submit";
 import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
 import { resolveVideoModelLimits } from "@/lib/media/video-segment-plan";
+import { normalizeVideoProductionParameters, resolveVideoProductionCapabilities, videoProductionIssues } from "@/lib/media/video-production-capabilities";
+import { resolveVideoVoiceReferences } from "@/lib/media/video-voice-references";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { BillingError } from "@/lib/billing/service";
 import { lockVideoAudioPerformance } from "@/lib/media/director-prompt-locks";
+import { soundPolicyAudioMode } from "@/lib/production-configuration/contract";
+import { resolveProductionRequestConfiguration, productionConfigurationFingerprint, assertPreviewConfiguration, productionRequestErrorStatus, mediaRequestPreviewFingerprint, assertPreviewRequest } from "@/lib/production-configuration/execution";
 
 type Context = { params: Promise<{ projectId: string; episodeId: string }> };
 const schema = z.object({
@@ -29,6 +33,9 @@ const schema = z.object({
   model: z.string().min(1),
   idempotencyKey: z.string().min(1).max(200),
   preview: z.boolean().optional(),
+  productionOverride: z.never().optional(),
+  previewConfigurationHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  previewRequestHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 });
 
 export async function POST(request: Request, context: Context) {
@@ -106,6 +113,8 @@ export async function POST(request: Request, context: Context) {
       if (active)
         return reply({ message: "关联镜头已有生成任务，请等待完成" }, 409);
       const params = {
+        previewConfigurationHash: input.previewConfigurationHash,
+        previewRequestHash: input.previewRequestHash,
         userId: user.id,
         projectId,
         episodeId,
@@ -206,11 +215,24 @@ export async function POST(request: Request, context: Context) {
         return reply({ message: "首尾帧模式需要同时连接首帧和尾帧" }, 400);
     }
     const rawStandalonePrompt = [getProjectArtStyleDirective(episode.project.config?.artStyle ?? "realistic", "zh"), compiled.prompt].filter(Boolean).join("\n\n");
-    const standalonePrompt = input.kind === "video" ? lockVideoAudioPerformance(rawStandalonePrompt) : rawStandalonePrompt;
+    const productionConfiguration = await resolveProductionRequestConfiguration(user.id, { projectId, episodeId });
+    const productionCapabilities = input.kind === "video" ? resolveVideoProductionCapabilities({ model: input.model, protocol: channel.protocol, capabilities: JSON.parse(model.capabilitiesJson || "{}") }) : undefined;
+    const capabilityIssues = productionCapabilities ? videoProductionIssues(productionCapabilities, productionConfiguration.sound) : [];
+    if (capabilityIssues.some(issue => issue.blocking)) return reply({ message: capabilityIssues.filter(issue => issue.blocking).map(issue => issue.message).join("；") }, 400);
+    const referenceAudios = productionCapabilities ? await resolveVideoVoiceReferences(user.id, productionConfiguration.sound, productionCapabilities) : [];
+    const videoParameters = productionCapabilities ? normalizeVideoProductionParameters({ model: input.model, protocol: channel.protocol, capabilities: productionCapabilities, ratio: mediaDefaults.videoGenerationRatio, resolution: mediaDefaults.videoGenerationResolution, durationSeconds: Number.parseFloat(mediaDefaults.videoGenerationDuration), mode, referenceAudioCount: referenceAudios.length }) : undefined;
+    if (!input.preview) assertPreviewConfiguration(productionConfiguration, input.previewConfigurationHash);
+    const standalonePrompt = input.kind === "video" ? lockVideoAudioPerformance(rawStandalonePrompt, { soundPolicy: productionConfiguration.sound }) : rawStandalonePrompt;
     if (input.preview)
       return reply({
         prompt: standalonePrompt,
         references: compiled.references,
+        productionConfiguration,
+        configurationHash: productionConfigurationFingerprint(productionConfiguration),
+        requestHash: videoParameters ? mediaRequestPreviewFingerprint([{ model: input.model, channelId: input.channelId, request: { productionConfiguration, prompt: standalonePrompt, ratio: videoParameters.ratio, resolution: videoParameters.resolution, duration: videoParameters.duration, videoMode: mode, audioMode: soundPolicyAudioMode(productionConfiguration.sound), referenceImages: compiled.referenceImages, referenceAudios } }]) : undefined,
+        capabilities: productionCapabilities,
+        issues: capabilityIssues,
+        parameters: videoParameters ? { ...videoParameters, channelId: input.channelId, model: input.model, audioMode: soundPolicyAudioMode(productionConfiguration.sound), referenceAudioCount: referenceAudios.length, videoMode: mode } : undefined,
       });
     const canvasAssetTargets =
       input.kind === "image"
@@ -248,17 +270,19 @@ export async function POST(request: Request, context: Context) {
       protocol: channel.protocol,
       model: input.model,
       request: {
+        productionConfiguration,
+        productionCapabilities,
         prompt: standalonePrompt,
         canvasRevision: canvas.revision,
         canvasPromptVersionId: node.promptVersions?.at(-1)?.id,
         ratio:
           input.kind === "image"
             ? mediaDefaults.imageGenerationRatio
-            : mediaDefaults.videoGenerationRatio,
+            : videoParameters!.ratio,
         resolution:
           input.kind === "image"
             ? mediaDefaults.imageGenerationResolution
-            : mediaDefaults.videoGenerationResolution,
+            : videoParameters!.resolution,
         ...(input.kind === "image"
           ? {
               count: mediaDefaults.imageGenerationCount,
@@ -267,10 +291,11 @@ export async function POST(request: Request, context: Context) {
               format: "png",
             }
           : {
-              duration: mediaDefaults.videoGenerationDuration,
+              duration: videoParameters!.duration,
               videoMode: mode,
-              audioMode: "full",
+              audioMode: soundPolicyAudioMode(productionConfiguration.sound),
               format: "mp4",
+              ...(referenceAudios.length ? { referenceAudios } : {}),
             }),
         ...(compiled.referenceImages.length
           ? { referenceImages: compiled.referenceImages }
@@ -278,9 +303,12 @@ export async function POST(request: Request, context: Context) {
         ...(canvasAssetTargets.length ? { canvasAssetTargets } : {}),
       },
     });
+    assertPreviewRequest(mediaRequestPreviewFingerprint([task]), input.previewRequestHash);
     await store.create(task);
     return reply({ task: await enqueuePersistedMediaTask(user.id, task) }, 202);
   } catch (error) {
+    const configurationStatus = productionRequestErrorStatus(error);
+    if (configurationStatus) return reply({ message: error instanceof Error ? error.message : "配置无效" }, configurationStatus);
     return reply(
       { message: error instanceof Error ? error.message : "提交失败" },
       error instanceof ProjectAssetTaskError || error instanceof BillingError

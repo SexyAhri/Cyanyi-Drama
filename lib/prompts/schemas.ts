@@ -790,11 +790,7 @@ export const storyboardMediaPromptDesignSchema = z
   })
   .strict();
 
-export const studioWorkflowAgentSchema = z
-  .object({
-    reply: z.string().trim().min(1).max(4_000),
-    operation: z
-      .enum([
+const studioAgentOperations = [
         "cancel_media_task",
         "cancel_workflow",
         "pause_workflow",
@@ -814,12 +810,41 @@ export const studioWorkflowAgentSchema = z
         "start_manuscript_analysis",
         "start_original_episode_generation",
         "start_episode_preproduction",
-      ])
-      .nullable(),
-    targetId: z.string().trim().min(1).nullable(),
-    canvasPrompt: z.string().trim().min(1).max(30000).nullable(),
-  })
-  .strict();
+] as const;
+
+/**
+ * Normalize common chat-style structured replies before validation. Reply-only
+ * answers are valid; operation fields stay opt-in and are never inferred from
+ * prose. Unknown provider fields are stripped by Zod's default object mode.
+ */
+export function normalizeStudioWorkflowAgentResponse(value: unknown) {
+  if (typeof value === "string") {
+    return { reply: value, operation: null, targetId: null, canvasPrompt: null };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const raw = value as Record<string, unknown>;
+  const reply = raw.reply ?? raw.response ?? raw.message ?? raw.content ?? raw.text;
+  const rawOperation = raw.operation ?? raw.proposedOperation ?? raw.action;
+  const operation = typeof rawOperation === "string" &&
+    (studioAgentOperations as readonly string[]).includes(rawOperation)
+    ? rawOperation
+    : null;
+  const rawTarget = raw.targetId ?? raw.target_id;
+  const rawCanvasPrompt = raw.canvasPrompt ?? raw.canvas_prompt;
+  return {
+    reply,
+    operation,
+    targetId: typeof rawTarget === "string" && rawTarget.trim() ? rawTarget : null,
+    canvasPrompt: typeof rawCanvasPrompt === "string" && rawCanvasPrompt.trim() ? rawCanvasPrompt : null,
+  };
+}
+
+export const studioWorkflowAgentSchema = z.object({
+  reply: z.string().trim().min(1).max(4_000),
+  operation: z.enum(studioAgentOperations).nullable().default(null),
+  targetId: z.string().trim().min(1).nullable().default(null),
+  canvasPrompt: z.string().trim().min(1).max(30_000).nullable().default(null),
+});
 
 export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
   [PROMPT_IDS.SOURCE_NOTES]: SourceNotesSchema,

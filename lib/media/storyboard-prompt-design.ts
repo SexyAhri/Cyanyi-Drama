@@ -154,7 +154,7 @@ export async function designStoryboardMediaPrompt(input: {
   });
   const prompt = input.kind === "video"
     ? withProductionRules(basePrompt, "video-prompt-generation")
-    : withProductionRules(basePrompt, "storyboard-generation");
+    : basePrompt;
   if (input.kind === "video") {
     const soundContract = soundPolicyInstructions(configuration.sound, locale);
     prompt.platformContract = [prompt.platformContract, soundContract].filter(Boolean).join("\n\n");
@@ -196,6 +196,7 @@ export function parseStoryboardMediaPromptDesignText(
 
 export async function resolvePromptDesignProvider(input: {
   userId: string;
+  projectId?: string;
   channelId: string;
   model: string;
 }) {
@@ -219,6 +220,8 @@ export async function resolvePromptDesignProvider(input: {
   const settings = await loadUserRuntimeSettings(input.userId);
   return {
     baseUrl: channel.baseUrl,
+    billing: { userId: input.userId, projectId: input.projectId },
+    channelId: input.channelId,
     apiKeys,
     model: input.model,
     ...structuredRequestOptions(settings),

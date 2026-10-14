@@ -4,6 +4,9 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/server/prisma";
 import { resolveEpisodeTextProvider } from "@/lib/episodes/provider";
+import { currentProductionConfiguration } from "@/lib/production-configuration/context";
+import { workflowCacheFingerprint } from "@/lib/workflow/cache-fingerprint";
+import { recordWorkflowArtifactReuse } from "@/lib/workflow/request-events";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { PROMPT_IDS, renderPrompt } from "@/lib/prompts";
 import {
@@ -106,17 +109,81 @@ export async function generateOriginalEpisode(
   if (!previous?.novelText?.trim())
     throw new Error("请先完成并采用上一集正文，以便续写保持衔接");
   const previousHash = sourceFingerprint(previous.novelText);
-  const key = sourceFingerprint({
-    episodeId: episode.id,
-    previousHash,
-    packageId: parent.id,
-    version: parent.version,
+  const key = workflowCacheFingerprint({
+    source: {
+      episodeId: episode.id,
+      episodeNumber: episode.episodeNumber,
+      previousHash,
+      packageId: parent.id,
+      packageVersion: parent.version,
+      packageSourceHash: sourceFingerprint(story),
+      outline,
+      instructions: input.instructions ?? "",
+    },
+    prompt: `${PROMPT_IDS.STORY_PACKAGE_GENERATION}:original-episode-format-v3`,
+    promptVersion: "original-episode-v3",
+    channelId: input.channelId,
     model: input.model,
-    instructions: input.instructions,
-    formatVersion: 3,
+    agentConfiguration: currentProductionConfiguration()?.snapshot ?? null,
+    parameters: {
+      locale: input.locale,
+      temperature: 0.45,
+      timeoutMs: 270_000,
+      stream: true,
+      schema: z.toJSONSchema(EpisodeSchema),
+      projectSettings: {
+        artStyle: episode.project.config?.artStyle,
+        ratio: episode.project.config?.videoRatio,
+        targetSeconds: episode.project.config?.episodeTargetDurationSeconds,
+      },
+    },
   });
-  const completed = await hooks.loadArtifact("original.completed", key);
-  if (completed) return completed;
+  const frozenInput = {
+    episodeId: episode.id,
+    episodeNumber: episode.episodeNumber,
+    packageId: parent.id,
+    packageVersion: parent.version,
+    packageSourceHash: sourceFingerprint(story),
+    previousEpisodeId: previous.id,
+    previousEpisodeHash: previousHash,
+    outline,
+    instructions: input.instructions ?? "",
+  };
+  const completed = await hooks.loadArtifact("original.completed", key) as { sourceId?: unknown } | null;
+  if (typeof completed?.sourceId === "string") {
+    const savedSource = await prisma.episodeSourceVersion.findFirst({
+      where: {
+        id: completed.sourceId,
+        episodeId: episode.id,
+        kind: "adapted",
+        sourceHash: { not: "" },
+        content: { not: "" },
+        instructions: { startsWith: `策划包 ${parent.id} v${parent.version}；原创续写 ` },
+      },
+      select: { id: true },
+    });
+    if (savedSource) {
+      await recordWorkflowArtifactReuse({
+        recordRequest: hooks.recordRequest,
+        request: {
+          requestId: randomUUID(),
+          requestType: "original_episode_completion",
+          targetType: "episode",
+          targetId: episode.id,
+          provider: input.channelId,
+          model: input.model,
+          inputHash: key,
+          input: frozenInput,
+          cacheVersion: "workflow-cache-v2",
+          promptVersion: "original-episode-v3",
+          promptVersionHash: sourceFingerprint(`${PROMPT_IDS.STORY_PACKAGE_GENERATION}:original-episode-format-v3`),
+        },
+        artifactRefs: [`original.completed:${key}`, `episode.source_version:${savedSource.id}`],
+        reuseReason: "cache_fingerprint_match",
+      });
+      return completed;
+    }
+  }
   const cachedCandidate = EpisodeSchema.safeParse(
     normalizeOriginalEpisodeOutput(await hooks.loadArtifact("original.episode", key), story, input.locale),
   );
@@ -209,6 +276,26 @@ export async function generateOriginalEpisode(
           }),
         ],
       });
+  if (cached) {
+    await recordWorkflowArtifactReuse({
+      recordRequest: hooks.recordRequest,
+      request: {
+        requestId: randomUUID(),
+        requestType: "original_episode_generation",
+        targetType: "episode",
+        targetId: episode.id,
+        provider: input.channelId,
+        model: input.model,
+        inputHash: key,
+        input: frozenInput,
+        cacheVersion: "workflow-cache-v2",
+        promptVersion: "original-episode-v3",
+        promptVersionHash: sourceFingerprint(`${PROMPT_IDS.STORY_PACKAGE_GENERATION}:original-episode-format-v3`),
+      },
+      artifactRefs: [`original.episode:${key}`],
+      reuseReason: "cache_fingerprint_match",
+    });
+  }
   if (!cached) {
     await hooks.persistArtifact("original.episode", key, result.data);
     if ("trace" in result)
@@ -235,6 +322,26 @@ export async function generateOriginalEpisode(
       cachedVisualProfiles.data,
       visualCandidates,
     ).length === 0;
+  if (cacheIsComplete) {
+    await recordWorkflowArtifactReuse({
+      recordRequest: hooks.recordRequest,
+      request: {
+        requestId: randomUUID(),
+        requestType: "original_asset_visual_profiles",
+        targetType: "episode_assets",
+        targetId: episode.id,
+        provider: input.channelId,
+        model: input.model,
+        inputHash: visualProfilesKey,
+        input: { episodeId: episode.id, sourceInputHash: key, assets: visualCandidates.map(({ kind, item }) => ({ kind, name: item.name })) },
+        cacheVersion: "workflow-cache-v2",
+        promptVersion: "original-asset-visual-profiles-v3",
+        promptVersionHash: sourceFingerprint("original-asset-visual-profiles-v3"),
+      },
+      artifactRefs: [`original.visual_profiles:${visualProfilesKey}`],
+      reuseReason: "cache_fingerprint_match",
+    });
+  }
   let visualProfiles = cacheIsComplete
     ? { data: cachedVisualProfiles.data }
     : { data: { assetVisualProfiles: [] as GeneratedAssetVisualProfile[] } };

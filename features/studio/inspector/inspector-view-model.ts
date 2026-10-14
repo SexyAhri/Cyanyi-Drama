@@ -8,6 +8,8 @@ import type {
   WorkflowStepSummary,
   WorkspaceSnapshot,
 } from "../types";
+import { classifyProviderFailure, mediaPhaseTimeoutGuidance, providerFailureGuidance } from "@/lib/providers/failure-classification";
+import { agentDisplayName } from "@/features/production-configuration/agent-presentation";
 
 export type OperationItem =
   | {
@@ -18,6 +20,46 @@ export type OperationItem =
       step: WorkflowStepSummary;
     }
   | { id: string; kind: "task"; updatedAt: string; task: StudioMediaTask };
+
+export type OperationFailureFilters = { cause?: string; model?: string; phase?: string };
+
+export function prioritizeFocusedOperation(items: OperationItem[], focusId?: string | null) {
+  if (!focusId) return items;
+  const index = items.findIndex((item) =>
+    item.id === focusId || (item.kind === "workflow-step" && item.workflow.id === focusId),
+  );
+  if (index <= 0) return items;
+  return [items[index], ...items.slice(0, index), ...items.slice(index + 1)];
+}
+
+export function operationCauseKey(item: OperationItem) {
+  const error = item.kind === "task" ? item.task.error : item.step.error;
+  if (!error) return "none";
+  if (error.failureStage === "result_storage") return "result_storage";
+  const code = typeof error.code === "string" ? error.code.toLowerCase() : "";
+  if (code.includes("dependency_blocked")) return "dependency";
+  if (code.includes("billing") || code.includes("quota")) return "quota";
+  const message = typeof error.message === "string" ? error.message : code;
+  return classifyProviderFailure(message) ?? "other";
+}
+
+export function operationModelKey(item: OperationItem) {
+  return item.kind === "task" ? item.task.model || "unknown" : "workflow";
+}
+
+export function operationPhaseKey(item: OperationItem) {
+  return item.kind === "task"
+    ? item.task.executionPhase ?? item.task.status
+    : item.step.status;
+}
+
+export function filterOperationItems(items: OperationItem[], filters: OperationFailureFilters) {
+  return items.filter((item) =>
+    (!filters.cause || filters.cause === "all" || operationCauseKey(item) === filters.cause) &&
+    (!filters.model || filters.model === "all" || operationModelKey(item) === filters.model) &&
+    (!filters.phase || filters.phase === "all" || operationPhaseKey(item) === filters.phase),
+  );
+}
 
 export function buildOperationItems(
   snapshot: WorkspaceSnapshot,
@@ -83,6 +125,18 @@ export function isOperationDeletable(item: OperationItem) {
   return preferredStep?.id === item.step.id;
 }
 
+export function isWorkflowRunRetryActionItem(item: OperationItem) {
+  if (
+    item.kind !== "workflow-step" ||
+    !["blocked", "failed"].includes(item.workflow.status)
+  )
+    return false;
+  const primary =
+    item.workflow.steps.find((step) => ["blocked", "failed"].includes(step.status)) ??
+    [...item.workflow.steps].reverse().find((step) => step.status !== "pending");
+  return primary?.id === item.step.id;
+}
+
 export function workflowAttemptLabel(
   step: WorkflowStepSummary,
   locale: StudioLocale,
@@ -99,7 +153,52 @@ export function operationErrorMessage(
 ) {
   const message =
     typeof error?.message === "string" ? error.message.trim() : "";
+  const blockedSteps = Array.isArray(error?.blockedSteps)
+    ? error.blockedSteps.filter((item): item is Record<string, unknown> =>
+        Boolean(item) && typeof item === "object" && !Array.isArray(item),
+      )
+    : [];
+  const dependencyDetails = blockedSteps.map((item) => {
+    const stepKey = typeof item.stepKey === "string" ? item.stepKey : "?";
+    const waitingOn = Array.isArray(item.waitingOn)
+      ? item.waitingOn.filter((dependency): dependency is Record<string, unknown> =>
+          Boolean(dependency) && typeof dependency === "object" && !Array.isArray(dependency),
+        )
+      : [];
+    const labels = waitingOn.map((dependency) => {
+      const key = typeof dependency.stepKey === "string" ? dependency.stepKey : "?";
+      const status = typeof dependency.status === "string" ? dependency.status : "unknown";
+      const localizedStatus = locale === "zh-CN"
+        ? ({ blocked: "已阻塞", failed: "失败", missing: "缺失", pending: "待执行", ready: "就绪", running: "进行中", succeeded: "已完成" } as Record<string, string>)[status] ?? status
+        : ({ blocked: "blocked", failed: "failed", missing: "missing", pending: "pending", ready: "ready", running: "running", succeeded: "succeeded" } as Record<string, string>)[status] ?? status;
+      return locale === "zh-CN" ? `${key}（${localizedStatus}）` : `${key} (${localizedStatus})`;
+    });
+    return locale === "zh-CN"
+      ? `步骤 ${stepKey} 等待前置步骤：${labels.join("、")}`
+      : `Step ${stepKey} is waiting on: ${labels.join(", ")}`;
+  });
+  const dependencyMessage = dependencyDetails.join("; ");
+  if (error?.code === "BILLING_MEDIA_BUDGET_EXCEEDED")
+    return locale === "zh-CN"
+      ? "媒体任务超过项目或批次额度预算；提高预算或等待已有任务结算后再提交。"
+      : "This media task exceeds the project or batch credit budget. Increase the cap or wait for active holds to settle before submitting again.";
+  if (error?.code === "BILLING_MEDIA_BUDGET_PRICE_UNKNOWN")
+    return locale === "zh-CN"
+      ? "媒体预算已启用，但所选模型未配置计价；配置价格后才能执行预算内请求。"
+      : "A media budget is enabled, but this model has no configured price. Configure pricing before submitting a budgeted request.";
+  if (error?.code === "WORKFLOW_DEPENDENCY_BLOCKED") {
+    const heading = message || (locale === "zh-CN" ? "工作流等待前置步骤" : "Workflow is waiting on prerequisites");
+    return dependencyMessage ? `${heading} ${dependencyMessage}` : heading;
+  }
   if (!message) return "";
+  if (error?.failureStage === "result_storage")
+    return locale === "zh-CN"
+      ? `模型已完成，结果下载或保存失败；重试会复用已保存的模型结果。${message}`
+      : `Generation completed, but downloading or saving the result failed; retry will reuse the saved model output. ${message}`;
+  if (error?.failureStage === "generation")
+    return locale === "zh-CN"
+      ? `模型生成失败：${message}`
+      : `Model generation failed: ${message}`;
   const transport = message.match(
     /STRUCTURED_PROVIDER_TRANSPORT_FAILED:stage=([^;]+);attempts=(\d+);timeoutMs=(\d+);elapsedMs=(\d+);reason=([^;]+);causeCode=([^;]+)/,
   );
@@ -137,9 +236,14 @@ export function operationErrorMessage(
       ? `模型响应超时（应用上限 ${seconds} 秒）`
       : `Model response timed out (app limit ${seconds}s)`;
   }
+  const phaseTimeout = mediaPhaseTimeoutGuidance(message, locale);
+  if (phaseTimeout) return `${phaseTimeout} ${message}`;
   if (/aborted due to timeout|timed out/i.test(message))
     return locale === "zh-CN" ? "模型响应超时" : "Model response timed out";
-  return message;
+  const failureCategory = classifyProviderFailure(message);
+  if (failureCategory)
+    return `${providerFailureGuidance(failureCategory, locale)} ${message}`;
+  return dependencyMessage ? `${message} ${dependencyMessage}` : message;
 }
 
 function providerStageLabel(stage: string, locale: StudioLocale) {
@@ -158,6 +262,24 @@ export function summarizeUsageCosts(costs: StudioUsageCost[]) {
     },
     { quantity: 0, total: 0 },
   );
+}
+
+export function formatElapsedDuration(
+  startedAt: string,
+  completedAt: string | undefined,
+  locale: StudioLocale,
+) {
+  if (!completedAt) return locale === "zh-CN" ? "进行中" : "In progress";
+  const start = Date.parse(startedAt);
+  const end = Date.parse(completedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return "—";
+  const seconds = Math.max(0, (end - start) / 1000);
+  if (locale === "zh-CN") {
+    if (seconds < 60) return `${(Math.floor(seconds * (seconds < 10 ? 10 : 1)) / (seconds < 10 ? 10 : 1)).toFixed(seconds < 10 ? 1 : 0)} 秒`;
+    return `${Math.floor(seconds / 60)} 分 ${Math.floor(seconds % 60)} 秒`;
+  }
+  if (seconds < 60) return `${(Math.floor(seconds * (seconds < 10 ? 10 : 1)) / (seconds < 10 ? 10 : 1)).toFixed(seconds < 10 ? 1 : 0)} s`;
+  return `${Math.floor(seconds / 60)} min ${Math.floor(seconds % 60)} s`;
 }
 
 export function buildTraceRows(spans: StudioExecutionSpan[]) {
@@ -384,6 +506,7 @@ export function traceSpanKindLabel(
       workflow_run: "工作流",
       workflow_step: "工作流步骤",
       workflow_attempt: "执行尝试",
+      workflow_request: "子请求",
       workflow_artifact: "中间结果",
       prompt: "模型调用",
       media_task: "媒体任务",
@@ -392,6 +515,7 @@ export function traceSpanKindLabel(
       workflow_run: "Workflow",
       workflow_step: "Workflow step",
       workflow_attempt: "Execution attempt",
+      workflow_request: "Subrequest",
       workflow_artifact: "Intermediate result",
       prompt: "Model call",
       media_task: "Media task",
@@ -400,9 +524,42 @@ export function traceSpanKindLabel(
   return labels[locale][kind];
 }
 
-export function traceEventLabel(type: string, locale: StudioLocale) {
+export function traceAgentLabel(id: string, locale: StudioLocale) {
+  const english = locale !== "zh-CN";
+  return agentDisplayName(id, humanizeIdentifier(id), english);
+}
+
+export function traceArtifactLabel(artifactType: string, locale: StudioLocale) {
+  return artifactNameCopy[locale][artifactType] ?? humanizeIdentifier(artifactType);
+}
+
+export function traceConfigurationSources(value: unknown, locale: StudioLocale) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const source = item as Record<string, unknown>;
+    if (typeof source.scopeKey !== "string" || !source.scopeKey) return [];
+    const version = typeof source.version === "number" ? source.version : null;
+    const names: Record<string, [string, string]> = {
+      user: ["个人", "Personal"], project: ["项目", "Project"],
+      episode: ["剧集", "Episode"], panel: ["镜头", "Shot"],
+      request: ["本次请求", "This request"],
+    };
+    const [kind, ...scopeParts] = source.scopeKey.split(":");
+    const scopeName = names[kind]?.[locale === "zh-CN" ? 0 : 1];
+    const scope = scopeName
+      ? `${scopeName}${scopeParts.length ? `:${scopeParts.join(":")}` : ""}`
+      : source.scopeKey;
+    return [`${scope}${version === null ? "" : ` v${version}`}`];
+  });
+}
+
+export function traceEventLabel(type: string, locale: StudioLocale, message?: string) {
+  if (type === "blocked" && message && /前置步骤|prerequisite|waiting on:/i.test(message))
+    return locale === "zh-CN" ? "等待前置步骤" : "Waiting on prerequisites";
   const labels: Record<StudioLocale, Record<string, string>> = {
     "zh-CN": {
+      queued: "等待后台执行",
       created: "工作流已创建",
       running: "工作流已开始",
       step_running: "步骤已开始",
@@ -418,6 +575,7 @@ export function traceEventLabel(type: string, locale: StudioLocale) {
       step_retry_requested: "已请求重试步骤",
     },
     en: {
+      queued: "Queued for background execution",
       created: "Workflow created",
       running: "Workflow started",
       step_running: "Step started",
@@ -475,14 +633,22 @@ export function localizedTraceAttributes(
     clipIndex: "片段序号",
     sceneCount: "场景数",
     reused: "复用已有结果",
+    reuseReason: "复用原因",
+    cacheVersion: "缓存指纹版本",
+    promptVersion: "提示词版本",
+    promptVersionHash: "提示词版本摘要",
     degraded: "使用降级结果",
     success: "是否成功",
     error: "错误详情",
     fallbackReason: "降级原因",
+    fallbackPriceCompatibility: "备用模型价格兼容性",
+    retryCount: "重试次数",
+    failureStage: "失败阶段",
+    effectiveParameters: "有效生成参数",
+    creditHolds: "平台额度冻结记录",
+    settledCredits: "平台额度结算记录",
     promptId: "提示词 ID",
     agentId: "Agent ID",
-    promptVersion: "提示词版本",
-    promptVersionHash: "提示词版本摘要",
     systemHash: "系统提示词摘要",
     structuredOutputMode: "结构化输出模式",
     repaired: "JSON 已修复",

@@ -3,13 +3,14 @@ import { resolveStoredMediaInput } from "@/lib/storage";
 import type {
   MediaProviderRequest,
   MediaReferenceImage,
+  MediaReferenceAudio,
 } from "@/lib/providers/media/types";
 
 export async function resolveStoredReferenceImages(
   request: MediaProviderRequest,
   userId: string,
 ): Promise<MediaProviderRequest> {
-  const references = request.referenceImages ?? [];
+  const references = [...(request.referenceImages ?? []), ...(request.referenceAudios ?? [])];
   if (!references.length) return request;
 
   const storageKeys = uniqueStrings(
@@ -43,7 +44,7 @@ export async function resolveStoredReferenceImages(
   );
 
   const resolved = await Promise.all(
-    references.map(async (reference): Promise<MediaReferenceImage> => {
+    references.map(async (reference): Promise<MediaReferenceImage | MediaReferenceAudio> => {
       const asset =
         (reference.storageKey
           ? byStorageKey.get(reference.storageKey)
@@ -63,7 +64,10 @@ export async function resolveStoredReferenceImages(
     }),
   );
 
-  return { ...request, referenceImages: resolved };
+  return { ...request,
+    ...(request.referenceImages ? { referenceImages: resolved.slice(0, request.referenceImages.length) as MediaReferenceImage[] } : {}),
+    ...(request.referenceAudios ? { referenceAudios: resolved.slice(request.referenceImages?.length ?? 0) as MediaReferenceAudio[] } : {}),
+  };
 }
 
 function uniqueStrings(values: Array<string | undefined>) {

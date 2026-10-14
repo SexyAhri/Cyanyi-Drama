@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { WorkflowRequestUpdate } from "@/lib/workflow/request-events";
 
 export const SOURCE_CHUNK_CHARS = 12_000;
 export type SourceChunk = { index: number; start: number; end: number; text: string };
@@ -59,4 +60,5 @@ export type SourceTaskHooks = {
   loadArtifact: (type: string, id: string) => Promise<unknown | null>;
   persistArtifact: (type: string, id: string, payload: unknown) => Promise<void>;
   reportProgress?: (message: string) => Promise<void>;
+  recordRequest?: (request: WorkflowRequestUpdate) => Promise<void>;
 };

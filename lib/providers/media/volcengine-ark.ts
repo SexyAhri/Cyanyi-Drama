@@ -21,11 +21,13 @@ export const volcengineArkMediaProvider: MediaProviderAdapter = {
     return generateAudio(input);
   },
   lipSync: generateLipSync,
+  resume: resumeVideo,
 };
 
 async function generateImage(input: GenerateProviderMediaInput) {
   const references = await referencesAsDataUrls(
     input.request.referenceImages ?? [],
+    input.signal,
   );
   const count = normalizeImageCount(input.request.count ?? input.request.n);
   const response = await fetchWithProviderRetry(
@@ -46,6 +48,7 @@ async function generateImage(input: GenerateProviderMediaInput) {
         ...(references.length ? { image: references } : {}),
         response_format: "url",
       }),
+      signal: input.signal,
     },
   );
   const payload = await readProviderJson(response);
@@ -67,7 +70,7 @@ function normalizeImageCount(value?: number) {
 
 async function generateVideo(input: GenerateProviderMediaInput) {
   const references = input.request.referenceImages ?? [];
-  const dataUrls = await referencesAsDataUrls(references);
+  const dataUrls = await referencesAsDataUrls(references, input.signal);
   const content = [
     { type: "text", text: input.request.prompt ?? "" },
     ...references.map((reference, index) => ({
@@ -75,7 +78,9 @@ async function generateVideo(input: GenerateProviderMediaInput) {
       image_url: { url: dataUrls[index] },
       role: reference.role ?? "reference_image",
     })),
+    ...(input.request.referenceAudios ?? []).map(reference => ({ type: "audio_url", audio_url: { url: reference.url }, role: "reference_audio" })),
   ];
+  await input.onExecutionPhase?.("request_sent");
   const response = await fetchWithProviderRetry(
     joinUrl(input.baseUrl, "contents/generations/tasks"),
     {
@@ -90,12 +95,22 @@ async function generateVideo(input: GenerateProviderMediaInput) {
         generate_audio: input.request.audioMode !== "none",
         watermark: false,
       }),
+      signal: input.signal,
     },
   );
   const payload = await readProviderJson(response);
   if (!response.ok)
     throw new Error(providerErrorMessage(payload, response.status));
+  const taskId = videoState(payload).taskId;
+  if (taskId) {
+    await input.onProviderTaskId?.(taskId);
+    await input.onExecutionPhase?.("submitted");
+  }
   return pollArkVideo(input, payload);
+}
+
+async function resumeVideo(input: GenerateProviderMediaInput, providerTaskId: string) {
+  return pollArkVideo(input, { id: providerTaskId, status: "running" });
 }
 
 async function generateAudio(input: GenerateProviderMediaInput) {
@@ -110,6 +125,7 @@ async function generateAudio(input: GenerateProviderMediaInput) {
         voice: input.request.voice ?? "alloy",
         response_format: input.request.responseFormat ?? "mp3",
       }),
+      signal: input.signal,
     },
   );
   const contentType = response.headers.get("content-type") ?? "audio/mpeg";
@@ -145,6 +161,7 @@ async function generateLipSync(input: GenerateProviderLipSyncInput) {
         input: { video_url: input.videoUrl, audio_url: input.audioUrl },
         parameters: { action: "lip-sync" },
       }),
+      signal: input.signal,
     },
   );
   const payload = await readProviderJson(response);
@@ -166,14 +183,15 @@ async function pollArkVideo(
     ));
   if (initial.url) return [videoAsset(input, initial.url)];
   if (!initial.taskId) throw new Error("VIDEO_TASK_ID_MISSING");
+  await input.onExecutionPhase?.("generating");
   for (let attempt = 0; attempt < 60; attempt += 1) {
-    await waitForProviderPoll();
+    await waitForProviderPoll(3_000, input.signal);
     const response = await fetchWithProviderRetry(
       joinUrl(
         input.baseUrl,
         `contents/generations/tasks/${encodeURIComponent(initial.taskId)}`,
       ),
-      { headers: { Authorization: `Bearer ${input.apiKey}` } },
+      { headers: { Authorization: `Bearer ${input.apiKey}` }, signal: input.signal },
     );
     const payload = await readProviderJson(response);
     if (!response.ok)
@@ -198,13 +216,13 @@ async function pollArkLipSync(
   if (initial.url) return [lipSyncAsset(input, initial.url)];
   if (!initial.taskId) throw new Error("LIP_SYNC_TASK_ID_MISSING");
   for (let attempt = 0; attempt < 60; attempt += 1) {
-    await waitForProviderPoll();
+    await waitForProviderPoll(3_000, input.signal);
     const response = await fetchWithProviderRetry(
       joinUrl(
         input.baseUrl,
         `contents/generations/tasks/${encodeURIComponent(initial.taskId)}`,
       ),
-      { headers: { Authorization: `Bearer ${input.apiKey}` } },
+      { headers: { Authorization: `Bearer ${input.apiKey}` }, signal: input.signal },
     );
     const payload = await readProviderJson(response);
     if (!response.ok)

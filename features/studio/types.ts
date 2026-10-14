@@ -39,6 +39,7 @@ export type WorkflowStepSummary = {
   status: string;
   attempt: number;
   maxAttempts: number;
+  dependsOn?: string[];
   retryable: boolean;
   error?: Record<string, unknown>;
   startedAt?: string;
@@ -58,6 +59,7 @@ export type WorkflowRunSummary = {
   projectId: string;
   episodeId?: string;
   workflowType: string;
+  workflowVersion?: number;
   execution?: "ai" | "local";
   targetType?: string;
   targetId?: string;
@@ -401,7 +403,7 @@ export type StudioBalance = {
 
 export type StudioUsageCost = {
   id: string;
-  projectId: string;
+  projectId: string | null;
   apiType: string;
   model: string;
   action: string;
@@ -413,6 +415,38 @@ export type StudioUsageCost = {
   createdAt: string;
 };
 
+export type StudioUsageCostSummary = {
+  total: string;
+  quantity: number;
+  count: number;
+};
+
+export type StudioProjectModelMetric = {
+  executionKind: "media" | "workflow" | "conversation";
+  channelId: string | null;
+  channel: string;
+  model: string;
+  attempts: number;
+  succeeded: number;
+  failed: number;
+  canceled: number;
+  successRate: number | null;
+  rateLimited: number;
+  durationSamples: number;
+  averageDurationMs: number | null;
+  recordedCost: string | null;
+  cachedRequestsReused: number;
+  estimatedCreditSavings: null;
+};
+
+export type StudioProjectModelMetrics = {
+  since: string;
+  until: string;
+  windowDays: number;
+  sampled: boolean;
+  rows: StudioProjectModelMetric[];
+};
+
 export type StudioExecutionSpan = {
   spanId: string;
   parentSpanId?: string;
@@ -420,6 +454,7 @@ export type StudioExecutionSpan = {
     | "workflow_run"
     | "workflow_step"
     | "workflow_attempt"
+    | "workflow_request"
     | "workflow_artifact"
     | "prompt"
     | "media_task";
@@ -440,6 +475,9 @@ export type StudioExecutionTrace = {
     spanId: string;
     type: string;
     status?: string;
+    executionPhase?: string;
+    artifactType?: string;
+    artifactRefId?: string;
     message?: string;
     createdAt: string;
   }>;

@@ -1,13 +1,19 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
-import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
-import { retryWorkflowStep } from "@/lib/workflow/store";
+import { retryWorkflowStepAndEnqueue } from "@/lib/workflow/actions";
 
 type Context = { params: Promise<{ runId: string; stepKey: string }> };
 
-export async function POST(_request: Request, context: Context) {
+export async function POST(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { runId, stepKey } = await context.params;
-  const workflow = await retryWorkflowStep(user.id, runId, stepKey);
+  const body = await request.json().catch(() => ({}));
+  if (body.mode !== undefined && body.mode !== "continue") return attachSessionCookie(Response.json({ message: "续跑模式无效" }, { status: 400 }), sessionId);
+  const workflow = await retryWorkflowStepAndEnqueue({
+    runId,
+    stepKey,
+    userId: user.id,
+    mode: body.mode === "continue" ? "continue" : undefined,
+  });
   if (!workflow)
     return attachSessionCookie(
       Response.json(
@@ -16,12 +22,6 @@ export async function POST(_request: Request, context: Context) {
       ),
       sessionId,
     );
-  await enqueueWorkflowJob({
-    runId,
-    userId: user.id,
-    projectId: workflow.projectId,
-    maxAttempts: 1,
-  });
   return attachSessionCookie(
     Response.json({ workflow }, { status: 202 }),
     sessionId,

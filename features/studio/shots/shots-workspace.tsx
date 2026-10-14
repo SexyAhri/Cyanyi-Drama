@@ -55,6 +55,7 @@ import { ShotPromptDesignPanel } from "./shot-prompt-design-panel";
 import { VfxWorkspace } from "./vfx-workspace";
 import {
   buildShotMediaCandidates,
+  latestShotBatchProgress,
   latestPanelTasks,
   type ShotMediaCandidate,
   type ShotMediaKind,
@@ -305,8 +306,10 @@ export function ShotsWorkspace({
   async function controlTask(task: MediaTask, action: "cancel" | "retry") {
     setBusyTaskId(task.id);
     try {
-      await controlStudioMediaTask(task.id, action);
-      toast.success(action === "cancel" ? copy.taskCanceled : copy.taskRetried);
+      const result = await controlStudioMediaTask(task.id, action);
+      if (action === "cancel" && result.task.cancellationPolicy?.provider === "cancellation_unsupported")
+        toast.warning(copy.cancelProviderUnsupported);
+      else toast.success(action === "cancel" ? copy.taskCanceled : copy.taskRetried);
       await refreshAll();
     } catch (requestError) {
       toast.error(
@@ -346,13 +349,14 @@ export function ShotsWorkspace({
       const completed = results.filter(
         (result) => result.status === "fulfilled",
       ).length;
+      const providerWorkMayContinue = results.some(
+        (result) => result.status === "fulfilled" && result.value.task.cancellationPolicy?.provider === "cancellation_unsupported",
+      );
       if (completed) {
-        toast.success(
-          (action === "cancel" ? copy.tasksCanceled : copy.tasksRetried).replace(
-            "{count}",
-            String(completed),
-          ),
-        );
+        if (action === "cancel" && providerWorkMayContinue) toast.warning(copy.cancelProviderUnsupported);
+        else toast.success(
+            (action === "cancel" ? copy.tasksCanceled : copy.tasksRetried).replace("{count}", String(completed)),
+          );
       }
       if (completed !== results.length) toast.error(copy.actionFailed);
       await refreshAll();
@@ -492,6 +496,28 @@ export function ShotsWorkspace({
               key={mediaKind}
               value={mediaKind}
             >
+              {(() => {
+                const batch = latestShotBatchProgress(
+                  snapshot.tasks,
+                  episode.id,
+                  mediaKind,
+                );
+                if (!batch) return null;
+                const title = locale === "en" ? "Latest batch requests" : "最近一批请求";
+                const counts = locale === "en"
+                  ? `${batch.succeeded} succeeded · ${batch.failed} failed · ${batch.pending} pending${batch.canceled ? ` · ${batch.canceled} canceled` : ""} · ${batch.total} total`
+                  : `${batch.succeeded} 成功 · ${batch.failed} 失败 · ${batch.pending} 待处理${batch.canceled ? ` · ${batch.canceled} 已取消` : ""} · 共 ${batch.total} 项`;
+                return (
+                  <div
+                    aria-live="polite"
+                    className="mb-3 flex flex-wrap items-center justify-between gap-1 rounded-md border bg-muted/35 px-3 py-2 text-xs"
+                    role="status"
+                  >
+                    <span className="font-medium">{title}</span>
+                    <span className="text-muted-foreground">{counts}</span>
+                  </div>
+                );
+              })()}
               <div className="grid min-h-[34rem] border-y lg:grid-cols-[17rem_minmax(0,1fr)] xl:h-full xl:min-h-0">
                 <aside className="border-b lg:border-r lg:border-b-0 xl:flex xl:min-h-0 xl:flex-col">
                   <label className="flex h-10 items-center gap-2 border-b px-3 text-xs text-muted-foreground">

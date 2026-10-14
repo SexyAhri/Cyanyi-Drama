@@ -44,6 +44,16 @@ export async function generateProviderMedia(
   return provider.generate(input);
 }
 
+export async function resumeProviderMedia(
+  input: GenerateProviderMediaInput,
+  providerTaskId: string,
+) {
+  const provider = providers[input.protocol];
+  if (!provider?.resume)
+    throw new Error(`MEDIA_PROVIDER_RESUME_NOT_SUPPORTED:${input.protocol}`);
+  return provider.resume(input, providerTaskId);
+}
+
 export async function generateProviderLipSync(
   input: GenerateProviderLipSyncInput,
 ): Promise<MediaAsset[]> {

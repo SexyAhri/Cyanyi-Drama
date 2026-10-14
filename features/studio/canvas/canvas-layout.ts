@@ -17,7 +17,7 @@ export function needsEpisodeCanvasLayout(document: CanvasDocument, graph: Canvas
   const nodes = new Map(document.nodes.map(node => [node.id, node]));
   const edges = new Set(document.edges.map(edge => edge.id));
   return nodes.size !== graph.nodes.length || edges.size !== graph.edges.length ||
-    graph.nodes.some(node => !nodes.has(node.id) || node.episodeLayer !== nodes.get(node.id)?.episodeLayer) ||
+    graph.nodes.some(node => !nodes.has(node.id) || node.episodeLayer !== nodes.get(node.id)?.episodeLayer || node.panelId !== nodes.get(node.id)?.panelId) ||
     graph.edges.some(edge => !edges.has(edge.id));
 }
 
@@ -42,7 +42,9 @@ export function buildEpisodeCanvasGraph(
   const nodes = document.nodes.filter((node) => !node.sourceEpisodeId).map((node) => ({ ...node }));
   const removedIds = new Set<string>();
   function branches(parentId: string, kind: "image" | "video") {
-    return nodes.filter((node) => node.kind === kind && document.edges.some(
+    const parent = nodes.find(node => node.id === parentId);
+    return nodes.filter((node) => node.kind === kind &&
+      (kind !== "video" || !node.panelId || node.panelId === parent?.panelId) && document.edges.some(
       (edge) => edge.from === parentId && edge.to === node.id,
     ));
   }
@@ -79,7 +81,10 @@ export function buildEpisodeCanvasGraph(
     const parent = nodeByPanel.get(panel.id)!;
     const reused = reuseBranches(parent.id, "video", id, panel.videoPrompt ?? "");
     if (reused.length) {
-      for (const branch of reused) branch.episodeLayer = "shot_video";
+      for (const branch of reused) {
+        branch.episodeLayer = "shot_video";
+        branch.panelId ??= panel.id;
+      }
       videoNodeByPanel.set(panel.id, reused[0]);
       continue;
     }

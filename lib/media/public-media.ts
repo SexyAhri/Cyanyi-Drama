@@ -7,8 +7,8 @@ export function mediaAssetContentUrl(assetId: string) {
 export function compactMediaTaskRequest(
   request: Record<string, unknown>,
 ): Record<string, unknown> {
-  const referenceImages = Array.isArray(request.referenceImages)
-    ? request.referenceImages.map((value) => {
+  const compactReferences = (values: unknown) => Array.isArray(values)
+    ? values.map((value) => {
         if (!isRecord(value) || typeof value.storageKey !== "string")
           return value;
         return {
@@ -17,7 +17,9 @@ export function compactMediaTaskRequest(
         };
       })
     : undefined;
-  return referenceImages ? { ...request, referenceImages } : request;
+  const referenceImages = compactReferences(request.referenceImages);
+  const referenceAudios = compactReferences(request.referenceAudios);
+  return referenceImages || referenceAudios ? { ...request, ...(referenceImages ? { referenceImages } : {}), ...(referenceAudios ? { referenceAudios } : {}) } : request;
 }
 
 export function compactMediaTaskOutput(output: MediaAsset[]) {

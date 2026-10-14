@@ -384,7 +384,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsTtsRateFast: "Fast (1.5x)",
     settingsTtsRateVeryFast: "Very fast (2.0x)",
     settingsDescription:
-      "Manage model channels, creative defaults, and workflow runtime behavior.",
+      "Manage preferences, model connections, Agents, and sound production mode.",
     showApiKey: "Show API Key",
     showModelName: "Show model name",
     switchLanguage: "Switch language",
@@ -582,7 +582,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     settingsTtsRateFast: "加速 (1.5x)",
     settingsTtsRateVeryFast: "快速 (2.0x)",
     settingsDescription:
-      "管理模型渠道、创作默认值和工作流运行参数。",
+      "管理个人偏好、模型连接、Agent 和声音制作方式。",
     showApiKey: "显示 API Key",
     showModelName: "显示模型名称",
     switchLanguage: "切换语言",

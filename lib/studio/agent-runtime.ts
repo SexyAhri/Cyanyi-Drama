@@ -4,11 +4,16 @@ import type {
   AgentMessage,
   AgentToolCall,
 } from "@/lib/agent/types";
-import { createHash } from "node:crypto";
-import { resolveProductionConfiguration, assertConfigurationScope } from "@/lib/production-configuration/store";
+import { createHash, randomUUID } from "node:crypto";
+import { summarizeAgentTestRunCost } from "./agent-test-cost";
+import type { ModelChargeReceipt } from "@/lib/billing/model-charge";
+import { resolveProductionConfiguration, assertConfigurationScope, validateManagementConfiguration } from "@/lib/production-configuration/store";
+import { mergeProductionConfigurations, type ProductionConfigurationPatch, type ProductionConfigurationSnapshot } from "@/lib/production-configuration/contract";
 import { withProductionConfiguration } from "@/lib/production-configuration/context";
 import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
+import { StructuredOutputError } from "@/lib/llm/structured-output";
+import { studioAgentPlainTextFallback } from "@/lib/studio/agent-response";
 import { controlMediaTask } from "@/lib/media/task-actions";
 import { createDatabaseMediaTaskStore } from "@/lib/media/task-store";
 import {
@@ -28,7 +33,7 @@ import {
   type CanvasCard,
 } from "./canvas-document";
 import { PROMPT_IDS, renderPrompt } from "@/lib/prompts";
-import { studioWorkflowAgentSchema } from "@/lib/prompts/schemas";
+import { normalizeStudioWorkflowAgentResponse, studioWorkflowAgentSchema } from "@/lib/prompts/schemas";
 import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import {
@@ -39,6 +44,19 @@ import { getWorkflowRun, listWorkflowRuns } from "@/lib/workflow/store";
 import { loadAgentAssetContext } from "./agent-asset-context";
 import { loadAgentProjectContext } from "./agent-project-context";
 import { serializeBudgetedContext } from "./context-budget";
+import {
+  applyStudioAgentContextScopes,
+  DEFAULT_STUDIO_AGENT_CONTEXT_SCOPES,
+  type StudioAgentContextScope,
+} from "./agent-context-policy";
+import {
+  filterStudioAgentOperationCandidates,
+  isStudioAgentOperationEnabled,
+} from "./agent-operation-policy";
+import {
+  studioAgentApprovalGranted,
+  studioAgentConfirmationMode,
+} from "./agent-approval-policy";
 import {
   STUDIO_PRODUCTION_OPERATIONS,
   isProductionOperation,
@@ -126,6 +144,11 @@ type StudioAgentDecision = {
   targetId: string | null;
   canvasPrompt?: string | null;
   modelSelection?: StudioAgentModelSelection;
+  testRun?: {
+    request: { channelId?: string; model: string; structuredOutputMode?: string; temperature: number; systemText: string; userText: string };
+    trace: { model: string; channelId?: string; tokenUsage: unknown; characterUsage?: { inputCharacters: number } | null; billing?: ModelChargeReceipt[]; correctionAttempts: number; outputHash: string };
+    validation: { passed: boolean; schema: string; code?: string; fallback?: "plain_text" };
+  };
 };
 
 export async function runStudioAgent(input: {
@@ -138,8 +161,66 @@ export async function runStudioAgent(input: {
   projectId: string;
   userId: string;
 }): Promise<AsyncIterable<AgentEvent>> {
-  const state = await loadAgentState(input);
-  return runStudioAgentEvents(input, state);
+  const configuration = await resolveProductionConfiguration(input.userId, {
+    projectId: input.projectId,
+    episodeId: input.context.episodeId,
+  });
+  const contextScopes =
+    configuration.agents[PROMPT_IDS.STUDIO_WORKFLOW_AGENT]?.contextScopes ??
+    DEFAULT_STUDIO_AGENT_CONTEXT_SCOPES;
+  const state = await loadAgentState({ ...input, contextScopes });
+  return runStudioAgentEvents(input, state, configuration);
+}
+
+export async function previewStudioAgent(input: {
+  content: string;
+  context: StudioAgentContext;
+  locale: StudioAgentLocale;
+  modelSelection?: StudioAgentModelSelection;
+  projectId: string;
+  userId: string;
+  draft?: ProductionConfigurationPatch;
+}) {
+  await assertConfigurationScope(input.userId, {
+    projectId: input.projectId,
+    episodeId: input.context.episodeId,
+  });
+  let configuration = await resolveProductionConfiguration(input.userId, {
+    projectId: input.projectId,
+    episodeId: input.context.episodeId,
+  });
+  if (input.draft) {
+    const patch = await validateManagementConfiguration(input.userId, input.draft);
+    if (patch.sound) throw new Error("Agent 试运行只接受 Agent 草稿");
+    configuration = {
+      ...mergeProductionConfigurations([configuration, patch]),
+      defaultsVersion: configuration.defaultsVersion,
+      format: "production-configuration-v1",
+      sources: [...configuration.sources, {
+        scopeKey: "test-draft",
+        version: 0,
+        fields: Object.entries(patch.agents ?? {}).flatMap(([id, agent]) =>
+          Object.keys(agent).map((field) => `agents.${id}.${field}`),
+        ),
+      }],
+    };
+  }
+  const contextScopes =
+    configuration.agents[PROMPT_IDS.STUDIO_WORKFLOW_AGENT]?.contextScopes ??
+    DEFAULT_STUDIO_AGENT_CONTEXT_SCOPES;
+  const state = await loadAgentState({ ...input, contextScopes });
+  const decision = await decideStudioAgentAction(input, state, configuration);
+  const testRunId = randomUUID();
+  const costEstimate = decision.testRun ? summarizeAgentTestRunCost(decision.testRun.trace.billing) : null;
+  return {
+    response: decision.reply,
+    proposedOperation: decision.operation,
+    targetId: decision.targetId,
+    modelSelection: decision.modelSelection,
+    testRun: decision.testRun ? { ...decision.testRun, id: testRunId, costEstimate } : null,
+    configurationSources: configuration.sources,
+    executed: false,
+  };
 }
 
 async function* runStudioAgentEvents(
@@ -154,8 +235,9 @@ async function* runStudioAgentEvents(
     userId: string;
   },
   state: AgentState,
+  configuration: ProductionConfigurationSnapshot,
 ): AsyncIterable<AgentEvent> {
-  const decision = await decideStudioAgentAction(input, state);
+  const decision = await decideStudioAgentAction(input, state, configuration);
   if (!decision.operation) {
     yield messageEvent(decision.reply);
     return;
@@ -253,6 +335,7 @@ async function* runStudioAgentEvents(
     id: toolCallId,
     name: decision.operation,
     args: {
+      confirmationMode: studioAgentConfirmationMode(decision.operation),
       context: {
         episodeId: state.episode?.id ?? null,
         projectId: state.project.id,
@@ -353,6 +436,13 @@ export function resolveStudioAgentApproval(input: {
   ) {
     throw new StudioAgentError("AGENT_APPROVAL_CONTEXT_MISMATCH", 403);
   }
+  if (
+    studioAgentConfirmationMode(approval.operation) === "automatic_read" ||
+    (input.decision === "approved" &&
+      !studioAgentApprovalGranted(approval.operation, input.decision))
+  ) {
+    throw new StudioAgentError("AGENT_APPROVAL_NOT_REQUIRED", 400);
+  }
   return resolveStudioAgentApprovalEvents(input, approval);
 }
 
@@ -368,7 +458,7 @@ async function* resolveStudioAgentApprovalEvents(
     approvalId: input.approvalId,
     decision: input.decision,
   };
-  if (input.decision === "denied") {
+  if (!studioAgentApprovalGranted(approval.operation, input.decision)) {
     yield messageEvent(
       approval.locale === "en" ? "Action denied." : "操作已拒绝。",
     );
@@ -487,6 +577,7 @@ export class StudioAgentError extends Error {
 async function loadAgentState(input: {
   content?: string;
   context: StudioAgentContext;
+  contextScopes: readonly StudioAgentContextScope[];
   projectId: string;
   userId: string;
 }) {
@@ -515,6 +606,9 @@ async function loadAgentState(input: {
         },
       },
       episodes: {
+        where: input.context.episodeId
+          ? { id: input.context.episodeId }
+          : { id: "__no_current_episode__" },
         orderBy: { episodeNumber: "asc" },
         select: { id: true, name: true },
       },
@@ -529,12 +623,18 @@ async function loadAgentState(input: {
 
   const [workflows, tasks, clips, assetContext, projectContext] =
     await Promise.all([
-      listWorkflowRuns(input.userId, input.projectId, 100),
-      createDatabaseMediaTaskStore(input.userId).list({
+      input.contextScopes.includes("current_episode") && episode
+        ? listWorkflowRuns(input.userId, input.projectId, 100, episode.id)
+        : Promise.resolve([]),
+      input.contextScopes.includes("current_episode") && episode
+        ? createDatabaseMediaTaskStore(input.userId).list({
         projectId: input.projectId,
+        episodeId: episode.id,
         limit: 100,
-      }),
-      prisma.storyClip.findMany({
+      })
+        : Promise.resolve([]),
+      input.contextScopes.includes("current_episode") && episode
+        ? prisma.storyClip.findMany({
         where: {
           projectId: input.projectId,
           project: { userId: input.userId },
@@ -550,19 +650,25 @@ async function loadAgentState(input: {
           status: true,
           summary: true,
         },
-      }),
-      loadAgentAssetContext({
+      })
+        : Promise.resolve([]),
+      input.contextScopes.includes("character_assets")
+        ? loadAgentAssetContext({
         userId: input.userId,
         projectId: input.projectId,
-        selection: input.context.selection,
+        selection: input.contextScopes.includes("selected_shot")
+          ? input.context.selection
+          : undefined,
         artStyle: project.config?.artStyle,
-      }),
+      })
+        : Promise.resolve(null),
       loadAgentProjectContext({
         userId: input.userId,
         projectId: input.projectId,
         episodeId: episode?.id,
         selectionId: input.context.selection?.id,
         request: input.content ?? "",
+        contextScopes: input.contextScopes,
         artStyle: project.config?.artStyle,
       }),
     ]);
@@ -583,7 +689,9 @@ async function loadAgentState(input: {
       })
     : [];
   const canvasRow =
-    episode && input.context.view === "canvas"
+    episode &&
+    input.contextScopes.includes("selected_shot") &&
+    input.context.view === "canvas"
       ? await prisma.creativeCanvas.findUnique({
           where: { episodeId: episode.id },
         })
@@ -652,7 +760,7 @@ async function loadAgentState(input: {
           ).inputs,
         }
       : null;
-  return {
+  return applyStudioAgentContextScopes({
     projectContext,
     asset: assetContext,
     canvas: canvasContext,
@@ -672,11 +780,12 @@ async function loadAgentState(input: {
       };
     }),
     context: input.context,
+    contextScopes: input.contextScopes,
     episode,
     project,
     tasks,
     workflows: relevantWorkflows,
-  };
+  }, input.contextScopes);
 }
 
 function canvasPromptTargets(state: AgentState) {
@@ -838,17 +947,18 @@ async function decideStudioAgentAction(
     userId: string;
   },
   state: AgentState,
+  configuration: ProductionConfigurationSnapshot,
 ): Promise<StudioAgentDecision> {
-  const configuration = await resolveProductionConfiguration(input.userId, { projectId: state.project.id, episodeId: state.episode?.id });
   const configuredAgent = configuration.agents[PROMPT_IDS.STUDIO_WORKFLOW_AGENT];
-  const disabled = new Set(configuredAgent?.disabledOperations ?? []);
+  const disabled = configuredAgent?.disabledOperations ?? [];
   const provider = await resolveStudioAgentProvider({ ...input,
     modelSelection: configuredAgent?.channelId && configuredAgent.model ? { channelId: configuredAgent.channelId, model: configuredAgent.model } : input.modelSelection }, state);
   if (!provider) {
     const decision = deterministicStudioAgentDecision(input, state);
-    return decision.operation && disabled.has(decision.operation) ? { ...decision, operation: null, targetId: null } : decision;
+    return decision.operation && !isStudioAgentOperationEnabled(decision.operation, disabled) ? { ...decision, operation: null, targetId: null } : decision;
   }
   const retrievedIds: string[] = [];
+  const receipts: ModelChargeReceipt[] = [];
   let result: Awaited<
     ReturnType<
       typeof requestOpenAiStructured<
@@ -856,9 +966,9 @@ async function decideStudioAgentAction(
       >
     >
   >;
+  let testRun: StudioAgentDecision["testRun"];
   for (let retrieval = 0; ; retrieval++) {
-    const candidates = buildOperationCandidates(state);
-    for (const operation of disabled) if (operation in candidates) candidates[operation as keyof typeof candidates] = [];
+    const candidates = filterStudioAgentOperationCandidates(buildOperationCandidates(state), disabled);
     candidates.read_project_object = candidates.read_project_object.filter(
       (item) => !retrievedIds.includes(item.id),
     );
@@ -872,17 +982,75 @@ async function decideStudioAgentAction(
         user_request: input.content.trim(),
       },
     });
-    result = await withProductionConfiguration(input.userId, configuration, () => requestOpenAiStructured({
-      baseUrl: provider.baseUrl,
-      apiKeys: provider.apiKeys,
-      model: provider.model,
-      prompt,
-      schema: studioWorkflowAgentSchema,
-      structuredOutputMode: provider.structuredOutputMode,
-      temperature: 0.1,
-      ...provider.requestOptions,
-    }));
-    if (result.data.operation && disabled.has(result.data.operation)) return { reply: input.locale === "en" ? "This operation is disabled in the published Agent settings." : "当前已发布的 Agent 设置已停用该操作。", operation: null, targetId: null };
+    try {
+      result = await withProductionConfiguration(input.userId, configuration, () => requestOpenAiStructured({
+        baseUrl: provider.baseUrl,
+        billing: { userId: input.userId, projectId: state.project.id, episodeId: state.episode?.id },
+        channelId: provider.channelId,
+        apiKeys: provider.apiKeys,
+        model: provider.model,
+        prompt,
+        schema: studioWorkflowAgentSchema,
+        normalizeRaw: normalizeStudioWorkflowAgentResponse,
+        structuredOutputMode: provider.structuredOutputMode,
+        temperature: 0.1,
+        ...provider.requestOptions,
+      }));
+    } catch (error) {
+      if (!(error instanceof StructuredOutputError)) throw error;
+      const fallback = studioAgentPlainTextFallback(error.rawText);
+      if (!fallback) throw error;
+      const failureTrace = error.executionTrace;
+      testRun = {
+        request: {
+          channelId: failureTrace?.channelId ?? provider.channelId,
+          model: failureTrace?.model ?? provider.model,
+          structuredOutputMode: failureTrace?.structuredOutputMode ?? provider.structuredOutputMode ?? "json_object",
+          temperature: 0.1,
+          systemText: prompt.systemText,
+          userText: prompt.text,
+        },
+        trace: {
+          model: failureTrace?.model ?? provider.model,
+          channelId: failureTrace?.channelId ?? provider.channelId,
+          tokenUsage: failureTrace?.tokenUsage ?? null,
+          characterUsage: failureTrace?.characterUsage,
+          billing: [...receipts, ...(failureTrace?.billing ?? [])],
+          correctionAttempts: failureTrace?.correctionAttempts ?? 0,
+          outputHash: failureTrace?.outputHash ?? createHash("sha256").update(fallback.reply).digest("hex"),
+        },
+        validation: { passed: false, schema: "studioWorkflowAgentSchema", code: error.code, fallback: "plain_text" },
+      };
+      return {
+        reply: fallback.reply,
+        operation: fallback.operation,
+        targetId: fallback.targetId,
+        modelSelection: { channelId: failureTrace?.channelId ?? provider.channelId, model: failureTrace?.model ?? provider.model },
+        testRun,
+      };
+    }
+    receipts.push(...(result.trace.billing ?? []));
+    testRun = {
+      request: {
+        channelId: result.trace.channelId,
+        model: result.trace.model,
+        structuredOutputMode: result.trace.structuredOutputMode,
+        temperature: 0.1,
+        systemText: prompt.systemText,
+        userText: prompt.text,
+      },
+      trace: {
+        model: result.trace.model,
+        channelId: result.trace.channelId,
+        tokenUsage: result.trace.tokenUsage,
+        characterUsage: result.trace.characterUsage,
+        billing: [...receipts],
+        correctionAttempts: result.trace.correctionAttempts,
+        outputHash: result.trace.outputHash,
+      },
+      validation: { passed: true, schema: "studioWorkflowAgentSchema" },
+    };
+    if (result.data.operation && !isStudioAgentOperationEnabled(result.data.operation, disabled)) return { reply: input.locale === "en" ? "This operation is disabled in the published Agent settings." : "当前已发布的 Agent 设置已停用该操作。", operation: null, targetId: null, modelSelection: { channelId: result.trace.channelId ?? provider.channelId, model: result.trace.model }, testRun };
     if (result.data.operation !== "read_project_object") break;
     const targetId = result.data.targetId;
     if (
@@ -891,10 +1059,10 @@ async function decideStudioAgentAction(
       retrievedIds.includes(targetId) ||
       !findOperationTarget(state, "read_project_object", targetId)
     ) {
-      return { reply: result.data.reply, operation: null, targetId: null };
+      return { reply: result.data.reply, operation: null, targetId: null, modelSelection: { channelId: result.trace.channelId ?? provider.channelId, model: result.trace.model }, testRun };
     }
     retrievedIds.push(targetId);
-    state.projectContext = await loadAgentProjectContext({
+    const expandedContext = await loadAgentProjectContext({
       userId: input.userId,
       projectId: state.project.id,
       episodeId: state.episode?.id,
@@ -903,13 +1071,18 @@ async function decideStudioAgentAction(
       artStyle: state.project.config?.artStyle,
       detailIds: retrievedIds,
     });
+    state.projectContext = applyStudioAgentContextScopes(
+      { ...state, projectContext: expandedContext },
+      state.contextScopes,
+    ).projectContext;
   }
   const decision = {
     ...result.data,
     modelSelection: {
-      channelId: provider.channelId,
-      model: provider.model,
+      channelId: result.trace.channelId ?? provider.channelId,
+      model: result.trace.model,
     },
+    testRun,
   };
   if (!decision.operation && !decision.targetId) return decision;
   if (!decision.operation || !decision.targetId)
@@ -917,6 +1090,7 @@ async function decideStudioAgentAction(
       reply: decision.reply,
       operation: null,
       targetId: null,
+      testRun,
     };
   const target = findOperationTarget(
     state,
@@ -932,6 +1106,7 @@ async function decideStudioAgentAction(
             : `${decision.reply}\n\n模型选择的目标不属于当前阶段可操作候选，因此未创建操作。`,
         operation: null,
         targetId: null,
+        testRun,
       };
 }
 
@@ -1035,7 +1210,7 @@ type StudioOperationCandidate = { id: string; [key: string]: unknown };
 function buildOperationCandidates(
   state: AgentState,
 ): Record<string, StudioOperationCandidate[]> {
-  return Object.fromEntries<StudioOperationCandidate[]>(
+  const candidates = Object.fromEntries<StudioOperationCandidate[]>(
     (
       [
         "cancel_media_task",
@@ -1152,6 +1327,36 @@ function buildOperationCandidates(
                     })),
     ]),
   );
+  const scopes = new Set(state.contextScopes);
+  if (!scopes.has("project_materials")) {
+    candidates.start_manuscript_analysis = [];
+    candidates.start_story_package_generation = [];
+    candidates.read_project_object = (candidates.read_project_object ?? []).filter(
+      (item) => !["manuscript", "deliverable"].includes(String(item.kind)),
+    );
+  }
+  if (!scopes.has("current_episode")) {
+    for (const operation of [
+      "start_script_organization", "start_storyboard_generation", "start_voice_analysis",
+      "start_voice_design", "start_episode_adaptation", "start_episode_preproduction",
+      "start_original_episode_generation", "revise_screenplay", "cancel_media_task",
+      "cancel_workflow", "pause_workflow", "resume_workflow", "retry_media_task",
+      "retry_workflow",
+    ]) candidates[operation] = [];
+  }
+  if (!scopes.has("character_assets")) {
+    candidates.start_asset_visual_design = [];
+    candidates.read_project_object = (candidates.read_project_object ?? []).filter(
+      (item) => !["character", "location", "prop", "media"].includes(String(item.kind)),
+    );
+  }
+  if (!scopes.has("selected_shot")) {
+    candidates.update_canvas_prompt = [];
+    candidates.read_project_object = (candidates.read_project_object ?? []).filter(
+      (item) => !["shot", "canvas_node"].includes(String(item.kind)),
+    );
+  }
+  return candidates;
 }
 
 function buildModelState(state: AgentState, request: string) {
@@ -1349,8 +1554,14 @@ async function executeOperation(
   const scope = { projectId: approval.projectId, episodeId: approval.episodeId ?? approval.canvasDraft?.episodeId };
   await assertConfigurationScope(approval.userId, scope);
   const configuration = await resolveProductionConfiguration(approval.userId, scope);
-  if (configuration.agents[PROMPT_IDS.STUDIO_WORKFLOW_AGENT]?.disabledOperations?.includes(approval.operation))
+  const configuredAgent = configuration.agents[PROMPT_IDS.STUDIO_WORKFLOW_AGENT];
+  if (!isStudioAgentOperationEnabled(approval.operation, configuredAgent?.disabledOperations))
     throw new StudioAgentError("该操作已在 Agent 设置中停用，请更新设置后重新申请操作", 403);
+  const allowedScopes = new Set(
+    configuredAgent?.contextScopes ?? DEFAULT_STUDIO_AGENT_CONTEXT_SCOPES,
+  );
+  if (requiredAgentContextScopes(approval.operation).some((item) => !allowedScopes.has(item)))
+    throw new StudioAgentError("当前 Agent 配置不允许读取该范围，未执行操作", 403);
   if (approval.operation === "read_project_object")
     throw new StudioAgentError("读取项目资料无需审批，请重新发送问题");
   if (isProductionOperation(approval.operation)) {
@@ -1490,6 +1701,9 @@ async function executeOperation(
       action: approval.operation,
       id: task.id,
       status: task.status,
+      ...(approval.operation === "cancel_media_task" && task.cancellationPolicy
+        ? { cancellationPolicy: task.cancellationPolicy }
+        : {}),
       traceId: task.traceId,
       updatedAt: task.updatedAt,
     };
@@ -1507,6 +1721,17 @@ async function executeOperation(
     traceId: workflow.traceId,
     updatedAt: workflow.updatedAt,
   };
+}
+
+function requiredAgentContextScopes(
+  operation: StudioAgentOperation,
+): StudioAgentContextScope[] {
+  if (operation === "start_manuscript_analysis" || operation === "start_story_package_generation")
+    return ["project_materials"];
+  if (operation === "start_asset_visual_design") return ["character_assets"];
+  if (operation === "update_canvas_prompt") return ["current_episode", "selected_shot"];
+  if (operation === "read_project_object") return [];
+  return ["current_episode"];
 }
 
 function readApproval(value: string): ApprovalPayload {

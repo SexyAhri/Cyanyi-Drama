@@ -120,4 +120,44 @@ describe("director production contract regressions", () => {
     const plan = persistArtifact.mock.calls.find(call => call[0] === "storyboard.director.plan");
     expect(plan).toBeDefined();
   });
+
+  it("repairs only the scene with validation errors and retains valid scene results", async () => {
+    const scenes = [scene, { ...scene, id: "scene-2", sceneNumber: 1 }];
+    const calls: Array<{ agentId: string; sceneId: string | null }> = [];
+    request.mockImplementation(async input => {
+      const agentId = input.prompt.agentId as string;
+      const sceneId = /\"scene\":\{\"id\":\"([^\"]+)\"/.exec(input.prompt.text)?.[1] ?? null;
+      calls.push({ agentId, sceneId });
+      const isReview = agentId === "production_storyboard-review";
+      const isRepair = agentId === "production_storyboard-repair";
+      const output = isReview
+        ? { approved: true, summary: "通过", findings: [] }
+        : { shots: [shot(sceneId === "scene-1" && !isRepair ? 5 : 12)] };
+      const parsed = await generateStructuredOutput({
+        schema: input.schema, validate: input.validate,
+        request: async () => JSON.stringify(output), prompt: input.prompt.text,
+        maxCorrectionAttempts: 0,
+      });
+      return { ...parsed, trace: { agentId, sceneId } };
+    });
+    const persistArtifact = vi.fn<(type: string, refId: string, payload: unknown) => Promise<void>>(async () => {});
+
+    const result = await directStoryboard({
+      userId: "user-1", channelId: "channel-1", model: "test", scenes,
+      style: "写实", locale: "zh", productionSpec: "15秒内", visualRules: "自然光",
+      assets: { characters: [], locations: [], props: [] },
+      assertActive: async () => {}, persistArtifact,
+    });
+
+    expect(result.approved).toBe(true);
+    expect(calls.filter(call => call.agentId === "production_storyboard-generation")).toHaveLength(2);
+    expect(calls.filter(call => call.agentId === "production_storyboard-repair")).toEqual([
+      { agentId: "production_storyboard-repair", sceneId: "scene-1" },
+    ]);
+    expect(result.panels.map(panel => [panel.sceneId, panel.durationSeconds])).toEqual([
+      ["scene-1", 12], ["scene-2", 12],
+    ]);
+    expect(persistArtifact.mock.calls.filter(call => call[0] === "storyboard.director.plan").map(call => call[1]).sort())
+      .toEqual(["scene-1", "scene-2"]);
+  });
 });

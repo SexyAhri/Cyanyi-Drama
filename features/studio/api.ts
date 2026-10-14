@@ -37,6 +37,37 @@ import type {
   StoryPackageGenerationResult,
 } from "./types";
 import type { StoryboardPromptPreview } from "@/lib/media/project-asset-tasks";
+import type { StoryboardBatchPreflightItemInput, StoryboardBatchPreflightResult } from "@/lib/media/storyboard-batch-preflight";
+import type { MediaTaskRetryPreview } from "@/lib/media/retry-preview";
+
+export type StudioMediaBudgetSummary = {
+  configured: boolean;
+  limit: string | null;
+  unit: string;
+  actual: string;
+  reserved: string;
+  remaining: string | null;
+  exceeded: boolean;
+};
+
+export async function loadStudioMediaBudget(projectId: string, batchId?: string, signal?: AbortSignal) {
+  const params = batchId ? `?batchId=${encodeURIComponent(batchId)}` : "";
+  return request<{ summary: StudioMediaBudgetSummary }>(
+    `/api/projects/${encodeURIComponent(projectId)}/media-budget${params}`,
+    { signal },
+  );
+}
+
+export async function saveStudioMediaBudget(projectId: string, limit: string | number | null, batchId?: string) {
+  return request<{ summary: StudioMediaBudgetSummary }>(
+    `/api/projects/${encodeURIComponent(projectId)}/media-budget`,
+    {
+      body: JSON.stringify({ limit, ...(batchId ? { batchId } : {}) }),
+      headers: { "Content-Type": "application/json" },
+      method: "PUT",
+    },
+  );
+}
 import type {
   NovelCharacterRecord,
   NovelLocationRecord,
@@ -244,7 +275,7 @@ export async function startStoryToScriptWorkflow(
 
 export async function controlStudioWorkflow(
   runId: string,
-  action: "cancel" | "retry" | "pause" | "resume",
+  action: "cancel" | "retry" | "pause" | "resume" | "continue",
 ) {
   return request<{ workflow: WorkflowRunSummary }>(
     `/api/workflows/${encodeURIComponent(runId)}`,
@@ -256,10 +287,10 @@ export async function controlStudioWorkflow(
   );
 }
 
-export async function retryStudioWorkflowStep(runId: string, stepKey: string) {
+export async function retryStudioWorkflowStep(runId: string, stepKey: string, mode?: "continue") {
   return request<{ workflow: WorkflowRunSummary }>(
     `/api/workflows/${encodeURIComponent(runId)}/steps/${encodeURIComponent(stepKey)}/retry`,
-    { method: "POST" },
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) },
   );
 }
 
@@ -321,22 +352,24 @@ export async function splitStudioNovel(
 export async function loadStudioAssetCatalog(
   projectId: string,
   signal?: AbortSignal,
+  force = false,
 ): Promise<ProjectAssetCatalog> {
   const encodedProjectId = encodeURIComponent(projectId);
+  const init = { signal, ...(force ? { cache: "no-store" as const } : {}) };
   const [assets, characterResult, locationResult, propResult] =
     await Promise.all([
-      loadStudioProjectAssets(projectId, signal),
+      loadStudioProjectAssets(projectId, signal, force),
       request<{ characters: NovelCharacterRecord[] }>(
         `/api/projects/${encodedProjectId}/characters`,
-        { signal },
+        init,
       ),
       request<{ locations: NovelLocationRecord[] }>(
         `/api/projects/${encodedProjectId}/locations`,
-        { signal },
+        init,
       ),
       request<{ props: ProductionPropRecord[] }>(
         `/api/projects/${encodedProjectId}/props`,
-        { signal },
+        init,
       ),
     ]);
   const catalog: ProjectAssetCatalog = {
@@ -352,12 +385,13 @@ export async function loadStudioAssetCatalog(
 export async function loadStudioProjectAssets(
   projectId: string,
   signal?: AbortSignal,
+  force = false,
 ) {
   const assets: ProjectMediaAsset[] = [];
   let cursor: string | null = null;
   do {
     const result: { assets: ProjectMediaAsset[]; nextCursor?: string | null } = await request(
-      `/api/projects/${encodeURIComponent(projectId)}/assets${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, { signal },
+      `/api/projects/${encodeURIComponent(projectId)}/assets${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, { signal, ...(force ? { cache: "no-store" as const } : {}) },
     );
     assets.push(...result.assets);
     cursor = result.nextCursor ?? null;
@@ -835,7 +869,12 @@ export async function generateStudioAssetBatch(
     }>;
   },
 ) {
-  return request<{ batchId: string; count: number }>(
+  return request<{
+    batchId: string;
+    count: number;
+    summary?: { requested: number; submitted: number; failedToSubmit: number };
+    failures?: Array<{ item: unknown; message: string }>;
+  }>(
     `/api/projects/${encodeURIComponent(projectId)}/assets/generate-batch`,
     {
       body: JSON.stringify(input),
@@ -867,10 +906,11 @@ export async function loadStudioStoryboard(
   projectId: string,
   episodeId: string,
   signal?: AbortSignal,
+  force = false,
 ) {
   return request<StudioStoryboardData>(
     `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard`,
-    { signal },
+    { signal, ...(force ? { cache: "no-store" as const } : {}) },
   );
 }
 
@@ -950,6 +990,30 @@ export async function previewStudioPanelPrompt(
   );
 }
 
+export async function preflightStudioPanelBatch(
+  projectId: string,
+  episodeId: string,
+  input: {
+    channelId: string;
+    model: string;
+    kind: "image" | "video";
+    mode?: "reference" | "first-last";
+    batchBudgetLimit?: string | number | null;
+    items: StoryboardBatchPreflightItemInput[];
+  },
+  signal?: AbortSignal,
+) {
+  return request<{ preflight: StoryboardBatchPreflightResult }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard/batch-preflight`,
+    {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+      signal,
+    },
+  );
+}
+
 export async function designStudioPanelPrompt(
   projectId: string,
   episodeId: string,
@@ -985,6 +1049,8 @@ export async function generateStudioPanelVideo(
   episodeId: string,
   panelId: string,
   input: {
+    previewConfigurationHash?: string;
+    previewRequestHash?: string;
     channelId: string;
     model: string;
     prompt?: string;
@@ -1006,11 +1072,14 @@ export async function generateStudioPanelBatch(
   projectId: string,
   episodeId: string,
   input: {
+    batchBudgetLimit?: string | number | null;
     channelId: string;
     model: string;
     kind: "image" | "video";
     mode?: "reference" | "first-last";
     items: Array<{
+      previewConfigurationHash?: string;
+      previewRequestHash?: string;
       panelId: string;
       prompt?: string;
       mode?: "reference" | "first-last";
@@ -1020,7 +1089,13 @@ export async function generateStudioPanelBatch(
 ) {
   const suffix =
     input.kind === "video" ? "generate-video-batch" : "generate-batch";
-  return request<{ batchId: string; count: number }>(
+  return request<{
+    batchId: string;
+    budget?: StudioMediaBudgetSummary;
+    count: number;
+    summary?: { requested: number; submitted: number; failedToSubmit: number };
+    failures?: Array<{ item: unknown; message: string }>;
+  }>(
     `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard/${suffix}`,
     {
       body: JSON.stringify(input),
@@ -1081,6 +1156,13 @@ export async function controlStudioMediaTask(
       headers: { "Content-Type": "application/json" },
       method: "POST",
     },
+  );
+}
+
+export async function loadStudioMediaRetryPreview(taskId: string, signal?: AbortSignal) {
+  return request<{ preview: MediaTaskRetryPreview }>(
+    `/api/media/tasks/${encodeURIComponent(taskId)}/retry-preview`,
+    { signal },
   );
 }
 
@@ -1249,7 +1331,7 @@ export async function generateStudioVoiceLine(
 export async function generateStudioVoiceLineBatch(
   projectId: string,
   episodeId: string,
-  input: { channelId: string; model: string; lineIds: string[] },
+  input: { channelId: string; model: string; lineIds: string[]; configuredSpeech?: boolean },
 ) {
   return request<{
     count: number;
@@ -1412,16 +1494,33 @@ export async function renderStudioTimeline(
 export async function loadStudioBilling(
   projectId: string,
   signal?: AbortSignal,
+  costPage: { limit?: number; cursor?: string } = {},
 ) {
   const encodedProjectId = encodeURIComponent(projectId);
-  const [balanceResult, costResult] = await Promise.all([
+  const costParams = new URLSearchParams({ projectId, limit: String(costPage.limit ?? 100) });
+  if (costPage.cursor) costParams.set("cursor", costPage.cursor);
+  const [balanceResult, costResult, metricsResult] = await Promise.all([
     request<{ balance: StudioBalance }>("/api/user/balance", { signal }),
-    request<{ costs: StudioUsageCost[] }>(
-      `/api/user/costs?projectId=${encodedProjectId}&limit=100`,
+    request<{ costs: StudioUsageCost[]; nextCursor: string | null; summary: import("./types").StudioUsageCostSummary }>(
+      `/api/user/costs?${costParams}`,
+      { signal },
+    ),
+    request<{ metrics: import("./types").StudioProjectModelMetrics }>(
+      `/api/projects/${encodedProjectId}/model-metrics`,
       { signal },
     ),
   ]);
-  return { balance: balanceResult.balance, costs: costResult.costs };
+  return { balance: balanceResult.balance, costs: costResult.costs, metrics: metricsResult.metrics, nextCursor: costResult.nextCursor, costSummary: costResult.summary };
+}
+
+export async function loadStudioCostPage(
+  projectId: string,
+  page: { limit: number; cursor?: string },
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams({ projectId, limit: String(page.limit) });
+  if (page.cursor) params.set("cursor", page.cursor);
+  return request<{ costs: StudioUsageCost[]; nextCursor: string | null }>(`/api/user/costs?${params}`, { signal });
 }
 
 export async function loadStudioTrace(traceId: string, signal?: AbortSignal) {

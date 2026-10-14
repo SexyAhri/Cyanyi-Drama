@@ -34,12 +34,22 @@ import {
 } from "@/components/ui/tooltip";
 import type { MediaTask } from "@/lib/media/task-contract";
 import { cn } from "@/lib/utils";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 
 import { StatusIndicator } from "../components/status-indicator";
-import { getStudioCopy } from "../i18n";
+import { formatStudioDate, getStudioCopy } from "../i18n";
 import { runtimeStatusToStageStatus } from "../stage-state";
+import { mediaTaskExecutionPhaseLabel } from "../workflow-labels";
 import type { StudioLocale } from "../types";
-import type { ShotMediaCandidate } from "./shot-view-model";
+import {
+  shotCandidateSnapshot,
+  type ShotMediaCandidate,
+} from "./shot-view-model";
 
 export function ShotCandidateGrid({
   busyTaskId,
@@ -61,10 +71,12 @@ export function ShotCandidateGrid({
   onTaskAction: (task: MediaTask, action: "cancel" | "retry") => void;
 }) {
   const copy = getStudioCopy(locale);
-  const [deleteTarget, setDeleteTarget] =
-    useState<ShotMediaCandidate | null>(null);
-  const [previewTarget, setPreviewTarget] =
-    useState<ShotMediaCandidate | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ShotMediaCandidate | null>(
+    null,
+  );
+  const [previewTarget, setPreviewTarget] = useState<ShotMediaCandidate | null>(
+    null,
+  );
   if (!candidates.length) {
     return (
       <div className="flex min-h-56 items-center justify-center border-y px-6 text-center text-sm text-muted-foreground">
@@ -173,6 +185,7 @@ function CandidateCard({
   const deleteBusy = candidate.assetId === deletingAssetId;
   const active =
     candidate.task && ["queued", "running"].includes(candidate.task.status);
+  const snapshot = shotCandidateSnapshot(candidate);
   return (
     <figure
       className={cn(
@@ -233,6 +246,98 @@ function CandidateCard({
           </Badge>
         ) : null}
       </div>
+      {candidate.configurationStale ? (
+        <p className="border-t bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          {locale === "en"
+            ? "Generated from older source, references, or settings. Review before selecting, or regenerate from the current version."
+            : "该产物基于旧剧本、引用素材或配置生成；选用前请复核，或基于当前版本重新生成。"}
+        </p>
+      ) : null}
+      {active && candidate.task ? (
+        <p
+          className="border-t px-3 py-1.5 text-xs text-muted-foreground"
+          role="status"
+          aria-live="polite"
+        >
+          {mediaTaskExecutionPhaseLabel(locale, candidate.task.executionPhase)}{" "}
+          · {candidate.task.progress}%
+        </p>
+      ) : null}
+      {snapshot ? (
+        <Accordion className="border-t">
+          <AccordionItem value={`snapshot-${candidate.id}`}>
+            <AccordionTrigger className="px-3 py-2 text-xs">
+              {locale === "en"
+                ? "Frozen input and configuration"
+                : "冻结输入与配置版本"}
+            </AccordionTrigger>
+            <AccordionContent className="grid min-w-0 gap-2 px-3 text-xs">
+              <dl className="grid min-w-0 gap-x-3 gap-y-1 sm:grid-cols-2">
+                <SnapshotDetail
+                  label={locale === "en" ? "Task" : "请求 ID"}
+                  value={snapshot.taskId}
+                />
+                <SnapshotDetail
+                  label={locale === "en" ? "Model" : "模型"}
+                  value={`${snapshot.provider} · ${snapshot.model}`}
+                />
+                <SnapshotDetail
+                  label={locale === "en" ? "Created" : "创建时间"}
+                  value={formatStudioDate(locale, candidate.createdAt)}
+                />
+                {snapshot.inputHash ? (
+                  <SnapshotDetail
+                    label={locale === "en" ? "Input fingerprint" : "输入指纹"}
+                    value={snapshot.inputHash}
+                  />
+                ) : null}
+                {snapshot.configurationHash ? (
+                  <SnapshotDetail
+                    label={
+                      locale === "en" ? "Configuration fingerprint" : "配置指纹"
+                    }
+                    value={snapshot.configurationHash}
+                  />
+                ) : null}
+              </dl>
+              {snapshot.configurationSources.length ? (
+                <div className="min-w-0 rounded-md bg-muted/50 p-2">
+                  <p className="font-medium">
+                    {locale === "en"
+                      ? "Published configuration versions"
+                      : "配置来源版本"}
+                  </p>
+                  <ul className="mt-1 grid gap-1 text-muted-foreground">
+                    {snapshot.configurationSources.map((source) => (
+                      <li
+                        className="break-all"
+                        key={`${source.scopeKey}-${source.version}`}
+                      >
+                        {source.scopeKey} · v{source.version}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {snapshot.prompt ? (
+                <div className="min-w-0 rounded-md bg-muted/50 p-2">
+                  <p className="font-medium">
+                    {locale === "en" ? "Frozen prompt" : "冻结提示词"}
+                  </p>
+                  <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-anywhere text-muted-foreground">
+                    {snapshot.prompt}
+                  </p>
+                </div>
+              ) : null}
+              {Object.keys(snapshot.parameters).length ? (
+                <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-anywhere rounded-md bg-muted/50 p-2 font-mono text-[11px] leading-5">
+                  {JSON.stringify(snapshot.parameters, null, 2)}
+                </pre>
+              ) : null}
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+      ) : null}
       <figcaption className="flex min-h-11 items-center gap-2 border-t px-2.5 py-1.5">
         <StatusIndicator
           locale={locale}
@@ -319,6 +424,15 @@ function CandidateCard({
         </div>
       </figcaption>
     </figure>
+  );
+}
+
+function SnapshotDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="break-all font-mono">{value}</dd>
+    </div>
   );
 }
 

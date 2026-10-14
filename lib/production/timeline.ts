@@ -116,6 +116,8 @@ export function buildTimelineSubtitles(
     content: string;
     matchedPanelId?: string | null;
     durationSeconds?: number | null;
+    startSeconds?: number;
+    endSeconds?: number;
   }[],
   tracks: readonly { id: string; panelId?: string; duration: number }[],
 ): TimelineSubtitleCue[] {
@@ -150,15 +152,19 @@ export function buildTimelineSubtitles(
         trackDuration: panelDuration,
         trackStart,
       });
-      matchedLines.forEach((line, index) =>
+      matchedLines.forEach((line, index) => {
+        const start = line.startSeconds ?? timings[index].start - trackStart;
+        const end = line.endSeconds ?? (line.startSeconds === undefined ? timings[index].end - trackStart : start + (line.durationSeconds ?? fallbackDuration));
+        if (start < 0 || end <= start || end > panelDuration + 0.01) throw new Error(`TIMELINE_SUBTITLE_TIMING_INVALID:${line.lineIndex}`);
         cues.push({
           id: line.id,
           index: line.lineIndex,
-          ...timings[index],
+          start: trackStart + start,
+          end: trackStart + end,
           speaker: line.speaker,
           text: line.content.trim(),
-        }),
-      );
+        });
+      });
     }
     processedPanels.add(panelId);
     trackStart += trackDuration;

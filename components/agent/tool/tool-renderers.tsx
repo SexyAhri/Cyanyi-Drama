@@ -1678,7 +1678,7 @@ function FailurePreview({
         <div className="text-xs font-medium">
           {kind === "image" ? "图片生成失败" : "视频生成失败"}
         </div>
-        <div className="max-w-full break-words text-[11px] leading-5 text-destructive/80 [overflow-wrap:anywhere]">
+        <div className="max-w-full break-anywhere text-[11px] leading-5 text-destructive/80 [overflow-wrap:anywhere]">
           {error || "请检查错误信息后重试"}
         </div>
       </div>
@@ -1835,7 +1835,9 @@ function formatMediaMeta(label: string, format?: string) {
 }
 
 function getDownloadFilename(src: string, mimeType?: string) {
-  const assetId = /\/api\/media\/assets\/([^/?]+)\/content(?:[?#]|$)/.exec(src)?.[1];
+  const assetId = /\/api\/media\/assets\/([^/?]+)\/content(?:[?#]|$)/.exec(
+    src,
+  )?.[1];
   if (assetId) {
     try {
       return `${decodeURIComponent(assetId).replace(/[^a-zA-Z0-9._-]/g, "_")}.${mimeTypeToExtension(mimeType || "image/png") || "png"}`;

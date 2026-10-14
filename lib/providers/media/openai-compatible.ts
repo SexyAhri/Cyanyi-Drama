@@ -39,12 +39,27 @@ export const openAiCompatibleMediaProvider: MediaProviderAdapter = {
         kind: input.kind,
         request: input.request as Record<string, unknown>,
         template: input.mediaTemplate,
+        signal: input.signal,
+        onExecutionPhase: input.onExecutionPhase,
+        onProviderTaskId: input.onProviderTaskId,
       });
     if (input.kind === "image") return generateImage(input);
     if (input.kind === "video") return generateVideo(input);
     return generateAudio(input);
   },
   lipSync: generateLipSync,
+  resume(input, providerTaskId) {
+    const agnesVideo = isAgnesVideoModel(input.model);
+    const statusPath = trimPath(
+      process.env.OPENAI_COMPATIBLE_VIDEO_STATUS_PATH || "videos/{id}",
+    );
+    return pollVideoResult({
+      input,
+      initialPayload: { id: providerTaskId, status: "running" },
+      agnesVideo,
+      statusPath: (taskId) => statusPath.replace("{id}", encodeURIComponent(taskId)),
+    });
+  },
 };
 
 async function generateImage(
@@ -52,6 +67,7 @@ async function generateImage(
 ): Promise<MediaAsset[]> {
   const references = await referencesAsDataUrls(
     input.request.referenceImages ?? [],
+    input.signal,
   );
   if (isAgnesImageModel(input.model))
     return generateAgnesImage(input, references);
@@ -99,6 +115,7 @@ async function generateAgnesImage(
           : {}),
       }),
       cache: "no-store",
+      signal: input.signal,
     },
     { maxAttempts: 3 },
   );
@@ -140,6 +157,7 @@ function requestImage(
       headers: { Authorization: `Bearer ${input.apiKey}` },
       body: form,
       cache: "no-store",
+      signal: input.signal,
     }, { maxAttempts: 3 });
   }
   return fetchWithProviderRetry(joinUrl(input.baseUrl, endpoint), {
@@ -153,6 +171,7 @@ function requestImage(
       ...(input.request.quality ? { quality: input.request.quality } : {}),
     }),
     cache: "no-store",
+    signal: input.signal,
   }, { maxAttempts: 3 });
 }
 
@@ -170,6 +189,7 @@ async function generateVideo(
   const statusPath = trimPath(
     process.env.OPENAI_COMPATIBLE_VIDEO_STATUS_PATH || "videos/{id}",
   );
+  await input.onExecutionPhase?.("request_sent");
   const response = await fetchWithProviderRetry(
     joinUrl(input.baseUrl, createPath),
     {
@@ -186,11 +206,17 @@ async function generateVideo(
             )
           : buildVideoBody(input.model, input.request),
       ),
+      signal: input.signal,
     },
   );
   const payload = await readProviderJson(response);
   if (!response.ok)
     throw new Error(providerErrorMessage(payload, response.status));
+  const accepted = extractVideoState(payload);
+  if (accepted.taskId) {
+    await input.onProviderTaskId?.(accepted.taskId);
+    await input.onExecutionPhase?.("submitted");
+  }
   return pollVideoResult({
     input,
     initialPayload: payload,
@@ -265,6 +291,7 @@ async function generateAudio(
         voice: input.request.voice ?? "alloy",
         response_format: input.request.responseFormat ?? "mp3",
       }),
+      signal: input.signal,
     },
   );
   const contentType = response.headers.get("content-type") ?? "audio/mpeg";
@@ -302,6 +329,7 @@ async function generateLipSync(
         video_url: input.videoUrl,
         audio_url: input.audioUrl,
       }),
+      signal: input.signal,
     },
   );
   const payload = await readProviderJson(response);
@@ -325,8 +353,9 @@ async function pollVideoResult(input: {
     ));
   if (initial.url) return [videoAsset(input.input, initial.url)];
   if (!initial.taskId) throw new Error("VIDEO_TASK_ID_MISSING");
+  await input.input.onExecutionPhase?.("generating");
   for (let attempt = 0; attempt < 60; attempt += 1) {
-    await waitForProviderPoll();
+    await waitForProviderPoll(3_000, input.input.signal);
     const response = await fetchWithProviderRetry(
       input.agnesVideo
         ? agnesVideoStatusUrl(
@@ -340,6 +369,7 @@ async function pollVideoResult(input: {
           ? "GET"
           : process.env.OPENAI_COMPATIBLE_VIDEO_STATUS_METHOD || "GET",
         headers: { Authorization: `Bearer ${input.input.apiKey}` },
+        signal: input.input.signal,
       },
     );
     const payload = await readProviderJson(response);
@@ -365,10 +395,10 @@ async function pollLipSyncResult(
   if (initial.url) return [lipSyncAsset(input, initial.url)];
   if (!initial.taskId) throw new Error("LIP_SYNC_TASK_ID_MISSING");
   for (let attempt = 0; attempt < 60; attempt += 1) {
-    await waitForProviderPoll();
+    await waitForProviderPoll(3_000, input.signal);
     const response = await fetchWithProviderRetry(
       joinUrl(input.baseUrl, `videos/${encodeURIComponent(initial.taskId)}`),
-      { headers: { Authorization: `Bearer ${input.apiKey}` } },
+      { headers: { Authorization: `Bearer ${input.apiKey}` }, signal: input.signal },
     );
     const payload = await readProviderJson(response);
     if (!response.ok)

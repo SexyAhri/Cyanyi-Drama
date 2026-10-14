@@ -21,6 +21,8 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { StudioLocale } from "../types";
+import { CanvasEpisodeSwitcher } from "./canvas-episode-switcher";
+import type { CanvasEpisodeOption } from "./canvas-episode-navigation";
 
 export type CanvasToolbarProps = {
   locale: StudioLocale;
@@ -55,6 +57,9 @@ export type CanvasToolbarProps = {
   onSave: () => void;
   onReview: () => void;
   onAssembleEpisodeGraph?: () => void;
+  episodes?: CanvasEpisodeOption[];
+  episodeId?: string;
+  onSelectEpisode?: (episodeId: string) => Promise<void>;
 };
 function Tool({
   icon: Icon,
@@ -85,7 +90,7 @@ function Tool({
 export function CanvasHeader(props: CanvasToolbarProps) {
   const t = (zh: string, en: string) => (props.locale === "en" ? en : zh);
   return (
-    <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
+    <div className="flex min-h-11 min-w-0 shrink-0 flex-wrap items-center gap-1.5 border-b px-2 py-1 sm:px-3">
       <span className="hidden lg:inline-flex">
         <Tool
           icon={PanelLeft}
@@ -124,6 +129,10 @@ export function CanvasHeader(props: CanvasToolbarProps) {
           {props.showReusableBranches ? t("折叠复用分支", "Hide reused branches") : t("展开复用分支", "Show reused branches")}
           <span className="text-xs text-muted-foreground">{props.reusableBranchCount}</span>
         </Button>
+      )}
+      {props.episodes && props.episodeId && props.onSelectEpisode && (
+        <CanvasEpisodeSwitcher episodes={props.episodes} episodeId={props.episodeId} locale={props.locale}
+          disabled={props.busy || props.saving} onSelect={props.onSelectEpisode} />
       )}
       <div className="ml-auto flex items-center gap-1">
         <Tool

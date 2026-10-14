@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import type { ProductionCopy } from "./copy";
 
 export const selectClass =
-  "h-9 w-full min-w-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
+  "h-10 min-h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 export function ConfigurationField({
   label,
   source,
@@ -12,6 +12,8 @@ export function ConfigurationField({
   onInherit,
   copy,
   children,
+  className,
+  help,
 }: {
   label: string;
   source: string;
@@ -19,11 +21,16 @@ export function ConfigurationField({
   onInherit: () => void;
   copy: ProductionCopy;
   children: ReactNode;
+  className?: string;
+  help?: ReactNode;
 }) {
   return (
-    <div className="min-w-0 space-y-1.5">
+    <div className={`min-w-0 space-y-2 ${className ?? ""}`}>
       <div className="flex flex-wrap items-center justify-between gap-1">
-        <span className="text-sm font-medium">{label}</span>
+        <span className="flex items-center gap-2 text-sm font-medium">
+          {label}
+          {help}
+        </span>
         <span className="flex items-center gap-2 text-xs text-muted-foreground">
           {overridden ? copy.custom : `${copy.inherited} · ${source}`}
           {overridden && (

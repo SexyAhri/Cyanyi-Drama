@@ -6,6 +6,11 @@ import { enqueuePersistedMediaTask } from "@/lib/media/task-submit";
 import { BillingError } from "@/lib/billing/service";
 import { prisma } from "@/lib/server/prisma";
 import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
+import { productionRequestOptionsSchema, resolveProductionRequestConfiguration, productionRequestErrorStatus } from "@/lib/production-configuration/execution";
+import { soundPolicyAudioMode } from "@/lib/production-configuration/contract";
+import { lockVideoAudioPerformance } from "@/lib/media/director-prompt-locks";
+import { resolveVideoProductionCapabilities, videoProductionIssues, normalizeVideoProductionParameters } from "@/lib/media/video-production-capabilities";
+import { resolveVideoVoiceReferences } from "@/lib/media/video-voice-references";
 
 const taskKinds = new Set<MediaTaskKind>([
   "image",
@@ -91,7 +96,7 @@ export async function POST(request: Request) {
       Response.json({ message: "lipsync 任务必须使用 lip_sync operation" }, { status: 400 }),
       sessionId,
     );
-  const projectId = typeof body.projectId === "string" ? body.projectId : undefined;
+  let projectId = typeof body.projectId === "string" ? body.projectId : undefined;
   const episodeId = typeof body.episodeId === "string" ? body.episodeId : undefined;
   if (
     projectId &&
@@ -112,6 +117,29 @@ export async function POST(request: Request) {
       sessionId,
     );
 
+  let productionConfiguration;
+  try {
+    if (episodeId && !projectId) {
+      const episode = await prisma.episode.findFirst({ where: { id: episodeId, project: { userId: user.id } }, select: { projectId: true } });
+      projectId = episode?.projectId;
+    }
+    productionRequestOptionsSchema.parse(body);
+    productionConfiguration = await resolveProductionRequestConfiguration(user.id, { projectId, episodeId,
+      ...(body.targetType === "storyboard_panel" && typeof body.targetId === "string" ? { panelId: body.targetId } : {}),
+    });
+    delete requestPayload.panelSoundConfigurations;
+    if (kind === "video") {
+      const configured = await prisma.providerModel.findFirst({ where: { channelId, modelId: model, selected: true }, select: { capabilitiesJson: true } });
+      const capabilities = resolveVideoProductionCapabilities({ model, protocol: channel.protocol, capabilities: JSON.parse(configured?.capabilitiesJson || "{}") });
+      const blockers = videoProductionIssues(capabilities, productionConfiguration.sound).filter(issue => issue.blocking);
+      if (blockers.length) return attachSessionCookie(Response.json({ message: blockers.map(issue => issue.message).join("；") }, { status: 400 }), sessionId);
+      const referenceAudios = await resolveVideoVoiceReferences(user.id, productionConfiguration.sound, capabilities);
+      const parameters = normalizeVideoProductionParameters({ model, protocol: channel.protocol, capabilities, ratio: typeof requestPayload.ratio === "string" ? requestPayload.ratio : "16:9", resolution: typeof requestPayload.resolution === "string" ? requestPayload.resolution : "1080p", durationSeconds: typeof requestPayload.duration === "string" ? Number.parseFloat(requestPayload.duration) : 5, mode: typeof requestPayload.videoMode === "string" ? requestPayload.videoMode : "reference", referenceAudioCount: referenceAudios.length });
+      Object.assign(requestPayload, { ratio: parameters.ratio, resolution: parameters.resolution, duration: parameters.duration, prompt: lockVideoAudioPerformance(String(requestPayload.prompt ?? ""), { soundPolicy: productionConfiguration.sound }), audioMode: soundPolicyAudioMode(productionConfiguration.sound), referenceAudios, productionCapabilities: capabilities });
+    }
+  } catch (error) {
+    return attachSessionCookie(Response.json({ message: error instanceof Error ? error.message : "配置无效" }, { status: productionRequestErrorStatus(error) ?? 500 }), sessionId);
+  }
   const task = createMediaTask({
     id: `media_task_${crypto.randomUUID()}`,
     idempotencyKey,
@@ -126,7 +154,7 @@ export async function POST(request: Request) {
     targetType:
       typeof body.targetType === "string" ? body.targetType : undefined,
     targetId: typeof body.targetId === "string" ? body.targetId : undefined,
-    request: requestPayload,
+    request: { ...requestPayload, productionConfiguration },
     maxRetries: typeof body.maxRetries === "number" ? body.maxRetries : 0,
   });
   await store.create(task);
