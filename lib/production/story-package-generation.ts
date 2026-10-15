@@ -16,19 +16,21 @@ import {
 import { resolveEpisodeTextProvider } from "@/lib/episodes/provider";
 import { prisma } from "@/lib/server/prisma";
 import { z } from "zod";
+import type { SourceTaskHooks } from "@/lib/episodes/long-source";
+import { currentProductionConfiguration } from "@/lib/production-configuration/context";
+import { workflowCacheFingerprint } from "@/lib/workflow/cache-fingerprint";
+import { recordWorkflowArtifactReuse, trackWorkflowRequest } from "@/lib/workflow/request-events";
+import { isSerialStorySetup } from "@/lib/studio/production-input";
+import { generateStoryPackageAssets, generateStoryPackageFirstEpisode, type StoryPhase, type StoryPhaseRunner } from "./story-package-phases";
 import { PANEL_PRODUCTION_DESIGN_INSTRUCTIONS, validatePanelProductionDesign } from "./panel-production-design";
 
 import { createProductionDeliverable } from "./deliverables";
 import {
   renderEpisodeBatch,
-  renderFirstEpisode,
-  renderStoryPackageAssets,
   renderStoryPackagePlan,
 } from "./story-package-document";
 import {
-  StoryPackageAssetsGenerationSchema,
   StoryPackageEpisodeBatchSchema,
-  StoryPackageFirstEpisodeGenerationSchema,
   StoryPackagePlanSchema,
   ResolvedStorySetupSchema,
   StoryPackageSchema,
@@ -62,27 +64,14 @@ export async function generateAndSaveStoryPackage(input: {
   locale: "zh" | "en";
   setup: StoryPackageSetup;
   onProgress?: (progress: StoryPackageGenerationProgress) => void;
+  workflowId?: string;
+  hooks?: SourceTaskHooks;
+  projectSnapshot?: StoryPackageProjectSnapshot;
 }) {
-  const project = await prisma.project.findFirst({
-    where: { id: input.projectId, userId: input.userId },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      config: {
-        select: {
-          videoRatio: true,
-          videoResolution: true,
-          episodeTargetDurationSeconds: true,
-          artStyle: true,
-          visualEra: true,
-          visualEraCustom: true,
-          workflowMode: true,
-        },
-      },
-    },
-  });
-  if (!project) throw new StoryPackageGenerationError("项目不存在", 404);
+  // Permission is rechecked even when executing an immutable workflow snapshot.
+  const currentProject = await captureStoryPackageProject(input.userId, input.projectId);
+  const project = input.projectSnapshot ?? currentProject;
+  if (project.id !== input.projectId) throw new StoryPackageGenerationError("项目快照不匹配", 400);
 
   const provider = await resolveEpisodeTextProvider({
     userId: input.userId,
@@ -124,15 +113,8 @@ export async function generateAndSaveStoryPackage(input: {
   let storyPackage: StoryPackage;
   let promptTrace: Record<string, unknown>;
   try {
-    const requestPhase = async <T>(phase: {
-      title: string;
-      status: string;
-      task: string;
-      schema: z.ZodType<T>;
-      validate?: (value: T) => StructuredValidationIssue[];
-      context?: unknown;
-      preview: (value: T) => string;
-    }) => {
+    const requestPhase: StoryPhaseRunner = async <T>(phase: StoryPhase<T>) => {
+      await input.hooks?.assertActive();
       input.onProgress?.({
         status:
           phase.status +
@@ -159,16 +141,42 @@ export async function generateAndSaveStoryPackage(input: {
           ].join("\n\n"),
         },
       });
+      const fingerprint = workflowCacheFingerprint({
+        source: { projectId: project.id, setup, phase: phase.title },
+        prompt: { text: prompt.text, systemText: prompt.systemText, schema: z.toJSONSchema(phase.schema) },
+        promptVersion: `story-package-phases-v2:${prompt.versionHash}`,
+        channelId: input.channelId, model: input.model,
+        agentConfiguration: currentProductionConfiguration()?.snapshot,
+        parameters: { temperature: 0.65 },
+      });
+      const request = { requestId: `story-package:${fingerprint}`, requestType: "story_package.phase",
+        targetType: "story_package_phase", targetId: phase.title,
+        provider: input.channelId, model: input.model, inputHash: fingerprint };
+      const cached = input.hooks?.reusePreviousResults !== false
+        ? await input.hooks?.loadArtifact("story-package.phase", fingerprint) : null;
+      const cachedRecord = z.object({ data: phase.schema, trace: z.unknown() }).safeParse(cached);
+      if (cachedRecord.success && !(phase.validate?.(cachedRecord.data.data)?.length)) {
+        await recordWorkflowArtifactReuse({ recordRequest: input.hooks?.recordRequest, request,
+          artifactRefs: [`story-package.phase:${fingerprint}`], reuseReason: "cache_fingerprint_match" });
+        if (cachedRecord.data.trace) traces.push(cachedRecord.data.trace as PromptExecutionTrace);
+        await input.hooks?.reportProgress?.(`${phase.title} · ${input.locale === "en" ? "reused saved result" : "复用已保存结果"}`);
+        output.section(phase.title);
+        output.push(phase.preview(cachedRecord.data.data));
+        return cachedRecord.data.data;
+      }
+      await input.hooks?.reportProgress?.(phase.status);
       let lastProgressAt = Date.now();
       let result: Awaited<ReturnType<typeof requestOpenAiStructured<T>>>;
       try {
-        result = await requestOpenAiStructured({
+        result = await trackWorkflowRequest({ request, recordRequest: input.hooks?.recordRequest, execute: async () => {
+          const response = await requestOpenAiStructured({
           ...provider,
           prompt,
           schema: phase.schema,
+          normalizeRaw: phase.normalizeRaw,
           validate: phase.validate,
           maxCorrectionAttempts: 2,
-          temperature: 0.55,
+          temperature: 0.65,
           timeoutMs: 270_000,
           stream: true,
           onTextDelta: () => {
@@ -178,14 +186,25 @@ export async function generateAndSaveStoryPackage(input: {
               lastProgressAt = now;
             }
           },
-        });
+          });
+          await input.hooks?.assertActive();
+          // A paid, validated response is checkpointed before any later request starts.
+          await input.hooks?.persistArtifact("story-package.phase", fingerprint, { data: response.data, trace: response.trace });
+          await input.hooks?.persistArtifact("prompt.trace", fingerprint, response.trace);
+          return { result: response, artifactRefs: [`story-package.phase:${fingerprint}`] };
+        } });
       } catch (error) {
         if (error instanceof StructuredOutputError) {
-          throw new StructuredOutputError(
+          const failure = new StructuredOutputError(
             error.code,
             [`phase: ${phase.title}`, ...error.details],
             error.rawText,
           );
+          failure.executionTrace = error.executionTrace;
+          throw failure;
+        }
+        if (error instanceof Error && /^STRUCTURED_PROVIDER_/.test(error.message)) {
+          throw new Error(`${phase.title}：${error.message}；${input.locale === "en" ? "saved phases are retained; continue this task to retry only unfinished requests" : "已完成阶段已保留，可在任务中心继续完成"}`, { cause: error });
         }
         throw error;
       }
@@ -227,7 +246,7 @@ export async function generateAndSaveStoryPackage(input: {
     const hooks: StoryPackage["hooks"] = [];
     const foreshadowing: StoryPackage["foreshadowing"] = [];
     const reversals: StoryPackage["reversals"] = [];
-    const batchSize = 10;
+    const batchSize = 5;
     for (let start = 1; start <= setup.episodeCount; start += batchSize) {
       const end = Math.min(start + batchSize - 1, setup.episodeCount);
       const context = buildEpisodeBatchContext({
@@ -253,6 +272,7 @@ export async function generateAndSaveStoryPackage(input: {
           end,
           episodeCount: setup.episodeCount,
           context,
+          serial: isSerialStorySetup(setup),
         }),
         context: projectContext,
         schema: StoryPackageEpisodeBatchSchema,
@@ -265,38 +285,26 @@ export async function generateAndSaveStoryPackage(input: {
       reversals.push(...batch.reversals);
     }
 
-    const assets = await requestPhase({
-      title: input.locale === "en" ? "Characters and assets" : "角色与美术资产",
-      status:
-        input.locale === "en"
-          ? "Designing consistent characters, props, and locations…"
-          : "正在依据全剧大纲设计角色、道具与场景…",
-      task: buildAssetsTask(input.locale, plan, episodeOutlines),
-      context: projectContext,
-      schema: StoryPackageAssetsGenerationSchema,
-      preview: (value) => renderStoryPackageAssets(value, input.locale),
+    const assets = await generateStoryPackageAssets({
+      request: requestPhase, locale: input.locale,
+      task: buildAssetsTask(input.locale),
+      context: { project: projectContext, seriesPlan: plan, episodeOutlines },
     });
 
     const firstEpisodeContext = {
       project: projectContext,
       seriesPlan: plan,
       episodeOneOutline: episodeOutlines[0],
-      characters: assets.characters,
-      props: assets.props,
-      locations: assets.locations,
+      characters: assets.characters.map(withoutVisualDossier),
+      props: assets.props.map(withoutVisualDossier),
+      locations: assets.locations.map(withoutVisualDossier),
     };
-    const firstEpisode = await requestPhase({
-      title: input.locale === "en" ? "Episode 1 screenplay" : "第一集完整正文",
-      status:
-        input.locale === "en"
-          ? "Writing and validating the complete first episode…"
-          : "正在编写第一集正文，并校验每场的视频提示词…",
-      task: buildFirstEpisodeTask(input.locale),
+    const firstEpisode = await generateStoryPackageFirstEpisode({
+      request: requestPhase, locale: input.locale, assets,
+      targetSeconds: projectContext.project.episodeDurationSeconds,
+      designTask: buildFirstEpisodeTask(input.locale),
       context: firstEpisodeContext,
-      schema: StoryPackageFirstEpisodeGenerationSchema,
-      validate: (value) =>
-        validateFirstEpisode(value.firstEpisode, input.locale, assets, projectContext.project.episodeDurationSeconds),
-      preview: (value) => renderFirstEpisode(value.firstEpisode, input.locale),
+      validate: value => validateFirstEpisode(value, input.locale, assets),
     });
 
     const parsed = StoryPackageSchema.safeParse({
@@ -306,7 +314,7 @@ export async function generateAndSaveStoryPackage(input: {
       hooks,
       foreshadowing,
       reversals,
-      ...firstEpisode,
+      firstEpisode,
     });
     if (!parsed.success)
       throw new StructuredOutputError(
@@ -322,6 +330,7 @@ export async function generateAndSaveStoryPackage(input: {
       setup.episodeCount,
       input.locale,
     );
+    semanticIssues.push(...validateFirstEpisode(parsed.data.firstEpisode, input.locale, assets, projectContext.project.episodeDurationSeconds));
     if (semanticIssues.length)
       throw new StructuredOutputError(
         "STRUCTURED_SEMANTIC_INVALID",
@@ -352,6 +361,7 @@ export async function generateAndSaveStoryPackage(input: {
         ? "Package generated; validating and saving…"
         : "策划包已生成，正在校验并保存…",
   });
+  await input.hooks?.assertActive();
   const deliverable = await createProductionDeliverable(
     input.userId,
     project.id,
@@ -380,6 +390,7 @@ export async function generateAndSaveStoryPackage(input: {
         },
       ],
       promptTrace,
+      idempotencyKey: input.workflowId ? `story-package:${input.workflowId}` : undefined,
     },
   );
   return {
@@ -392,6 +403,19 @@ export async function generateAndSaveStoryPackage(input: {
     storyPackage,
   };
 }
+
+export async function captureStoryPackageProject(userId: string, projectId: string) {
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, userId },
+    select: { id: true, name: true, description: true, config: { select: {
+      videoRatio: true, videoResolution: true, episodeTargetDurationSeconds: true,
+      artStyle: true, visualEra: true, visualEraCustom: true, workflowMode: true,
+    } } },
+  });
+  if (!project) throw new StoryPackageGenerationError("项目不存在", 404);
+  return project;
+}
+export type StoryPackageProjectSnapshot = Awaited<ReturnType<typeof captureStoryPackageProject>>;
 
 function createOutputProgressReporter(
   onProgress?: (progress: StoryPackageGenerationProgress) => void,
@@ -456,21 +480,18 @@ function buildPlanTask(locale: "zh" | "en", episodeCount: number) {
   ].join("\n");
 }
 
-function buildAssetsTask(
-  locale: "zh" | "en",
-  plan: z.infer<typeof StoryPackagePlanSchema>,
-  episodeOutlines: StoryPackage["episodeOutlines"],
-) {
-  const planJson = JSON.stringify(
-    { seriesPlan: plan, episodeOutlines },
-    null,
-    2,
-  );
+function withoutVisualDossier<T extends { imagePrompt: string; visualProfile?: unknown }>(asset: T) {
+  const copy: Partial<T> = { ...asset };
+  delete copy.imagePrompt;
+  delete copy.visualProfile;
+  return copy as Omit<T, "imagePrompt" | "visualProfile">;
+}
+
+function buildAssetsTask(locale: "zh" | "en") {
   if (locale === "en")
     return [
-      "PHASE: character and visual asset dossiers. Return only characters, props, and locations.",
-      "Use this series plan and complete episode outlines as the source of story facts and keep names consistent:",
-      planJson,
+      "PHASE: visual asset dossiers for the requested category and named entities only. Return only the requested field.",
+      "Use the supplied series plan, registry and episode outlines as story canon. Keep names consistent; do not add entities beyond currentEntities.",
       "Character dossiers define role, age/appearance, personality, motivation, arc, relationships, a recognizable voice style, and imageReferenceSlot. Include enough distinct characters to carry the central conflicts.",
       "Also define storyFunction, 1-3 tags, speakingTell, signatureDetail, pressureBehavior, addressingRules, firstAppearanceEpisode, and keyEpisodes for every character.",
       "Prop dossiers state story function, appearance, capabilities, strict limits, and a specific cost or consequence. Include only plot-critical props; never create an all-purpose solution.",
@@ -482,9 +503,8 @@ function buildAssetsTask(
       "Assign positive imageReferenceSlot numbers. Keep each entity's imagePrompt specific enough for visual continuity. Do not generate the series plan, episode outlines, hooks, or screenplay here.",
     ].join("\n\n");
   return [
-    "阶段：角色档案与美术资产设定。只输出 characters、props、locations。",
-    "以下全剧规划和完整逐集大纲是故事事实来源，名称、设定和出场集数必须与其一致：",
-    planJson,
+    "阶段：指定类型、指定对象的美术资产档案。只输出本次指定的一个类型字段。",
+    "所给全剧规划、名册和逐集大纲是故事事实来源，名称、设定和出场集数必须一致；不得增加 currentEntities 之外的对象。",
     "角色档案写清 role、ageAndAppearance、personality、motivation、arc、relationships、稳定可辨的 voiceStyle 和 imageReferenceSlot。角色要足以支撑主要冲突。",
     "每个角色还要写 storyFunction、1-3 个 tags、speakingTell（说话破绽）、signatureDetail（记忆点）、pressureBehavior（被逼急时的行为）、addressingRules（称呼规则）、firstAppearanceEpisode 和 keyEpisodes。",
     "道具档案写清 storyFunction、appearance、capabilities、严格的 limits，以及明确的 costOrConsequence。只列影响剧情的关键道具，不能设计万能解题道具。",
@@ -521,6 +541,7 @@ function buildEpisodeBatchTask(input: {
   end: number;
   episodeCount: number;
   context: unknown;
+  serial: boolean;
 }) {
   const context = JSON.stringify(input.context, null, 2);
   if (input.locale === "en")
@@ -530,7 +551,7 @@ function buildEpisodeBatchTask(input: {
       context,
       `Write exactly ${input.end - input.start + 1} outlines numbered ${input.start} through ${input.end}. Each needs a title, concise causal summary, endingHook, plantedClue, and its payoff. Escalate goals, obstacles, actions, costs, and new problems; do not repeat conflicts with cosmetic changes. Respect the corresponding volume arc.`,
       "Write exactly one hooks entry for every episode in this batch, matching that episode's endingHook and a concrete promisedPayoff. Add at least one foreshadowing and one reversal for this batch; setup and payoff must be possible and point to episode numbers/ranges that exist in the series. Connect them to these outlines and prior beats.",
-      `Do not create episodes outside ${input.start}-${input.end}, rewrite prior episodes, or generate series plan, asset dossiers, or screenplay. The complete series ends at episode ${input.episodeCount}.`,
+      `Do not create episodes outside ${input.start}-${input.end}, rewrite prior episodes, or generate series plan, asset dossiers, or screenplay. ${input.serial ? `This is an ongoing serial. Episode ${input.episodeCount} closes a planning batch, not the whole series; deliver a stage payoff and next goal.` : `The complete series ends at episode ${input.episodeCount}.`}`,
     ].join("\n\n");
   return [
     `阶段：第 ${input.start}-${input.end} 集逐集大纲。只输出 episodeOutlines、hooks、foreshadowing、reversals。`,
@@ -538,31 +559,31 @@ function buildEpisodeBatchTask(input: {
     context,
     `恰好生成 ${input.end - input.start + 1} 集，编号为 ${input.start} 到 ${input.end}。每集都要有标题、因果清楚的短梗概、endingHook、plantedClue 和对应 payoff。目标、阻碍、行动、代价与新问题逐步升级，不要重复换皮冲突；遵循对应分卷的故事弧线。`,
     "本批次每集恰好生成一条 hooks，hook 与该集 endingHook 一致，并写出具体 promisedPayoff。本批次至少给出一条 foreshadowing 和一条 reversal；铺垫与回收必须合理，并关联真实集数/范围。与本批次及前文大纲保持对应。",
-    `不要生成 ${input.start}-${input.end} 之外的集数，不要重写前文，不要生成全剧规划、资产档案或剧本。全剧在第 ${input.episodeCount} 集结束。`,
+    `不要生成 ${input.start}-${input.end} 之外的集数，不要重写前文，不要生成全剧规划、资产档案或剧本。${input.serial ? `这是长线连载，第 ${input.episodeCount} 集只是本次规划批次的终点，兑现阶段目标并开启下一目标，不强行全剧完结。` : `全剧在第 ${input.episodeCount} 集结束。`}`,
   ].join("\n\n");
 }
 
 function buildFirstEpisodeTask(locale: "zh" | "en") {
   if (locale === "en")
     return [
-      "PHASE: the complete Episode 1 screenplay. Return only firstEpisode.",
+      "PHASE: audiovisual design for the single supplied scene. Return only imagePrompt, videoPrompt and productionDesign. The server owns the supplied imageReferenceSlots; do not generate this field.",
       PANEL_PRODUCTION_DESIGN_INSTRUCTIONS,
       "Each scene is a 15-second production draft matching the five video ranges. Create enough scenes to approach the configured runtime; durationSeconds must be 15, never label a 15-second prompt as an 18/20-second scene. These scene drafts still require shot review.",
       "Use the supplied episode outline, series plan, project configuration, and asset dossiers as canon. Do not invent facts that contradict them.",
-      "Write at least four shootable scenes. Scene durations should sum close to the configured target runtime. Each scene establishes its starting state, visible action, feedback, and ending state; dialogue is split by speaker and never includes action or internal thought; include compatible camera and sound direction.",
+      "Faithfully stage the supplied frozen action and dialogue, with compatible camera and sound direction. Do not rewrite dialogue, add events, return firstEpisode or generate any other scene.",
       "Each scene has a single imagePrompt paragraph of at least 40 characters and videoPrompt of at least 100 characters. The image prompt follows the unified art style and describes one frame only, with no collage, readable text, logo, or watermark.",
       "Each videoPrompt starts with 15 seconds, unified art style, aspect ratio, camera texture, and references. Then include exactly five continuous ranges: 0-3s, 3-6s, 6-9s, 9-12s, 12-15s. Every range describes visible action, relative positions, camera movement, feedback, and end state. No readable text or subtitles.",
-      "For every scene, list the needed characters, locations, and props in imageReferenceSlots using unique positive numbers starting at 1. At first appearance, mark each in videoPrompt as `Image 1 (character reference: Name)` or equivalent location/prop reference, matching the slot number and kind exactly. These are user-bindable slots; do not claim that images exist.",
+      "Use exact asset names in videoPrompt, without making up image numbers or binding annotations. The server will prepend the fixed scene reference bindings. If a numeric reference is essential, it must match the supplied imageReferenceSlots. These are user-bindable slots; do not claim images already exist.",
     ].join("\n\n");
   return [
-    "阶段：第一集完整正文。只输出 firstEpisode。",
+    "阶段：所给单场的视听设计。只输出 imagePrompt、videoPrompt、productionDesign 三项。imageReferenceSlots 已由服务端从冻结正文生成，本次不得输出该字段。",
     PANEL_PRODUCTION_DESIGN_INSTRUCTIONS,
     "每场为 15 秒制作草稿，与五段视频时间线一致；通过足够的场次数接近目标集长。durationSeconds 必须为 15，不得将 15 秒提示词标成 18/20 秒场次。场次草稿仍需分镜审核。",
     "严格以提供的第一集大纲、全剧规划、项目配置和资产档案为准，不得编造冲突事实。",
-    "至少 4 场可拍正文，场次时长之和接近项目目标集长。每场写清起始状态、可见行动、反馈变化和结束状态；对白按说话人拆分，动作和心理不能冒充台词；镜头和声音表达彼此兼容。",
+    "忠实转译所给已冻结的行动和对白，镜头和声音表达彼此兼容；不改台词、不加事件，不返回 firstEpisode 或其他场次。",
     "每场 imagePrompt 是不少于 40 字的单段提示词，遵守统一画风，只描述一个画面，不得拼图、出现可读文字、Logo 或水印。每场 videoPrompt 不少于 100 字。",
     "每条 videoPrompt 开头写 15 秒、统一画风、画幅、镜头质感与参考主体，随后严格包含连续的五个时间段：0-3 秒、3-6 秒、6-9 秒、9-12 秒、12-15 秒。每段写可见动作、人物相对位置、镜头运动、动作反馈及结束状态，不生成可读文字或字幕。",
-    "每场 imageReferenceSlots 列出所需角色、场景、道具，编号从 1 开始且本提示词内不重复。videoPrompt 中主体首次出现时写“图片 1（角色参考：名称）”或对应场景/道具参考，编号和 kind 必须与槽位一致。槽位待用户绑定，不能声称图片已经存在。",
+    "videoPrompt 用所给资产原名描述主体，不自行生成图片编号或绑定声明；服务端会在开头编入固定参考槽位。如确需数字引用，只能使用所给 imageReferenceSlots 的对应编号。槽位待用户绑定，不能声称图片已经存在。",
   ].join("\n\n");
 }
 

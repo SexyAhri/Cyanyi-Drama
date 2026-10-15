@@ -99,13 +99,13 @@ export const PROMPT_CANARY_MANIFEST = {
   "episode_adaptation:en":
     "918448d9c71d83ffd9f146fc7ff313a086b65003767bbe352d2bfc0451112e36",
   "story_package_generation:zh":
-    "01acf828333ae13d66f31b846a03f92fffb512a2c7b1f1e6f49f1768163adfa7",
+    "7558294319dfe2f927fd60308b18644fa0fab53889ac1dedfbb707b40f731673",
   "story_package_generation:en":
-    "122e3543dd0851d7f0be823c5acca6c8aaff611894ac18b3e6768db1534b4657",
+    "dc34b7c28a7eb725518209ea502c6e8b5f0f05f1fd8b3e17bd90b165f4917ece",
   "studio_workflow_agent:zh":
-    "1bdfea89ecd4604f9ef60149ab749fbdd6cff44455f6d1dbbd476eec0be58c6a",
+    "2ecb2c75267998144bfab55f32f3ebd513bb11ca8551f1379d5f9d31187e3598",
   "studio_workflow_agent:en":
-    "2de5d9ac646da3e53abdc9ef42b200a2e09290cab0d988d42dd9909ca7f1dcc8",
+    "ca6e7165a7deae4d9957e8405a09129803bf6af12d2621ab9dd323667e274f8d",
 } satisfies Record<CanaryKey, string>;
 
 export type PromptCanaryIssue = {

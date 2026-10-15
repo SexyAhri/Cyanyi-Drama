@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { z } from "zod";
+import type { WorkflowRequestUpdate } from "@/lib/workflow/request-events";
 
 const mocks = vi.hoisted(() => ({
   request: vi.fn(),
@@ -20,69 +21,8 @@ vi.mock("@/lib/episodes/provider", () => ({
 vi.mock("./deliverables", () => ({ createProductionDeliverable: mocks.save }));
 
 import { generateAndSaveStoryPackage, validateFirstEpisode, type StoryPackageGenerationProgress } from "./story-package-generation";
-import type { StoryPackage } from "./story-package-contract";
 
-const imagePrompt = "国漫风格，中景，一名身穿蓝色长袍的修理师站在废器炉旁，背景为整齐的工具架，柔和侧光照亮衣料和金属纹理，构图清晰。";
-const videoPrompt = `15 秒，国漫风格，9:16，图片 1（角色参考：阿青）。0-3 秒：阿青从炉旁站起，镜头缓慢前推。3-6 秒：伸手检查零件，炉火映亮手部。6-9 秒：转身走向工具架，镜头平移。9-12 秒：取下工具，低头检查接口，动作保持连贯。12-15 秒：回到炉前放下工具，火光照亮面部，保持最终姿态。`;
-
-function makePackage(): StoryPackage {
-  const visualProfile = {
-    visualIdentity: "旧器物修理铺的基础参考", shapeAndStructure: "清晰结构", surfaceAndStyling: "旧布与铜质",
-    colorPalette: "低饱和蓝灰", lightingAndPresentation: "柔和侧光", signatureDetails: ["铜纹"],
-    consistencyRules: ["保持纹路"], negativePrompt: "无现代电器", inferenceNotes: ["材质为美术推定"],
-  };
-  return {
-    resolvedSetup: { audience: ["悬疑爱好者"], characters: ["青年修理师"], eras: ["架空前工业小城"], hooks: ["旧物线索" ] },
-    title: "废器炉",
-    logline: "修理师追查一件旧器物的来历。",
-    coreAppeal: ["修复器物", "揭开旧案"],
-    emotionalCurve: "好奇到危机，再到解决。",
-    synopsis: "阿青发现旧器物的秘密，逐步查明真相。",
-    backgroundSetting: "以修复旧器物为生的小城。",
-    format: { episodeCount: 20, episodeDurationSeconds: 95, structure: "三幕式", aspectRatio: "9:16", artStyle: "anime" },
-    worldRules: Array.from({ length: 3 }, (_, i) => ({ rule: `规则 ${i + 1}`, consequence: `后果 ${i + 1}` })),
-    volumes: [1, 2].map((volume) => ({
-      volume, title: `阶段 ${volume}`, episodeRange: volume === 1 ? "1-10" : "11-20",
-      phaseGoal: "从发现线索到确认事实", informationRelease: "揭开器物来源", distinctiveness: "推进新的调查目标",
-      synopsis: "根据前阶段的证据推进调查。", climax: "面对真相", endingHook: "还有谁知道这个秘密？",
-    })),
-    episodeOutlines: Array.from({ length: 20 }, (_, i) => ({
-      episodeNumber: i + 1, title: `集纲 ${i + 1}`, summary: `独有集纲事件 ${i + 1}`,
-      endingHook: "出现新线索", plantedClue: "零件上的纹路", payoff: "确认器物的来源",
-    })),
-    hooks: Array.from({ length: 20 }, (_, i) => ({ episodeNumber: i + 1, hook: "出现新线索", questionRaised: "纹路从何而来？", promisedPayoff: "确认器物来源" })),
-    foreshadowing: [{ clue: "特殊纹路", introducedAt: "第 1 集", introducedForm: "零件特写", payoffAt: "第 20 集", payoff: "查明制造者" }],
-    reversals: [{ reveal: "器物来自旧工坊", setup: "零件上的标记", episodeNumber: 20 }],
-    creativeProhibitions: ["不凭空解决问题", "不随意增加能力", "不改变器物来源"],
-    whyWatch: { earlyEpisodes: [{ episodeNumber: 1, moment: "零件点亮炉火", questionRaised: "谁留下零件？" }], nonInterchangeabilityReason: "每集依据前集线索推进。" },
-    characters: [{
-      name: "阿青", role: "主角", storyFunction: "调查旧器物", tags: ["修理师"], ageAndAppearance: "青年，蓝衣",
-      personality: "谨慎", motivation: "查明真相", arc: "从回避到面对", relationships: "独自经营修理铺",
-      voiceStyle: "简短", speakingTell: "犹豫时停顿", signatureDetail: "蓝色围巾", pressureBehavior: "仔细观察",
-      addressingRules: "直接称名", firstAppearanceEpisode: 1, keyEpisodes: [1, 20], imageReferenceSlot: 1, imagePrompt, visualProfile,
-    }],
-    props: [{ name: "旧零件", type: "机械零件", storyFunction: "提供调查线索", appearance: "带纹路的铜片", capabilities: "接通炉火", limits: "只能接通一次", costOrConsequence: "接通后损坏", firstAppearanceEpisode: 1, keyEpisodes: [1, 20], imageReferenceSlot: 2, imagePrompt, visualProfile }],
-    locations: [{ name: "修理铺", type: "室内", storyFunction: "调查起点", spatialRules: "工具架与炉子之间有窄道", atmosphere: "昏暗温暖", reusableActions: "从炉子走向工具架", keyEpisodes: [1, 20], imageReferenceSlot: 3, imagePrompt, visualProfile }],
-    firstEpisode: {
-      title: "炉火", synopsis: "阿青检查旧零件。", endingHook: "谁留下零件？", targetDurationSeconds: 95,
-      scenes: Array.from({ length: 6 }, (_, i) => ({
-        sceneNumber: i + 1, heading: `修理铺场次 ${i + 1}`, durationSeconds: 15, location: "修理铺",
-        characters: ["阿青"], props: ["旧零件"], action: "阿青检查零件。", dialogue: [{ speaker: "阿青", line: "这是什么？" }],
-        camera: "缓慢前推", sound: "炉火声", endState: "零件放在炉边",
-        imageReferenceSlots: [{ number: 1, kind: "character", name: "阿青" }, { number: 2, kind: "prop", name: "旧零件" }, { number: 3, kind: "location", name: "修理铺" }], imagePrompt,
-        videoPrompt: `图片 2（道具：旧零件），图片 3（场景：修理铺）。${videoPrompt}`,
-        productionDesign: {
-          photography: { camera: "前推", cameraPosition: "炉前", focalLength: "50mm", lighting: "炉火", composition: "居中", depthOfField: "浅景深", colorTone: "暖色" },
-          acting: [{ name: "阿青", emotion: "好奇", action: "检查零件", expression: "凝视" }],
-          startState: { body: "站立", hands: "握零件", gaze: "向下", screenDirection: "朝右", props: "铜片在手" },
-          motionBeats: [{ startSecond: 0, endSecond: 15, action: "检查并放下零件", camera: "缓慢前推" }],
-          worldContext: { realm: "不适用", technique: "不适用", powerRule: "接通一次", environmentScale: "小铺", evidence: ["零件只能接通一次"] },
-          vfxCues: [], sfxCues: [],
-        },
-      })),
-    },
-  };
-}
+import { makePackage, phaseResponses } from "./story-package-test-fixture";
 
 const input = {
   userId: "user-1", projectId: "project-1", channelId: "channel-1", model: "mock-model", locale: "zh" as const,
@@ -96,6 +36,16 @@ beforeEach(() => {
   mocks.save.mockResolvedValue({ id: "package-1", title: "废器炉 · 全剧策划包", version: 1, status: "draft" });
 });
 
+
+function mockPhases(responses: unknown[]) {
+  mocks.request.mockImplementation(async ({ schema, validate, normalizeRaw }: { schema: z.ZodType; validate?: (value: never) => unknown[]; normalizeRaw?: (value: unknown) => unknown }) => {
+    const raw = responses.shift();
+    const data = schema.parse(normalizeRaw ? normalizeRaw(raw) : raw);
+    expect(validate?.(data as never) ?? []).toEqual([]);
+    return { data, trace: { promptId: "story_package_generation", correctionAttempts: 0, tokenUsage: null, outputHash: "mock-hash" } };
+  });
+}
+
 describe("story package generation phases", () => {
   it("checks original-package scene duration against the configured episode target", () => {
     const episode = makePackage().firstEpisode;
@@ -106,34 +56,22 @@ describe("story package generation phases", () => {
   });
   it("generates all outlines before assets, streams readable previews, and saves the complete package", async () => {
     const storyPackage = makePackage();
-    const { characters, props, locations, firstEpisode, episodeOutlines, hooks, foreshadowing, reversals, ...plan } = storyPackage;
-    const responses = [
-      plan,
-      { episodeOutlines: episodeOutlines.slice(0, 10), hooks: hooks.slice(0, 10), foreshadowing, reversals },
-      { episodeOutlines: episodeOutlines.slice(10), hooks: hooks.slice(10), foreshadowing, reversals },
-      { characters, props, locations },
-      { firstEpisode },
-    ];
-    mocks.request.mockImplementation(async ({ schema, validate }: { schema: z.ZodType; validate?: (value: never) => unknown[] }) => {
-      const data = schema.parse(responses.shift());
-      expect(validate?.(data as never) ?? []).toEqual([]);
-      return { data, trace: { promptId: "story_package_generation", correctionAttempts: 0, tokenUsage: null, outputHash: "mock-hash" } };
-    });
+    mockPhases(phaseResponses(storyPackage));
     const progress: StoryPackageGenerationProgress[] = [];
 
     const result = await generateAndSaveStoryPackage({ ...input, onProgress: (event) => progress.push(event) });
 
-    expect(mocks.request).toHaveBeenCalledTimes(5);
+    expect(mocks.request).toHaveBeenCalledTimes(16);
     const prompts = mocks.request.mock.calls.map(([call]) => call.prompt.text as string);
     expect(prompts[1]).toContain('"priorEpisodeOutlines": []');
-    expect(prompts[2]).toContain("独有集纲事件 10");
+    expect(prompts[2]).toContain("独有集纲事件 5");
     expect(prompts[2]).not.toContain("独有集纲事件 20");
-    expect(prompts[3]).toContain("独有集纲事件 20");
-    expect(prompts[4]).toContain('"name": "阿青"');
+    expect(prompts[5]).toContain("独有集纲事件 20");
+    expect(prompts[6]).toContain('"name": "阿青"');
     const preview = progress.map((event) => event.delta ?? "").join("");
-    expect(preview.indexOf("# 故事大纲")).toBeLessThan(preview.indexOf("## 第 1-10 集大纲"));
-    expect(preview.indexOf("## 第 11-20 集大纲")).toBeLessThan(preview.indexOf("## 角色与美术资产"));
-    expect(preview).toContain("第一集完整正文");
+    expect(preview.indexOf("# 故事大纲")).toBeLessThan(preview.indexOf("## 第 1-5 集大纲"));
+    expect(preview.indexOf("## 第 16-20 集大纲")).toBeLessThan(preview.indexOf("## 资产档案"));
+    expect(preview).toContain("第一集故事正文");
     expect(mocks.save).toHaveBeenCalledTimes(1);
     expect(mocks.save.mock.calls[0][2].payload.storyPackage).toEqual(result.storyPackage);
     expect(result.storyPackage.episodeOutlines).toHaveLength(20);
@@ -150,5 +88,97 @@ describe("story package generation phases", () => {
     expect(progress.map((event) => event.delta ?? "").join("")).toContain("# 故事大纲");
     expect(progress.at(-1)?.status).toContain("已收到的内容保留");
     expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it("retains validated phases across a socket failure and resumes without repeating them", async () => {
+    const responses = phaseResponses(makePackage());
+    mockPhases(responses);
+    const implementation = mocks.request.getMockImplementation()!;
+    let attempt = 0;
+    mocks.request.mockImplementation(async (...args) => {
+      if (++attempt === 4) throw new Error("STRUCTURED_PROVIDER_TRANSPORT_FAILED:stage=response_body;reason=terminated;causeCode=UND_ERR_SOCKET");
+      return implementation(...args);
+    });
+    const artifacts = new Map<string, unknown>();
+    const hooks = {
+      assertActive: vi.fn(async () => {}), reusePreviousResults: true,
+      loadArtifact: vi.fn(async (type: string, key: string) => artifacts.get(`${type}:${key}`) ?? null),
+      persistArtifact: vi.fn(async (type: string, key: string, value: unknown) => { artifacts.set(`${type}:${key}`, value); }),
+      recordRequest: vi.fn(async (_event: WorkflowRequestUpdate) => { void _event; }),
+    };
+    await expect(generateAndSaveStoryPackage({ ...input, workflowId: "run", hooks })).rejects.toThrow("已完成阶段已保留");
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(artifacts.size).toBe(6);
+    const result = await generateAndSaveStoryPackage({ ...input, workflowId: "run", hooks });
+    expect(result.storyPackage.episodeOutlines).toHaveLength(20);
+    expect(mocks.request).toHaveBeenCalledTimes(17); // 16 successes + exactly one failed request
+    expect(hooks.recordRequest.mock.calls.filter(([event]) => (event as { reused?: boolean }).reused)).toHaveLength(3);
+    expect(mocks.save.mock.calls[0][2].idempotencyKey).toBe("story-package:run");
+  });
+
+  it("plans 100 episodes in bounded batches and does not force a serial finale", async () => {
+    const story = makePackage();
+    story.format.episodeCount = 100;
+    story.episodeOutlines = Array.from({ length: 100 }, (_, i) => ({ ...story.episodeOutlines[0], episodeNumber: i + 1 }));
+    story.hooks = Array.from({ length: 100 }, (_, i) => ({ ...story.hooks[0], episodeNumber: i + 1 }));
+    story.volumes = Array.from({ length: 10 }, (_, i) => ({ ...story.volumes[0], volume: i + 1, episodeRange: `${i * 10 + 1}-${i * 10 + 10}` }));
+    mockPhases(phaseResponses(story));
+    const result = await generateAndSaveStoryPackage({ ...input, setup: { ...input.setup, episodeCount: 100, storyIdea: "长篇治愈种田连载" } });
+    expect(result.storyPackage.episodeOutlines).toHaveLength(100);
+    expect(mocks.request).toHaveBeenCalledTimes(32);
+    const outlinePrompts = mocks.request.mock.calls.slice(1, 21).map(([call]) => call.prompt.text as string);
+    expect(outlinePrompts[19]).toContain("第 96-100 集");
+    expect(outlinePrompts[19]).toContain("不强行全剧完结");
+    expect(outlinePrompts.every(text => text.includes("恰好生成 5 集"))).toBe(true);
+  });
+
+  it("reuses every phase after final-save failure, but invalidates changed input and explicit restarts", async () => {
+    const artifacts = new Map<string, unknown>();
+    const hooks = {
+      assertActive: async () => {}, reusePreviousResults: true,
+      loadArtifact: async (type: string, key: string) => artifacts.get(`${type}:${key}`) ?? null,
+      persistArtifact: async (type: string, key: string, value: unknown) => { artifacts.set(`${type}:${key}`, value); },
+    };
+    mockPhases(phaseResponses(makePackage()));
+    mocks.save.mockRejectedValueOnce(new Error("SAVE_TEMPORARILY_UNAVAILABLE"));
+    await expect(generateAndSaveStoryPackage({ ...input, workflowId: "run", hooks })).rejects.toThrow("SAVE_TEMPORARILY_UNAVAILABLE");
+    await generateAndSaveStoryPackage({ ...input, workflowId: "run", hooks });
+    expect(mocks.request).toHaveBeenCalledTimes(16);
+    mockPhases(phaseResponses(makePackage()));
+    await generateAndSaveStoryPackage({ ...input, workflowId: "run", hooks, setup: { ...input.setup, storyIdea: "修改后的新创意" } });
+    expect(mocks.request).toHaveBeenCalledTimes(32);
+    mockPhases(phaseResponses(makePackage()));
+    await generateAndSaveStoryPackage({ ...input, workflowId: "run", hooks: { ...hooks, reusePreviousResults: false } });
+    expect(mocks.request).toHaveBeenCalledTimes(48);
+  });
+
+  it("keeps the frozen project config and dramatic dialogue while designing individual scenes", async () => {
+    const frozen = { id: "project-1", name: "冻结的项目名", description: null, config: {
+      episodeTargetDurationSeconds: 95, artStyle: "anime", videoRatio: "9:16", videoResolution: "720p",
+      visualEra: "source", visualEraCustom: "", workflowMode: "novel-promotion",
+    } };
+    mocks.project.mockResolvedValue({ ...frozen, name: "编辑后的项目名", config: { ...frozen.config, episodeTargetDurationSeconds: 180 } });
+    mockPhases(phaseResponses(makePackage()));
+    const result = await generateAndSaveStoryPackage({ ...input, projectSnapshot: frozen });
+    expect(result.storyPackage.firstEpisode.scenes.map(scene => scene.dialogue)).toEqual(makePackage().firstEpisode.scenes.map(scene => scene.dialogue));
+    expect(mocks.request.mock.calls[0][0].prompt.text).toContain("冻结的项目名");
+    expect(mocks.request.mock.calls[0][0].prompt.text).not.toContain("编辑后的项目名");
+    const design = mocks.request.mock.calls[10][0].prompt.text;
+    expect(design).toContain("只输出 imagePrompt、videoPrompt、productionDesign 三项");
+    expect(design).toContain("imageReferenceSlots 已由服务端从冻结正文生成");
+    expect(design).not.toContain("至少 4 场可拍正文");
+  });
+
+  it("bounds each asset request to two exact registered entities", async () => {
+    const story = makePackage();
+    story.characters = [story.characters[0], ...["大伯", "老猎户", "苏晚秋"].map(name => ({ ...story.characters[0], name }))];
+    mockPhases(phaseResponses(story));
+    const result = await generateAndSaveStoryPackage(input);
+    expect(result.storyPackage.characters.map(character => character.name)).toEqual(["阿青", "大伯", "老猎户", "苏晚秋"]);
+    expect(mocks.request).toHaveBeenCalledTimes(17);
+    const firstDossier = mocks.request.mock.calls[6][0].schema.safeParse({ characters: story.characters });
+    expect(firstDossier.success).toBe(false);
+    const validation = mocks.request.mock.calls[7][0].validate({ characters: story.characters.slice(0, 2) });
+    expect(validation[0].code).toBe("asset_registry_mismatch");
   });
 });

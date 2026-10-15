@@ -9,6 +9,6 @@ describe("studio agent plain-text fallback", () => {
 
   it("bounds provider text and ignores empty replies", () => {
     expect(studioAgentPlainTextFallback("  ")).toBeNull();
-    expect(studioAgentPlainTextFallback("a".repeat(5_000))?.reply).toHaveLength(4_000);
+    expect(studioAgentPlainTextFallback("a".repeat(17_000))?.reply).toHaveLength(16_000);
   });
 });

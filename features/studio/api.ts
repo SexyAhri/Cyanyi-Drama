@@ -34,7 +34,6 @@ import type {
   VoicePresetRecord,
   WorkflowRunSummary,
   WorkspaceSnapshot,
-  StoryPackageGenerationResult,
 } from "./types";
 import type { StoryboardPromptPreview } from "@/lib/media/project-asset-tasks";
 import type { StoryboardBatchPreflightItemInput, StoryboardBatchPreflightResult } from "@/lib/media/storyboard-batch-preflight";
@@ -452,20 +451,13 @@ export async function generateStudioStoryPackage(
     };
   },
   onProgress?: (progress: { delta?: string; status?: string }) => void,
-): Promise<StoryPackageGenerationResult> {
-  const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/story-package/generate`, {
-    method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" }, body: JSON.stringify(input),
-  });
-  if (!response.ok || !response.body) {
-    const error = await response.json().catch(() => null);
-    throw new StudioApiError(error?.message ?? "策划包生成失败", response.status);
-  }
-  for await (const event of readJsonLineStream(response.body)) {
-    if (event.type === "progress") onProgress?.({ delta: typeof event.delta === "string" ? event.delta : undefined, status: typeof event.status === "string" ? event.status : undefined });
-    if (event.type === "failed") throw new Error(String(event.message ?? "策划包生成失败"));
-    if (event.type === "completed") return event.result as StoryPackageGenerationResult;
-  }
-  throw new Error("生成连接已中断，请刷新项目检查是否已保存策划包");
+): Promise<{ submitted: true; workflowId: string; status: string; reused: boolean }> {
+  const result = await request<{ submitted: true; workflowId: string; status: string; reused: boolean }>(
+    `/api/projects/${encodeURIComponent(projectId)}/story-package/generate`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) },
+  );
+  onProgress?.({ status: input.locale === "en" ? "Submitted. Follow progress in Tasks." : "已提交，可在任务中心查看进度。" });
+  return result;
 }
 
 export async function transitionStudioDeliverable(

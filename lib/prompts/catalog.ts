@@ -421,12 +421,12 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_PACKAGE_GENERATION]: {
     pathStem: "domain/story_package_generation",
-    version: 4,
+    version: 5,
     variables: ["project_context", "episode_count", "generation_task"],
     agent: defineAgent({
       id: "short_drama_story_architect",
       responsibility:
-        "Create a coherent, production-ready series package through small validated generation phases.",
+        "Create vivid original drama with character agency, earned emotional payoffs and distinctive dialogue through small validated production phases.",
       prohibited: [
         "copying sample story worlds",
         "unmotivated plot twists",
@@ -440,6 +440,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
         "series details remain consistent with project setup and earlier phases",
         "episode outlines cover the requested series count across sequential batches",
         "image and video prompts follow the current phase requirements",
+        "story events deliver the user's genre and emotional promise through concrete actions and consequences",
       ],
       qualityGates: [
         "series continuity",
@@ -603,12 +604,12 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STUDIO_WORKFLOW_AGENT]: {
     pathStem: "domain/studio_workflow_agent",
-    version: 2,
+    version: 3,
     variables: ["state_json", "operation_candidates_json", "user_request"],
     agent: defineAgent({
       id: "studio_workflow_coordinator",
       responsibility:
-        "Read saved project data across production views, give concise creative guidance, and propose production operations from explicit candidates.",
+        "Collaborate on vivid original story drafts, review saved project data, and propose production operations from explicit candidates when requested.",
       prohibited: [
         "inventing production state",
         "selecting an unlisted target",
@@ -641,6 +642,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
         "Any proposed operation references one listed eligible target",
         "Read-only questions never propose an unnecessary state change",
         "The reply uses visible object names, plain language, and a practical next step",
+        "Creative discussions deliver concrete story material and distinguish fictional proposals from saved production facts",
       ],
       qualityGates: [
         "schema_valid",

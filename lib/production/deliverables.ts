@@ -57,6 +57,7 @@ export async function createProductionDeliverable(
     promptTrace?: unknown;
     cost?: number | string;
     dependencyIds?: string[];
+    idempotencyKey?: string;
   },
 ) {
   const department = getProductionDepartment(input.department);
@@ -97,6 +98,15 @@ export async function createProductionDeliverable(
   const dependencyHash = createDependencyHash(dependencies);
 
   return prisma.$transaction(async (tx) => {
+    const stableId = input.idempotencyKey
+      ? `deliverable_${createHash("sha256").update(`${userId}\u0000${projectId}\u0000${input.idempotencyKey}`).digest("hex")}`
+      : undefined;
+    if (stableId) {
+      const existing = await tx.productionDeliverable.findFirst({
+        where: { id: stableId, userId, projectId }, include: deliverableInclude,
+      });
+      if (existing) return toDeliverable(existing);
+    }
     const previous = await tx.productionDeliverable.findFirst({
       where: {
         projectId,
@@ -117,7 +127,7 @@ export async function createProductionDeliverable(
     }
     const row = await tx.productionDeliverable.create({
       data: {
-        id: randomUUID(),
+        id: stableId ?? randomUUID(),
         userId,
         projectId,
         episodeId: input.episodeId,

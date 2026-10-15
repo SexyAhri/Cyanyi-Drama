@@ -119,6 +119,11 @@ export async function createOrReuseWorkflowRun(
   // Always replace caller-supplied context, including through the generic workflow API.
   // Step inputs are persisted once; retries never reread edited shot facts or adopted assets.
   const executionSteps = await Promise.all(definition.steps.map(async (step) => {
+    if (step.type === "generate_story_package") {
+      const { captureStoryPackageProject } = await import("@/lib/production/story-package-generation");
+      const projectSnapshot = await captureStoryPackageProject(definition.userId, definition.projectId);
+      return { ...step, input: { ...step.input, projectSnapshot } };
+    }
     if (!["design_storyboard_media_prompt", "review_storyboard_video"].includes(step.type)) return step;
     const stepInput = step.input && typeof step.input === "object" && !Array.isArray(step.input)
       ? step.input as Record<string, unknown> : {};

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   resolveConfiguration: vi.fn(),
   assertPreview: vi.fn(),
   captureContext: vi.fn(),
+  captureProject: vi.fn(),
 }));
 
 vi.mock("@/lib/server/prisma", () => ({ prisma: {
@@ -18,6 +19,7 @@ vi.mock("@/lib/server/prisma", () => ({ prisma: {
 vi.mock("@/lib/production-configuration/store", () => ({ resolveProductionConfiguration: mocks.resolveConfiguration }));
 vi.mock("@/lib/production-configuration/execution", () => ({ assertPreviewConfiguration: mocks.assertPreview }));
 vi.mock("@/lib/media/storyboard-prompt-design", () => ({ captureStoryboardPromptContext: mocks.captureContext }));
+vi.mock("@/lib/production/story-package-generation", () => ({ captureStoryPackageProject: mocks.captureProject }));
 
 import { DEFAULT_SOUND_POLICY, DEFAULT_WORKFLOW_POLICY } from "@/lib/production-configuration/contract";
 import { createOrReuseWorkflowRun } from "./store";
@@ -71,6 +73,16 @@ beforeEach(() => {
 });
 
 describe("workflow execution after configuration management removal", () => {
+  it("replaces forged story-package project snapshots with a server-owned frozen capture", async () => {
+    const snapshot = { id: "project-1", name: "原项目", config: { artStyle: "anime", episodeTargetDurationSeconds: 90 } };
+    mocks.captureProject.mockResolvedValue(snapshot);
+    await createOrReuseWorkflowRun({ id: "run-story", userId: "user-1", projectId: "project-1", workflowType: "story-package-generation",
+      input: { projectSnapshot: { id: "foreign" } },
+      steps: [{ key: "generate_story_package", type: "generate_story_package", input: { projectSnapshot: { config: { artStyle: "forged" } } } }],
+    });
+    expect(mocks.captureProject).toHaveBeenCalledWith("user-1", "project-1");
+    expect(mocks.create.mock.calls[0][0].data.steps.create[0].input.projectSnapshot).toEqual(snapshot);
+  });
   it("replaces forged caller snapshots with a server capture in persisted step input", async () => {
     mocks.captureContext.mockResolvedValue({ panel: { id: "panel", imageAssetId: "owned-image" } });
     await createOrReuseWorkflowRun({ id: "run-snapshot", userId: "user-1", projectId: "project-1", episodeId: "episode-1", workflowType: "storyboard-prompt-design",

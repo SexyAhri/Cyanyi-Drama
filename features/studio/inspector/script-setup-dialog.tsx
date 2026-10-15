@@ -172,6 +172,8 @@ const HOOKS = [
   "时间循环",
 ];
 const STRUCTURES = [
+  "自动适配",
+  "长线阶段式",
   "三幕式",
   "五幕式",
   "英雄旅程",
@@ -200,7 +202,7 @@ const DEFAULT_SETUP: ScriptSetup = {
   eras: [],
   hooks: [],
   episodeCount: 20,
-  structure: "三幕式",
+  structure: "自动适配",
   popular: true,
 };
 
@@ -761,6 +763,8 @@ function translateTopic(value: string) {
 
 function translateStructure(value: string) {
   const labels: Record<string, string> = {
+    自动适配: "Fit to the story",
+    长线阶段式: "Long-running arcs",
     三幕式: "Three-act",
     五幕式: "Five-act",
     英雄旅程: "Hero's journey",

@@ -842,7 +842,7 @@ export function normalizeStudioWorkflowAgentResponse(value: unknown) {
 }
 
 export const studioWorkflowAgentSchema = z.object({
-  reply: z.string().trim().min(1).max(4_000),
+  reply: z.string().trim().min(1).max(16_000),
   operation: z.enum(studioAgentOperations).nullable().default(null),
   targetId: z.string().trim().min(1).nullable().default(null),
   canvasPrompt: z.string().trim().min(1).max(30_000).nullable().default(null),

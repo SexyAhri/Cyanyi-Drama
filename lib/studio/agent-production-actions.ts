@@ -9,7 +9,7 @@ import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { inspectStructuredScreenplay } from "@/lib/novel/screenplay-state";
 import { resolveStorySetup, resolveAdaptationOptions, type StudioProductionOptions } from "./production-input";
 import {
-  generateAndSaveStoryPackage,
+  StoryPackageGenerationError,
   type StoryPackageGenerationProgress,
 } from "@/lib/production/story-package-generation";
 
@@ -107,21 +107,29 @@ export async function startStudioProductionAction(input: {
         config: { select: { artStyle: true } },
       },
     });
-    if (!project) throw new Error("项目不存在");
-    const result = await generateAndSaveStoryPackage({
+    if (!project) throw new StoryPackageGenerationError("项目不存在", 404);
+    await resolveEpisodeTextProvider(input);
+    const setup = resolveStorySetup({ options: input.options, request: input.request,
+      artStyle: project.config?.artStyle, description: project.description, projectName: project.name });
+    const settings = await loadUserRuntimeSettings(input.userId);
+    const result = await createOrReuseWorkflowRun({
+      id: `workflow_${crypto.randomUUID()}`,
       userId: input.userId,
-      projectId: project.id,
-      channelId: input.channelId,
-      model: input.model,
-      locale: input.locale,
-      onProgress: input.onProgress,
-      setup: resolveStorySetup({ options: input.options, request: input.request,
-        artStyle: project.config?.artStyle, description: project.description, projectName: project.name }),
+      projectId: input.projectId,
+      workflowType: "story-package-generation",
+      targetType: "project", targetId: input.projectId,
+      input: { channelId: input.channelId, model: input.model, locale: input.locale, setup },
+      steps: [{ key: "generate_story_package", type: "generate_story_package",
+        artifactTypes: ["story-package.phase", "story-package.completed", "prompt.trace"],
+        retryable: true, maxAttempts: settings.workflowStepMaxAttempts }],
+      maxAttempts: settings.workflowStepMaxAttempts,
     });
+    if (!result) throw new Error("项目不存在");
+    if (!result.reused) await enqueueWorkflowJob({ runId: result.workflow.id,
+      userId: input.userId, projectId: input.projectId, maxAttempts: 1 });
     return {
-      deliverable: result.deliverable,
-      episodeCount: result.storyPackage.format.episodeCount,
-      firstEpisodeSceneCount: result.storyPackage.firstEpisode.scenes.length,
+      submitted: true, workflow: result.workflow, workflowId: result.workflow.id,
+      status: result.workflow.status, reused: result.reused,
     };
   }
   await resolveEpisodeTextProvider(input);

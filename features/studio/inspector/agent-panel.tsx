@@ -141,11 +141,7 @@ function createStudioToolRegistry(locale: StudioLocale): ToolRegistry {
               hideProcessDetails: true,
               renderResult: () => (
                 <p className="text-xs text-muted-foreground">
-                  {name === "start_story_package_generation"
-                    ? locale === "en"
-                      ? "Saved in development deliverables. Review the new package there."
-                      : "已保存到开发部交付物，可在这里查看完整策划包。"
-                    : locale === "en"
+                  {locale === "en"
                       ? "Submitted. Follow progress and results in Tasks."
                       : "已提交，可在任务栏查看进度与结果。"}
                 </p>

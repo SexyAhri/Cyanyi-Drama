@@ -2,10 +2,8 @@ import { storySetupSchema } from "@/lib/studio/production-input";
 import { z } from "zod";
 
 import { EpisodeSplitError } from "@/lib/episodes/errors";
-import {
-  StoryPackageGenerationError,
-  generateAndSaveStoryPackage,
-} from "@/lib/production/story-package-generation";
+import { StoryPackageGenerationError } from "@/lib/production/story-package-generation";
+import { startStudioProductionAction } from "@/lib/studio/agent-production-actions";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 
 export const maxDuration = 300;
@@ -33,39 +31,16 @@ export async function POST(request: Request, context: Context) {
       ),
       sessionId,
     );
-  if (request.headers.get("accept")?.includes("application/x-ndjson")) {
-    const encoder = new TextEncoder();
-    let closed = false;
-    let heartbeat: ReturnType<typeof setInterval> | undefined;
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        const send = (event: unknown) => { if (!closed) controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`)); };
-        send({ type: "started" });
-        heartbeat = setInterval(() => send({ type: "heartbeat" }), 15000);
-        void generateAndSaveStoryPackage({ userId: user.id, projectId, ...parsed.data,
-          onProgress: progress => send({ type: "progress", ...progress }),
-        }).then(result => send({ type: "completed", result })).catch(error =>
-          send({ type: "failed", message: error instanceof Error ? error.message : "策划包生成失败" }),
-        ).finally(() => {
-          if (heartbeat) clearInterval(heartbeat);
-          if (!closed) controller.close();
-          closed = true;
-        });
-      },
-      cancel() { closed = true; if (heartbeat) clearInterval(heartbeat); },
-    });
-    return attachSessionCookie(new Response(stream, { headers: {
-      "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no",
-    } }), sessionId);
-  }
   try {
-    const result = await generateAndSaveStoryPackage({
+    const result = await startStudioProductionAction({
       userId: user.id,
       projectId,
-      ...parsed.data,
+      operation: "start_story_package_generation", targetId: projectId,
+      channelId: parsed.data.channelId, model: parsed.data.model, locale: parsed.data.locale,
+      options: { storySetup: parsed.data.setup },
     });
     return attachSessionCookie(
-      Response.json(result, { status: 201 }),
+      Response.json(result, { status: 202 }),
       sessionId,
     );
   } catch (error) {

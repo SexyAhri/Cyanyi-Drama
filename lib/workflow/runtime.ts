@@ -13,6 +13,8 @@ import { adaptEpisodeSource } from "@/lib/episodes/adaptation";
 import { splitEpisodesWithAi } from "@/lib/episodes/split";
 import { analyzeManuscript } from "@/lib/episodes/manuscript-analysis";
 import { generateOriginalEpisode } from "@/lib/production/original-episode-generation";
+import { generateAndSaveStoryPackage, type StoryPackageProjectSnapshot } from "@/lib/production/story-package-generation";
+import { storySetupSchema } from "@/lib/studio/production-input";
 import { designStoryboardMediaPrompt, type StoryboardPromptContext } from "@/lib/media/storyboard-prompt-design";
 import { reviewStoryboardVideo } from "@/lib/media/storyboard-video-review";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
@@ -764,6 +766,21 @@ async function runStep(
     recordRequest?: (request: WorkflowRequestUpdate) => Promise<void>;
   },
 ) {
+  if (step.stepType === "generate_story_package") {
+    const input = mergedStepInput(run.input, step.input);
+    const channelId = getString(input.channelId), model = getString(input.model);
+    const setup = storySetupSchema.parse(input.setup);
+    if (!channelId || !model || !isRecord(input.projectSnapshot)) throw new Error("WORKFLOW_STORY_PACKAGE_INPUT_REQUIRED");
+    const result = await generateAndSaveStoryPackage({
+      userId, projectId: run.projectId, channelId, model,
+      locale: getString(input.locale) === "en" ? "en" : "zh", setup,
+      workflowId: run.id, hooks: runtime,
+      projectSnapshot: input.projectSnapshot as unknown as StoryPackageProjectSnapshot,
+    });
+    const completed = { deliverable: result.deliverable, episodeCount: result.storyPackage.format.episodeCount };
+    await runtime.persistArtifact("story-package.completed", run.id, completed);
+    return completed;
+  }
   if (step.stepType === "generate_original_episode") {
     const input = mergedStepInput(run.input, step.input);
     const channelId = getString(input.channelId), model = getString(input.model);

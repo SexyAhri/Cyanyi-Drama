@@ -14,6 +14,7 @@ import { supportsStoredStructuredOutputs } from "@/lib/agent/provider-types";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { StructuredOutputError } from "@/lib/llm/structured-output";
 import { studioAgentPlainTextFallback } from "@/lib/studio/agent-response";
+import { resolveStorySetup } from "./production-input";
 import { controlMediaTask } from "@/lib/media/task-actions";
 import { createDatabaseMediaTaskStore } from "@/lib/media/task-store";
 import {
@@ -306,7 +307,13 @@ async function* runStudioAgentEvents(
             failureContext: screenplayFailureContext,
             model: decision.modelSelection?.model,
             request: input.content.trim().slice(0, 8_000),
-            productionOptions: input.productionOptions,
+            productionOptions: decision.operation === "start_story_package_generation"
+              ? { ...input.productionOptions, storySetup: resolveStorySetup({
+                  options: input.productionOptions, request: input.content,
+                  conversation: input.conversation, projectName: state.project.name,
+                  artStyle: state.project.config?.artStyle,
+                }) }
+              : input.productionOptions,
           }
         : {}),
       expiresAt: Date.now() + APPROVAL_TTL_MS,
@@ -491,12 +498,8 @@ async function* resolveStudioAgentApprovalEvents(
     yield messageEvent(
       isProductionOperation(approval.operation)
         ? approval.locale === "en"
-          ? approval.operation === "start_story_package_generation"
-            ? `The complete story package for ${approval.targetLabel ?? "the project"} has been generated and saved in development deliverables.`
-            : `The workflow for ${approval.targetLabel ?? "the selected target"} has been submitted. Follow its progress in Tasks.`
-          : approval.operation === "start_story_package_generation"
-            ? `「${approval.targetLabel ?? "项目"}」的完整策划包已生成并保存到开发部交付物中。`
-            : `已提交「${approval.targetLabel ?? "所选目标"}」的${operationLabel(approval.operation)}任务，可在任务栏查看进度。`
+          ? `The workflow for ${approval.targetLabel ?? "the selected target"} has been submitted. Follow its progress in Tasks.`
+          : `已提交「${approval.targetLabel ?? "所选目标"}」的${operationLabel(approval.operation)}任务，可在任务栏查看进度。`
         : approval.locale === "en"
           ? "The approved action completed. Workspace data has been refreshed."
           : "已完成批准的操作，工作台数据已刷新。",
@@ -951,6 +954,7 @@ async function decideStudioAgentAction(
 ): Promise<StudioAgentDecision> {
   const configuredAgent = configuration.agents[PROMPT_IDS.STUDIO_WORKFLOW_AGENT];
   const disabled = configuredAgent?.disabledOperations ?? [];
+  const temperature = configuredAgent?.temperature ?? 0.55;
   const provider = await resolveStudioAgentProvider({ ...input,
     modelSelection: configuredAgent?.channelId && configuredAgent.model ? { channelId: configuredAgent.channelId, model: configuredAgent.model } : input.modelSelection }, state);
   if (!provider) {
@@ -993,7 +997,7 @@ async function decideStudioAgentAction(
         schema: studioWorkflowAgentSchema,
         normalizeRaw: normalizeStudioWorkflowAgentResponse,
         structuredOutputMode: provider.structuredOutputMode,
-        temperature: 0.1,
+        temperature,
         ...provider.requestOptions,
       }));
     } catch (error) {
@@ -1006,7 +1010,7 @@ async function decideStudioAgentAction(
           channelId: failureTrace?.channelId ?? provider.channelId,
           model: failureTrace?.model ?? provider.model,
           structuredOutputMode: failureTrace?.structuredOutputMode ?? provider.structuredOutputMode ?? "json_object",
-          temperature: 0.1,
+          temperature,
           systemText: prompt.systemText,
           userText: prompt.text,
         },
@@ -1035,7 +1039,7 @@ async function decideStudioAgentAction(
         channelId: result.trace.channelId,
         model: result.trace.model,
         structuredOutputMode: result.trace.structuredOutputMode,
-        temperature: 0.1,
+        temperature,
         systemText: prompt.systemText,
         userText: prompt.text,
       },
