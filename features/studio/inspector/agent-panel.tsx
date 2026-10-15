@@ -45,6 +45,7 @@ import { ModelSelect } from "../components/model-select";
 import { createStudioAgentAdapter } from "./studio-agent-adapter";
 import {
   directorAssistantCopy,
+  getDirectorComposerCopy,
   getDirectorSuggestions,
 } from "./director-assistant-copy";
 import { DirectorPromptReview } from "./director-prompt-review";
@@ -202,6 +203,7 @@ export function AgentPanel({
   beforeSend?: () => Promise<boolean>;
 }) {
   const text = directorAssistantCopy[locale];
+  const composerCopy = getDirectorComposerCopy(context, locale);
   const [input, setInput] = useState("");
   const [scriptBrief, setScriptBrief] = useState("");
   const [productionOptions, setProductionOptions] =
@@ -316,7 +318,7 @@ export function AgentPanel({
   useEffect(() => {
     if (followTail.current && scrollPane.current)
       scrollPane.current.scrollTop = scrollPane.current.scrollHeight;
-  }, [agent.messages, busy]);
+  }, [agent.messages, agent.error, busy]);
   useEffect(() => {
     if (agent.error) setInput((current) => current || lastInput.current);
   }, [agent.error]);
@@ -657,6 +659,28 @@ export function AgentPanel({
             )}
           </div>
         )}
+        {agent.error ? (
+          <div
+            className="mt-4 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-xs"
+            role="alert"
+          >
+            <p className="flex items-center gap-2 font-medium">
+              <AlertCircle className="size-3.5 text-destructive" aria-hidden="true" />
+              {text.errorTitle}
+            </p>
+            <p className="mt-1.5 leading-5 text-muted-foreground">
+              {text.errorRecovery}
+            </p>
+            <details className="mt-2">
+              <summary className="cursor-pointer text-muted-foreground">
+                {text.errorDetails}
+              </summary>
+              <p className="mt-2 max-h-28 overflow-y-auto whitespace-pre-wrap break-anywhere leading-5 text-muted-foreground">
+                {agent.error.message}
+              </p>
+            </details>
+          </div>
+        ) : null}
       </div>
       {showJump && agent.messages.length > 0 && (
         <div className="flex shrink-0 justify-center pb-2">
@@ -736,7 +760,8 @@ export function AgentPanel({
           }
           <Textarea
             ref={composer}
-            aria-label={text.ask}
+            aria-label={composerCopy.placeholder}
+            aria-describedby={composerCopy.hint ? settingsId + "-capabilities" : undefined}
             className="max-h-36 min-h-20 resize-none rounded-xl border-0 bg-transparent px-2.5 py-2.5 text-sm leading-6 shadow-none focus-visible:ring-0 dark:bg-transparent"
             disabled={busy}
             onChange={(event) => setInput(event.target.value)}
@@ -751,7 +776,7 @@ export function AgentPanel({
                 void submit();
               }
             }}
-            placeholder={text.ask}
+            placeholder={composerCopy.placeholder}
             value={input}
           />
           <div className="flex min-w-0 items-center justify-between gap-2 px-2 pb-1.5">
@@ -793,31 +818,14 @@ export function AgentPanel({
             </Tooltip>
           </div>
         </div>
+        {composerCopy.hint ? (
+          <p id={settingsId + "-capabilities"} className="mt-2 text-[11px] leading-5 text-muted-foreground">
+            {composerCopy.hint}
+          </p>
+        ) : null}
         <p className="mt-2 text-center text-[10px] leading-4 text-muted-foreground">
           {text.inputHint}
         </p>
-        {agent.error ? (
-          <div
-            className="mt-2 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-xs"
-            role="alert"
-          >
-            <p className="flex items-center gap-2 font-medium">
-              <AlertCircle className="size-3.5 text-destructive" />
-              {text.errorTitle}
-            </p>
-            <p className="mt-1.5 leading-5 text-muted-foreground">
-              {text.errorRecovery}
-            </p>
-            <details className="mt-2">
-              <summary className="cursor-pointer text-muted-foreground">
-                {text.errorDetails}
-              </summary>
-              <p className="mt-2 max-h-28 overflow-y-auto whitespace-pre-wrap break-anywhere leading-5 text-muted-foreground">
-                {agent.error.message}
-              </p>
-            </details>
-          </div>
-        ) : null}
       </form>
     </div>
   );

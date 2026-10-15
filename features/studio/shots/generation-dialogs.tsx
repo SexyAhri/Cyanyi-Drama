@@ -257,6 +257,8 @@ export function PanelGenerationDialog({
     try {
       if (kind === "image") {
         await generateStudioPanelImage(projectId, episodeId, panel.id, {
+          previewConfigurationHash: preview?.configurationHash,
+          previewRequestHash: preview?.requestHash,
           channelId: model.channelId,
           model: model.modelId,
           prompt: prompt.trim() || undefined,
@@ -641,11 +643,9 @@ export function BatchGenerationDialog({
         mode,
         items: readyTargets.map((panel) => ({
           previewConfigurationHash:
-            kind === "video"
-              ? preflight[panel.id]?.configurationHash
-              : undefined,
+            preflight[panel.id]?.configurationHash,
           previewRequestHash:
-            kind === "video" ? preflight[panel.id]?.requestHash : undefined,
+            preflight[panel.id]?.requestHash,
           panelId: panel.id,
           mode: kind === "video" ? mode : undefined,
           lastFramePanelId:

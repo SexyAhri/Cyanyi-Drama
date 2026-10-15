@@ -9,6 +9,7 @@ Creative requirements (inside current phase fields, without adding JSON fields):
 6. Open the screenplay on an immediate problem or engaging action instead of a biography or lore lecture. Show behavior and reactions. Dialogue follows individual identity, relationship and intent, with subtext and varied voices rather than identical speeches and slogans. Use dialect sparingly.
 7. Deliver an actual local payoff and changed situation within each episode. Ending hooks arise from consequences and pose a specific question. Long serials resolve stage goals without forcing a finale at the end of a planning batch; finite stories complete their overall arc.
 8. Story and performance come before technical packaging. Keep camera instructions and schema commentary out of dialogue. Fill fields specifically and concisely, without repeating the entire plan or generating another phase's content.
+9. Honor frozen production limits. A dramatic scene and a camera shot are separate units; do not add scenes to satisfy a model's 15-second clip duration. Follow the user's scope for independent prop dossiers. Verify physical state changes: packing fills a bag and clears a table; putting an object down leaves the hand empty and the object supported. An image depicts only the starting instant. Preserve the frozen dialogue ledger exactly and in order across downstream outputs. Express relationships through visible choices and natural speech rather than explanatory emotion speeches; necessary facts can still be spoken.
 
 Project and setup:
 {{project_context}}

@@ -7,7 +7,7 @@ import { transitionMediaTaskExecutionPhase, type MediaTaskEventRecord, type Medi
 import { currentProductionConfiguration } from "@/lib/production-configuration/context";
 import { resolveProductionRequestConfiguration } from "@/lib/production-configuration/execution";
 import { configurationSnapshotSchema } from "@/lib/production-configuration/contract";
-import { assertConfigurationScope, resolveProductionConfiguration } from "@/lib/production-configuration/store";
+import { assertConfigurationScope, resolveProductionConfiguration, ConfigurationError } from "@/lib/production-configuration/store";
 import { captureMediaTargetSourceRevision } from "./target-source-revision";
 
 async function attachTaskConfiguration(userId: string, task: { projectId?: string | null; episodeId?: string | null; targetType?: string | null; targetId?: string | null }, request: Record<string, unknown>) {
@@ -35,9 +35,12 @@ async function attachTaskConfiguration(userId: string, task: { projectId?: strin
     episodeId: episodeId ?? null,
     targetType: task.targetType ?? null,
     targetId: task.targetId ?? null,
-    revisionVersion: 2,
+    revisionVersion: task.targetType === "canvas_node" ? 3 : 2,
     request,
   });
+  if (task.targetType === "canvas_node" && typeof request.canvasInputFingerprint === "string" && request.canvasInputFingerprint !== sourceRevision?.fingerprint) {
+    throw new ConfigurationError("画布提示词或参考素材已变化，请重新预览后提交", 409);
+  }
   if (sourceRevision) result.sourceRevision = sourceRevision;
   if (episodeId && projectId && ["merge_episode_audio", "render_timeline"].includes(String(request.operation)) && !request.panelSoundConfigurations) {
     result.panelSoundConfigurations = await prisma.$transaction(async tx => {

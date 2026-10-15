@@ -31,7 +31,7 @@ export function ChannelsPage() {
         </Button>
       }
       description="集中配置上游协议、接口地址、密钥和可用模型。密钥只写入服务端，不会在页面回显。"
-      title="渠道"
+      title="模型渠道"
     >
       <ChannelSettingsPanel
         copy={copy}

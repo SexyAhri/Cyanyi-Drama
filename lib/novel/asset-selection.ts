@@ -21,6 +21,7 @@ export async function selectProjectAsset(input: {
       where: {
         id: input.targetId,
         imageAssetId: { not: null },
+        imageAsset: { kind: "image", task: { userId: input.userId, projectId: input.projectId, status: "succeeded" } },
         character: {
           projectId: input.projectId,
           project: { userId: input.userId },
@@ -81,8 +82,8 @@ export async function selectProjectAsset(input: {
       select: { id: true, imageAssetId: true, videoAssetId: true },
     });
     if (!panel) return null;
-    let assetId =
-      assetKind === "video" ? panel.videoAssetId : panel.imageAssetId;
+    let assetId = input.assetId ??
+      (assetKind === "video" ? panel.videoAssetId : panel.imageAssetId);
     let selectedSegments: Array<{
       taskId: string;
       assetId: string;
@@ -94,10 +95,10 @@ export async function selectProjectAsset(input: {
       model: string;
       mode: string;
     }> = [];
-    if (input.assetId) {
+    if (assetId) {
       const candidate = await prisma.mediaAsset.findFirst({
         where: {
-          id: input.assetId,
+          id: assetId,
           kind: assetKind,
           task: {
             userId: input.userId,
@@ -240,7 +241,7 @@ export async function selectProjectAsset(input: {
       where: {
         id: input.assetId,
         kind: "image",
-        task: { userId: input.userId, projectId: input.projectId },
+        task: { userId: input.userId, projectId: input.projectId, status: "succeeded" },
         references: {
           some: {
             projectId: input.projectId,
@@ -292,6 +293,7 @@ export async function selectProjectAsset(input: {
     where: {
       id: input.targetId,
       imageAssetId: { not: null },
+      imageAsset: { kind: "image", task: { userId: input.userId, projectId: input.projectId, status: "succeeded" } },
       location: {
         projectId: input.projectId,
         project: { userId: input.userId },

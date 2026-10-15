@@ -23,6 +23,8 @@ import {
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { DataTable } from "@/components/ui/data-table";
+import { TableRow, TableCell } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -511,9 +513,9 @@ export const ChannelSettingsPanel = forwardRef<
   }
 
   return (
-    <div className="grid gap-4">
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
       {showToolbar ? (
-        <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex shrink-0 flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <p>{copy.settingsChannelsDescription}</p>
           <Button className="shrink-0" onClick={openNewChannel} type="button">
             <Plus />
@@ -522,40 +524,24 @@ export const ChannelSettingsPanel = forwardRef<
         </div>
       ) : null}
 
-      <div className="overflow-hidden border">
-        <div className="hidden grid-cols-[minmax(0,1fr)_10rem_minmax(12rem,1fr)_6rem_7rem] gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground lg:grid">
-          <span>渠道</span>
-          <span>协议</span>
-          <span>接口地址</span>
-          <span>模型</span>
-          <span className="text-right">操作</span>
-        </div>
+      <DataTable label="模型渠道" headers={["渠道名称", "协议", "接口地址", "模型数", "操作"]} empty="尚未添加渠道" className="min-w-[720px]">
         {channels.map((channel) => {
           const modelCount = channel.modelIds.length;
 
           return (
-            <div
-              className="grid gap-3 border-b p-4 last:border-b-0 lg:grid-cols-[minmax(0,1fr)_10rem_minmax(12rem,1fr)_6rem_7rem] lg:items-center"
-              key={channel.id}
-            >
-              <div className="min-w-0">
-                <p className="truncate font-medium">{channel.name}</p>
-                <p className="mt-1 text-xs text-muted-foreground lg:hidden">
-                  {getProtocolLabel(channel.protocol)} ·{" "}
-                  {copy.settingsChannelModelCount(modelCount)}
-                </p>
-              </div>
-              <span className="hidden truncate text-sm lg:block">
+            <TableRow key={channel.id}>
+              <TableCell className="max-w-64 truncate font-medium" title={channel.name}>{channel.name}</TableCell>
+              <TableCell>
                 {getProtocolLabel(channel.protocol)}
-              </span>
-              <span
-                className="truncate text-sm text-muted-foreground"
+              </TableCell>
+              <TableCell
+                className="max-w-[32rem] truncate text-muted-foreground"
                 title={channel.baseUrl}
               >
                 {channel.baseUrl || "-"}
-              </span>
-              <span className="hidden text-sm lg:block">{modelCount}</span>
-              <div className="flex items-center justify-end gap-1">
+              </TableCell>
+              <TableCell>{modelCount}</TableCell>
+              <TableCell><div className="flex items-center gap-1">
                 <Button
                   aria-label={`${copy.settingsCopyChannel}: ${channel.name}`}
                   onClick={() => copyChannel(channel)}
@@ -592,11 +578,11 @@ export const ChannelSettingsPanel = forwardRef<
                     <Trash2 />
                   )}
                 </Button>
-              </div>
-            </div>
+              </div></TableCell>
+            </TableRow>
           );
         })}
-      </div>
+      </DataTable>
 
       <Dialog
         onOpenChange={(open) => {

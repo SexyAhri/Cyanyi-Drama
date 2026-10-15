@@ -192,6 +192,7 @@ export type EditorTimelineTrack = {
   volume?: number;
   transition?: "cut" | "fade";
   transitionDuration?: number;
+  imageFit?: "contain" | "crop";
 };
 
 export type EditorTimeline = {

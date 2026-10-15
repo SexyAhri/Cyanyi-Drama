@@ -104,7 +104,7 @@ export function TimelineEditor({
             {tracks.map((track, index) => (
               <button
                 className={cn(
-                  "group relative flex h-20 shrink-0 cursor-grab items-center border-r border-background/80 bg-muted/70 px-2 text-left active:cursor-grabbing",
+                  "group relative flex h-12 shrink-0 cursor-grab items-center border-r border-background/80 bg-muted/70 px-2 text-left active:cursor-grabbing",
                   selectedTrack?.id === track.id &&
                     "bg-foreground text-background ring-2 ring-inset ring-foreground",
                 )}
@@ -146,7 +146,7 @@ export function TimelineEditor({
             {tracks.map((track) => (
               <button
                 className={cn(
-                  "flex h-11 shrink-0 items-center border-r border-background/80 bg-status-success/15 px-2 text-left text-[10px] text-status-success",
+                  "flex h-9 shrink-0 items-center border-r border-background/80 bg-status-success/15 px-2 text-left text-[10px] text-status-success md:h-8",
                   selectedTrack?.id === track.id && "ring-2 ring-inset ring-foreground",
                 )}
                 key={track.id}
@@ -164,7 +164,7 @@ export function TimelineEditor({
             {tracks.map((track) => (
               <button
                 className={cn(
-                  "h-11 shrink-0 truncate border-r border-background/80 bg-status-warning/15 px-2 text-left text-[10px]",
+                  "h-9 shrink-0 truncate border-r border-background/80 bg-status-warning/15 px-2 text-left text-[10px] md:h-8",
                   selectedTrack?.id === track.id && "ring-2 ring-inset ring-foreground",
                 )}
                 key={track.id}
@@ -181,7 +181,7 @@ export function TimelineEditor({
       </div>
 
       {selectedTrack ? (
-        <div className="grid gap-3 border-t px-3 py-4 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2 border-t px-2 py-2 @min-[44rem]:grid-cols-5">
           <NumberField
             label={text.shotDuration}
             max={30}
@@ -207,10 +207,10 @@ export function TimelineEditor({
             step={0.1}
             value={selectedTrack.sourceStart ?? 0}
           />
-          <label className="grid gap-1.5 text-xs font-medium">
+          <label className="grid min-w-0 gap-1 text-xs font-medium">
             {text.volume} · {Math.round((selectedTrack.volume ?? 1) * 100)}%
             <input
-              className="h-9 w-full accent-foreground"
+              className="h-8 w-full accent-foreground md:h-7"
               max={2}
               min={0}
               onChange={(event) =>
@@ -225,10 +225,11 @@ export function TimelineEditor({
               value={selectedTrack.volume ?? 1}
             />
           </label>
-          <label className="grid gap-1.5 text-xs font-medium">
+          <label className="grid min-w-0 gap-1 text-xs font-medium">
             {text.transition}
             <NativeSelect
               className="w-full"
+              size="sm"
               onChange={(event) =>
                 onChange(
                   updateTimelineTrackSettings(timeline, selectedTrack.id, {
@@ -274,7 +275,7 @@ function TimelineRow({
 }) {
   return (
     <div className="grid grid-cols-[92px_minmax(0,1fr)] border-b last:border-b-0">
-      <div className="sticky left-0 z-10 flex items-center gap-2 border-r bg-background px-3 text-xs font-medium">
+      <div className="sticky left-0 z-10 flex items-center gap-1.5 border-r bg-background px-2 text-xs font-medium">
         <span className="[&_svg]:size-3.5">{icon}</span>
         {label}
       </div>
@@ -301,9 +302,10 @@ function NumberField({
   value: number;
 }) {
   return (
-    <label className="grid gap-1.5 text-xs font-medium">
+    <label className="grid min-w-0 gap-1 text-xs font-medium">
       {label}
       <Input
+        className="md:h-7"
         disabled={disabled}
         max={max}
         min={min}

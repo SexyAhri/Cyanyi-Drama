@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { StoryPackage } from "@/lib/production/story-package-contract";
+import { validateStoryProductionConstraints } from "@/lib/production/story-quality-contract";
 
 import type { StudioLocale } from "../types";
 
@@ -55,6 +56,7 @@ export function StoryPackageReviewDialog({
   const [adopted, setAdopted] = useState(false);
   const en = locale === "en";
   const t = (zh: string, english: string) => (en ? english : zh);
+  const constraintIssues = validateStoryProductionConstraints(storyPackage, storyPackage.productionConstraints ?? {});
   async function adopt() {
     if (!projectId || !deliverableId || adopting) return;
     setAdopting(true);
@@ -143,6 +145,21 @@ export function StoryPackageReviewDialog({
             value="overview"
           >
             <div className="mx-auto max-w-4xl space-y-5">
+              <section aria-label={t("制作约束核对", "Production constraint check")} className="rounded-lg border p-3 text-sm">
+                <SectionTitle>{t("制作约束核对", "Production constraint check")}</SectionTitle>
+                <p className="mt-2 text-muted-foreground">{t("正文场次数", "Dramatic scenes")}: {storyPackage.firstEpisode.scenes.length} · {t("角色", "Characters")}: {storyPackage.characters.length} · {t("地点", "Locations")}: {storyPackage.locations.length} · {t("独立道具", "Independent props")}: {storyPackage.props.length}</p>
+                {storyPackage.productionConstraints ? <p className="mt-1 text-xs text-muted-foreground">
+                  {t("已冻结要求", "Frozen limits")}: {[
+                    storyPackage.productionConstraints.sceneCount !== undefined ? `${storyPackage.productionConstraints.sceneCount} ${t("场", "scenes")}` : "",
+                    storyPackage.productionConstraints.characterCount !== undefined ? `${storyPackage.productionConstraints.characterCount} ${t("人", "characters")}` : "",
+                    storyPackage.productionConstraints.locationCount !== undefined ? `${storyPackage.productionConstraints.locationCount} ${t("地点", "locations")}` : "",
+                    storyPackage.productionConstraints.targetDurationSeconds !== undefined ? `${storyPackage.productionConstraints.targetDurationSeconds}s` : "",
+                    storyPackage.productionConstraints.propPolicy ? `${t("道具范围", "Prop scope")}: ${storyPackage.productionConstraints.propPolicy === "inline" ? t("场景内普通物件", "inline objects") : storyPackage.productionConstraints.propPolicy === "minimal" ? t("仅关键道具独立建档", "only key props have dossiers") : t("标准", "standard")}` : "",
+                  ].filter(Boolean).join(" · ") || t("未指定额外数量限制", "No additional numeric limits")}
+                </p> : <p className="mt-1 text-xs text-muted-foreground">{t("旧版本未保存结构化约束，请对照原始要求审核。场次与导演拆分后的镜头数量分别计算。", "This older version has no structured limits. Review the original brief; scene count and directed shot count are separate.")}</p>}
+                {constraintIssues.length ? <div role="alert" className="mt-2 text-destructive"><p>{t("以下偏差需修复后才能采用：", "Resolve these deviations before adoption:")}</p><ul className="mt-1 list-inside list-disc">{constraintIssues.map((issue, index) => <li key={index}>{issue.message}</li>)}</ul></div> : null}
+                {storyPackage.inlineProps?.length ? <p className="mt-2 text-xs text-muted-foreground">{t("留在场景描述中的普通物件（不独立生图）", "Inline objects without separate image tasks")}: {storyPackage.inlineProps.map(item => item.name).join("、")}</p> : null}
+              </section>
               <section>
                 <SectionTitle>{t("一句话故事", "Logline")}</SectionTitle>
                 <p className="mt-2 rounded-xl border bg-muted/20 p-4 text-sm leading-7">
@@ -620,7 +637,7 @@ export function StoryPackageReviewDialog({
           {projectId && deliverableId && (
             <Button
               className="shrink-0"
-              disabled={adopting || adopted}
+              disabled={adopting || adopted || constraintIssues.length > 0}
               onClick={() => void adopt()}
               type="button"
             >

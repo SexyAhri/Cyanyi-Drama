@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { StoryProductionConstraintsSchema } from "@/lib/production/story-quality-contract";
 
 export const storySetupSchema = z.object({
   storyIdea: z.string().trim().max(4000).default(""),
@@ -10,6 +11,7 @@ export const storySetupSchema = z.object({
   artStyle: z.string().trim().min(1).max(1010).default("realistic"),
   episodeCount: z.number().int().min(1).max(100).default(20),
   structure: z.string().trim().min(1).max(80).default("自动适配"),
+  productionConstraints: StoryProductionConstraintsSchema.optional(),
 });
 
 export type StorySetup = z.infer<typeof storySetupSchema>;

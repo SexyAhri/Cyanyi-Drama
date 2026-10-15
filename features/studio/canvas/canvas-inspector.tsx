@@ -6,6 +6,7 @@ import {
 import { X, ArrowUpRight, Trash2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PanelEditorDialog } from "../storyboard/panel-editor-dialog";
+import { CanvasPromptDifference } from "./canvas-prompt-difference";
 import type {
   CanvasCard,
   CanvasDocument,
@@ -114,7 +115,7 @@ export function CanvasInspector({
             }))
         : undefined;
   const assetVersions =
-    appearanceIds?.filter((item) => item.assetId) ??
+    appearanceIds?.filter((item) => item.assetId && candidates.some(candidate => candidate.id === item.assetId)) ??
     candidates.map((item, index) => ({
       assetId: item.id,
       label: `${index + 1} · ${item.kind === "image" ? t("图片", "Image") : t("视频", "Video")} · ${new Date(item.createdAt).toLocaleString(locale === "en" ? "en-US" : "zh-CN")}`,
@@ -165,6 +166,7 @@ export function CanvasInspector({
                     "shot_sequence",
                     "story_asset",
                     "episode_bridge",
+                    "shot_video",
                   ] as const
                 ).map((purpose) => (
                   <NativeSelectOption key={purpose} value={purpose}>
@@ -177,6 +179,11 @@ export function CanvasInspector({
         )}
         {node && (
           <>
+            {node.detachedPanelId && (
+              <p role="status" className="rounded-md border p-2.5 leading-5 text-muted-foreground">
+                {t("原正式镜头已删除，内容与素材已保留为独立节点。可重新关联其他镜头。", "The production shot was deleted. Content and media are preserved as an independent node; you can link another shot.")}
+              </p>
+            )}
             <label className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
               {t("名称", "Name")}
               <input
@@ -294,6 +301,13 @@ export function CanvasInspector({
                 }
               />
             </label>
+            <CanvasPromptDifference node={node} document={document} catalog={catalog} locale={locale} busy={busy} onPatch={onPatch} />
+            {node.assetId && !media && (
+              <div className="space-y-2 rounded-md border p-2.5">
+                <p role="status">{t("固定素材不可用或类型不匹配，请重新选择。", "The pinned media is unavailable or has the wrong type. Choose another version.")}</p>
+                <Button size="sm" variant="outline" disabled={busy} onClick={() => onPatch({ assetId: undefined })}>{t("使用当前有效素材", "Use current valid media")}</Button>
+              </div>
+            )}
             {panel && (
               <details className="rounded-md border p-2.5">
                 <summary className="cursor-pointer font-medium">
@@ -345,7 +359,7 @@ export function CanvasInspector({
                   disabled={busy}
                   value={node.panelId ?? ""}
                   onChange={(event) =>
-                    onPatch({ panelId: event.target.value || undefined })
+                    onPatch({ panelId: event.target.value || undefined, detachedPanelId: undefined })
                   }
                   className="min-w-0 w-full max-w-full"
                 >

@@ -154,6 +154,7 @@ export function panelCard(
     panelId: panel.id,
     kind: "panel",
     title: `镜头 ${panel.panelIndex + 1}`,
+    defaultTitle: `镜头 ${panel.panelIndex + 1}`,
     text: panel.imagePrompt ?? panel.description ?? "",
     videoText: panel.videoPrompt ?? "",
     panelPromptBase: {
@@ -175,16 +176,24 @@ export function nodeCandidates(
   return (catalog?.assets ?? [])
     .filter(
       (asset) =>
+        asset.kind === canvasMediaKind(node) &&
         asset.url &&
         asset.taskStatus === "succeeded" &&
         (asset.id === node.assetId ||
           inheritedIds.has(asset.id) ||
-          (!!node.panelId && asset.sourceTargetId === node.panelId) ||
+          (!!(node.panelId ?? node.detachedPanelId) && asset.sourceTargetId === (node.panelId ?? node.detachedPanelId)) ||
           asset.sourceTargetId === node.id ||
           (!!node.entityId &&
             asset.references.some((ref) => ref.entityId === node.entityId))),
     )
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+/** A linked shot can switch output mode; fixed media cards keep their own kind. */
+export function canvasMediaKind(node: CanvasCard): ProjectMediaAsset["kind"] | undefined {
+  if (node.kind === "panel") return node.outputKind ?? "image";
+  if (node.kind === "video" || node.kind === "audio") return node.kind;
+  if (["image", "character", "location", "prop"].includes(node.kind)) return "image";
 }
 
 /** Default episode asset branches reuse project images until they have their own output. */
@@ -257,8 +266,9 @@ export function nodeMedia(
   panels: StudioStoryboardPanel[] = [],
   document?: CanvasDocument,
 ): ProjectMediaAsset | undefined {
+  const mediaById = (id: string) => catalog?.assets.find((asset) => asset.id === id && asset.kind === canvasMediaKind(node));
   if (node.assetId)
-    return catalog?.assets.find((asset) => asset.id === node.assetId);
+    return mediaById(node.assetId);
   const entity = linkedCanvasAsset(node, catalog);
   if (entity) {
     const adopted = entity.candidates.find(
@@ -268,14 +278,14 @@ export function nodeMedia(
       .filter((candidate) => candidate.url)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
     const assetId = (adopted ?? fallback)?.assetId;
-    if (assetId) return catalog?.assets.find((asset) => asset.id === assetId);
+    if (assetId) return mediaById(assetId);
   }
   const panel = panels.find((item) => item.id === node.panelId);
   const official =
-    (node.outputKind ?? (node.kind === "video" ? "video" : "image")) === "video"
+    canvasMediaKind(node) === "video"
       ? panel?.videoAssetId
       : panel?.imageAssetId;
-  if (official) return catalog?.assets.find((asset) => asset.id === official);
+  if (official) return mediaById(official);
   const candidates = nodeCandidates(node, catalog, document);
   const ownOutput = inheritedCanvasAsset(node, catalog, document)
     ? candidates.find(asset => asset.sourceTargetId === node.id && asset.kind === "image")
@@ -287,15 +297,9 @@ export function nodeMedia(
     const fallback = inherited.candidates.filter(candidate => candidate.url)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
     const assetId = (baseline ?? fallback)?.assetId;
-    if (assetId) return catalog?.assets.find(asset => asset.id === assetId);
+    if (assetId) return mediaById(assetId);
   }
-  return candidates.find(
-    (asset) =>
-      asset.kind ===
-      (node.kind === "audio"
-        ? "audio"
-        : (node.outputKind ?? (node.kind === "video" ? "video" : "image"))),
-  );
+  return candidates[0];
 }
 
 export function canvasNodeTask(

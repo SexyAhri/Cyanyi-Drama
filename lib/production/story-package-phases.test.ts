@@ -3,6 +3,7 @@ import { generateStoryPackageFirstEpisode, type StoryPhaseRunner } from "./story
 import { makePackage, phaseResponses } from "./story-package-test-fixture";
 import { validateFirstEpisode } from "./story-package-generation";
 import { buildSceneReferenceSlots } from "./story-scene-references";
+import type { StoryProductionConstraints } from "./story-quality-contract";
 
 function fixture() {
   const story = makePackage();
@@ -17,10 +18,12 @@ function fixture() {
   return story;
 }
 
-function run(story = fixture(), mutate?: (value: Record<string, unknown>, call: number) => void) {
+function run(story = fixture(), mutate?: (value: Record<string, unknown>, call: number) => void, constraints?: StoryProductionConstraints) {
   const responses = phaseResponses(story).slice(-story.firstEpisode.scenes.length - 1);
   let count = 0;
-  const request = vi.fn<StoryPhaseRunner>(async phase => {
+  const request = vi.fn();
+  const runPhase: StoryPhaseRunner = async phase => {
+    request(phase);
     const value = structuredClone(responses.shift()) as Record<string, unknown>;
     mutate?.(value, count++);
     const normalized = phase.normalizeRaw ? phase.normalizeRaw(value) : value;
@@ -28,15 +31,34 @@ function run(story = fixture(), mutate?: (value: Record<string, unknown>, call: 
     const issues = phase.validate?.(data) ?? [];
     if (issues.length) throw new Error(issues.map(issue => issue.code).join(","));
     return data;
-  });
+  };
   const result = generateStoryPackageFirstEpisode({
-    request, locale: "zh", assets: story, context: {}, targetSeconds: 95, designTask: "Design only",
+    request: runPhase, locale: "zh", assets: story, context: {}, targetSeconds: constraints?.targetDurationSeconds ?? 95, constraints, designTask: "Design only",
     validate: episode => validateFirstEpisode(episode, "zh", story),
   });
   return { result, request };
 }
 
 describe("asset-bound first episode phases", () => {
+  it("allows exactly two 30-second dramatic scenes without forcing four scene drafts", async () => {
+    const story = fixture();
+    story.firstEpisode.targetDurationSeconds = 60;
+    story.firstEpisode.scenes = story.firstEpisode.scenes.slice(0, 2).map(scene => ({ ...scene, durationSeconds: 30,
+      videoPrompt: scene.videoPrompt.replace("15 秒", "30 秒") + "15-30 秒：阿青将零件放回炉边。",
+      productionDesign: { ...scene.productionDesign!, motionBeats: [{ startSecond: 0, endSecond: 30, action: "检查并放下零件", camera: "前推" }] } }));
+    const { result, request } = run(story, undefined, { sceneCount: 2, targetDurationSeconds: 60 });
+    expect((await result).scenes).toHaveLength(2);
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(request.mock.calls[0][0].task).toContain("恰好 2 个连续戏剧场次");
+  });
+  it("rejects media design that changes frozen boundary states or omits dialogue", async () => {
+    await expect(run(fixture(), (value, call) => {
+      if (call === 1) (value.productionDesign as { startState: { hands: string } }).startState.hands = "已经空手";
+    }).result).rejects.toThrow("frozen_start_state_changed");
+    await expect(run(fixture(), (value, call) => {
+      if (call === 1) value.videoPrompt = String(value.videoPrompt).replace("这是什么？", "");
+    }).result).rejects.toThrow("dialogue_prompt_missing_or_reordered");
+  });
   it.each(["omitted", "invalid"])("compiles %s redundant slots without corrective model calls, preserving action and dialogue", async mode => {
     const story = fixture();
     const { result, request } = run(story, (value, call) => {

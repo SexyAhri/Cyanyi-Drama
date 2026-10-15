@@ -53,13 +53,18 @@ export async function PUT(request: Request, context: Context) {
     typeof body.timeline === "object" &&
     !Array.isArray(body.timeline)
   ) {
-    const result = await saveEditorProject(
+    let result;
+    try { result = await saveEditorProject(
       user.id,
       projectId,
       episodeId,
       body.timeline as Record<string, unknown>,
       body.subtitles,
-    );
+    ); } catch (error) {
+      if (error instanceof Error && /^(TIMELINE_|SUBTITLE_)/.test(error.message))
+        return attachSessionCookie(Response.json({ message: error.message }, { status: 400 }), sessionId);
+      throw error;
+    }
     if (!result)
       return attachSessionCookie(
         Response.json({ message: "项目或剧集不存在" }, { status: 404 }),

@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   downloadAndStoreMedia: vi.fn(),
   storeMediaBytes: vi.fn(),
   stripAudioFromVideoUrl: vi.fn(),
+  inspectImageBytes: vi.fn(),
 }));
 
 vi.mock("@/lib/providers/local/ffmpeg-video", () => ({
@@ -14,6 +15,7 @@ vi.mock("@/lib/storage", () => ({
   downloadAndStoreMedia: mocks.downloadAndStoreMedia,
   storeMediaBytes: mocks.storeMediaBytes,
 }));
+vi.mock("@/lib/providers/local/image-inspection", () => ({ inspectImageBytes: mocks.inspectImageBytes }));
 
 import { storeGeneratedMediaAsset } from "./generated-media-storage";
 
@@ -23,6 +25,14 @@ beforeEach(() => {
 });
 
 describe("generated media storage", () => {
+  it("records actual image dimensions and ratio mismatch instead of trusting provider claims", async () => {
+    mocks.inspectImageBytes.mockResolvedValue({ width: 1536, height: 1024, method: "ffmpeg_decoded" });
+    const asset = { id: "image", kind: "image" as const, url: "data:image/png;base64,AQID", width: 1920, height: 1080, metadata: {} };
+    await storeGeneratedMediaAsset({ asset, storageKey: "image.png", stripVideoAudio: false, expectedImageRatio: "16:9" });
+    expect(mocks.inspectImageBytes).toHaveBeenCalledWith(Uint8Array.from([1, 2, 3]));
+    expect(asset).toMatchObject({ width: 1536, height: 1024, metadata: { imageInspection: { width: 1536, height: 1024, requestedRatio: "16:9", aspectMismatch: true } } });
+    expect(mocks.storeMediaBytes).toHaveBeenCalledOnce();
+  });
   it("stores a stripped storyboard video instead of the provider source", async () => {
     const stripped = Uint8Array.from([1, 2, 3]);
     mocks.stripAudioFromVideoUrl.mockResolvedValue(stripped);

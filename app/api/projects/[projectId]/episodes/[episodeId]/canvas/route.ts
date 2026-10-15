@@ -89,6 +89,6 @@ export async function POST(_request: Request, context: Context) {
   if (!canvas) return reply({ message: "画布不存在" }, 404);
   const parsed = canvasDocumentSchema.safeParse(canvas.document);
   if (!parsed.success) return reply({ message: "画布数据无效" }, 400);
-  await reconcileCanvasAssetImages(parsed.data, user.id, projectId, episodeId);
+  await reconcileCanvasAssetImages(parsed.data, user.id, projectId, episodeId, canvas.revision);
   return reply({ synced: true });
 }

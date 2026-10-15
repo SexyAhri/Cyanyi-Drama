@@ -24,6 +24,19 @@ function task(targetId: string, status: "running" | "failed" = "running", target
 }
 
 describe("canvas uses shared workflow assets", () => {
+  it("keeps image, video and audio candidates separate even on the same shot", () => {
+    const shared = catalog();
+    shared.assets = [asset("image", "panel"), { ...asset("video", "panel"), kind: "video" }, { ...asset("audio", "panel"), kind: "audio" }];
+    const panelNode: CanvasCard = { id: "panel-node", kind: "panel", panelId: "panel", title: "Shot", text: "", x: 0, y: 0 };
+    expect(nodeCandidates(panelNode, shared).map(item => item.id)).toEqual(["image"]);
+    expect(nodeCandidates({ ...panelNode, outputKind: "video" }, shared).map(item => item.id)).toEqual(["video"]);
+    expect(nodeCandidates({ ...panelNode, kind: "video" }, shared).map(item => item.id)).toEqual(["video"]);
+    expect(nodeCandidates({ ...panelNode, kind: "audio" }, shared).map(item => item.id)).toEqual(["audio"]);
+    expect(nodeMedia({ ...panelNode, kind: "video", assetId: "image" }, shared)).toBeUndefined();
+    expect(nodeMedia({ ...panelNode, kind: "image", assetId: "video" }, shared)).toBeUndefined();
+    expect(nodeMedia({ ...panelNode, kind: "video", assetId: "video" }, shared)?.id).toBe("video");
+    expect(nodeMedia({ ...panelNode, kind: "video" }, shared, [{ id: "panel", imageAssetId: "image", videoAssetId: "video" } as StudioStoryboardPanel])?.id).toBe("video");
+  });
   it("legacy random image branches display the adopted project baseline", () => {
     const shared = catalog();
     expect(nodeMedia(entity, shared, [], doc)?.id).toBe("baseline");

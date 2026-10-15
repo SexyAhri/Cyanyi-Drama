@@ -56,6 +56,13 @@ describe("storyboard batch billing preflight", () => {
     expect(estimateMediaBatchCharge([{ unit: "request", unitPrice: 1 }], [])).toBeNull();
   });
 
+  it("blocks image batches when the reviewed effective request changed", async () => {
+    mocks.preview.mockResolvedValue({ kind: "image", finalPrompt: "Current", issues: [], configurationHash: "same-config", requestHash: "new-input" });
+    const result = await preflightStoryboardBatch({ userId: "owner", projectId: "project", episodeId: "episode", channelId: "channel-1", model: "image-model", kind: "image", items: [{ panelId: "panel", previewRequestHash: "reviewed-input", previewConfigurationHash: "same-config" }], mediaDefaults: { imageGenerationCount: 1 } as never });
+    expect(result.blockers).toContainEqual(expect.objectContaining({ code: "stale_request_preview", blocking: true }));
+    expect(result.requestCount).toBe(0);
+  });
+
   it("collects blocking issues for every target and estimates configured balance before dispatch", async () => {
     mocks.preview.mockImplementation(async ({ panelId }: { panelId: string }) => ({
       kind: "image",

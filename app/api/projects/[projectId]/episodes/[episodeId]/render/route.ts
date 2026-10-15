@@ -1,5 +1,6 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
-import { createProductionTask, ProductionTaskError } from "@/lib/media/production-tasks";
+import { ProductionTaskError } from "@/lib/media/production-tasks";
+import { createLocalRenderTask } from "@/lib/media/local-render-task";
 import { normalizeRenderSpecification } from "@/lib/providers/local/render-spec";
 import { prisma } from "@/lib/server/prisma";
 
@@ -9,10 +10,6 @@ export async function POST(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { projectId, episodeId } = await context.params;
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
-  const channelId = stringValue(body.channelId);
-  const model = stringValue(body.model);
-  if (!channelId || !model)
-    return attachSessionCookie(Response.json({ message: "channelId 和 model 是必填项" }, { status: 400 }), sessionId);
   let specification;
   try {
     specification = normalizeRenderSpecification(body);
@@ -26,19 +23,11 @@ export async function POST(request: Request, context: Context) {
     );
   }
   try {
-    const task = await createProductionTask({
+    const task = await createLocalRenderTask({
       userId: user.id,
       projectId,
       episodeId,
-      kind: "video",
-      targetType: "editor_render",
-      targetId: episodeId,
-      channelId,
-      model,
-      request: {
-        operation: "render_timeline",
-        ...specification,
-      },
+      specification,
     });
     await prisma.editorProject.updateMany({
       where: {
@@ -58,5 +47,3 @@ export async function POST(request: Request, context: Context) {
     throw error;
   }
 }
-
-function stringValue(value: unknown) { return typeof value === "string" ? value.trim() : ""; }

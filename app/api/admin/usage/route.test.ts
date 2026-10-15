@@ -47,6 +47,7 @@ describe("admin usage route", () => {
   it("applies filters and serializes decimal and date values", async () => {
     const createdAt = new Date("2026-09-03T02:00:00.000Z");
     mocks.findMany
+      .mockResolvedValueOnce([{ apiType: "video" }])
       .mockResolvedValueOnce([
         {
           id: "usage-1",
@@ -60,8 +61,7 @@ describe("admin usage route", () => {
           project: { id: "project-1", name: "Demo" },
           user: { id: "user-1", displayName: "User", email: "u@example.com" },
         },
-      ])
-      .mockResolvedValueOnce([{ apiType: "video" }]);
+      ]);
     mocks.aggregate.mockResolvedValue({
       _count: 1,
       _sum: { cost: new Prisma.Decimal("1.250000") },
@@ -76,9 +76,9 @@ describe("admin usage route", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.findMany).toHaveBeenNthCalledWith(
-      1,
+      2,
       expect.objectContaining({
-        take: 500,
+        take: 100,
         where: expect.objectContaining({
           apiType: "video",
           OR: expect.arrayContaining([

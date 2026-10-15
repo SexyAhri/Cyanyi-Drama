@@ -11,6 +11,7 @@ export function phaseResponses(story: StoryPackage) {
     sceneNumber: scene.sceneNumber, heading: scene.heading, durationSeconds: scene.durationSeconds,
     location: scene.location, characters: scene.characters, props: scene.props, action: scene.action,
     dialogue: scene.dialogue, camera: scene.camera, sound: scene.sound, endState: scene.endState,
+    continuity: scene.continuity,
   })) } };
   const designs = firstEpisode.scenes.map(({ imageReferenceSlots, imagePrompt, videoPrompt, productionDesign }) => ({ imageReferenceSlots, imagePrompt, videoPrompt, productionDesign }));
   const dossiers: unknown[] = [];
@@ -68,7 +69,12 @@ export function makePackage(): StoryPackage {
         characters: ["阿青"], props: ["旧零件"], action: "阿青检查零件。", dialogue: [{ speaker: "阿青", line: "这是什么？" }],
         camera: "缓慢前推", sound: "炉火声", endState: "零件放在炉边",
         imageReferenceSlots: [{ number: 1, kind: "character", name: "阿青" }, { number: 2, kind: "prop", name: "旧零件" }, { number: 3, kind: "location", name: "修理铺" }], imagePrompt,
-        videoPrompt: `图片 2（道具：旧零件），图片 3（场景：修理铺）。${videoPrompt}`,
+        videoPrompt: `图片 2（道具：旧零件），图片 3（场景：修理铺）。${videoPrompt}阿青说：“这是什么？”`,
+        continuity: {
+          startState: { body: "站立", hands: "握零件", gaze: "向下", screenDirection: "朝右", props: "铜片在手" },
+          endState: { body: "站立", hands: "空手", gaze: "向下", screenDirection: "朝右", props: "零件放在炉边" },
+          transitions: [{ subject: "零件", before: "手中", action: "放下", after: "炉边" }],
+        },
         productionDesign: {
           photography: { camera: "前推", cameraPosition: "炉前", focalLength: "50mm", lighting: "炉火", composition: "居中", depthOfField: "浅景深", colorTone: "暖色" },
           acting: [{ name: "阿青", emotion: "好奇", action: "检查零件", expression: "凝视" }],

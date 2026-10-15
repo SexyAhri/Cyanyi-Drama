@@ -47,6 +47,18 @@ function mockPhases(responses: unknown[]) {
 }
 
 describe("story package generation phases", () => {
+  it("checks frozen start states in shared validation and keeps legacy episodes readable", () => {
+    const episode = makePackage().firstEpisode;
+    expect(validateFirstEpisode(episode, "zh")).toEqual([]);
+    const changed = structuredClone(episode);
+    changed.scenes[0].productionDesign!.startState.hands = "工具已放下";
+    expect(validateFirstEpisode(changed, "zh")).toContainEqual(expect.objectContaining({
+      code: "scene_start_state_changed", path: "firstEpisode.scenes.0.productionDesign.startState.hands",
+    }));
+    const legacy = structuredClone(episode);
+    for (const scene of legacy.scenes) delete scene.continuity;
+    expect(validateFirstEpisode(legacy, "zh")).toEqual([]);
+  });
   it("checks original-package scene duration against the configured episode target", () => {
     const episode = makePackage().firstEpisode;
     expect(validateFirstEpisode(episode, "zh", undefined, 95)).toEqual([]);

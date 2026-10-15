@@ -39,10 +39,11 @@ export function mediaRequestPreviewFingerprint(
 ) {
   const reference = (value: unknown) =>
     Array.isArray(value)
-      ? value.map((item) => ({
-          key: item.storageKey ?? item.url,
-          role: item.role,
-        }))
+      ? value.map((item: unknown) => {
+          if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+          const ref = item as Record<string, unknown>;
+          return { assetId: ref.assetId, key: ref.storageKey ?? ref.url, mimeType: ref.mimeType, role: ref.role };
+        })
       : [];
   const stable = inputs.map((input) => ({
     model: input.model,
@@ -51,6 +52,10 @@ export function mediaRequestPreviewFingerprint(
     prompt: input.request.prompt,
     ratio: input.request.ratio,
     resolution: input.request.resolution,
+    count: input.request.count,
+    n: input.request.n,
+    quality: input.request.quality,
+    format: input.request.format,
     duration: input.request.duration,
     videoMode: input.request.videoMode,
     audioMode: input.request.audioMode,

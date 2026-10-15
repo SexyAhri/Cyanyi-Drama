@@ -37,6 +37,14 @@ beforeEach(() => {
   mocks.resolve.mockResolvedValue(structuredClone(published));
 });
 describe("request configuration", () => {
+  it("binds every effective image parameter and the exact asset identity", () => {
+    const original = { model: "image", channelId: "channel", request: { prompt: "Frame", count: 1, n: 1, quality: "high", ratio: "16:9", resolution: "1k", format: "png", referenceImages: [{ assetId: "asset-a", storageKey: "file", url: "signed-a", mimeType: "image/png" }] } };
+    const hash = mediaRequestPreviewFingerprint([original]);
+    for (const changed of [{ count: 2 }, { n: 2 }, { quality: "low" }, { ratio: "1:1" }, { resolution: "2k" }, { format: "jpg" }, { prompt: "Different" }, { referenceImages: [{ ...original.request.referenceImages[0], assetId: "asset-b" }] }]) {
+      expect(() => assertPreviewRequest(mediaRequestPreviewFingerprint([{ ...original, request: { ...original.request, ...changed } }]), hash)).toThrow("重新预览");
+    }
+    expect(mediaRequestPreviewFingerprint([{ ...original, request: { ...original.request, referenceImages: [{ ...original.request.referenceImages[0], url: "signed-b" }] } }])).toBe(hash);
+  });
   it("pins prompts, parameters and stable reference identities from preview to execution", () => {
     const original = [
       {

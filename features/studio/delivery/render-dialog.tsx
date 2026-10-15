@@ -1,7 +1,7 @@
 "use client";
 
 import { LoaderCircle, Play } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -18,15 +18,14 @@ import {
   NativeSelectOption,
 } from "@/components/ui/native-select";
 
-import { ModelSelect } from "../components/model-select";
-import type { StudioLocale, StudioModelOption } from "../types";
+import type { StudioLocale } from "../types";
+import { aspectRatioValue } from "@/lib/production/image-framing";
 
 const copy = {
   "zh-CN": {
     action: "渲染成片",
     title: "渲染成片",
-    description: "确认输出规格并提交当前时间线。",
-    model: "渲染模型",
+    description: "使用本地 FFmpeg 导出已保存的时间线，不调用视频模型，无需渠道或模型费率。",
     ratio: "画幅",
     resolution: "分辨率",
     fps: "帧率",
@@ -36,8 +35,7 @@ const copy = {
   en: {
     action: "Render video",
     title: "Render video",
-    description: "Confirm the output settings and submit the current timeline.",
-    model: "Render model",
+    description: "Export the saved timeline locally with FFmpeg. No video model, provider credentials or model price is required.",
     ratio: "Aspect ratio",
     resolution: "Resolution",
     fps: "Frame rate",
@@ -52,7 +50,7 @@ export function RenderDialog({
   defaultResolution,
   disabled,
   locale,
-  models,
+  preview,
   onRender,
 }: {
   busy: boolean;
@@ -60,9 +58,8 @@ export function RenderDialog({
   defaultResolution: string;
   disabled: boolean;
   locale: StudioLocale;
-  models: StudioModelOption[];
+  preview?: { url: string; fit: "contain" | "crop" };
   onRender: (input: {
-    model: StudioModelOption;
     ratio: string;
     resolution: string;
     fps: number;
@@ -70,24 +67,14 @@ export function RenderDialog({
 }) {
   const text = copy[locale];
   const [open, setOpen] = useState(false);
-  const [modelId, setModelId] = useState("");
   const [ratio, setRatio] = useState(defaultRatio || "9:16");
   const [resolution, setResolution] = useState(defaultResolution || "1080p");
   const [fps, setFps] = useState("24");
 
-  useEffect(() => {
-    setModelId((current) =>
-      models.some((model) => model.id === current)
-        ? current
-        : (models[0]?.id ?? ""),
-    );
-  }, [models]);
-
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    const model = models.find((item) => item.id === modelId);
-    if (!model) return;
-    await onRender({ model, ratio, resolution, fps: Number(fps) });
+    const result = await onRender({ ratio, resolution, fps: Number(fps) });
+    if (result === false) return;
     setOpen(false);
   }
 
@@ -97,23 +84,13 @@ export function RenderDialog({
         <Play className="size-4" />
         {text.action}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="min-w-0 grid-cols-1 sm:max-w-md">
         <form className="contents" onSubmit={submit}>
-          <DialogHeader>
+          <DialogHeader className="min-w-0">
             <DialogTitle>{text.title}</DialogTitle>
             <DialogDescription>{text.description}</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="grid gap-1.5 text-xs font-medium sm:col-span-2">
-              {text.model}
-              <ModelSelect
-                disabled={busy}
-                models={models}
-                onChange={setModelId}
-                placeholder={text.model}
-                value={modelId}
-              />
-            </label>
+          <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
             <SelectField
               label={text.ratio}
               onChange={setRatio}
@@ -133,7 +110,14 @@ export function RenderDialog({
               values={["24", "25", "30", "60"]}
             />
           </div>
-          <DialogFooter>
+          {preview && <figure className="min-w-0 space-y-1">
+            <div className="mx-auto w-full min-w-0 overflow-hidden bg-black" style={{ aspectRatio: aspectRatioValue(ratio), maxWidth: Math.min(360, 224 * aspectRatioValue(ratio)) }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img alt={locale === "en" ? "Selected shot framing preview" : "所选镜头画幅预览"} src={preview.url} className="size-full" style={{ objectFit: preview.fit === "crop" ? "cover" : "contain" }} />
+            </div>
+            <figcaption className="text-xs text-muted-foreground">{locale === "en" ? "Selected shot at the export aspect ratio" : "所选镜头在导出画幅中的预览"}</figcaption>
+          </figure>}
+          <DialogFooter className="min-w-0">
             <Button
               disabled={busy}
               onClick={() => setOpen(false)}
@@ -142,7 +126,7 @@ export function RenderDialog({
             >
               {text.cancel}
             </Button>
-            <Button disabled={busy || !modelId} type="submit">
+            <Button disabled={busy} type="submit">
               {busy ? <LoaderCircle className="size-4 animate-spin" /> : null}
               {text.submit}
             </Button>
@@ -165,7 +149,7 @@ function SelectField({
   values: string[];
 }) {
   return (
-    <label className="grid gap-1.5 text-xs font-medium">
+    <label className="grid min-w-0 grid-cols-1 gap-1.5 text-xs font-medium">
       {label}
       <NativeSelect
         className="w-full"

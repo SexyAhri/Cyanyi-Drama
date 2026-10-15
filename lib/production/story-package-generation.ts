@@ -23,6 +23,7 @@ import { recordWorkflowArtifactReuse, trackWorkflowRequest } from "@/lib/workflo
 import { isSerialStorySetup } from "@/lib/studio/production-input";
 import { generateStoryPackageAssets, generateStoryPackageFirstEpisode, type StoryPhase, type StoryPhaseRunner } from "./story-package-phases";
 import { PANEL_PRODUCTION_DESIGN_INSTRUCTIONS, validatePanelProductionDesign } from "./panel-production-design";
+import { resolveStoryProductionConstraints, validateStoryProductionConstraints, validateSceneDialoguePrompt, canonicalSceneDialogue, validateSingleFramePrompt, type StoryProductionConstraints } from "./story-quality-contract";
 
 import { createProductionDeliverable } from "./deliverables";
 import {
@@ -47,6 +48,7 @@ export type StoryPackageSetup = {
   artStyle: string;
   episodeCount: number;
   structure: string;
+  productionConstraints?: StoryProductionConstraints;
 };
 
 export type StoryPackageGenerationProgress = {
@@ -82,6 +84,7 @@ export async function generateAndSaveStoryPackage(input: {
   const config = project.config;
   const setup: StoryPackageSetup = {
     ...input.setup,
+    productionConstraints: resolveStoryProductionConstraints([...input.setup.characters, ...input.setup.eras, ...input.setup.hooks, input.setup.storyIdea].join("\n"), input.setup.productionConstraints),
     artStyle: config?.artStyle ?? input.setup.artStyle ?? "realistic",
   };
   const style = setup.artStyle;
@@ -91,7 +94,7 @@ export async function generateAndSaveStoryPackage(input: {
       description: project.description,
       aspectRatio: config?.videoRatio ?? "9:16",
       resolution: config?.videoResolution ?? "720p",
-      episodeDurationSeconds: config?.episodeTargetDurationSeconds ?? 120,
+      episodeDurationSeconds: setup.productionConstraints?.targetDurationSeconds ?? config?.episodeTargetDurationSeconds ?? 120,
       visualEra: config?.visualEra ?? "source",
       visualEraCustom: config?.visualEraCustom ?? "",
       workflowMode: config?.workflowMode ?? "novel-promotion",
@@ -144,7 +147,7 @@ export async function generateAndSaveStoryPackage(input: {
       const fingerprint = workflowCacheFingerprint({
         source: { projectId: project.id, setup, phase: phase.title },
         prompt: { text: prompt.text, systemText: prompt.systemText, schema: z.toJSONSchema(phase.schema) },
-        promptVersion: `story-package-phases-v2:${prompt.versionHash}`,
+        promptVersion: `story-package-phases-v3:${prompt.versionHash}`,
         channelId: input.channelId, model: input.model,
         agentConfiguration: currentProductionConfiguration()?.snapshot,
         parameters: { temperature: 0.65 },
@@ -287,6 +290,7 @@ export async function generateAndSaveStoryPackage(input: {
 
     const assets = await generateStoryPackageAssets({
       request: requestPhase, locale: input.locale,
+      constraints: setup.productionConstraints,
       task: buildAssetsTask(input.locale),
       context: { project: projectContext, seriesPlan: plan, episodeOutlines },
     });
@@ -297,10 +301,12 @@ export async function generateAndSaveStoryPackage(input: {
       episodeOneOutline: episodeOutlines[0],
       characters: assets.characters.map(withoutVisualDossier),
       props: assets.props.map(withoutVisualDossier),
+      inlineProps: assets.inlineProps ?? [],
       locations: assets.locations.map(withoutVisualDossier),
     };
     const firstEpisode = await generateStoryPackageFirstEpisode({
       request: requestPhase, locale: input.locale, assets,
+      constraints: setup.productionConstraints,
       targetSeconds: projectContext.project.episodeDurationSeconds,
       designTask: buildFirstEpisodeTask(input.locale),
       context: firstEpisodeContext,
@@ -308,6 +314,7 @@ export async function generateAndSaveStoryPackage(input: {
     });
 
     const parsed = StoryPackageSchema.safeParse({
+      productionConstraints: setup.productionConstraints,
       ...plan,
       ...assets,
       episodeOutlines,
@@ -331,6 +338,7 @@ export async function generateAndSaveStoryPackage(input: {
       input.locale,
     );
     semanticIssues.push(...validateFirstEpisode(parsed.data.firstEpisode, input.locale, assets, projectContext.project.episodeDurationSeconds));
+    semanticIssues.push(...validateStoryProductionConstraints(parsed.data, setup.productionConstraints ?? {}));
     if (semanticIssues.length)
       throw new StructuredOutputError(
         "STRUCTURED_SEMANTIC_INVALID",
@@ -568,21 +576,21 @@ function buildFirstEpisodeTask(locale: "zh" | "en") {
     return [
       "PHASE: audiovisual design for the single supplied scene. Return only imagePrompt, videoPrompt and productionDesign. The server owns the supplied imageReferenceSlots; do not generate this field.",
       PANEL_PRODUCTION_DESIGN_INSTRUCTIONS,
-      "Each scene is a 15-second production draft matching the five video ranges. Create enough scenes to approach the configured runtime; durationSeconds must be 15, never label a 15-second prompt as an 18/20-second scene. These scene drafts still require shot review.",
+      "Preserve the frozen scene count and durationSeconds. A scene may contain several future shots; never split or add scenes to meet a model clip duration. These are editable scene designs requiring later directing review.",
       "Use the supplied episode outline, series plan, project configuration, and asset dossiers as canon. Do not invent facts that contradict them.",
       "Faithfully stage the supplied frozen action and dialogue, with compatible camera and sound direction. Do not rewrite dialogue, add events, return firstEpisode or generate any other scene.",
       "Each scene has a single imagePrompt paragraph of at least 40 characters and videoPrompt of at least 100 characters. The image prompt follows the unified art style and describes one frame only, with no collage, readable text, logo, or watermark.",
-      "Each videoPrompt starts with 15 seconds, unified art style, aspect ratio, camera texture, and references. Then include exactly five continuous ranges: 0-3s, 3-6s, 6-9s, 9-12s, 12-15s. Every range describes visible action, relative positions, camera movement, feedback, and end state. No readable text or subtitles.",
+      "Start videoPrompt with the actual supplied duration, unified style, aspect ratio and references. Describe continuous timed action across that duration. For a 15-second scene use 0-3s, 3-6s, 6-9s, 9-12s, 12-15s; for other durations use suitable ranges that cover the actual duration. Every range describes visible action, positions, camera and feedback. ImagePrompt depicts only the frozen starting state; never combine multiple moments. No readable text or subtitles.",
       "Use exact asset names in videoPrompt, without making up image numbers or binding annotations. The server will prepend the fixed scene reference bindings. If a numeric reference is essential, it must match the supplied imageReferenceSlots. These are user-bindable slots; do not claim images already exist.",
     ].join("\n\n");
   return [
     "阶段：所给单场的视听设计。只输出 imagePrompt、videoPrompt、productionDesign 三项。imageReferenceSlots 已由服务端从冻结正文生成，本次不得输出该字段。",
     PANEL_PRODUCTION_DESIGN_INSTRUCTIONS,
-    "每场为 15 秒制作草稿，与五段视频时间线一致；通过足够的场次数接近目标集长。durationSeconds 必须为 15，不得将 15 秒提示词标成 18/20 秒场次。场次草稿仍需分镜审核。",
+    "保留冻结的场次数和 durationSeconds；一场可以由后续导演拆成多个镜头，不能为了模型单段时长增减场次。这里是可编辑场次设计，仍需正式分镜审核。",
     "严格以提供的第一集大纲、全剧规划、项目配置和资产档案为准，不得编造冲突事实。",
     "忠实转译所给已冻结的行动和对白，镜头和声音表达彼此兼容；不改台词、不加事件，不返回 firstEpisode 或其他场次。",
     "每场 imagePrompt 是不少于 40 字的单段提示词，遵守统一画风，只描述一个画面，不得拼图、出现可读文字、Logo 或水印。每场 videoPrompt 不少于 100 字。",
-    "每条 videoPrompt 开头写 15 秒、统一画风、画幅、镜头质感与参考主体，随后严格包含连续的五个时间段：0-3 秒、3-6 秒、6-9 秒、9-12 秒、12-15 秒。每段写可见动作、人物相对位置、镜头运动、动作反馈及结束状态，不生成可读文字或字幕。",
+    "videoPrompt 开头写所给真实时长、统一画风、画幅、镜头质感与参考主体，连续覆盖该时长。15秒场次使用0-3、3-6、6-9、9-12、12-15秒；其他时长按真实时长分段。写清可见动作、位置、运镜与反馈。imagePrompt 只写冻结起始状态，不得用随后、然后、逐渐等串联多个时刻，不生成可读文字或字幕。",
     "videoPrompt 用所给资产原名描述主体，不自行生成图片编号或绑定声明；服务端会在开头编入固定参考槽位。如确需数字引用，只能使用所给 imageReferenceSlots 的对应编号。槽位待用户绑定，不能声称图片已经存在。",
   ].join("\n\n");
 }
@@ -673,7 +681,7 @@ export function validateFirstEpisode(
       issues.push({
         code: "episode_duration_out_of_range",
         path: "firstEpisode.scenes",
-        message: `Scene draft totals ${plannedSeconds}s for a ${targetDurationSeconds}s episode target. Add or remove 15-second scene drafts so the total is within ${Math.round(tolerance)}s of the target.`,
+        message: `Scene draft totals ${plannedSeconds}s for a ${targetDurationSeconds}s episode target. Adjust scene durations and dramatic structure to stay within ${Math.round(tolerance)}s; scene count is independent of shot count.`,
       });
     }
     if (firstEpisode.targetDurationSeconds !== targetDurationSeconds) {
@@ -692,17 +700,25 @@ export function validateFirstEpisode(
       ])
     : null;
   for (const [index, scene] of firstEpisode.scenes.entries()) {
+    issues.push(...validateSceneDialoguePrompt(scene.videoPrompt, canonicalSceneDialogue(scene)).map(issue => ({ ...issue, path: `firstEpisode.scenes.${index}.${issue.path}` })));
+    issues.push(...validateSingleFramePrompt(scene.imagePrompt).map(issue => ({ ...issue, path: `firstEpisode.scenes.${index}.${issue.path}` })));
     if (scene.productionDesign) {
+      if (scene.continuity) {
+        for (const key of ["body", "hands", "gaze", "screenDirection", "props"] as const) {
+          if (scene.productionDesign.startState[key] !== scene.continuity.startState[key])
+            issues.push({ code: "scene_start_state_changed", path: `firstEpisode.scenes.${index}.productionDesign.startState.${key}`, message: `Preserve the frozen continuity.startState.${key}; subsequent actions belong in motionBeats and continuity.endState.` });
+        }
+      }
       for (const message of validatePanelProductionDesign(scene.productionDesign, scene.durationSeconds, scene.characters))
         issues.push({ code: "production_design_invalid", path: `firstEpisode.scenes.${index}.productionDesign`, message });
     }
-    const ranges = [
+    const ranges = scene.durationSeconds === 15 ? [
       /0\s*[-–]\s*3\s*(?:秒|s)/i,
       /3\s*[-–]\s*6\s*(?:秒|s)/i,
       /6\s*[-–]\s*9\s*(?:秒|s)/i,
       /9\s*[-–]\s*12\s*(?:秒|s)/i,
       /12\s*[-–]\s*15\s*(?:秒|s)/i,
-    ];
+    ] : [];
     if (ranges.some((pattern) => !pattern.test(scene.videoPrompt)))
       issues.push({
         code: "video_prompt_timeline_incomplete",
@@ -847,13 +863,13 @@ function validateStoryPackage(
   }
   for (const [index, scene] of storyPackage.firstEpisode.scenes.entries()) {
     const prompt = scene.videoPrompt;
-    const ranges = [
+    const ranges = scene.durationSeconds === 15 ? [
       /0\s*[-–]\s*3\s*(?:秒|s)/i,
       /3\s*[-–]\s*6\s*(?:秒|s)/i,
       /6\s*[-–]\s*9\s*(?:秒|s)/i,
       /9\s*[-–]\s*12\s*(?:秒|s)/i,
       /12\s*[-–]\s*15\s*(?:秒|s)/i,
-    ];
+    ] : [];
     if (ranges.some((pattern) => !pattern.test(prompt)))
       issues.push({
         code: "video_prompt_timeline_incomplete",

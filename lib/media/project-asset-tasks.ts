@@ -163,6 +163,8 @@ export async function createProjectImageTask(
 }
 
 export async function createStoryboardPanelImageTask(input: {
+  previewConfigurationHash?: string;
+  previewRequestHash?: string;
   idempotencyKey?: string;
   canvasNodeId?: string;
   userId: string;
@@ -279,6 +281,8 @@ export async function createStoryboardPanelImageTask(input: {
     generationPrompt,
     productionDesign,
   );
+  const productionConfiguration = await resolveProductionRequestConfiguration(input.userId, input);
+  assertPreviewConfiguration(productionConfiguration, input.previewConfigurationHash);
   const task = createMediaTask({
     id: `media_task_${randomUUID()}`,
     projectId: input.projectId,
@@ -293,26 +297,16 @@ export async function createStoryboardPanelImageTask(input: {
     protocol: channel.protocol,
     model: input.model,
     request: {
+      productionConfiguration,
       prompt: compiledPrompt,
       deferredSelection: true,
       ...(input.canvasNodeId ? {canvasNodeId:input.canvasNodeId,canvasDeferredSelection:true,canvasGenerationId:input.idempotencyKey} : {}),
       ...(input.iteration ? { generationIteration: input.iteration } : {}),
-      ratio:
-        input.ratio ??
-        input.mediaDefaults?.videoGenerationRatio ??
-        input.mediaDefaults?.imageGenerationRatio ??
-        "16:9",
-      resolution:
-        input.resolution ??
-        input.mediaDefaults?.imageGenerationResolution ??
-        "1k",
-      count: input.mediaDefaults?.imageGenerationCount ?? 1,
-      n: input.mediaDefaults?.imageGenerationCount ?? 1,
-      quality: input.mediaDefaults?.imageGenerationQuality ?? "high",
-      format: "png",
+      ...storyboardImageParameters(input),
       ...(referenceImages.length ? { referenceImages } : {}),
     },
   });
+  assertPreviewRequest(mediaRequestPreviewFingerprint([task]), input.previewRequestHash);
   const store = createDatabaseMediaTaskStore(input.userId);
   await store.create(task);
   const queued = await enqueueProjectTask(input.userId, task);
@@ -397,7 +391,7 @@ export async function createStoryboardPanelVideoTask(input: {
         select: { speaker: true, content: true, delivery: true },
       },
       imageAsset: {
-        select: { url: true, storageKey: true, mimeType: true },
+        select: { id: true, url: true, storageKey: true, mimeType: true },
       },
       storyboard: {
         select: { status: true },
@@ -458,6 +452,7 @@ export async function createStoryboardPanelVideoTask(input: {
       400,
     );
   const referenceImages: Array<{
+    assetId?: string;
     url: string;
     storageKey?: string;
     mimeType?: string;
@@ -487,25 +482,18 @@ export async function createStoryboardPanelVideoTask(input: {
       throw new ProjectAssetTaskError("首尾帧模式需要首帧和尾帧图片", 400);
     referenceImages.push(
       {
+        assetId: explicitFirst ? explicitFirst.assetId : panel.imageAsset?.id,
         url: firstFrameUrl,
-        storageKey:
-          explicitFirst?.storageKey ??
-          panel.imageAsset?.storageKey ??
-          undefined,
+        storageKey: (explicitFirst ? explicitFirst.storageKey : panel.imageAsset?.storageKey) ?? undefined,
         mimeType:
-          explicitFirst?.mimeType ?? panel.imageAsset?.mimeType ?? undefined,
+          (explicitFirst ? explicitFirst.mimeType : panel.imageAsset?.mimeType) ?? undefined,
         role: "first_frame",
       },
       {
+        assetId: explicitLast ? explicitLast.assetId : lastFrame?.imageAsset?.id,
         url: lastFrameUrl,
-        storageKey:
-          explicitLast?.storageKey ??
-          lastFrame?.imageAsset?.storageKey ??
-          undefined,
-        mimeType:
-          explicitLast?.mimeType ??
-          lastFrame?.imageAsset?.mimeType ??
-          undefined,
+        storageKey: (explicitLast ? explicitLast.storageKey : lastFrame?.imageAsset?.storageKey) ?? undefined,
+        mimeType: (explicitLast ? explicitLast.mimeType : lastFrame?.imageAsset?.mimeType) ?? undefined,
         role: "last_frame",
       },
     );
@@ -517,13 +505,11 @@ export async function createStoryboardPanelVideoTask(input: {
       explicitFirst?.url ?? (await mediaAssetUrl(panel.imageAsset));
     if (panelImageUrl)
       referenceImages.push({
+        assetId: explicitFirst ? explicitFirst.assetId : panel.imageAsset?.id,
         url: panelImageUrl,
-        storageKey:
-          explicitFirst?.storageKey ??
-          panel.imageAsset?.storageKey ??
-          undefined,
+        storageKey: (explicitFirst ? explicitFirst.storageKey : panel.imageAsset?.storageKey) ?? undefined,
         mimeType:
-          explicitFirst?.mimeType ?? panel.imageAsset?.mimeType ?? undefined,
+          (explicitFirst ? explicitFirst.mimeType : panel.imageAsset?.mimeType) ?? undefined,
         role: "first_frame",
       });
   }
@@ -616,6 +602,7 @@ export async function createStoryboardPanelVideoTask(input: {
 }
 
 export type StoryboardPromptPreview = {
+  references?: MediaReferenceImage[];
   capabilities?: VideoProductionCapabilities;
   productionConfiguration?: ProductionConfigurationSnapshot;
   configurationHash?: string;
@@ -705,7 +692,7 @@ export async function previewStoryboardPanelPrompt(input: {
       propsJson: true,
       locationName: true,
       imageAsset: {
-        select: { url: true, storageKey: true, mimeType: true },
+        select: { id: true, url: true, storageKey: true, mimeType: true },
       },
       storyboard: {
         select: {
@@ -842,8 +829,8 @@ export async function previewStoryboardPanelPrompt(input: {
       const lastFrameUrl = input.canvasReferences?.find(ref => ref.role === "last_frame")?.url ?? await mediaAssetUrl(lastFrame?.imageAsset);
       const firstExplicit = input.canvasReferences?.find(ref => ref.role === "first_frame");
       const lastExplicit = input.canvasReferences?.find(ref => ref.role === "last_frame");
-      if (firstFrameUrl) previewReferences.push({ url: firstFrameUrl, storageKey: firstExplicit?.storageKey ?? panel.imageAsset?.storageKey ?? undefined, role: "first_frame" });
-      if (lastFrameUrl) previewReferences.push({ url: lastFrameUrl, storageKey: lastExplicit?.storageKey ?? lastFrame?.imageAsset?.storageKey ?? undefined, role: "last_frame" });
+      if (firstFrameUrl) previewReferences.push({ assetId: firstExplicit ? firstExplicit.assetId : panel.imageAsset?.id, url: firstFrameUrl, storageKey: (firstExplicit ? firstExplicit.storageKey : panel.imageAsset?.storageKey) ?? undefined, mimeType: (firstExplicit ? firstExplicit.mimeType : panel.imageAsset?.mimeType) ?? undefined, role: "first_frame" });
+      if (lastFrameUrl) previewReferences.push({ assetId: lastExplicit ? lastExplicit.assetId : lastFrame?.imageAsset?.id, url: lastFrameUrl, storageKey: (lastExplicit ? lastExplicit.storageKey : lastFrame?.imageAsset?.storageKey) ?? undefined, mimeType: (lastExplicit ? lastExplicit.mimeType : lastFrame?.imageAsset?.mimeType) ?? undefined, role: "last_frame" });
       if (!firstFrameUrl || !lastFrameUrl)
         issues.push({
           blocking: true,
@@ -859,7 +846,8 @@ export async function previewStoryboardPanelPrompt(input: {
       });
     } else {
       const firstFrameUrl = input.canvasReferences?.find(ref => ref.role === "first_frame")?.url ?? await mediaAssetUrl(panel.imageAsset);
-      if (firstFrameUrl) previewReferences.push({ url: firstFrameUrl, storageKey: input.canvasReferences?.find(ref => ref.role === "first_frame")?.storageKey ?? panel.imageAsset?.storageKey ?? undefined, role: "first_frame" });
+      const firstExplicit = input.canvasReferences?.find(ref => ref.role === "first_frame");
+      if (firstFrameUrl) previewReferences.push({ assetId: firstExplicit ? firstExplicit.assetId : panel.imageAsset?.id, url: firstFrameUrl, storageKey: (firstExplicit ? firstExplicit.storageKey : panel.imageAsset?.storageKey) ?? undefined, mimeType: (firstExplicit ? firstExplicit.mimeType : panel.imageAsset?.mimeType) ?? undefined, role: "first_frame" });
       if (!firstFrameUrl && !input.canvasReferences?.length)
         issues.push({
           blocking: true,
@@ -911,7 +899,8 @@ export async function previewStoryboardPanelPrompt(input: {
       productionConfiguration,
       capabilities: productionCapabilities,
       configurationHash: productionConfigurationFingerprint(productionConfiguration),
-      requestHash: input.model ? mediaRequestPreviewFingerprint(segments.map((segment, index) => ({ model: input.model!, channelId: input.channelId, request: { prompt: segment.prompt, productionConfiguration, ratio: input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9", resolution: outputResolution, duration: actualDurations[index], videoMode: input.mode ?? "reference", audioMode, referenceImages: previewReferences.slice(0, limits.maxReferenceImages), referenceAudios: previewAudios } }))) : undefined,
+      requestHash: input.model ? mediaRequestPreviewFingerprint(segments.map((segment, index) => ({ model: input.model!, channelId: input.channelId, request: { prompt: segment.prompt, productionConfiguration, ratio: input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9", resolution: outputResolution, duration: actualDurations[index], videoMode: input.mode ?? "reference", audioMode, format: "mp4", referenceImages: previewReferences.slice(0, limits.maxReferenceImages), referenceAudios: previewAudios } }))) : undefined,
+      references: previewReferences.slice(0, limits.maxReferenceImages),
       parameters: {
         channelId: input.channelId, model: input.model,
         ratio: input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? "16:9",
@@ -942,7 +931,8 @@ export async function previewStoryboardPanelPrompt(input: {
     props,
     locationName: panel.locationName,
   });
-  const referenceCount = [...(input.canvasReferences ?? []), ...supportingReferences].filter((ref,index,all)=>all.findIndex(other=>other.url===ref.url)===index).length;
+  const references = [...(input.canvasReferences ?? []), ...supportingReferences].filter((ref,index,all)=>all.findIndex(other=>other.url===ref.url)===index);
+  const referenceCount = references.length;
   let compiledPrompt = "";
   let generationPrompt = "";
   const sources: StoryboardPromptPreview["sources"] = [
@@ -992,6 +982,8 @@ export async function previewStoryboardPanelPrompt(input: {
   );
 
   const sanitized = sanitizeMediaPrompt(compiledPrompt);
+  const productionConfiguration = await resolveProductionRequestConfiguration(input.userId, input);
+  const parameters = storyboardImageParameters(input);
   if (sanitized.changes.length)
     sources.push({
       key: "safety_rewrite",
@@ -1004,10 +996,26 @@ export async function previewStoryboardPanelPrompt(input: {
     finalPrompt: sanitized.prompt,
     issues,
     kind: "image",
+    productionConfiguration,
+    configurationHash: productionConfigurationFingerprint(productionConfiguration),
+    requestHash: input.model ? mediaRequestPreviewFingerprint([{ model: input.model, channelId: input.channelId, request: { productionConfiguration, prompt: compiledPrompt, ...parameters, referenceImages: references } }]) : undefined,
+    parameters: { ...parameters, model: input.model, channelId: input.channelId },
+    references,
     submissionMode: "compiled",
     referenceCount,
     safetyRewrites: sanitized.changes,
     sources,
+  };
+}
+
+function storyboardImageParameters(input: { ratio?: string; resolution?: string; mediaDefaults?: MediaGenerationDefaults }) {
+  return {
+    ratio: input.ratio ?? input.mediaDefaults?.videoGenerationRatio ?? input.mediaDefaults?.imageGenerationRatio ?? "16:9",
+    resolution: input.resolution ?? input.mediaDefaults?.imageGenerationResolution ?? "1k",
+    count: input.mediaDefaults?.imageGenerationCount ?? 1,
+    n: input.mediaDefaults?.imageGenerationCount ?? 1,
+    quality: input.mediaDefaults?.imageGenerationQuality ?? "high",
+    format: "png",
   };
 }
 
@@ -1046,7 +1054,7 @@ async function findLastFramePanel(input: {
     orderBy: { panelIndex: "asc" },
     select: {
       imageAsset: {
-        select: { url: true, storageKey: true, mimeType: true },
+        select: { id: true, url: true, storageKey: true, mimeType: true },
       },
     },
   });
@@ -1554,7 +1562,7 @@ async function findSelectedReferenceImages(input: CreateProjectImageTaskInput) {
         imageAsset: { url: { not: null } },
       },
       include: {
-        imageAsset: { select: { url: true, storageKey: true, mimeType: true } },
+        imageAsset: { select: { id: true, url: true, storageKey: true, mimeType: true } },
       },
       orderBy: { updatedAt: "desc" },
       take: 3,
@@ -1580,7 +1588,7 @@ async function findSelectedReferenceImages(input: CreateProjectImageTaskInput) {
         imageAsset: { url: { not: null } },
       },
       include: {
-        imageAsset: { select: { url: true, storageKey: true, mimeType: true } },
+        imageAsset: { select: { id: true, url: true, storageKey: true, mimeType: true } },
       },
       orderBy: { updatedAt: "desc" },
       take: 3,
@@ -1607,7 +1615,7 @@ async function findSelectedReferenceImages(input: CreateProjectImageTaskInput) {
       mediaAsset: { kind: "image", url: { not: null } },
     },
     include: {
-      mediaAsset: { select: { url: true, storageKey: true, mimeType: true } },
+      mediaAsset: { select: { id: true, url: true, storageKey: true, mimeType: true } },
     },
     orderBy: { createdAt: "desc" },
     take: 3,
@@ -1631,11 +1639,7 @@ async function findStoryboardReferenceImages(input: {
   props?: string[];
   locationName: string | null;
 }) {
-  const references: Array<{
-    url: string;
-    storageKey?: string;
-    mimeType?: string;
-  }> = [];
+  const references: MediaReferenceImage[] = [];
   const names = input.characters.map((name) => name.trim()).filter(Boolean);
   if (names.length) {
     const characters = await prisma.novelCharacter.findMany({
@@ -1651,7 +1655,7 @@ async function findStoryboardReferenceImages(input: {
           where: { selected: true, imageAsset: { url: { not: null } } },
           include: {
             imageAsset: {
-              select: { url: true, storageKey: true, mimeType: true },
+              select: { id: true, url: true, storageKey: true, mimeType: true },
             },
           },
           orderBy: { updatedAt: "desc" },
@@ -1663,6 +1667,7 @@ async function findStoryboardReferenceImages(input: {
       const asset = character.appearances[0]?.imageAsset;
       if (asset?.url)
         references.push({
+          assetId: asset.id,
           url: asset.url,
           storageKey: asset.storageKey ?? undefined,
           mimeType: asset.mimeType ?? undefined,
@@ -1677,7 +1682,7 @@ async function findStoryboardReferenceImages(input: {
           where: { selected: true, imageAsset: { url: { not: null } } },
           include: {
             imageAsset: {
-              select: { url: true, storageKey: true, mimeType: true },
+              select: { id: true, url: true, storageKey: true, mimeType: true },
             },
           },
           orderBy: { updatedAt: "desc" },
@@ -1688,6 +1693,7 @@ async function findStoryboardReferenceImages(input: {
     const asset = location?.images[0]?.imageAsset;
     if (asset?.url)
       references.push({
+        assetId: asset.id,
         url: asset.url,
         storageKey: asset.storageKey ?? undefined,
         mimeType: asset.mimeType ?? undefined,
@@ -1711,7 +1717,7 @@ async function findStoryboardReferenceImages(input: {
         },
         select: {
           mediaAsset: {
-            select: { url: true, storageKey: true, mimeType: true },
+            select: { id: true, url: true, storageKey: true, mimeType: true },
           },
         },
       });
@@ -1719,6 +1725,7 @@ async function findStoryboardReferenceImages(input: {
         const asset = reference.mediaAsset;
         if (asset.url)
           references.push({
+            assetId: asset.id,
             url: asset.url,
             storageKey: asset.storageKey ?? undefined,
             mimeType: asset.mimeType ?? undefined,

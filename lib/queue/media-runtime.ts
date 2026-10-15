@@ -23,6 +23,9 @@ import { sanitizeMediaProviderRequest } from "@/lib/media/provider-prompt-safety
 import { resolveStoredReferenceImages } from "@/lib/media/reference-inputs";
 import { renderTimelineVideo } from "@/lib/providers/local/ffmpeg-render";
 import { normalizeRenderSpecification } from "@/lib/providers/local/render-spec";
+import { captureTimelineRenderSnapshot, readTimelineRenderSnapshot } from "@/lib/production/render-snapshot";
+import { isLocalRenderTask } from "@/lib/media/local-render-task";
+import { inspectSubtitleTimings, parseSavedSubtitles } from "@/lib/production/subtitle-timing";
 import {
   buildTimelineSubtitles,
   parseTimelineSequence,
@@ -61,14 +64,15 @@ export async function processQueuedMediaTask(
   });
   if (!task) throw new Error("MEDIA_TASK_NOT_FOUND");
   if (task.status !== "running") return false;
-  if (!task.channelId) throw new Error("MEDIA_TASK_CHANNEL_REQUIRED");
+  const payload = task.payload as { request?: TaskRequest };
+  const localRender = isLocalRenderTask(task, payload.request ?? {});
+  if (!localRender && !task.channelId) throw new Error("MEDIA_TASK_CHANNEL_REQUIRED");
   if (task.cancelRequestedAt) return false;
 
-  const channel = await prisma.channel.findFirst({
-    where: accessibleChannelWhere(userId, task.channelId),
+  const channel = localRender ? { protocol: "local", providerKey: "local", baseUrl: "", encryptedApiKeys: "[]" } : await prisma.channel.findFirst({
+    where: accessibleChannelWhere(userId, task.channelId!),
   });
   if (!channel) throw new Error("MEDIA_TASK_CHANNEL_NOT_FOUND");
-  const payload = task.payload as { request?: TaskRequest };
   const request = await fixMediaTaskConfiguration(task, payload.request ?? {}, userId) as TaskRequest;
   const deadline = createMediaPhaseDeadline(process.env, cancellationSignal);
   deadline.setPhase((task.executionPhase ?? "connecting") as MediaTaskExecutionPhase);
@@ -120,7 +124,7 @@ export async function processQueuedMediaTask(
     !output &&
     channel.protocol === "openai-compatible" &&
     (task.kind === "image" || task.kind === "video")
-      ? await findMediaTemplate(task.channelId, task.model, task.kind)
+      ? await findMediaTemplate(task.channelId!, task.model, task.kind)
       : undefined;
   const keys = output
     ? []
@@ -163,7 +167,7 @@ export async function processQueuedMediaTask(
           protocol: channel.protocol,
         });
         output = await withProviderCapacity({
-          channelId: task.channelId,
+          channelId: task.channelId!,
           model: task.model,
           providerKey: channel.providerKey,
           protocol: channel.protocol,
@@ -234,6 +238,7 @@ export async function processQueuedMediaTask(
         storedKey = await deadline.run(storeGeneratedMediaAsset({
           asset,
           storageKey,
+          expectedImageRatio: typeof request.ratio === "string" ? request.ratio : undefined,
           stripVideoAudio: stripProviderAudio,
           signal: deadline.signal,
           onExecutionPhase: async phase => {
@@ -246,7 +251,7 @@ export async function processQueuedMediaTask(
           } } : {}),
         }));
       } catch (error) {
-        if (validateVideo || stripProviderAudio || isSourceMediaDownloadFailure(error) ||
+        if (asset.kind === "image" || validateVideo || stripProviderAudio || isSourceMediaDownloadFailure(error) ||
             storagePhase === "saving" ||
             (error instanceof Error && error.message.startsWith("MEDIA_PHASE_TIMEOUT:")) ||
             (error instanceof Error && error.message.startsWith("MEDIA_TASK_")))
@@ -702,70 +707,14 @@ async function renderEpisodeTimeline(
 ): Promise<MediaAsset[]> {
   if (!episodeId || !projectId)
     throw new Error("TIMELINE_RENDER_EPISODE_REQUIRED");
-  await assertEpisodeTimelineCurrent(userId, projectId, episodeId);
+  const frozenRender = (request as Record<string, unknown>).timelineRenderSnapshot;
+  if (frozenRender === undefined) await assertEpisodeTimelineCurrent(userId, projectId, episodeId);
+  else if (!await prisma.episode.count({ where: { id: episodeId, projectId, project: { userId } } })) throw new Error("TIMELINE_RENDER_EPISODE_NOT_FOUND");
   const soundPolicy = requestSoundPolicy(request);
 
-  const [storyboard, editorProject, voiceLines, episodeAudioTracks] =
-    await Promise.all([
-      prisma.storyboard.findFirst({
-        where: { projectId, episodeId, project: { userId } },
-        select: {
-          panels: {
-            orderBy: { panelIndex: "asc" },
-            select: {
-              id: true,
-              panelIndex: true,
-              imageAsset: { select: { url: true, storageKey: true } },
-              videoAsset: { select: { url: true, storageKey: true } },
-              lipSyncAsset: { select: { url: true, storageKey: true } },
-              videoSegments: {
-                select: {
-                  id: true,
-                  videoAsset: { select: { url: true, storageKey: true } },
-                },
-              },
-            },
-          },
-        },
-      }),
-      prisma.editorProject.findFirst({
-        where: {
-          episodeId,
-          episode: { projectId, project: { userId } },
-        },
-        select: { timelineJson: true },
-      }),
-      prisma.voiceLine.findMany({
-        where: { episodeId, episode: { projectId, project: { userId } } },
-        orderBy: { lineIndex: "asc" },
-        select: {
-          id: true,
-          lineIndex: true,
-          speaker: true,
-          content: true,
-          delivery: true,
-          matchedPanelId: true,
-          durationSeconds: true,
-        },
-      }),
-      prisma.episodeAudioTrack.findMany({
-        where: {
-          episodeId,
-          trackType: { in: ["merged", "ambience", "sfx", "music"] },
-          episode: { projectId, project: { userId } },
-        },
-        orderBy: { createdAt: "asc" },
-        select: {
-          id: true,
-          trackType: true,
-          startSeconds: true,
-          endSeconds: true,
-          volume: true,
-          metadataJson: true,
-          asset: { select: { url: true, storageKey: true } },
-        },
-      }),
-    ]);
+  const { storyboard, editorProject, voiceLines, episodeAudioTracks } =
+    readTimelineRenderSnapshot(frozenRender, { userId, projectId, episodeId })
+    ?? await captureTimelineRenderSnapshot(userId, projectId, episodeId);
   if (!storyboard) throw new Error("TIMELINE_RENDER_STORYBOARD_NOT_FOUND");
   const sequence = parseTimelineSequence(
     parseJsonValue(editorProject?.timelineJson),
@@ -840,6 +789,7 @@ async function renderEpisodeTimeline(
     volume: track.volume,
     transition: track.transition,
     transitionDurationSeconds: track.transitionDuration,
+    imageFit: track.imageFit ?? "contain",
   }));
 
   const renderAudioTracks = episodeAudioTracks.filter(track => soundPolicy.mode !== "silent" && (
@@ -878,7 +828,12 @@ async function renderEpisodeTimeline(
   );
 
   assertTimelineDialogueAudioCoverage(nativeVoiceLines.length, undefined, nativeVoiceLines.every(line => resolvedTracks.some(({ panel, source, isImage, track }) => panel.id === line.matchedPanelId && source && !isImage && track.volume !== 0)));
-  const subtitles = buildTimelineSubtitles(subtitleLines, sequence);
+  const savedSubtitles = editorProject?.subtitleJson ? parseSavedSubtitles(parseJsonValue(editorProject.subtitleJson)) : null;
+  const eligible = new Set(subtitleLines.map(line => line.id));
+  const subtitles = savedSubtitles ? savedSubtitles.filter(cue => eligible.has(cue.id)) : buildTimelineSubtitles(subtitleLines, sequence);
+  if (subtitleLines.some(line => !subtitles.some(cue => cue.id === line.id))) throw new Error("TIMELINE_SUBTITLE_COVERAGE_MISSING");
+  const subtitleIssues = inspectSubtitleTimings(subtitles, sequence.reduce((sum, track) => sum + track.duration, 0), subtitleLines);
+  if (subtitleIssues.length) throw new Error(`TIMELINE_SUBTITLE_TIMING_INVALID:${subtitleIssues.map(issue => issue.code).join(",")}`);
   const selectedAudioTracks = renderAudioTracks;
 
   const specification = normalizeRenderSpecification(

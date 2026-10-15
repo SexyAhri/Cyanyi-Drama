@@ -58,6 +58,7 @@ export type ShellCopy = {
   selectModel: string;
   settings: string;
   settingsAccount: string;
+  settingsUsage: string;
   settingsAccountRedirecting: string;
   settingsAdmin: string;
   settingsChannels: string;
@@ -254,6 +255,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     selectModel: "Select model",
     settings: "Settings",
     settingsAccount: "Account",
+    settingsUsage: "Model usage logs",
     settingsAccountRedirecting: "Opening payment...",
     settingsAdmin: "Administration",
     settingsChannels: "Channels",
@@ -456,6 +458,7 @@ export const shellCopyByLocale: Record<AgentLocale, ShellCopy> = {
     selectModel: "选择模型",
     settings: "设置",
     settingsAccount: "账户",
+    settingsUsage: "模型使用日志",
     settingsAccountRedirecting: "正在跳转支付...",
     settingsAdmin: "管理员设置",
     settingsChannels: "渠道",

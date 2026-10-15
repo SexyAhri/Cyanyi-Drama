@@ -312,6 +312,19 @@ describe("storyboard prompt preview", () => {
     expect(mocks.enqueueTask).not.toHaveBeenCalled();
   });
 
+  it("keeps an explicit frame independent from the panel's newly adopted default", async () => {
+    const input = { userId: "user-1", projectId: "project-1", episodeId: "episode-1", panelId: "panel-1", channelId: "channel-1", model: "video-model", mode: "reference" as const,
+      canvasReferences: [{ assetId: "pinned", url: "data:image/png;base64,AQID", role: "first_frame" as const }] };
+    mocks.storyboardPanelFindFirst.mockResolvedValue({ ...panel(), imageAsset: { id: "default-a", url: "data:image/png;base64,Ag==", storageKey: null, mimeType: "image/png" } });
+    const reviewed = await previewStoryboardPanelPrompt({ ...input, kind: "video" });
+    mocks.storyboardPanelFindFirst.mockResolvedValue({ ...panel(), imageAsset: { id: "default-b", url: "data:image/jpeg;base64,Aw==", storageKey: null, mimeType: "image/jpeg" } });
+    const updated = await previewStoryboardPanelPrompt({ ...input, kind: "video" });
+    expect(updated.requestHash).toBe(reviewed.requestHash);
+    await createStoryboardPanelVideoTask({ ...input, previewRequestHash: reviewed.requestHash });
+    expect(mocks.taskCreate.mock.calls[0][0].request.referenceImages).toEqual(reviewed.references);
+    expect(reviewed.references).toEqual([expect.objectContaining({ assetId: "pinned", mimeType: undefined, storageKey: undefined })]);
+  });
+
   it("shows the actual H3 15-second resolution instead of unsupported 1080p", async () => {
     mocks.channelFindFirst.mockResolvedValue({
       protocol: "autodl-comfyui", models: [{ capabilitiesJson: "{}" }],

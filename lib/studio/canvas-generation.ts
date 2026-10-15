@@ -90,6 +90,7 @@ export async function resolveCanvasGeneration(input: {
   const referenceImages = references.map((ref) => {
     const asset = assets.find((item) => item.id === ref.assetId)!;
     return {
+      assetId: asset.id,
       url: asset.url,
       storageKey: asset.storageKey ?? undefined,
       mimeType: asset.mimeType ?? undefined,

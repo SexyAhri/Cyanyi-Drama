@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DataTable } from "@/components/ui/data-table";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -26,11 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
   TableCell,
-  TableHead,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
 import { ModelPricePanel } from "./model-price-panel";
@@ -143,22 +140,22 @@ export function BillingPage() {
         </div>
       }
       description="配置模型计费单价，检查用户余额、冻结金额和每一笔扣费流水。"
-      title="扣费系统"
+      title="计费与余额"
     >
-      {error ? <Alert className="mb-5" variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
-      <Tabs defaultValue="prices">
-        <TabsList variant="line">
+      {error ? <Alert className="shrink-0" variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+      <Tabs className="min-h-0 flex-1 overflow-hidden" defaultValue="prices">
+        <TabsList className="shrink-0" variant="line">
           <TabsTrigger value="prices">模型价格</TabsTrigger>
           <TabsTrigger value="balances">用户余额</TabsTrigger>
           <TabsTrigger value="transactions">扣费流水</TabsTrigger>
         </TabsList>
 
-        <TabsContent className="mt-5 min-w-0" value="prices">
+        <TabsContent className="mt-1 min-h-0 min-w-0 flex-1 overflow-hidden" value="prices">
           {loading ? <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground" role="status"><LoaderCircle className="size-4 animate-spin" />正在加载模型价格…</div> : error ? null : <ModelPricePanel channels={channels} prices={prices} onChange={setPrices} />}
         </TabsContent>
 
-        <TabsContent className="mt-5" value="balances">
-          <DataTable empty="暂无用户余额" headers={["用户", "可用余额", "冻结", "累计消费", "更新时间"]}>
+        <TabsContent className="mt-1 flex min-h-0 flex-1 flex-col overflow-hidden" value="balances">
+          <DataTable label="用户余额" loading={loading} className="min-w-[700px]" empty="暂无用户余额" headers={["用户", "可用余额", "冻结", "累计消费", "更新时间"]}>
             {balances.map((item) => (
               <TableRow key={item.id}>
                 <TableCell><UserCell user={item.user} /></TableCell>
@@ -171,8 +168,8 @@ export function BillingPage() {
           </DataTable>
         </TabsContent>
 
-        <TabsContent className="mt-5" value="transactions">
-          <DataTable empty="暂无扣费流水" headers={["时间", "用户", "类型", "任务", "金额", "余额", "说明"]}>
+        <TabsContent className="mt-1 flex min-h-0 flex-1 flex-col overflow-hidden" value="transactions">
+          <DataTable label="扣费流水" loading={loading} className="min-w-[1100px]" empty="暂无扣费流水" headers={["时间", "用户", "类型", "任务", "金额", "余额", "说明"]}>
             {transactions.map((item) => (
               <TableRow key={item.id}>
                 <TableCell className="text-muted-foreground">{formatDate(item.createdAt)}</TableCell>
@@ -208,13 +205,6 @@ export function BillingPage() {
         </DialogContent>
       </Dialog>
     </AdminPage>
-  );
-}
-
-function DataTable({ children, empty, headers }: React.PropsWithChildren<{ empty: string; headers: string[] }>) {
-  const hasRows = Array.isArray(children) ? children.length > 0 : Boolean(children);
-  return (
-    <div className="overflow-hidden border"><Table><TableHeader><TableRow>{headers.map((header, index) => <TableHead className={index === headers.length - 1 ? "text-right" : undefined} key={`${header}-${index}`}>{header}</TableHead>)}</TableRow></TableHeader><TableBody>{hasRows ? children : <TableRow><TableCell className="h-32 text-center text-muted-foreground" colSpan={headers.length}>{empty}</TableCell></TableRow>}</TableBody></Table></div>
   );
 }
 

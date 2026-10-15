@@ -518,6 +518,23 @@ export async function saveEditorProject(
     where: { id: episodeId, projectId, project: { userId } },
   });
   if (!ownsEpisode) return null;
+  const { inspectSubtitleTimings, parseSavedSubtitles } = await import("./subtitle-timing");
+  if (!Array.isArray(timeline.tracks) || !timeline.tracks.length || typeof timeline.duration !== "number" || !Number.isFinite(timeline.duration) || timeline.duration <= 0)
+    throw new Error("TIMELINE_EDIT_INVALID: 时间线时长或轨道无效");
+  const tracks = timeline.tracks as Array<Record<string, unknown>>;
+  if (tracks.some(track => !track || typeof track.id !== "string" || typeof track.duration !== "number" || !Number.isFinite(track.duration) || track.duration < 0.5 || track.duration > 30 || (track.imageFit !== undefined && track.imageFit !== "contain" && track.imageFit !== "crop")))
+    throw new Error("TIMELINE_EDIT_INVALID: 镜头时长或画幅处理无效");
+  if (Math.abs(tracks.reduce((sum, track) => sum + Number(track.duration), 0) - timeline.duration) > 0.01)
+    throw new Error("TIMELINE_EDIT_INVALID: 轨道时长与总片长不一致");
+  if (subtitles !== undefined && subtitles !== null) {
+    const cues = parseSavedSubtitles(subtitles);
+    const audioLines = cues.length ? await prisma.voiceLine.findMany({
+      where: { episodeId, id: { in: cues.map(cue => cue.id) }, audioAssetId: { not: null } },
+      select: { id: true, audioAssetId: true },
+    }) : [];
+    const issues = inspectSubtitleTimings(cues, timeline.duration, audioLines);
+    if (issues.length) throw new Error(`TIMELINE_SUBTITLE_TIMING_INVALID: ${issues.map(issue => issue.message).join("；")}`);
+  }
   const row = await prisma.editorProject.upsert({
     where: { episodeId },
     create: {

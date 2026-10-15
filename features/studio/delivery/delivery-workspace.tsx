@@ -37,6 +37,7 @@ import { StatusIndicator } from "../components/status-indicator";
 import { runtimeStatusToStageStatus } from "../stage-state";
 import type {
   EditorTimeline,
+  EditorSubtitle,
   ProductionData,
   ProductionDeliverableCatalog,
   ProjectMediaAsset,
@@ -49,12 +50,17 @@ import type {
 import {
   alignTimelineSubtitles,
   findTimelineAsset,
+  updateTimelineTrackSettings,
 } from "./delivery-view-model";
 import { PostMasterPanel } from "./post-master-panel";
 import { RenderDialog } from "./render-dialog";
 import { syncTimelineSources } from "@/lib/production/timeline-source-sync";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { TimelineEditor } from "./timeline-editor";
+import { SubtitleEditor } from "./subtitle-editor";
+import { ImageFramingControl } from "./image-framing-control";
+import { aspectRatioValue } from "@/lib/production/image-framing";
+import { inspectSubtitleTimings } from "@/lib/production/subtitle-timing";
 
 const copy = {
   "zh-CN": {
@@ -153,7 +159,6 @@ export function DeliveryWorkspace({
   onContextChange,
   onRefresh,
   snapshot,
-  videoModels,
 }: {
   episode: WorkspaceSnapshot["project"]["episodes"][number];
   locale: StudioLocale;
@@ -168,6 +173,10 @@ export function DeliveryWorkspace({
   const [timeline, setTimeline] = useState<EditorTimeline | null>(null);
   const [rebuildOpen, setRebuildOpen] = useState(false);
   const [savedTimeline, setSavedTimeline] = useState("");
+  const [subtitles, setSubtitles] = useState<EditorSubtitle[]>([]);
+  const [savedSubtitles, setSavedSubtitles] = useState("[]");
+  const [subtitleResetOpen, setSubtitleResetOpen] = useState(false);
+  const [measuredImages, setMeasuredImages] = useState<Record<string, { width: number; height: number }>>({});
   const [selectedTrackId, setSelectedTrackId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -192,6 +201,9 @@ export function DeliveryWorkspace({
           const stored = production.editorProject?.timeline ?? null;
           setTimeline(stored);
           setSavedTimeline(stored ? JSON.stringify(stored) : "");
+          const savedCues = production.editorProject?.subtitles ?? (stored ? alignTimelineSubtitles(production.voiceLines, stored) : []);
+          setSubtitles(savedCues);
+          setSavedSubtitles(JSON.stringify(savedCues));
         }
         return next;
       } catch (requestError) {
@@ -246,7 +258,9 @@ export function DeliveryWorkspace({
   const renderTask = tasks
     .filter((task) => task.targetType === "editor_render")
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-  const dirty = Boolean(timeline) && JSON.stringify(timeline) !== savedTimeline;
+  const dirty = Boolean(timeline) && (JSON.stringify(timeline) !== savedTimeline || JSON.stringify(subtitles) !== savedSubtitles);
+  const subtitleVoiceLines = data?.production.voiceLines ?? [];
+  const subtitleIssues = timeline ? inspectSubtitleTimings(subtitles, timeline.duration, subtitleVoiceLines) : [];
   const sourceSync = timeline && data?.storyboard.storyboard
     ? syncTimelineSources(timeline, data.storyboard.storyboard.panels) : null;
   const sourcesChanged = Boolean(sourceSync?.changedIds.length || sourceSync?.incompatibleIds.length);
@@ -255,13 +269,13 @@ export function DeliveryWorkspace({
     setTimeline(sourceSync.timeline);
     toast.success(locale === "en" ? "Media references updated; save the timeline to apply." : "已更新素材引用并保留剪辑，请保存时间线。");
   }
-  const subtitles = useMemo(
-    () =>
-      timeline && data
-        ? alignTimelineSubtitles(data.production.voiceLines, timeline)
-        : [],
-    [data, timeline],
-  );
+  function resetSubtitleTiming() {
+    if (!timeline || !data) return;
+    try {
+      setSubtitles(alignTimelineSubtitles(data.production.voiceLines, timeline));
+      setSubtitleResetOpen(false);
+    } catch (error) { toast.error(error instanceof Error ? error.message : text.actionFailed); }
+  }
 
   async function refreshAll() {
     await Promise.all([load(), onRefresh()]);
@@ -273,12 +287,14 @@ export function DeliveryWorkspace({
       await action();
       toast.success(message);
       await refreshAll();
+      return true;
     } catch (requestError) {
       toast.error(
         requestError instanceof Error
           ? requestError.message
           : text.actionFailed,
       );
+      return false;
     } finally {
       setBusy(false);
     }
@@ -298,26 +314,24 @@ export function DeliveryWorkspace({
     await act(async () => {
       const result = await saveStudioTimeline(projectId, episode.id, {
         timeline,
-        subtitles: alignTimelineSubtitles(data.production.voiceLines, timeline),
+        subtitles,
       });
       setData((current) =>
         current ? { ...current, production: result } : current,
       );
       setSavedTimeline(JSON.stringify(timeline));
+      setSavedSubtitles(JSON.stringify(subtitles));
     }, text.saved);
   }
 
   async function render(input: {
-    model: StudioModelOption;
     ratio: string;
     resolution: string;
     fps: number;
   }) {
-    await act(
+    return act(
       () =>
         renderStudioTimeline(projectId, episode.id, {
-          channelId: input.model.channelId,
-          model: input.model.modelId,
           ratio: input.ratio,
           resolution: input.resolution,
           fps: input.fps,
@@ -360,20 +374,18 @@ export function DeliveryWorkspace({
   const selectedSubtitles = selectedTrack
     ? subtitles.filter(
         (subtitle) =>
-          subtitle.start === selectedTrack.start &&
-          subtitle.end === selectedTrack.end,
+          data?.production.voiceLines.some(line => line.id === subtitle.id && line.matchedPanelId === (selectedTrack.panelId ?? selectedTrack.id)) ||
+          (subtitle.start < selectedTrack.end && subtitle.end > selectedTrack.start),
       )
     : [];
+  const previewRatio = aspectRatioValue(snapshot.project.config.videoRatio);
 
   return (
-    <div className="mx-auto w-full max-w-[1600px] px-4 py-5 sm:px-6 sm:py-7 lg:px-8">
-      <header className="flex flex-col gap-4 border-b pb-5 2xl:flex-row 2xl:items-end 2xl:justify-between">
-        <div className="min-w-0">
-          <p className="truncate text-xs text-muted-foreground">
-            {String(episode.episodeNumber).padStart(2, "0")} · {episode.name}
-          </p>
-          <div className="mt-1 flex items-center gap-2">
-            <h1 className="text-xl font-semibold">{text.title}</h1>
+    <div className="@container mx-auto w-full max-w-[1600px] px-3 py-3 sm:px-5 lg:px-6">
+      <header className="flex flex-col gap-2.5 border-b pb-3 @min-[44rem]:flex-row @min-[44rem]:items-center @min-[44rem]:justify-between">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5">
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg font-semibold">{text.title}</h1>
             {renderTask ? (
               <StatusIndicator
                 locale={locale}
@@ -381,8 +393,11 @@ export function DeliveryWorkspace({
               />
             ) : null}
           </div>
+          <p className="truncate text-xs text-muted-foreground">
+            {String(episode.episodeNumber).padStart(2, "0")} · {episode.name}
+          </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-1.5">
           <Button
             disabled={busy || dirty}
             onClick={() => timeline ? setRebuildOpen(true) : void buildTimeline()}
@@ -393,7 +408,7 @@ export function DeliveryWorkspace({
             {timeline ? text.rebuild : text.build}
           </Button>
           <Button
-            disabled={busy || !dirty}
+            disabled={busy || !dirty || subtitleIssues.length > 0}
             onClick={() => void saveTimeline()}
             size="sm"
             variant="outline"
@@ -406,14 +421,16 @@ export function DeliveryWorkspace({
             defaultRatio={snapshot.project.config.videoRatio}
             defaultResolution={snapshot.project.config.videoResolution}
             disabled={
-              busy || !timeline?.tracks.length || dirty || sourcesChanged || !videoModels.length
+              busy || !timeline?.tracks.length || dirty || sourcesChanged || subtitleIssues.length > 0
             }
             locale={locale}
-            models={videoModels}
+            preview={previewAsset?.url && previewAsset.kind === "image" ? { url: previewAsset.url, fit: selectedTrack?.imageFit ?? "contain" } : undefined}
             onRender={render}
           />
         </div>
       </header>
+      {dirty && <p role="status" className="mt-3 text-xs text-status-warning">{locale === "en" ? "Unsaved timeline or subtitle changes" : "时间线或字幕有未保存修改"}</p>}
+      {subtitleIssues.length > 0 && <p role="alert" className="mt-3 text-xs text-destructive">{locale === "en" ? "Fix subtitle timing before saving or exporting: " : "保存或导出前请修正字幕时间："}{subtitleIssues.map(issue => issue.message).join("；")}</p>}
 
       {sourcesChanged && <section className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border bg-muted/30 p-3">
         <p className="min-w-0 flex-1 text-xs leading-6">
@@ -422,6 +439,13 @@ export function DeliveryWorkspace({
         </p>
         <Button size="sm" variant="outline" disabled={busy || !sourceSync?.changedIds.length} onClick={refreshTimelineMedia}>{locale === "en" ? "Refresh adopted media" : "更新已采用素材"}</Button>
       </section>}
+      <Dialog open={subtitleResetOpen} onOpenChange={setSubtitleResetOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{locale === "en" ? "Replan subtitle timing" : "重新分配字幕时间"}</DialogTitle>
+            <DialogDescription>{locale === "en" ? "This replaces manual subtitle in/out points with timings based on the current shot lengths, reading estimates, and recorded audio durations. Save the timeline to apply." : "这会按当前镜头长度、阅读估计和已测音频时长替换手动字幕入出点。保存时间线后生效。"}</DialogDescription></DialogHeader>
+          <DialogFooter><Button variant="outline" onClick={() => setSubtitleResetOpen(false)}>{locale === "en" ? "Cancel" : "取消"}</Button><Button onClick={resetSubtitleTiming}>{locale === "en" ? "Replan" : "重新分配"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={rebuildOpen} onOpenChange={setRebuildOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>{text.rebuild}</DialogTitle><DialogDescription>{locale === "en" ? "Rebuilding replaces shot order, timing and trims. To keep your edit, use Refresh adopted media instead." : "重建会替换镜头顺序、时长和裁剪设置。保留现有剪辑请使用“更新已采用素材”。"}</DialogDescription></DialogHeader>
@@ -453,10 +477,10 @@ export function DeliveryWorkspace({
           onValueChange={setActiveWorkspaceTab}
           value={activeWorkspaceTab}
         >
-          <div className="flex min-h-11 flex-wrap items-center gap-4 border-b text-xs">
+          <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 border-b py-1 text-xs">
             <TabsList
               aria-label={text.title}
-              className="h-11 max-w-full shrink-0 justify-start gap-5 overflow-x-auto px-1"
+              className="h-8 max-w-full shrink-0 justify-start gap-3 overflow-x-auto px-0"
               variant="line"
             >
               <TabsTrigger className="px-2" value="timeline">
@@ -467,8 +491,8 @@ export function DeliveryWorkspace({
               </TabsTrigger>
             </TabsList>
             {activeWorkspaceTab === "timeline" ? (
-              <div className="ml-auto flex items-center gap-5">
-                <span className="font-semibold">
+              <div className="ml-auto flex flex-wrap items-center gap-3">
+                <span className="whitespace-nowrap font-semibold">
                   {text.timelineDuration} · {timeline.duration.toFixed(1)} {text.seconds}
                 </span>
                 <label className="flex items-center gap-2 text-muted-foreground">
@@ -476,7 +500,7 @@ export function DeliveryWorkspace({
                   <span className="sr-only">{text.timelineZoom}</span>
                   <input
                     aria-label={text.timelineZoom}
-                    className="w-28 accent-foreground"
+                    className="w-20 accent-foreground sm:w-24"
                     max={64}
                     min={18}
                     onChange={(event) => setPixelsPerSecond(Number(event.target.value))}
@@ -500,17 +524,25 @@ export function DeliveryWorkspace({
                 subtitles={subtitles}
                 timeline={timeline}
               />
-              <div className="grid min-w-0 2xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.8fr)]">
-                <section className="min-w-0 py-5 2xl:pr-6">
+              <div className="grid min-w-0 @min-[48rem]:grid-cols-[minmax(0,1.2fr)_minmax(300px,1fr)]">
+                <section className="min-w-0 py-3 @min-[48rem]:pr-4">
                   <h2 className="mb-2 text-sm font-semibold">{text.preview}</h2>
-                  <div className="overflow-hidden rounded-md border bg-muted/30">
-                    <AspectRatio ratio={16 / 9}>
+                  <div
+                    className="mx-auto w-full overflow-hidden rounded-md border bg-muted/30"
+                    style={{ maxWidth: `min(100%, calc(clamp(160px, calc(100dvh - 540px), 320px) * ${previewRatio}))` }}
+                  >
+                    <AspectRatio ratio={previewRatio}>
                       {previewAsset?.url && previewAsset.kind === "image" ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
                           alt={text.preview}
-                          className="size-full object-contain"
+                          className="size-full bg-black"
+                          style={{ objectFit: selectedTrack?.imageFit === "crop" ? "cover" : "contain" }}
                           src={previewAsset.url}
+                          onLoad={event => {
+                            const image = event.currentTarget;
+                            setMeasuredImages(previous => ({ ...previous, [previewAsset.id]: { width: image.naturalWidth, height: image.naturalHeight } }));
+                          }}
                         />
                       ) : previewAsset?.url ? (
                         <video
@@ -526,52 +558,49 @@ export function DeliveryWorkspace({
                       )}
                     </AspectRatio>
                   </div>
+                  {selectedTrack && previewAsset?.kind === "image" && <ImageFramingControl locale={locale} ratio={snapshot.project.config.videoRatio}
+                    metadata={measuredImages[previewAsset.id] ? { ...previewAsset.metadata, imageInspection: measuredImages[previewAsset.id] } : previewAsset.metadata}
+                    value={selectedTrack.imageFit ?? "contain"}
+                    onChange={imageFit => setTimeline(updateTimelineTrackSettings(timeline, selectedTrack.id, { imageFit }))} />}
                 </section>
 
-                <aside className="min-w-0 border-t py-5 2xl:border-t-0 2xl:border-l 2xl:pl-6">
+                <aside className="min-w-0 border-t py-3 @min-[48rem]:border-t-0 @min-[48rem]:border-l @min-[48rem]:pl-4">
                   <h2 className="text-sm font-semibold">{text.review}</h2>
                   {selectedTrack ? (
-                    <dl className="mt-2 grid grid-cols-2 border-y text-sm">
-                      <div className="border-b py-3 pr-3">
+                    <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 border-y py-2 text-xs">
+                      <div className="flex min-w-0 items-baseline justify-between gap-2">
                         <dt className="text-xs text-muted-foreground">{text.shot}</dt>
-                        <dd className="mt-1 font-mono font-medium">
+                        <dd className="font-mono font-medium">
                           {String(selectedTrack.shotIndex + 1).padStart(2, "0")}
                         </dd>
                       </div>
-                      <div className="border-b border-l py-3 pl-3">
+                      <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-2">
                         <dt className="text-xs text-muted-foreground">{text.range}</dt>
-                        <dd className="mt-1 font-mono font-medium">
+                        <dd className="font-mono font-medium">
                           {selectedTrack.start.toFixed(1)}–{selectedTrack.end.toFixed(1)}s
                         </dd>
                       </div>
-                      <div className="py-3 pr-3">
+                      <div className="flex min-w-0 items-baseline justify-between gap-2">
                         <dt className="text-xs text-muted-foreground">{text.media}</dt>
-                        <dd className="mt-1 font-medium">{selectedTrack.type === "image" ? text.image : text.video}</dd>
+                        <dd className="font-medium">{selectedTrack.type === "image" ? text.image : text.video}</dd>
                       </div>
-                      <div className="border-l py-3 pl-3">
+                      <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-2">
                         <dt className="text-xs text-muted-foreground">{text.transition}</dt>
-                        <dd className="mt-1 font-medium">
+                        <dd className="font-medium">
                           {selectedTrack.transition === "fade" ? text.fade : text.cut}
                         </dd>
                       </div>
                     </dl>
                   ) : null}
 
-                  <section className="mt-5">
-                    <h3 className="text-sm font-semibold">{text.subtitles}</h3>
+                  <section className="mt-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-sm font-semibold">{text.subtitles}</h3>
+                      <Button size="sm" variant="outline" disabled={busy} onClick={() => setSubtitleResetOpen(true)}>{locale === "en" ? "Replan timings" : "重排字幕时间"}</Button>
+                    </div>
+                    <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{locale === "en" ? "Uses reading time or measured audio; manual timings stay until replanned." : "按阅读量或实测音频分配，手动时间需主动重排。"}</p>
                     {selectedSubtitles.length ? (
-                      <div className="mt-2 divide-y border-y">
-                        {selectedSubtitles.map((subtitle) => (
-                          <div className="py-3" key={subtitle.id}>
-                            <span className="text-xs font-medium">
-                              {subtitle.speaker}
-                            </span>
-                            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                              {subtitle.text}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
+                      <SubtitleEditor locale={locale} subtitles={subtitles} visibleIds={new Set(selectedSubtitles.map(cue => cue.id))} duration={timeline.duration} onChange={setSubtitles} voiceLines={subtitleVoiceLines} />
                     ) : (
                       <p className="mt-2 border-y py-4 text-sm text-muted-foreground">
                         {text.noSubtitles}

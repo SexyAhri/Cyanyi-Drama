@@ -945,7 +945,7 @@ export async function generateStudioPanelImage(
   projectId: string,
   episodeId: string,
   panelId: string,
-  input: { channelId: string; model: string; prompt?: string },
+  input: { channelId: string; model: string; prompt?: string; previewConfigurationHash?: string; previewRequestHash?: string },
 ) {
   return request<{ task: MediaTask; panel: Record<string, unknown> }>(
     `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard/${encodeURIComponent(panelId)}/generate`,
@@ -1493,8 +1493,8 @@ export async function renderStudioTimeline(
   projectId: string,
   episodeId: string,
   input: {
-    channelId: string;
-    model: string;
+    channelId?: string;
+    model?: string;
     ratio: string;
     resolution: string;
     fps: number;

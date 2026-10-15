@@ -73,7 +73,7 @@ export type MediaTask = {
   kind: MediaTaskKind;
   status: MediaTaskStatus;
   provider: string;
-  protocol: ChannelProtocol;
+  protocol: ChannelProtocol | "local";
   model: string;
   request: Record<string, unknown>;
   hasSavedProviderOutput?: boolean;
@@ -137,7 +137,7 @@ export function createMediaTask(input: {
   idempotencyKey?: string;
   kind: MediaTaskKind;
   provider: string;
-  protocol: ChannelProtocol;
+  protocol: ChannelProtocol | "local";
   model: string;
   request: Record<string, unknown>;
   maxRetries?: number;

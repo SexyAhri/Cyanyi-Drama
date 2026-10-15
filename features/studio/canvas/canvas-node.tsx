@@ -262,7 +262,7 @@ export function CanvasNode({
               {inputs.length
                 ? locale === "en"
                   ? "Inputs connected. Select to write a prompt."
-                  : "已连接参考，点击填写创作提示词"
+                  : "已连接上游节点，点击填写创作提示词"
                 : locale === "en"
                   ? "Select to add content or connect inputs"
                   : "点击填写内容，或连接参考素材"}
@@ -297,7 +297,7 @@ export function CanvasNode({
             className="absolute bottom-2 left-2 right-2 truncate rounded-md bg-background/90 px-2 py-1 text-[11px] text-muted-foreground"
             title={inputs.join(" · ")}
           >
-            {locale === "en" ? "From: " : "引用："}
+            {locale === "en" ? "Connections: " : "关系："}
             {inputs.join(" · ")}
           </div>
         )}

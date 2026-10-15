@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DataTable } from "@/components/ui/data-table";
 import {
   Select,
   SelectContent,
@@ -16,11 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
   TableCell,
-  TableHead,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
 
@@ -92,16 +89,16 @@ export function TopupsPage() {
         </Button>
       }
       description="查看易支付订单、到账额度、支付状态和第三方交易号。订单状态由支付回调更新。"
-      title="充值管理"
+      title="充值订单"
     >
       <form
-        className="flex flex-col gap-3 border-b pb-4 sm:flex-row"
+        className="flex shrink-0 flex-wrap gap-2"
         onSubmit={(event) => {
           event.preventDefault();
           setAppliedQuery(query.trim());
         }}
       >
-        <div className="relative max-w-lg flex-1">
+        <div className="relative min-w-48 flex-1">
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             aria-label="搜索充值订单"
@@ -112,7 +109,7 @@ export function TopupsPage() {
           />
         </div>
         <Select onValueChange={(value) => value && setStatus(value)} value={status}>
-          <SelectTrigger className="w-full sm:w-40"><SelectValue /></SelectTrigger>
+          <SelectTrigger aria-label="充值订单状态" className="w-36"><SelectValue>{statusLabel(status)}</SelectValue></SelectTrigger>
           <SelectContent>
             {statuses.map((item) => (
               <SelectItem key={item} value={item}>{statusLabel(item)}</SelectItem>
@@ -122,34 +119,18 @@ export function TopupsPage() {
         <Button type="submit">查询</Button>
       </form>
 
-      <div className="mt-5 grid border-y sm:grid-cols-3">
+      <div className="grid shrink-0 grid-cols-3 border-y">
         <Metric label="订单数" value={String(payload?.summary.count ?? 0)} />
         <Metric label="支付金额" value={`¥ ${payload?.summary.amount ?? "0"}`} />
         <Metric label="到账额度" value={`¥ ${payload?.summary.creditAmount ?? "0"}`} />
       </div>
 
       {error ? (
-        <Alert className="mt-5" variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
+        <Alert className="shrink-0" variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
       ) : null}
 
-      <div className="mt-5 overflow-hidden border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>创建时间</TableHead>
-              <TableHead>用户</TableHead>
-              <TableHead>订单号</TableHead>
-              <TableHead>方式</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead className="text-right">支付 / 到账</TableHead>
-              <TableHead>支付时间</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading && !payload ? (
-              <TableRow><TableCell className="h-32 text-center text-muted-foreground" colSpan={7}>正在加载充值订单...</TableCell></TableRow>
-            ) : payload?.orders.length ? (
-              payload.orders.map((order) => (
+      <DataTable label="充值订单" loading={loading} totalCount={payload?.summary.count} headers={["创建时间", "用户", "订单号", "方式", "状态", "支付 / 到账", "支付时间"]} empty="暂无匹配的充值订单" className="min-w-[1000px]">
+              {payload?.orders.map((order) => (
                 <TableRow key={order.id}>
                   <TableCell className="text-muted-foreground">{formatDate(order.createdAt)}</TableCell>
                   <TableCell>
@@ -162,25 +143,20 @@ export function TopupsPage() {
                   </TableCell>
                   <TableCell>{paymentLabel(order.paymentMethod)}</TableCell>
                   <TableCell><StatusBadge status={order.status} /></TableCell>
-                  <TableCell className="text-right font-mono">¥ {order.amount} / ¥ {order.creditAmount}</TableCell>
+                  <TableCell className="font-mono">¥ {order.amount} / ¥ {order.creditAmount}</TableCell>
                   <TableCell className="text-muted-foreground">{order.paidAt ? formatDate(order.paidAt) : "-"}</TableCell>
                 </TableRow>
-              ))
-            ) : (
-              <TableRow><TableCell className="h-32 text-center text-muted-foreground" colSpan={7}>暂无匹配的充值订单</TableCell></TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+              ))}
+      </DataTable>
     </AdminPage>
   );
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="border-b px-1 py-4 last:border-b-0 sm:border-r sm:border-b-0 sm:px-4 sm:first:pl-1 sm:last:border-r-0">
+    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-r px-3 py-2 first:pl-1 last:border-r-0">
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 text-xl font-semibold">{value}</p>
+      <p className="text-base font-semibold tabular-nums">{value}</p>
     </div>
   );
 }

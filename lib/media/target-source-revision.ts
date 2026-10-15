@@ -1,6 +1,17 @@
 import { createHash } from "node:crypto";
 import { prisma } from "@/lib/server/prisma";
 import { storyboardSourceFingerprintForPanel, storyboardSourceFingerprintForPanelLegacy } from "./storyboard-source-revision";
+import { canvasAssetTargets, canvasDocumentSchema } from "@/lib/studio/canvas-document";
+import { resolveCanvasGeneration } from "@/lib/studio/canvas-generation";
+
+export function fingerprintCanvasGenerationSource(input: {
+  prompt: string;
+  references: Array<{ assetId: string; role: string }>;
+  targets: Array<{ entityType: string; entityId: string }>;
+  kind: "image" | "video";
+}) {
+  return createHash("sha256").update(JSON.stringify({ prompt: input.prompt, references: input.references, targets: input.targets, kind: input.kind })).digest("hex");
+}
 
 export function fingerprintMediaTargetSource(source: unknown, request: Record<string, unknown>) {
   const references = [
@@ -43,7 +54,7 @@ export async function captureMediaTargetSourceRevision(input: {
   request: Record<string, unknown>;
 }) {
   const { userId, projectId, episodeId, targetType, targetId, request } = input;
-  const revisionVersion = input.revisionVersion ?? 2;
+  const revisionVersion = input.revisionVersion ?? (targetType === "canvas_node" ? 3 : 2);
   if (!targetType || !targetId) return undefined;
   let source: unknown;
 
@@ -118,6 +129,22 @@ export async function captureMediaTargetSourceRevision(input: {
       select: { revision: true, document: true },
     });
     if (canvas) {
+      if (revisionVersion >= 3) {
+        const parsed = canvasDocumentSchema.safeParse(canvas.document);
+        const node = parsed.success ? parsed.data.nodes.find((item) => item.id === targetId) : undefined;
+        let fingerprint: string;
+        if (parsed.success && node && projectId) {
+          const kind = request.format === "mp4" || request.videoMode ? "video" : "image";
+          try {
+            const compiled = await resolveCanvasGeneration({ document: parsed.data, node, kind, userId, projectId, episodeId });
+            fingerprint = fingerprintCanvasGenerationSource({ prompt: compiled.prompt, references: compiled.references, targets: kind === "image" ? canvasAssetTargets(node, parsed.data) : [], kind });
+          } catch {
+            // Deleted or inaccessible inputs invalidate the result instead of attaching it.
+            fingerprint = fingerprintMediaTargetSource({ unavailableCanvasInput: targetId }, {});
+          }
+        } else fingerprint = fingerprintMediaTargetSource({ missingCanvasNode: targetId }, {});
+        return { targetType, targetId, revisionVersion, fingerprint };
+      }
       const document = canvas.document as { nodes?: Array<{ id?: string }> };
       source = { revision: canvas.revision, node: document.nodes?.find((node) => node.id === targetId) ?? null };
     }

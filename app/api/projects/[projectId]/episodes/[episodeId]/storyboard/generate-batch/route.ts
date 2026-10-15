@@ -10,12 +10,13 @@ import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { submitBatchItems } from "@/lib/media/batch-submission";
 import { preflightStoryboardBatch } from "@/lib/media/storyboard-batch-preflight";
 import { getMediaBudgetSummary, setMediaBudgetLimit } from "@/lib/billing/media-budget";
+import { productionRequestOptionsSchema, productionRequestErrorStatus } from "@/lib/production-configuration/execution";
 
 type Context = {
   params: Promise<{ projectId: string; episodeId: string }>;
 };
 
-type PanelItem = { panelId: string; prompt?: string; iteration?: unknown };
+type PanelItem = { panelId: string; prompt?: string; iteration?: unknown; previewConfigurationHash?: string; previewRequestHash?: string };
 
 export async function POST(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
@@ -40,6 +41,12 @@ export async function POST(request: Request, context: Context) {
 
   const batchId = `storyboard_batch_${randomUUID()}`;
   const mediaDefaults = await loadUserRuntimeSettings(user.id);
+  try {
+    productionRequestOptionsSchema.parse(body);
+    items.forEach(item => productionRequestOptionsSchema.parse(item));
+  } catch (error) {
+    return attachSessionCookie(Response.json({ message: error instanceof Error ? error.message : "配置无效" }, { status: productionRequestErrorStatus(error) ?? 400 }), sessionId);
+  }
   const preflight = await preflightStoryboardBatch({
     userId: user.id,
     projectId,
@@ -47,6 +54,8 @@ export async function POST(request: Request, context: Context) {
     channelId,
     model,
     kind: "image",
+    ratio: stringValue(body.ratio) || undefined,
+    resolution: stringValue(body.resolution) || undefined,
     items,
     batchBudgetLimit,
     mediaDefaults,
@@ -60,6 +69,7 @@ export async function POST(request: Request, context: Context) {
   const submitted = await submitBatchItems(
     items.slice(0, 50),
     async (item) => createStoryboardPanelImageTask({
+        ...productionRequestOptionsSchema.parse(item),
         userId: user.id,
         projectId,
         episodeId,
@@ -110,7 +120,9 @@ function isPanelItem(value: unknown): value is PanelItem {
   return (
     typeof item.panelId === "string" &&
     item.panelId.trim().length > 0 &&
-    (item.prompt === undefined || typeof item.prompt === "string")
+    (item.prompt === undefined || typeof item.prompt === "string") &&
+    (item.previewConfigurationHash === undefined || typeof item.previewConfigurationHash === "string") &&
+    (item.previewRequestHash === undefined || typeof item.previewRequestHash === "string")
   );
 }
 

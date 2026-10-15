@@ -1,11 +1,13 @@
 import type { MediaAsset } from "@/lib/media/task-contract";
 import { stripAudioFromVideoUrl, inspectVideoBytes } from "@/lib/providers/local/ffmpeg-video";
 import { storeMediaBytes } from "@/lib/storage";
+import { inspectImageBytes } from "@/lib/providers/local/image-inspection";
 
 export async function storeGeneratedMediaAsset(input: {
   asset: MediaAsset;
   storageKey: string;
   stripVideoAudio: boolean;
+  expectedImageRatio?: string;
   signal?: AbortSignal;
   videoValidation?: { requireAudio: boolean; expectedDurationSeconds?: number };
   onExecutionPhase?: (phase: "downloading" | "saving") => Promise<void>;
@@ -33,6 +35,16 @@ export async function storeGeneratedMediaAsset(input: {
       ? dataUrlBytes(input.asset.url)
       : new Uint8Array(await response!.arrayBuffer());
     const contentType = input.asset.mimeType || response?.headers.get("content-type") || undefined;
+    if (input.asset.kind === "image") {
+      const inspection = await inspectImageBytes(bytes);
+      input.asset.width = inspection.width;
+      input.asset.height = inspection.height;
+      const [expectedWidth, expectedHeight] = (input.expectedImageRatio ?? "").split(":").map(Number);
+      const expectedRatio = expectedWidth > 0 && expectedHeight > 0 ? expectedWidth / expectedHeight : undefined;
+      input.asset.metadata = { ...input.asset.metadata, imageInspection: { ...inspection,
+        ...(expectedRatio ? { requestedRatio: input.expectedImageRatio, aspectMismatch: Math.abs(inspection.width / inspection.height / expectedRatio - 1) > 0.01 } : {}),
+      } };
+    }
     if (!isDataUrl) await input.onExecutionPhase?.("saving");
     return storeMediaBytes(bytes, input.storageKey, contentType);
   }

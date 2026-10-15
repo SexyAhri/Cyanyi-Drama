@@ -7,6 +7,7 @@ import {
   linkedCanvasAsset,
   panelCard,
 } from "./canvas-view-model";
+import { syncCanvasProduction } from "./canvas-production-sync";
 
 export const EPISODE_CANVAS_LAYOUT_VERSION = 4;
 
@@ -38,6 +39,7 @@ export function buildEpisodeCanvasGraph(
   },
   protectedNodeIds: ReadonlySet<string> = new Set(),
 ): CanvasDocument {
+  document = syncCanvasProduction(document, panels, catalog);
   const orderedPanels = [...panels].sort((a, b) => a.panelIndex - b.panelIndex);
   const nodes = document.nodes.filter((node) => !node.sourceEpisodeId).map((node) => ({ ...node }));
   const removedIds = new Set<string>();
@@ -94,7 +96,8 @@ export function buildEpisodeCanvasGraph(
       ...existing,
       id,
       kind: "video" as const,
-      title: `镜头 ${panel.panelIndex + 1} · 视频`,
+      title: existing?.title ?? `镜头 ${panel.panelIndex + 1} · 视频`,
+      defaultTitle: `镜头 ${panel.panelIndex + 1} · 视频`,
       text: existing?.text ?? prompt,
       videoText: existing?.videoText ?? prompt,
       panelId: panel.id,
@@ -192,8 +195,9 @@ export function buildEpisodeCanvasGraph(
       ...existing,
       id,
       kind: "image" as const,
-      title: `${asset.title} · 图片`.slice(0, 300),
+      title: existing?.title ?? `${asset.title} · 图片`.slice(0, 300),
       text: existing?.text || prompt,
+      assetPromptBase: existing?.assetPromptBase ?? (!existing || existing.text === prompt ? { entityId: asset.id, prompt } : undefined),
       panelId: undefined,
       entityId: undefined,
       episodeLayer: "asset_image" as const,

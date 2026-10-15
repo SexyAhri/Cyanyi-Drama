@@ -25,6 +25,7 @@ export interface TimelineSegment {
   requiresAudio?: boolean;
   transition?: "cut" | "fade";
   transitionDurationSeconds?: number;
+  imageFit?: "contain" | "crop";
 }
 
 export interface TimelineSubtitleCue {
@@ -228,16 +229,17 @@ export function buildNormalizeSegmentArgs(
   if (segment.kind === "image" || segment.durationSeconds)
     args.push("-t", String(duration));
   const filters = [
-    `scale=${specification.width}:${specification.height}:force_original_aspect_ratio=decrease`,
-    `pad=${specification.width}:${specification.height}:(ow-iw)/2:(oh-ih)/2:color=black`,
+    ...(segment.imageFit === "crop" ? [
+      `scale=${specification.width}:${specification.height}:force_original_aspect_ratio=increase`,
+      `crop=${specification.width}:${specification.height}`,
+    ] : [
+      `scale=${specification.width}:${specification.height}:force_original_aspect_ratio=decrease`,
+      `pad=${specification.width}:${specification.height}:(ow-iw)/2:(oh-ih)/2:color=black`,
+    ]),
     "setsar=1",
   ];
-  if (segment.kind === "image") {
-    const zoomIncrement = 0.03 / Math.max(1, duration * specification.fps);
-    filters.push(
-      `zoompan=z='min(max(zoom,pzoom)+${zoomIncrement.toFixed(8)},1.03)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${specification.width}x${specification.height}:fps=${specification.fps}`,
-    );
-  }
+  // Keep the saved framing stable throughout the clip so the preview matches
+  // the output. An implicit push-in would alter both contain and crop bounds.
   if (segment.kind !== "image" && segment.durationSeconds)
     filters.push(`tpad=stop_mode=clone:stop_duration=${duration}`);
   const transitionDuration = Math.min(

@@ -1,10 +1,10 @@
-import { StoryPackageFirstEpisodeGenerationSchema, type StoryPackage } from "./story-package-contract";
+import { StoryPackageFirstEpisodeSchema, type StoryPackage } from "./story-package-contract";
 
 /** Normalize presentation differences without inventing new story assets. */
 export function normalizeOriginalEpisodeOutput(value: unknown, story: StoryPackage, locale: "zh" | "en") {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const raw = value as Record<string, unknown>;
-  const parsed = StoryPackageFirstEpisodeGenerationSchema.shape.firstEpisode.safeParse(raw.episode);
+  const parsed = StoryPackageFirstEpisodeSchema.shape.firstEpisode.safeParse(raw.episode);
   if (!parsed.success) return value;
   const key = (name: string) => name.normalize("NFKC").trim().replace(/[\s「」『』“”"']/gu, "").toLocaleLowerCase();
   const base = (name: string) => key(name).replace(/\([^()]*\)/gu, "");

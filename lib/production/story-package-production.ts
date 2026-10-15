@@ -3,7 +3,8 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/server/prisma";
 import { parseApprovedScreenplay } from "@/lib/novel/approved-screenplay-parser";
 import { screenplayConversionSchema } from "@/lib/prompts/schemas";
-import { StoryPackageSchema, StoryPackageFirstEpisodeGenerationSchema, type StoryPackage } from "./story-package-contract";
+import { StoryPackageSchema, StoryPackageFirstEpisodeSchema, type StoryPackage } from "./story-package-contract";
+import { canonicalSceneDialogue } from "./story-quality-contract";
 
 export function renderPackageScene(scene: StoryPackage["firstEpisode"]["scenes"][number]) {
   return [
@@ -66,18 +67,20 @@ export async function seedPackageProduction(tx: Prisma.TransactionClient, input:
       charactersJson: JSON.stringify(scene.characters), locationsJson: JSON.stringify([scene.location]),
       propsJson: JSON.stringify(scene.props), status: "screenplay_ready", shotCount: 1 } });
     // A scene-level prompt is an editable draft, never an automatically approved shot plan.
-    const dialogueLines = parsed.lines.filter(line => line.kind === "dialogue");
-    const dialogueSpeakers = [...new Set(dialogueLines.map(line => line.character).filter(Boolean))];
+    const dialogueLines = canonicalSceneDialogue(scene).map(line => ({ ...line, sourceId: line.id, id: randomUUID(),
+      delivery: parsed.lines.find(parsedLine => parsedLine.text === line.content && (parsedLine.character ?? "旁白") === line.speaker)?.kind ?? "dialogue" }));
+    const spokenLines = dialogueLines.filter(line => line.delivery === "dialogue");
+    const dialogueSpeakers = [...new Set(spokenLines.map(line => line.speaker))];
     await tx.storyboardPanel.create({ data: { id: panelId, storyboardId, clipId, clipPanelIndex: 0,
       panelIndex: clipIndex, sceneNumber: scene.sceneNumber - 1, description: scene.action,
       cameraMove: scene.camera, locationName: scene.location, charactersJson: JSON.stringify(scene.characters),
       propsJson: JSON.stringify(scene.props), imagePrompt: scene.imagePrompt, videoPrompt: scene.videoPrompt,
       durationSeconds: scene.durationSeconds, srtStart: elapsed, srtEnd: elapsed + scene.durationSeconds,
       speakingCharacter: dialogueSpeakers.length === 1 ? dialogueSpeakers[0] : null,
-      lipSyncText: dialogueSpeakers.length === 1 ? dialogueLines.map(line => line.text).join("\n") : null,
-      voiceoverText: parsed.lines.filter(line => line.kind === "voiceover").map(line => line.text).join("\n") || null,
+      lipSyncText: dialogueSpeakers.length === 1 ? spokenLines.map(line => line.content).join("\n") : null,
+      voiceoverText: dialogueLines.filter(line => line.delivery === "voiceover").map(line => line.content).join("\n") || null,
       subtitleText: scene.dialogue.map(line => `${line.speaker}：${line.line}`).join("\n"),
-      endStateJson: JSON.stringify({ body: scene.endState }),
+      endStateJson: JSON.stringify(scene.continuity?.endState ?? { body: scene.endState }),
       startStateJson: scene.productionDesign ? JSON.stringify(scene.productionDesign.startState) : null,
       motionBeatsJson: scene.productionDesign ? JSON.stringify(scene.productionDesign.motionBeats) : null,
       actingNotesJson: scene.productionDesign ? JSON.stringify({ characters: scene.productionDesign.acting }) : null,
@@ -88,12 +91,14 @@ export async function seedPackageProduction(tx: Prisma.TransactionClient, input:
       worldContextJson: JSON.stringify({ source: "story-package", deliverableId: input.deliverableId,
         ...scene.productionDesign?.worldContext,
         sceneNumber: scene.sceneNumber, imageReferenceSlots: scene.imageReferenceSlots,
+        dialogueLedger: dialogueLines,
+        continuityTransitions: scene.continuity?.transitions ?? [], keyframeMoment: "start",
         referenceScopes: scene.imageReferenceSlots.map(slot => ({ assetName: slot.name,
           inherit: ["已确认的资产外观设定"], exclude: ["参考图中的临时姿态和动作"] })) }), status: "draft" } });
-    for (const line of parsed.lines) {
-      const speaker = line.character ?? "旁白";
-      await tx.voiceLine.create({ data: { id: randomUUID(), episodeId: episode.id, lineIndex: lineIndex++,
-        speaker, content: line.text, delivery: line.kind, matchedPanelId: panelId,
+    for (const line of dialogueLines) {
+      const speaker = line.speaker;
+      await tx.voiceLine.create({ data: { id: line.id, episodeId: episode.id, lineIndex: lineIndex++,
+        speaker, content: line.content, delivery: line.delivery, matchedPanelId: panelId,
         voiceProfilePrompt: input.story.characters.find(character => character.name === speaker)?.voiceStyle || null } });
     }
     elapsed += scene.durationSeconds;
@@ -118,7 +123,7 @@ export async function syncAdoptedPackageProduction(input: { userId: string; proj
     const story = StoryPackageSchema.parse(payload.storyPackage);
     if (source && source.episodeNumber > 1 && activeSource?.instructions?.includes("；原创续写 ")) {
       const trace = activeSource.promptTrace as Record<string, unknown> | null;
-      const continued = StoryPackageFirstEpisodeGenerationSchema.shape.firstEpisode.safeParse(trace?.episode);
+      const continued = StoryPackageFirstEpisodeSchema.shape.firstEpisode.safeParse(trace?.episode);
       if (!continued.success) return { synced: false };
       story.firstEpisode = continued.data;
     }

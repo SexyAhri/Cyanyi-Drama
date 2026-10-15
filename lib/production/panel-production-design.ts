@@ -61,6 +61,13 @@ export const PanelProductionDesignSchema = z.object({
 
 export type PanelProductionDesign = z.infer<typeof PanelProductionDesignSchema>;
 
+/** Frozen at the dramatic draft stage; media design cannot change these boundary facts. */
+export const SceneContinuitySchema = z.object({
+  startState: PanelProductionDesignSchema.shape.startState,
+  endState: PanelProductionDesignSchema.shape.startState,
+  transitions: z.array(z.object({ subject: text, before: text, action: text, after: text })),
+});
+
 export function validatePanelProductionDesign(
   design: PanelProductionDesign,
   duration: number,

@@ -20,6 +20,7 @@ import { structuredRequestOptions } from "@/lib/settings/runtime-contract";
 import { loadUserRuntimeSettings } from "@/lib/settings/runtime-store";
 import { withProductionRules } from "@/lib/prompts/production-rules";
 import { lockVideoAudioPerformance } from "./director-prompt-locks";
+import { validateSceneDialoguePrompt } from "@/lib/production/story-quality-contract";
 
 export type StoryboardMediaPromptKind = "image" | "video";
 export type StoryboardVideoMode = "reference" | "first-last";
@@ -97,6 +98,8 @@ export async function captureStoryboardPromptContext(input: {
       imageAssetId: true,
       videoAssetId: true,
       linkedToNextPanel: true,
+      voiceLines: { where: { episodeId: input.episodeId }, orderBy: { lineIndex: "asc" },
+        select: { id: true, lineIndex: true, speaker: true, content: true, delivery: true } },
     },
   });
   if (!panel) throw new StoryboardPromptDesignError("分镜格不存在", 404);
@@ -168,6 +171,9 @@ export async function designStoryboardMediaPrompt(input: StoryboardPromptInput) 
   const imageUrls = referenceAssetIds.map((id) => references.find((asset) => asset.id === id)!.url);
   const locale = input.locale === "en" ? "en" : "zh";
   const mode = input.kind === "video" ? input.mode ?? "reference" : "keyframe";
+  const dialogueLedger = panel.voiceLines ?? [];
+  const enabledSpeech = configuration.sound.mode === "native" ? (configuration.sound.speechLines ?? dialogueLedger).filter(line =>
+    line.delivery === "dialogue" ? configuration.sound.dialogue : line.delivery === "inner_monologue" ? configuration.sound.innerMonologue : configuration.sound.voiceover) : [];
   const currentPrompt =
     input.currentPrompt?.trim() ||
     (input.kind === "image"
@@ -205,12 +211,17 @@ export async function designStoryboardMediaPrompt(input: StoryboardPromptInput) 
         designNotes: z.array(z.string().trim().min(1).max(600)).max(16),
         continuitySafeguards: z.array(z.string().trim().min(1).max(600)).max(16),
         spatialAudit: spatialAuditContentSchema }).strict(),
+      validate: data => input.kind === "video" ? validateSceneDialoguePrompt(data.prompt, enabledSpeech) : [],
     })
     : requestOpenAiText({ ...provider, prompt, temperature: 0.35 }));
   const design: StoryboardMediaPromptDesign = "data" in result
     ? { ...result.data, spatialAudit: { ...result.data.spatialAudit, referenceAssetIds } }
     : parseStoryboardMediaPromptDesignText(result.text);
-  if (input.kind === "video") design.prompt = lockVideoAudioPerformance(design.prompt, { ...panel, locale, soundPolicy: configuration.sound });
+  if (input.kind === "video") {
+    const dialogueIssues = validateSceneDialoguePrompt(design.prompt, enabledSpeech);
+    if (dialogueIssues.length) throw new StoryboardPromptDesignError(`${locale === "en" ? "Dialogue coverage or order differs from the approved lines" : "提示词与已确认台词的顺序、内容或说话人不一致"}：${dialogueIssues.map(issue => issue.message).join("；")}`, 422);
+    design.prompt = lockVideoAudioPerformance(design.prompt, { ...panel, voiceLines: dialogueLedger, locale, soundPolicy: configuration.sound });
+  }
   return {
     design,
     rawOutput: result.outputText,
@@ -339,6 +350,7 @@ export function serializePanel(panel: Record<string, unknown>) {
     props: parseStringList(valueString(panel.propsJson)),
     durationSeconds: panel.durationSeconds,
     subtitleText: panel.subtitleText,
+    dialogueLedger: panel.voiceLines ?? [],
     speakingCharacter: panel.speakingCharacter,
     lipSyncText: panel.lipSyncText,
     voiceoverText: panel.voiceoverText,

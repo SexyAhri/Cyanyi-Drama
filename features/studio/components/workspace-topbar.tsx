@@ -106,7 +106,7 @@ export function WorkspaceTopbar({
     updateSettingsQuery(open, requestedSettingsTab ?? "preferences");
   }
 
-  function changeSettingsTab(tab: "preferences" | "runtime" | "account" | "agents" | "sound") {
+  function changeSettingsTab(tab: "preferences" | "runtime" | "account" | "usage" | "agents" | "sound") {
     const params = new URLSearchParams(searchParams.toString());
     params.set("settings", tab);
     router.replace(`${pathname}?${params}`, { scroll: false });
@@ -339,9 +339,9 @@ export function WorkspaceTopbar({
   );
 }
 
-function parseSettingsTab(value: string | null): "preferences" | "runtime" | "account" | "agents" | "sound" | null {
+function parseSettingsTab(value: string | null): "preferences" | "runtime" | "account" | "usage" | "agents" | "sound" | null {
   if (value === "production") return "agents";
-  return value === "preferences" || value === "runtime" || value === "account" || value === "agents" || value === "sound"
+  return value === "preferences" || value === "runtime" || value === "account" || value === "usage" || value === "agents" || value === "sound"
     ? value
     : null;
 }

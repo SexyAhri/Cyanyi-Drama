@@ -38,7 +38,7 @@ describe("render specification", () => {
     );
   });
 
-  it("transcodes video and still images to one concat-safe profile", () => {
+  it("keeps still framing fixed while transcoding all segments to one concat-safe profile", () => {
     const specification = normalizeRenderSpecification({
       resolution: "720p",
       aspectRatio: "16:9",
@@ -71,16 +71,46 @@ describe("render specification", () => {
       },
       specification,
     );
+    const croppedImage = buildNormalizeSegmentArgs(
+      "input.png",
+      "cropped.mp4",
+      {
+        url: "https://example.com/a.png",
+        panelIndex: 2,
+        kind: "image",
+        durationSeconds: 4,
+        imageFit: "crop",
+      },
+      specification,
+    );
     expect(video.join(" ")).toContain("scale=1280:720");
     expect(video.join(" ")).toContain("fps=25");
     expect(video).toEqual(expect.arrayContaining(["-ss", "1.25"]));
     expect(video.join(" ")).toContain("fade=t=in:st=0:d=0.5");
     expect(video.join(" ")).toContain("volume=0.75");
     expect(video.join(" ")).toContain("afade=t=out:st=3.5:d=0.5");
-    expect(image).toEqual(expect.arrayContaining(["-loop", "1", "-t", "4"]));
-    expect(image.join(" ")).toContain("anullsrc");
-    expect(image.join(" ")).toContain("zoompan=");
-    expect(image.join(" ")).toContain("1.03");
+    for (const still of [image, croppedImage]) {
+      const filter = still[still.indexOf("-vf") + 1];
+      expect(still).toEqual(expect.arrayContaining(["-loop", "1", "-t", "4"]));
+      expect(still.join(" ")).toContain("anullsrc");
+      expect(filter).not.toContain("zoompan=");
+      expect(filter).toContain("setsar=1");
+      expect(filter).toContain("fps=25");
+      expect(filter).toContain("format=yuv420p");
+      expect(still[still.indexOf("-c:v") + 1]).toBe("libx264");
+      expect(still[still.indexOf("-c:a") + 1]).toBe("aac");
+      expect(still[still.indexOf("-ar") + 1]).toBe("48000");
+      expect(still[still.indexOf("-ac") + 1]).toBe("2");
+      expect(still[still.indexOf("-video_track_timescale") + 1]).toBe("90000");
+    }
+    const containFilter = image[image.indexOf("-vf") + 1];
+    expect(containFilter).toContain("scale=1280:720:force_original_aspect_ratio=decrease");
+    expect(containFilter).toContain("pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black");
+    expect(containFilter).not.toContain("crop=");
+    const cropFilter = croppedImage[croppedImage.indexOf("-vf") + 1];
+    expect(cropFilter).toContain("scale=1280:720:force_original_aspect_ratio=increase");
+    expect(cropFilter).toContain("crop=1280:720,setsar=1");
+    expect(cropFilter).not.toContain("pad=");
     expect(video.join(" ")).not.toContain("zoompan=");
     const concatArgs = buildConcatFfmpegArgs(
       "inputs.txt",

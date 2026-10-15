@@ -3,7 +3,7 @@ import { z } from "zod";
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { prisma } from "@/lib/server/prisma";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
-import { canvasDocumentSchema } from "@/lib/studio/canvas-document";
+import { canvasAssetTargets, canvasDocumentSchema } from "@/lib/studio/canvas-document";
 import { resolveCanvasGeneration } from "@/lib/studio/canvas-generation";
 import {
   createStoryboardPanelImageTask,
@@ -13,6 +13,7 @@ import {
 } from "@/lib/media/project-asset-tasks";
 import { createMediaTask } from "@/lib/media/task-contract";
 import { createDatabaseMediaTaskStore } from "@/lib/media/task-store";
+import { fingerprintCanvasGenerationSource } from "@/lib/media/target-source-revision";
 import { enqueuePersistedMediaTask } from "@/lib/media/task-submit";
 import { isMediaChannelProtocol } from "@/lib/providers/media/registry";
 import { resolveVideoModelLimits } from "@/lib/media/video-segment-plan";
@@ -223,40 +224,30 @@ export async function POST(request: Request, context: Context) {
     const videoParameters = productionCapabilities ? normalizeVideoProductionParameters({ model: input.model, protocol: channel.protocol, capabilities: productionCapabilities, ratio: mediaDefaults.videoGenerationRatio, resolution: mediaDefaults.videoGenerationResolution, durationSeconds: Number.parseFloat(mediaDefaults.videoGenerationDuration), mode, referenceAudioCount: referenceAudios.length }) : undefined;
     if (!input.preview) assertPreviewConfiguration(productionConfiguration, input.previewConfigurationHash);
     const standalonePrompt = input.kind === "video" ? lockVideoAudioPerformance(rawStandalonePrompt, { soundPolicy: productionConfiguration.sound }) : rawStandalonePrompt;
+    const parameters = input.kind === "image"
+      ? { ratio: mediaDefaults.imageGenerationRatio, resolution: mediaDefaults.imageGenerationResolution, count: mediaDefaults.imageGenerationCount, n: mediaDefaults.imageGenerationCount, quality: mediaDefaults.imageGenerationQuality, format: "png" }
+      : { ratio: videoParameters!.ratio, resolution: videoParameters!.resolution, duration: videoParameters!.duration, videoMode: mode, audioMode: soundPolicyAudioMode(productionConfiguration.sound), format: "mp4" };
+    const generationRequest = {
+      productionConfiguration,
+      productionCapabilities,
+      prompt: standalonePrompt,
+      ...parameters,
+      ...(compiled.referenceImages.length ? { referenceImages: compiled.referenceImages } : {}),
+      ...(referenceAudios.length ? { referenceAudios } : {}),
+    };
+    const requestHash = mediaRequestPreviewFingerprint([{ model: input.model, channelId: input.channelId, request: generationRequest }]);
     if (input.preview)
       return reply({
         prompt: standalonePrompt,
         references: compiled.references,
         productionConfiguration,
         configurationHash: productionConfigurationFingerprint(productionConfiguration),
-        requestHash: videoParameters ? mediaRequestPreviewFingerprint([{ model: input.model, channelId: input.channelId, request: { productionConfiguration, prompt: standalonePrompt, ratio: videoParameters.ratio, resolution: videoParameters.resolution, duration: videoParameters.duration, videoMode: mode, audioMode: soundPolicyAudioMode(productionConfiguration.sound), referenceImages: compiled.referenceImages, referenceAudios } }]) : undefined,
+        requestHash,
         capabilities: productionCapabilities,
         issues: capabilityIssues,
-        parameters: videoParameters ? { ...videoParameters, channelId: input.channelId, model: input.model, audioMode: soundPolicyAudioMode(productionConfiguration.sound), referenceAudioCount: referenceAudios.length, videoMode: mode } : undefined,
+        parameters: { ...parameters, channelId: input.channelId, model: input.model, referenceAudioCount: referenceAudios.length },
       });
-    const canvasAssetTargets =
-      input.kind === "image"
-        ? [
-            ...new Map(
-              document.data.edges
-                .filter((edge) => edge.to === node.id)
-                .flatMap((edge) => {
-                  const source = document.data.nodes.find(
-                    (item) => item.id === edge.from,
-                  );
-                  return source &&
-                    ["character", "location", "prop"].includes(source.kind) &&
-                    source.entityId
-                    ? [[`${source.kind}:${source.entityId}`, {
-                        entityType: source.kind,
-                        entityId: source.entityId,
-                      }] as const]
-                    : [];
-                })
-                .slice(0, 32),
-            ).values(),
-          ]
-        : [];
+    assertPreviewRequest(requestHash, input.previewRequestHash);
     const task = createMediaTask({
       id: `media_task_${crypto.randomUUID()}`,
       idempotencyKey: key,
@@ -270,40 +261,13 @@ export async function POST(request: Request, context: Context) {
       protocol: channel.protocol,
       model: input.model,
       request: {
-        productionConfiguration,
-        productionCapabilities,
-        prompt: standalonePrompt,
+        ...generationRequest,
+        canvasInputFingerprint: fingerprintCanvasGenerationSource({ prompt: compiled.prompt, references: compiled.references, targets: input.kind === "image" ? canvasAssetTargets(node, document.data) : [], kind: input.kind }),
         canvasRevision: canvas.revision,
         canvasPromptVersionId: node.promptVersions?.at(-1)?.id,
-        ratio:
-          input.kind === "image"
-            ? mediaDefaults.imageGenerationRatio
-            : videoParameters!.ratio,
-        resolution:
-          input.kind === "image"
-            ? mediaDefaults.imageGenerationResolution
-            : videoParameters!.resolution,
-        ...(input.kind === "image"
-          ? {
-              count: mediaDefaults.imageGenerationCount,
-              n: mediaDefaults.imageGenerationCount,
-              quality: mediaDefaults.imageGenerationQuality,
-              format: "png",
-            }
-          : {
-              duration: videoParameters!.duration,
-              videoMode: mode,
-              audioMode: soundPolicyAudioMode(productionConfiguration.sound),
-              format: "mp4",
-              ...(referenceAudios.length ? { referenceAudios } : {}),
-            }),
-        ...(compiled.referenceImages.length
-          ? { referenceImages: compiled.referenceImages }
-          : {}),
-        ...(canvasAssetTargets.length ? { canvasAssetTargets } : {}),
+        canvasAssetTargets: input.kind === "image" ? canvasAssetTargets(node, document.data) : [],
       },
     });
-    assertPreviewRequest(mediaRequestPreviewFingerprint([task]), input.previewRequestHash);
     await store.create(task);
     return reply({ task: await enqueuePersistedMediaTask(user.id, task) }, 202);
   } catch (error) {

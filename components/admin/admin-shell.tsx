@@ -34,21 +34,21 @@ const navigationGroups = [
   {
     label: "模型服务",
     items: [
-      { href: "/admin/channels", label: "渠道", icon: SlidersHorizontal },
+      { href: "/admin/channels", label: "模型渠道", icon: SlidersHorizontal },
+      { href: "/admin/usage", label: "用量记录", icon: Activity },
     ],
   },
   {
-    label: "运营与财务",
+    label: "资金管理",
     items: [
-      { href: "/admin/usage", label: "使用日志", icon: Activity },
-      { href: "/admin/billing", label: "扣费系统", icon: CreditCard },
-      { href: "/admin/topups", label: "充值管理", icon: Landmark },
+      { href: "/admin/billing", label: "计费与余额", icon: CreditCard },
+      { href: "/admin/topups", label: "充值订单", icon: Landmark },
     ],
   },
   {
     label: "系统",
     items: [
-      { href: "/admin/system", label: "系统管理", icon: Settings2 },
+      { href: "/admin/system", label: "系统设置", icon: Settings2 },
     ],
   },
 ] as const;
@@ -60,7 +60,7 @@ export function AdminShell({
   const pathname = usePathname();
 
   return (
-    <div className="flex h-dvh min-h-0 bg-background">
+    <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
       <aside className="hidden w-60 shrink-0 border-r bg-sidebar/70 lg:flex lg:flex-col">
         <Link
           className="flex h-14 items-center gap-2 border-b px-4 text-sm font-medium text-muted-foreground hover:text-foreground"
@@ -103,7 +103,7 @@ export function AdminShell({
         </nav>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur sm:px-5">
           <AdminMobileNavigation pathname={pathname} />
           <ProductBrand />
@@ -113,7 +113,7 @@ export function AdminShell({
             <AuthAccountMenu compact locale="zh-CN" user={user} />
           </div>
         </header>
-        <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+        <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
       </div>
     </div>
   );

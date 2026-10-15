@@ -1,24 +1,56 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { findCharacterAppearance, panelFindFirst, characterFindMany, locationFindMany, propFindMany, assetReferenceFindMany } = vi.hoisted(() => ({
+const { findCharacterAppearance, panelFindFirst, characterFindMany, locationFindMany, propFindMany, assetReferenceFindMany, canvasFindFirst, locationFindFirst, owned } = vi.hoisted(() => ({
   findCharacterAppearance: vi.fn(), panelFindFirst: vi.fn(), characterFindMany: vi.fn(), locationFindMany: vi.fn(), propFindMany: vi.fn(), assetReferenceFindMany: vi.fn(),
+  canvasFindFirst: vi.fn(), locationFindFirst: vi.fn(), owned: vi.fn(),
 }));
 vi.mock("@/lib/server/prisma", () => ({
   prisma: {
     characterAppearance: { findFirst: findCharacterAppearance },
     storyboardPanel: { findFirst: panelFindFirst },
     novelCharacter: { findMany: characterFindMany },
-    novelLocation: { findMany: locationFindMany },
+    novelLocation: { findMany: locationFindMany, findFirst: locationFindFirst },
+    creativeCanvas: { findFirst: canvasFindFirst },
     novelProp: { findMany: propFindMany },
     assetReference: { findMany: assetReferenceFindMany },
   },
 }));
+vi.mock("@/lib/assets/project-store", () => ({ listOwnedProjectMediaAssets: owned }));
 
 import { captureMediaTargetSourceRevision } from "./target-source-revision";
 
 beforeEach(() => vi.clearAllMocks());
 
 describe("media target source revisions", () => {
+  it("ignores layout and unrelated edits but detects real canvas prompt and reference changes", async () => {
+    const document = {
+      nodes: [
+        { id: "image", kind: "image", text: "Two people", title: "Title", x: 0, y: 0 },
+        { id: "ref", kind: "location", entityId: "location", text: "Unused text", title: "Location", x: 1, y: 0 },
+        { id: "other", kind: "text", text: "Unrelated", title: "Other", x: 2, y: 0 },
+      ], edges: [{ id: "edge", from: "ref", to: "image", purpose: "reference" }], viewport: { x: 0, y: 0, k: 1 },
+    };
+    canvasFindFirst.mockResolvedValue({ revision: 1, document });
+    locationFindFirst.mockResolvedValue({ selectedImageId: "a", images: [{ id: "a", imageAssetId: "asset-a" }] });
+    owned.mockImplementation(async (_user, _project, ids: string[]) => ids.map(id => ({ id, url: `https://storage.test/${id}` })));
+    const input = { userId: "owner", projectId: "project", episodeId: "episode", targetType: "canvas_node", targetId: "image", request: { format: "png" } };
+    const before = await captureMediaTargetSourceRevision(input);
+    expect(before?.revisionVersion).toBe(3);
+    document.viewport = { x: 300, y: 800, k: 2 }; document.nodes[0].x = 400; document.nodes[0].title = "Renamed"; document.nodes[2].text = "Edited unrelated";
+    canvasFindFirst.mockResolvedValue({ revision: 99, document });
+    expect((await captureMediaTargetSourceRevision(input))?.fingerprint).toBe(before?.fingerprint);
+    document.nodes[0].text = "Three people";
+    expect((await captureMediaTargetSourceRevision(input))?.fingerprint).not.toBe(before?.fingerprint);
+    document.nodes[0].text = "Two people";
+    locationFindFirst.mockResolvedValue({ selectedImageId: "b", images: [{ id: "b", imageAssetId: "asset-b" }] });
+    expect((await captureMediaTargetSourceRevision(input))?.fingerprint).not.toBe(before?.fingerprint);
+    Object.assign(document.nodes[1], { assetId: "asset-a" });
+    expect((await captureMediaTargetSourceRevision(input))?.fingerprint).toBe(before?.fingerprint);
+    locationFindFirst.mockResolvedValue({ selectedImageId: "c", images: [{ id: "c", imageAssetId: "asset-c" }] });
+    expect((await captureMediaTargetSourceRevision(input))?.fingerprint).toBe(before?.fingerprint);
+    document.edges = [];
+    expect((await captureMediaTargetSourceRevision(input))?.fingerprint).not.toBe(before?.fingerprint);
+  });
   it("captures owned editable source data and changes when it is edited", async () => {
     const input = {
       userId: "user-1",

@@ -11,6 +11,7 @@ import { useStudioConfirmation } from "@/features/studio/components/use-studio-c
 import type { ConfigurationScope } from "@/lib/production-configuration/contract";
 import {
   AudioLines,
+  Activity,
   Bot,
   Network,
   RotateCcw,
@@ -50,11 +51,13 @@ import {
   type RuntimeSettingsPanelStatus,
 } from "./runtime-settings-panel";
 import type { ShellSettings } from "./shell-settings";
+import { UsageRecordsPanel } from "@/components/usage/usage-records-panel";
 
 export type SettingsTab =
   | "preferences"
   | "runtime"
   | "account"
+  | "usage"
   | "agents"
   | "sound";
 
@@ -160,6 +163,11 @@ export function AgentSettingsDialog({
                   Icon: UserRound,
                 },
                 {
+                  value: "usage",
+                  label: copy.settingsUsage,
+                  Icon: Activity,
+                },
+                {
                   value: "agents",
                   label: configurationCopy.agentManagementMenu,
                   Icon: Bot,
@@ -185,7 +193,7 @@ export function AgentSettingsDialog({
           </TabsList>
 
           <div
-            className={`min-h-0 min-w-0 overflow-x-hidden ${activeTab === "agents" ? "overflow-y-hidden" : "overflow-y-auto"}`}
+            className={`min-h-0 min-w-0 overflow-x-hidden ${activeTab === "agents" || activeTab === "usage" ? "overflow-y-hidden" : "overflow-y-auto"}`}
           >
             <TabsContent className="mt-0 h-full min-h-0" value="agents">
               <ProductionConfigurationPanel
@@ -231,6 +239,9 @@ export function AgentSettingsDialog({
                 onStatusChange={setAccountStatus}
                 user={user}
               />
+            </TabsContent>
+            <TabsContent className="mt-0 flex h-full min-h-0 flex-col overflow-hidden" value="usage">
+              <UsageRecordsPanel locale={copy.locale} />
             </TabsContent>
           </div>
         </Tabs>

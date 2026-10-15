@@ -26,6 +26,7 @@ import {
 } from "./story-package-contract";
 import { PANEL_PRODUCTION_DESIGN_INSTRUCTIONS } from "./panel-production-design";
 import { validateFirstEpisode } from "./story-package-generation";
+import { resolveStoryProductionConstraints, validateStoryProductionConstraints, type StoryProductionConstraints } from "./story-quality-contract";
 import {
   renderPackageScene,
   seedPackageProduction,
@@ -93,6 +94,28 @@ export async function generateOriginalEpisode(
   const story = StoryPackageSchema.parse(
     (parent.payload as Record<string, unknown>).storyPackage,
   );
+  const registryConstraints = story.productionConstraints ?? {};
+  const requestedEpisodeConstraints = resolveStoryProductionConstraints(input.instructions ?? "");
+  // Series asset counts describe the adopted registry, not every episode's cast or locations.
+  const constraints: StoryProductionConstraints = {
+    ...(registryConstraints.sceneCount !== undefined ? { sceneCount: registryConstraints.sceneCount } : {}),
+    ...(registryConstraints.targetDurationSeconds !== undefined ? { targetDurationSeconds: registryConstraints.targetDurationSeconds } : {}),
+    ...(registryConstraints.propPolicy !== undefined ? { propPolicy: registryConstraints.propPolicy } : {}),
+    ...requestedEpisodeConstraints,
+  };
+  const frozenConstraints = { registry: registryConstraints, episode: constraints };
+  const targetDurationSeconds = constraints.targetDurationSeconds
+    ?? episode.project.config?.episodeTargetDurationSeconds
+    ?? story.format.episodeDurationSeconds;
+  const validateConstraints = (candidate: StoryPackage["firstEpisode"]) => [
+    ...validateStoryProductionConstraints({ characters: story.characters, locations: story.locations, props: story.props }, registryConstraints),
+    ...validateStoryProductionConstraints({
+      characters: [...new Set(candidate.scenes.flatMap(scene => scene.characters))].map(name => ({ name })),
+      locations: [...new Set(candidate.scenes.map(scene => scene.location))].map(name => ({ name })),
+      props: [...new Set(candidate.scenes.flatMap(scene => scene.props))].map(name => ({ name })),
+      firstEpisode: candidate,
+    }, constraints),
+  ];
   const outline = story.episodeOutlines.find(
     (item) => item.episodeNumber === episode.episodeNumber,
   );
@@ -119,9 +142,10 @@ export async function generateOriginalEpisode(
       packageSourceHash: sourceFingerprint(story),
       outline,
       instructions: input.instructions ?? "",
+      productionConstraints: frozenConstraints,
     },
-    prompt: `${PROMPT_IDS.STORY_PACKAGE_GENERATION}:original-episode-format-v3`,
-    promptVersion: "original-episode-v3",
+    prompt: `${PROMPT_IDS.STORY_PACKAGE_GENERATION}:original-episode-format-v4`,
+    promptVersion: "original-episode-v4",
     channelId: input.channelId,
     model: input.model,
     agentConfiguration: currentProductionConfiguration()?.snapshot ?? null,
@@ -134,7 +158,7 @@ export async function generateOriginalEpisode(
       projectSettings: {
         artStyle: episode.project.config?.artStyle,
         ratio: episode.project.config?.videoRatio,
-        targetSeconds: episode.project.config?.episodeTargetDurationSeconds,
+        targetSeconds: targetDurationSeconds,
       },
     },
   });
@@ -148,6 +172,8 @@ export async function generateOriginalEpisode(
     previousEpisodeHash: previousHash,
     outline,
     instructions: input.instructions ?? "",
+    productionConstraints: frozenConstraints,
+    targetDurationSeconds,
   };
   const completed = await hooks.loadArtifact("original.completed", key) as { sourceId?: unknown } | null;
   if (typeof completed?.sourceId === "string") {
@@ -175,8 +201,8 @@ export async function generateOriginalEpisode(
           inputHash: key,
           input: frozenInput,
           cacheVersion: "workflow-cache-v2",
-          promptVersion: "original-episode-v3",
-          promptVersionHash: sourceFingerprint(`${PROMPT_IDS.STORY_PACKAGE_GENERATION}:original-episode-format-v3`),
+          promptVersion: "original-episode-v4",
+          promptVersionHash: sourceFingerprint(`${PROMPT_IDS.STORY_PACKAGE_GENERATION}:original-episode-format-v4`),
         },
         artifactRefs: [`original.completed:${key}`, `episode.source_version:${savedSource.id}`],
         reuseReason: "cache_fingerprint_match",
@@ -189,7 +215,8 @@ export async function generateOriginalEpisode(
   );
   const cached =
     cachedCandidate.success &&
-    validateFirstEpisode(cachedCandidate.data.episode, input.locale, story)
+    validateConstraints(cachedCandidate.data.episode).length === 0 &&
+    validateFirstEpisode(cachedCandidate.data.episode, input.locale, story, targetDurationSeconds)
       .length === 0 &&
     cachedCandidate.data.episode.scenes.every(
       (scene) =>
@@ -244,21 +271,24 @@ export async function generateOriginalEpisode(
                 characters: story.characters,
                 locations: story.locations,
                 props: story.props,
+                inlineProps: story.inlineProps ?? [],
+                productionConstraints: frozenConstraints,
+                productionConstraintScope: "registry 是已采用全剧资产档案范围，episode 是本集制作约束；本集人物和地点按 scenes 实际使用的唯一名称计数，propPolicy=inline 仅要求本集 scene.props 为空，普通物件留在动作和提示词正文，不删除全剧关键物件档案。",
                 project: {
                   artStyle: episode.project.config?.artStyle,
                   ratio: episode.project.config?.videoRatio,
-                  targetSeconds:
-                    episode.project.config?.episodeTargetDurationSeconds,
+                  targetSeconds: targetDurationSeconds,
                 },
                 userInstructions: input.instructions ?? "",
               },
               32_000,
             ),
-            generation_task: `编写第 ${episode.episodeNumber} 集完整可拍正文，不是重新生成策划包。严格遵循本集大纲、已采用的人物和世界规则，并承接上一集实际结尾；不得重复上一集或提前消耗下一集剧情。只能使用已提供的角色、场景、道具名称。至少四场，每场15秒，场次量接近目标集长。对白按人物拆分。每场包含动作、声音、结束状态、图片和视频提示词及 productionDesign。图片描述一个起始画面；视频提示词按0-3秒、3-6秒、6-9秒、9-12秒、12-15秒五段连续动作描述，遵守统一画风。本集可用资产名称白名单（完整，不可自创或缩写）：${JSON.stringify({ characters: story.characters.map(item => item.name), locations: story.locations.map(item => item.name), props: story.props.map(item => item.name) })}。每场的 imageReferenceSlots 必须逐项覆盖本场 characters、location 和 props，kind/name 必须与策划资产完全一致；视频里对应主体首次出现时写图片 N（角色参考：名称）等，槽位编号、类型和名称对应。\n${PANEL_PRODUCTION_DESIGN_INSTRUCTIONS}\n严格使用JSON Schema：${JSON.stringify(z.toJSONSchema(EpisodeSchema))}`,
+            generation_task: `编写第 ${episode.episodeNumber} 集完整可拍正文，不是重新生成策划包。严格遵循本集大纲、已采用的人物和世界规则，并承接上一集实际结尾；不得重复上一集或提前消耗下一集剧情。只能使用已提供的角色、场景、道具名称。冻结的数量/资产约束：${JSON.stringify(constraints)}。场次按连续戏剧单元划分，不强制每场15秒；按真实剧情分配时长，场次数不能用镜头数代替。对白按说话人原文、顺序进入所有提示词。每场包含动作、声音、结束状态、continuity（startState/endState及transitions）、图片和视频提示词及 productionDesign。productionDesign.startState 必须逐项等于 continuity.startState。图片只描述这一个起始瞬间，动作结束状态放进视频。视频覆盖真实场次时长；15秒场次用0-3、3-6、6-9、9-12、12-15秒五段。遵守统一画风。本集可用资产名称白名单（完整，不可自创或缩写）：${JSON.stringify({ characters: story.characters.map(item => item.name), locations: story.locations.map(item => item.name), props: story.props.map(item => item.name) })}。每场的 imageReferenceSlots 必须逐项覆盖本场 characters、location 和 props，kind/name 必须与策划资产完全一致；视频里对应主体首次出现时写图片 N（角色参考：名称）等，槽位编号、类型和名称对应。\n${PANEL_PRODUCTION_DESIGN_INSTRUCTIONS}\n严格使用JSON Schema：${JSON.stringify(z.toJSONSchema(EpisodeSchema))}`,
           },
         }),
         validate: (value) => [
-          ...validateFirstEpisode(value.episode, input.locale, story).map(issue => ({ ...issue, path: issue.path.replace(/^firstEpisode/, "episode") })),
+          ...validateConstraints(value.episode).map(issue => ({ ...issue, path: issue.path.replace(/^firstEpisode/, "episode") })),
+          ...validateFirstEpisode(value.episode, input.locale, story, targetDurationSeconds).map(issue => ({ ...issue, path: issue.path.replace(/^firstEpisode/, "episode") })),
           ...value.episode.scenes.flatMap((scene, index) => {
             const errors: string[] = [];
             if (scene.sceneNumber !== index + 1)
@@ -289,8 +319,8 @@ export async function generateOriginalEpisode(
         inputHash: key,
         input: frozenInput,
         cacheVersion: "workflow-cache-v2",
-        promptVersion: "original-episode-v3",
-        promptVersionHash: sourceFingerprint(`${PROMPT_IDS.STORY_PACKAGE_GENERATION}:original-episode-format-v3`),
+        promptVersion: "original-episode-v4",
+        promptVersionHash: sourceFingerprint(`${PROMPT_IDS.STORY_PACKAGE_GENERATION}:original-episode-format-v4`),
       },
       artifactRefs: [`original.episode:${key}`],
       reuseReason: "cache_fingerprint_match",

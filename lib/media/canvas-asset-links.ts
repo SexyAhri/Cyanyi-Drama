@@ -1,5 +1,23 @@
 import { prisma } from "@/lib/server/prisma";
 import type { MediaProviderRequest as TaskRequest } from "@/lib/providers/media/types";
+import { canvasAssetTargets, type CanvasDocument } from "@/lib/studio/canvas-document";
+
+export function frozenCanvasAssetTargets(request: Record<string, unknown>) {
+  if (!Object.prototype.hasOwnProperty.call(request, "canvasAssetTargets")) return undefined;
+  return Array.isArray(request.canvasAssetTargets) ? request.canvasAssetTargets.flatMap((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const target = value as Record<string, unknown>;
+    return ["character", "location", "prop"].includes(String(target.entityType)) && typeof target.entityId === "string" && target.entityId.trim()
+      ? [{ entityType: String(target.entityType), entityId: target.entityId.trim() }] : [];
+  }) : [];
+}
+
+function isStaleCanvasImage(metadataJson: string | null) {
+  try {
+    const metadata = metadataJson ? JSON.parse(metadataJson) : {};
+    return Boolean(metadata.productionConfigurationStale);
+  } catch { return true; }
+}
 
 export async function linkCanvasGeneratedImage(
   task: {
@@ -14,21 +32,7 @@ export async function linkCanvasGeneratedImage(
 ) {
   const targetId = task.targetId;
   if (!targetId) return;
-  const rawTargets = (request as Record<string, unknown>).canvasAssetTargets;
-  const targets = Array.isArray(rawTargets)
-    ? rawTargets.flatMap((value) => {
-        if (!value || typeof value !== "object" || Array.isArray(value))
-          return [];
-        const target = value as Record<string, unknown>;
-        const entityType = target.entityType;
-        const entityId = target.entityId;
-        return ["character", "location", "prop"].includes(String(entityType)) &&
-          typeof entityId === "string" &&
-          entityId.trim()
-          ? [{ entityType: String(entityType), entityId: entityId.trim() }]
-          : [];
-      })
-    : [];
+  const targets = frozenCanvasAssetTargets(request as Record<string, unknown>) ?? [];
   const prompt = typeof request.prompt === "string" ? request.prompt : "";
 
   await prisma.$transaction(async (tx) => {
@@ -148,40 +152,40 @@ export async function linkCanvasGeneratedImage(
 }
 
 
-/** Attach legacy canvas results using their saved asset-to-image connections. */
+/** Repair missing links from frozen ownership, never from newly edited connections. */
 export async function reconcileCanvasAssetImages(
-  document: import("@/lib/studio/canvas-document").CanvasDocument,
+  document: CanvasDocument,
   userId: string,
   projectId: string,
   episodeId: string,
+  currentRevision?: number,
 ) {
-  const targets = new Map<string, Array<{ entityType: string; entityId: string }>>();
-  for (const edge of document.edges) {
-    const source = document.nodes.find((node) => node.id === edge.from);
-    const target = document.nodes.find((node) => node.id === edge.to);
-    if (!source?.entityId || !["character", "location", "prop"].includes(source.kind) || target?.kind !== "image") continue;
-    const values = targets.get(target.id) ?? [];
-    if (!values.some((value) => value.entityType === source.kind && value.entityId === source.entityId))
-      values.push({ entityType: source.kind, entityId: source.entityId });
-    targets.set(target.id, values);
-  }
-  if (!targets.size) return;
   const tasks = await prisma.mediaTask.findMany({
-    where: { userId, projectId, episodeId, targetType: "canvas_node", targetId: { in: [...targets.keys()] }, kind: "image", status: "succeeded" },
+    where: { userId, projectId, episodeId, targetType: "canvas_node", kind: "image", status: "succeeded" },
     include: { assets: { where: { kind: "image" } } },
     orderBy: { createdAt: "asc" },
   });
   for (const task of tasks) {
+    const payload = task.payload as { request?: TaskRequest & Record<string, unknown> };
+    const request = payload?.request ?? {};
+    let expected = frozenCanvasAssetTargets(request);
+    if (expected === undefined) {
+      // A legacy request has no saved ownership. Infer only while the exact submitted
+      // canvas revision is still current; a moved or edited graph is not evidence.
+      if (currentRevision === undefined || request.canvasRevision !== currentRevision) continue;
+      const node = document.nodes.find((item) => item.id === task.targetId);
+      expected = node ? canvasAssetTargets(node, document) : [];
+    }
+    if (!expected.length) continue;
     for (const asset of task.assets) {
-      const expected = targets.get(task.targetId ?? "") ?? [];
+      if (isStaleCanvasImage(asset.metadataJson)) continue;
       const existing = await prisma.assetReference.findMany({
         where: { mediaAssetId: asset.id, projectId, role: "generated_candidate" },
         select: { entityType: true, entityId: true },
       });
       if (expected.every((target) => existing.some((ref) => ref.entityType === target.entityType && ref.entityId === target.entityId))) continue;
-      const payload = task.payload as { request?: TaskRequest };
       await linkCanvasGeneratedImage(task, userId, projectId, asset, {
-        ...payload.request,
+        ...request,
         canvasAssetTargets: expected,
       } as TaskRequest);
     }

@@ -19,6 +19,8 @@ export function billingBreakdownLines(metadata?: string | null, locale: "zh-CN" 
 const usageCostActionZh: Record<string, string> = {
   chat_completion: "对话模型请求",
   model_request: "模型请求",
+  story_package_generation: "剧集策划生成",
+  story_voice_performance_design: "对白表演设计",
   "agent test run estimate": "Agent 试运行费用估算",
   canvas_node: "画布节点生成",
   character_appearance: "角色形象图生成",

@@ -56,7 +56,7 @@ describe("project asset selection", () => {
       where: {
         id: "asset-1",
         kind: "image",
-        task: { userId: "user-1", projectId: "project-1" },
+        task: { userId: "user-1", projectId: "project-1", status: "succeeded" },
         references: {
           some: {
             projectId: "project-1",
@@ -178,6 +178,13 @@ describe("project asset selection", () => {
         assetKind: "image",
       }),
     ).resolves.toBeNull();
+    expect(transaction).not.toHaveBeenCalled();
+  });
+  it("validates the stored default's media kind before adopting it again", async () => {
+    storyboardPanelFindFirst.mockResolvedValue({ id: "panel-1", imageAssetId: null, videoAssetId: "wrong-image" });
+    mediaAssetFindFirst.mockResolvedValue(null);
+    expect(await selectProjectAsset({ userId: "user-1", projectId: "project-1", targetType: "storyboard_panel", targetId: "panel-1", assetKind: "video" })).toBeNull();
+    expect(mediaAssetFindFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "wrong-image", kind: "video", task: { userId: "user-1", projectId: "project-1", status: "succeeded" } }) }));
     expect(transaction).not.toHaveBeenCalled();
   });
 });

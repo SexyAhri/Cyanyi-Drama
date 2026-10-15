@@ -9,6 +9,7 @@ import {
 } from "@/lib/assets/visual-profile";
 import { StoryPackageSchema } from "./story-package-contract";
 import { renderPackageScene, seedPackageProduction } from "./story-package-production";
+import { resolveStoryProductionConstraints, validateStoryProductionConstraints } from "./story-quality-contract";
 
 /** Adoption creates missing production objects; existing work remains authoritative. */
 export async function adoptStoryPackage(input: {
@@ -54,6 +55,10 @@ export async function adoptStoryPackage(input: {
           if (payload.packageFormat !== "cyanyi-story-package-v1")
             throw new Error("策划包格式不支持采用");
           const story = StoryPackageSchema.parse(payload.storyPackage);
+          const savedSetup = payload.setup && typeof payload.setup === "object" && !Array.isArray(payload.setup) ? payload.setup : {};
+          const constraints = story.productionConstraints ?? resolveStoryProductionConstraints(typeof savedSetup.storyIdea === "string" ? savedSetup.storyIdea : "");
+          const qualityIssues = validateStoryProductionConstraints(story, constraints);
+          if (qualityIssues.length) throw new Error(`策划包未满足已确认约束，请修复后再采用：${qualityIssues.map(issue => issue.message).join("；")}`);
           const numbers = story.episodeOutlines.map(
             (item) => item.episodeNumber,
           );

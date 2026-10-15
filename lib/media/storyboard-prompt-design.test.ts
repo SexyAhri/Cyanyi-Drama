@@ -46,6 +46,8 @@ import {
   parseStoryboardMediaPromptDesignText,
   captureStoryboardPromptContext,
 } from "./storyboard-prompt-design";
+import { withProductionConfiguration } from "@/lib/production-configuration/context";
+import { mergeProductionConfigurations, type ProductionConfigurationSnapshot } from "@/lib/production-configuration/contract";
 
 const profile = JSON.stringify({
   version: 1,
@@ -221,6 +223,26 @@ describe("storyboard media prompt design", () => {
   });
 
   const videoInput = { userId: "user-1", projectId: "project-1", episodeId: "episode-1", panelId: "panel-2", channelId: "channel-1", model: "analysis-model", kind: "video" as const };
+
+  it("freezes ordered voice lines and rejects reversed or missing dialogue before saving a design", async () => {
+    const voiceLines = [{ id: "line-1", lineIndex: 0, speaker: "韩宇", content: "这是母亲的？", delivery: "dialogue" }, { id: "line-2", lineIndex: 1, speaker: "韩子枫", content: "替她收好。", delivery: "dialogue" }];
+    storyboardPanelFindFirst.mockResolvedValue({ ...panel, voiceLines });
+    const capturedContext = await captureStoryboardPromptContext(videoInput);
+    expect(capturedContext.panel.voiceLines).toEqual(voiceLines);
+    expect(storyboardPanelFindFirst.mock.calls[0][0].select.voiceLines.orderBy).toEqual({ lineIndex: "asc" });
+    storyboardPanelFindFirst.mockResolvedValue({ ...panel, voiceLines: voiceLines.slice().reverse() });
+    const configuration: ProductionConfigurationSnapshot = { ...mergeProductionConfigurations([{ sound: { mode: "native", dialogue: true } }]), format: "production-configuration-v1", sources: [] };
+    const run = () => withProductionConfiguration("user-1", configuration, () => designStoryboardMediaPrompt({ ...videoInput, capturedContext }));
+    for (const prompt of ["韩子枫：替她收好。 韩宇：这是母亲的？", "韩宇：这是母亲的？"]) {
+      requestOpenAiStructured.mockImplementationOnce(async ({ schema }) => ({ data: schema.parse({ prompt, designNotes: [], continuitySafeguards: [], spatialAudit: { observations: ["人物与铁盒可见"], allowedMotion: ["沿轴线递接"], forbiddenAdditions: [], conflicts: [], timeBudget: "6秒" } }), trace: {}, outputText: prompt }));
+      await expect(run()).rejects.toThrow("顺序、内容或说话人不一致");
+    }
+    const prompt = "韩宇：这是母亲的？ 韩子枫：替她收好。";
+    requestOpenAiStructured.mockImplementationOnce(async ({ schema }) => ({ data: schema.parse({ prompt, designNotes: [], continuitySafeguards: [], spatialAudit: { observations: ["人物与铁盒可见"], allowedMotion: ["沿轴线递接"], forbiddenAdditions: [], conflicts: [], timeBudget: "6秒" } }), trace: {}, outputText: prompt }));
+    const result = await run();
+    expect(result.design.prompt).toContain("这是母亲的？");
+    expect(requestOpenAiStructured.mock.calls.at(-1)?.[0].prompt.text).toContain('"id": "line-1"');
+  });
 
   it("uses frozen facts and adopted images after a shot is edited", async () => {
     const capturedContext = await captureStoryboardPromptContext(videoInput);

@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -37,6 +38,7 @@ type AdminSettingsPanelProps = {
   formId: string;
   onStatusChange: (status: AdminSettingsPanelStatus) => void;
   showPricing?: boolean;
+  sectioned?: boolean;
 };
 
 type CallbackUrls = {
@@ -113,6 +115,7 @@ export function AdminSettingsPanel({
   formId,
   onStatusChange,
   showPricing = true,
+  sectioned = false,
 }: AdminSettingsPanelProps) {
   const [settings, setSettings] = useState(EMPTY_SETTINGS);
   const [secrets, setSecrets] = useState(EMPTY_SECRETS);
@@ -253,13 +256,21 @@ export function AdminSettingsPanel({
 
   return (
     <form
-      className="grid gap-8"
+      className={sectioned ? "flex min-h-0 flex-1 flex-col overflow-hidden" : "grid gap-8"}
       id={formId}
       onSubmit={(event) => {
         event.preventDefault();
         void saveSettings();
       }}
     >
+      <Tabs defaultValue="email" className={sectioned ? "min-h-0 flex-1 overflow-hidden" : "contents"}>
+      {sectioned ? <TabsList className="shrink-0" variant="line" aria-label="系统设置分类">
+        <TabsTrigger value="email">邮箱与注册</TabsTrigger>
+        <TabsTrigger value="oauth">第三方登录</TabsTrigger>
+        <TabsTrigger value="payment">支付网关</TabsTrigger>
+        {showPricing ? <TabsTrigger value="pricing">模型价格</TabsTrigger> : null}
+      </TabsList> : null}
+      <SettingsTab sectioned={sectioned} value="email">
       <SettingsSection
         description="控制邮箱密码登录、开放注册和注册验证码。关闭邮箱登录前必须先启用一个 OAuth 服务。"
         title="邮箱登录与注册"
@@ -324,7 +335,9 @@ export function AdminSettingsPanel({
           />
         </div>
       </SettingsSection>
+      </SettingsTab>
 
+      <SettingsTab sectioned={sectioned} value="oauth">
       <SettingsSection
         description="保存 Client ID 和 Secret 后启用。Secret 加密保存，页面不会再次回显。"
         title="第三方登录"
@@ -365,10 +378,12 @@ export function AdminSettingsPanel({
           />
         </ProviderFields>
       </SettingsSection>
+      </SettingsTab>
 
+      <SettingsTab sectioned={sectioned} value="payment">
       <SettingsSection
         description="兼容标准易支付 submit.php 与 MD5 回调验签。支付回调按订单金额幂等入账。"
-        title="通用易支付"
+        title="支付网关"
       >
         <ToggleField
           checked={settings.epayEnabled}
@@ -436,8 +451,9 @@ export function AdminSettingsPanel({
           <p className="break-all">返回地址：{callbacks?.epayReturn || "-"}</p>
         </div>
       </SettingsSection>
+      </SettingsTab>
 
-      {showPricing ? <SettingsSection
+      {showPricing ? <SettingsTab sectioned={sectioned} value="pricing"><SettingsSection
         description="价格单位决定计费方式；同一模型可配置多个单位并叠加计费。"
         title="模型价格与计费方式"
       >
@@ -536,9 +552,15 @@ export function AdminSettingsPanel({
             )}
           </TableBody>
         </Table>
-      </SettingsSection> : null}
+      </SettingsSection></SettingsTab> : null}
+      </Tabs>
     </form>
   );
+}
+
+function SettingsTab({ sectioned, value, children }: React.PropsWithChildren<{ sectioned: boolean; value: string }>) {
+  if (!sectioned) return children;
+  return <TabsContent value={value} keepMounted className="min-h-0 flex-1 overflow-y-auto overscroll-contain pt-3 data-hidden:hidden">{children}</TabsContent>;
 }
 
 function SettingsSection({

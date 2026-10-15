@@ -10,7 +10,8 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
+import { TableRow, TableCell } from "@/components/ui/table";
+import { DataTable } from "@/components/ui/data-table";
 import { CAPABILITY_BILLING_UNITS, type ModelPriceEntry } from "@/lib/billing/pricing-contract";
 import { modelPricePlans, draftForPlan, draftRates, pricePlanSummary, capabilityLabels, priceUnitLabels, type PriceChannel, type PriceDraft } from "./model-price-plan";
 
@@ -69,22 +70,22 @@ export function ModelPricePanel({ channels, prices, onChange }: { channels: Pric
     finally { setSaving(false); }
   }
   const preview = (Number(sample.input) - Number(sample.cached)) * Number(draft.values["1m_input_tokens"]) / 1e6 + Number(sample.cached) * Number(draft.values["1m_cached_input_tokens"]) / 1e6 + Number(sample.output) * Number(draft.values["1m_output_tokens"]) / 1e6;
-  return <div className="grid min-w-0 gap-4">
-    <div className="flex flex-wrap items-start justify-between gap-3">
+  return <div className="flex h-full min-h-0 min-w-0 flex-col gap-3 overflow-hidden">
+    <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
       <div><h2 className="text-base font-semibold">模型计价</h2><p className="mt-1 text-sm text-muted-foreground">人民币 CNY。文本按实际 Token，图片按张，视频按秒；每个模型一套价格方案。</p></div>
       <Button disabled={!plans.some(plan => !plan.prices.length)} onClick={() => { const plan = plans.find(plan => !plan.prices.length); if (plan) edit(plan.key); }}><Plus />配置未定价模型</Button>
     </div>
-    <div className="relative max-w-sm"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" /><Input aria-label="搜索模型或渠道" className="pl-9" placeholder="搜索模型或渠道" value={search} onChange={event => setSearch(event.target.value)} /></div>
-    <div className="min-w-0 overflow-hidden rounded-lg border"><Table className="min-w-[720px]"><TableHeader><TableRow><TableHead>模型 / 渠道</TableHead><TableHead>能力</TableHead><TableHead>计费方式</TableHead><TableHead>价格（CNY）</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
-      <TableBody>{filtered.length ? filtered.map(plan => <TableRow key={plan.key}>
+    <div className="relative w-full max-w-sm shrink-0"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" /><Input aria-label="搜索模型或渠道" className="pl-9" placeholder="搜索模型或渠道" value={search} onChange={event => setSearch(event.target.value)} /></div>
+    <p className="shrink-0 text-xs leading-5 text-muted-foreground">0 表示免费。未配置或已停用时不能调用。同名模型按供应商共用价格，已发出请求保留原价格快照。</p>
+    <DataTable label="模型价格" className="min-w-[720px]" headers={["模型 / 渠道", "能力", "计费方式", "价格（CNY）", "操作"]} empty={search ? "没有匹配的模型" : "请先在模型渠道中添加模型"}>
+      {filtered.map(plan => <TableRow key={plan.key}>
         <TableCell className="max-w-64"><div className="truncate font-medium" title={plan.model}>{plan.label}</div><div className="mt-1 truncate text-xs text-muted-foreground" title={plan.channel}>{plan.channel}</div></TableCell>
         <TableCell><Badge variant="outline">{capabilityLabels[plan.capability] ?? plan.capability}</Badge></TableCell>
         <TableCell>{plan.legacy ? <span className="text-amber-700 dark:text-amber-300">旧方案 · 待重新配置</span> : !plan.prices.length ? <span className="text-muted-foreground">未配置</span> : plan.prices.some(price => price.unit.includes("tokens")) ? "按 Token / 百万" : `按${priceUnitLabels[plan.prices[0].unit] ?? plan.prices[0].unit}`}</TableCell>
         <TableCell className="max-w-lg whitespace-normal text-xs leading-6 tabular-nums">{pricePlanSummary(plan)}</TableCell>
-        <TableCell className="text-right"><Button aria-label={`配置 ${plan.model} 价格`} onClick={() => edit(plan.key)} size="sm" variant="outline"><Pencil className="size-3.5" />{plan.prices.length ? "编辑" : "配置"}</Button></TableCell>
-      </TableRow>) : <TableRow><TableCell colSpan={5} className="h-32 text-center text-muted-foreground">{search ? "没有匹配的模型" : "请先在渠道管理中添加模型"}</TableCell></TableRow>}</TableBody>
-    </Table></div>
-    <p className="text-xs text-muted-foreground">0 表示免费。未配置或已停用时不能调用。相同供应商下的同名模型共用价格，已发出请求使用其原价格快照。</p>
+        <TableCell><Button aria-label={`配置 ${plan.model} 价格`} onClick={() => edit(plan.key)} size="sm" variant="outline"><Pencil className="size-3.5" />{plan.prices.length ? "编辑" : "配置"}</Button></TableCell>
+      </TableRow>)}
+    </DataTable>
     <Dialog open={open} onOpenChange={next => { if (saving) return; if (!next && dirty) setConfirm("discard"); else setOpen(next); }}>
       <DialogContent className="flex max-h-[90dvh] flex-col sm:max-w-3xl" showCloseButton={!saving}>
         <DialogHeader><DialogTitle>配置模型价格</DialogTitle><DialogDescription>{selected?.label} · {selected?.channel} · {selected ? capabilityLabels[selected.capability] : ""}</DialogDescription></DialogHeader>

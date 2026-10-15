@@ -1,4 +1,5 @@
 import { planPanelDialogue } from "@/lib/media/dialogue-timeline";
+import { planSilentSubtitles, subtitleReadingSeconds } from "./subtitle-timing";
 
 export type EditorTimelineTrack = {
   clipId: string | null;
@@ -16,6 +17,7 @@ export type EditorTimelineTrack = {
   type: "image" | "video";
   videoAssetId: string | null;
   volume: number;
+  imageFit?: "contain" | "crop";
 };
 
 export type TimelineSubtitleCue = {
@@ -85,6 +87,7 @@ export function parseTimelineSequence(value: unknown) {
       transition: entry.transition === "fade" ? ("fade" as const) : ("cut" as const),
       transitionDuration: normalizeTransitionDuration(entry.transitionDuration),
       volume: normalizeVolume(entry.volume),
+      ...(entry.imageFit === "crop" || entry.imageFit === "contain" ? { imageFit: entry.imageFit as "crop" | "contain" } : {}),
     }];
   });
 }
@@ -144,17 +147,17 @@ export function buildTimelineSubtitles(
           return itemPanelId === panelId;
         })
         .reduce((total, item) => total + normalizeDuration(item.duration), 0);
-      const fallbackDuration = panelDuration / matchedLines.length;
-      const timings = buildPanelSubtitleTimings({
+      const silent = matchedLines.every(line => !line.durationSeconds && line.startSeconds === undefined && line.endSeconds === undefined);
+      const timings = silent ? planSilentSubtitles(matchedLines.map(line => line.content), panelDuration).map(timing => ({ start: trackStart + timing.start, end: trackStart + timing.end })) : buildPanelSubtitleTimings({
         lineDurations: matchedLines.map(
-          (line) => line.durationSeconds ?? fallbackDuration,
+          (line) => line.durationSeconds ?? subtitleReadingSeconds(line.content),
         ),
         trackDuration: panelDuration,
         trackStart,
       });
       matchedLines.forEach((line, index) => {
         const start = line.startSeconds ?? timings[index].start - trackStart;
-        const end = line.endSeconds ?? (line.startSeconds === undefined ? timings[index].end - trackStart : start + (line.durationSeconds ?? fallbackDuration));
+        const end = line.endSeconds ?? (line.startSeconds === undefined ? timings[index].end - trackStart : start + (line.durationSeconds ?? subtitleReadingSeconds(line.content)));
         if (start < 0 || end <= start || end > panelDuration + 0.01) throw new Error(`TIMELINE_SUBTITLE_TIMING_INVALID:${line.lineIndex}`);
         cues.push({
           id: line.id,

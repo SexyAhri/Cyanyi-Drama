@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AssetVisualProfileSpecSchema } from "@/lib/assets/visual-profile";
-import { PanelProductionDesignSchema } from "./panel-production-design";
+import { PanelProductionDesignSchema, SceneContinuitySchema } from "./panel-production-design";
+import { StoryProductionConstraintsSchema } from "./story-quality-contract";
 
 const text = z.string().trim().min(1);
 
@@ -30,6 +31,7 @@ export const ResolvedStorySetupSchema = z.object({
 });
 
 export const StoryPackageSchema = z.object({
+  productionConstraints: StoryProductionConstraintsSchema.optional(),
   resolvedSetup: ResolvedStorySetupSchema.optional(),
   title: text,
   logline: text,
@@ -163,6 +165,7 @@ export const StoryPackageSchema = z.object({
       visualProfile: AssetVisualProfileSpecSchema.optional(),
     }),
   ),
+  inlineProps: z.array(z.object({ name: text, storyFunction: text })).optional(),
   locations: z
     .array(
       z.object({
@@ -203,13 +206,14 @@ export const StoryPackageSchema = z.object({
           camera: text,
           sound: text,
           endState: text,
+          continuity: SceneContinuitySchema.optional(),
           imageReferenceSlots: referenceSlots,
           imagePrompt,
           videoPrompt: text.min(100),
           productionDesign: PanelProductionDesignSchema.optional(),
         }),
       )
-      .min(4),
+      .min(1),
   }),
 });
 
@@ -267,9 +271,10 @@ export const StoryPackageFirstEpisodeSchema = StoryPackageSchema.pick({
 export const StoryPackageFirstEpisodeGenerationSchema = z.object({
   firstEpisode: StoryPackageSchema.shape.firstEpisode.extend({
     scenes: z.array(StoryPackageSchema.shape.firstEpisode.shape.scenes.element.extend({
-      durationSeconds: z.literal(15),
+      durationSeconds: z.number().int().positive(),
+      continuity: SceneContinuitySchema,
       productionDesign: PanelProductionDesignSchema,
-    })).min(4),
+    })).min(1),
   }),
 });
 

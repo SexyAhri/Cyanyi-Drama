@@ -53,6 +53,7 @@ import { BatchGenerationDialog, PanelGenerationDialog } from "./generation-dialo
 import { ShotCandidateGrid } from "./shot-candidates";
 import { ShotPromptDesignPanel } from "./shot-prompt-design-panel";
 import { VfxWorkspace } from "./vfx-workspace";
+import { ShotContinuitySheet } from "./shot-continuity-sheet";
 import {
   buildShotMediaCandidates,
   latestShotBatchProgress,
@@ -90,7 +91,7 @@ export function ShotsWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [kind, setKind] = useState<ShotMediaKind>("image");
-  const [tab, setTab] = useState<ShotMediaKind | "vfx">("image");
+  const [tab, setTab] = useState<ShotMediaKind | "vfx" | "continuity">("image");
   const [selectedPanelId, setSelectedPanelId] = useState("");
   useEffect(() => { if (focusedPanelId) setSelectedPanelId(focusedPanelId); }, [focusedPanelId]);
   const [checkedPanelIds, setCheckedPanelIds] = useState<string[]>([]);
@@ -303,6 +304,21 @@ export function ShotsWorkspace({
     await refreshAll();
   }
 
+  async function saveContinuityPanel(panel: StudioStoryboardPanel) {
+    const fresh = await loadStudioStoryboard(projectId, episode.id, undefined, true);
+    const current = fresh.storyboard?.panels.find(item => item.id === panel.id);
+    if (!fresh.storyboard || !current) throw new Error(locale === "en" ? "This shot was deleted. Reload the contact sheet." : "该镜头已删除，请重新加载联系表。");
+    if (current.updatedAt !== panel.updatedAt) throw new Error(locale === "en" ? "This shot changed in another editor. Reload before saving." : "该镜头已在其他位置修改，请重新加载后再保存。");
+    await saveStudioStoryboard(projectId, episode.id, {
+      status: fresh.storyboard.status,
+      sourceHash: fresh.storyboard.sourceHash,
+      expectedVersion: fresh.storyboard.version,
+      panels: fresh.storyboard.panels.map(item => item.id === panel.id ? panel : item),
+    });
+    await onRefresh();
+    await load();
+  }
+
   async function controlTask(task: MediaTask, action: "cancel" | "retry") {
     setBusyTaskId(task.id);
     try {
@@ -396,7 +412,7 @@ export function ShotsWorkspace({
           </p>
           <h1 className="mt-1 text-xl font-semibold">{copy.shotWorkspace}</h1>
         </div>
-        {tab !== "vfx" && checkedPanels.length ? (
+        {(tab === "image" || tab === "video") && checkedPanels.length ? (
           <div className="flex flex-wrap items-center gap-2">
             {activeTasks.length ? (
               <Button
@@ -470,12 +486,12 @@ export function ShotsWorkspace({
         <Tabs
           className="min-w-0 py-5 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col"
           onValueChange={(value) => {
-            setTab(value as ShotMediaKind | "vfx");
+            setTab(value as ShotMediaKind | "vfx" | "continuity");
             if (value === "image" || value === "video") setKind(value);
           }}
           value={tab}
         >
-          <TabsList variant="line">
+          <TabsList variant="line" className="h-auto flex-wrap justify-start">
             <TabsTrigger value="image">
               <Images />
               {copy.images}
@@ -488,6 +504,7 @@ export function ShotsWorkspace({
               <GitBranch />
               VFX
             </TabsTrigger>
+            <TabsTrigger value="continuity"><Images />{locale === "en" ? "Continuity" : "连续性联系表"}</TabsTrigger>
           </TabsList>
 
           {(["image", "video"] as const).map((mediaKind) => (
@@ -668,6 +685,10 @@ export function ShotsWorkspace({
               </div>
             </TabsContent>
           ))}
+          <TabsContent className="mt-4 min-w-0 xl:min-h-0 xl:flex-1 xl:overflow-y-auto" value="continuity">
+            {tab === "continuity" && <ShotContinuitySheet panels={panels} assets={assets} locale={locale} onSavePanel={saveContinuityPanel} onSelectPanel={setSelectedPanelId}
+              onOpenShot={panelId => { setSelectedPanelId(panelId); setKind("image"); setTab("image"); }} />}
+          </TabsContent>
           <TabsContent
             className="mt-4 xl:min-h-0 xl:flex-1 xl:overflow-y-auto"
             value="vfx"

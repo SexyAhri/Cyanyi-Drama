@@ -41,6 +41,8 @@ import { CanvasViewport } from "./canvas-viewport";
 import { CanvasNode } from "./canvas-node";
 import { CanvasLibrary } from "./canvas-library";
 import { CanvasInspector } from "./canvas-inspector";
+import { syncCanvasProduction } from "./canvas-production-sync";
+import { CanvasReferencePreview, canvasReviewReferences, type CanvasReviewReference } from "./canvas-reference-preview";
 import { CanvasOutline } from "./canvas-outline";
 import {
   CanvasHeader,
@@ -95,6 +97,7 @@ type Review = {
   productionParameters?: unknown;
   inputSignature: string;
   references: string[];
+  actualReferences?: CanvasReviewReference[];
   key: string;
   status: string;
   error?: string;
@@ -155,6 +158,8 @@ export function CanvasWorkspace({
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [showReusableBranches, setShowReusableBranches] = useState(false);
   const [review, setReview] = useState<Review[]>([]);
+  const [productionReady, setProductionReady] = useState(false);
+  const previousPanels = useRef<StudioStoryboardPanel[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewPreparing, setReviewPreparing] = useState(false);
   const [reviewError, setReviewError] = useState<string>();
@@ -622,6 +627,7 @@ export function CanvasWorkspace({
     ]).then((results) => {
       if (abort.signal.aborted) return;
       const [assets, shots] = results;
+      if (assets.status === "fulfilled" && shots.status === "fulfilled") setProductionReady(true);
       if (assets.status === "fulfilled") setCatalog(assets.value);
       else
         toast.error(
@@ -639,8 +645,15 @@ export function CanvasWorkspace({
     return () => abort.abort();
   }, [projectId, episodeId, assetRevision, cacheRevision, url]);
 
+  useEffect(() => {
+    if (!productionReady || state.loading || busy || !storyboard || !catalog) return;
+    const synced = syncCanvasProduction(current.current, panels, catalog, previousPanels.current);
+    previousPanels.current = panels;
+    if (synced !== current.current) replace(synced, false);
+  }, [productionReady, storyboard, catalog, state.loading, busy, current, panels, replace]);
+
   const currentEpisodeGraph = useCallback(() => {
-    if (!catalog || !panels.length) return undefined;
+    if (!productionReady || !catalog || !panels.length) return undefined;
     const episode = snapshot.project.episodes.find((item) => item.id === episodeId);
     const previous = episode
       ? snapshot.project.episodes.find(
@@ -661,10 +674,10 @@ export function CanvasWorkspace({
         : undefined,
       new Set(snapshot.tasks.filter((task) => task.targetType === "canvas_node" && task.targetId).map((task) => task.targetId!)),
     );
-  }, [catalog, panels, snapshot.project.episodes, snapshot.tasks, episodeId, current]);
+  }, [productionReady, catalog, panels, snapshot.project.episodes, snapshot.tasks, episodeId, current]);
 
   useEffect(() => {
-    if (state.loading || !storyboard || layoutInitialized.current) return;
+    if (!productionReady || state.loading || !storyboard || layoutInitialized.current) return;
     if (!catalog && panels.length) return;
     layoutInitialized.current = true;
     if (current.current.layoutMode === "free") return;
@@ -690,7 +703,7 @@ export function CanvasWorkspace({
     }
     if (current.current.layoutMode) return;
     showBranches();
-  }, [state.loading, storyboard, catalog, currentEpisodeGraph]);
+  }, [productionReady, state.loading, storyboard, catalog, currentEpisodeGraph]);
 
   function assembleEpisodeGraph() {
     if (busyRef.current || !catalog || !panels.length) return;
@@ -733,34 +746,6 @@ export function CanvasWorkspace({
     choose(node.id);
     locate(current.current.nodes.find((item) => item.id === node.id)!);
   }, [focusedPanelId, state.loading, storyboard]);
-  useEffect(() => {
-    if (state.loading || busyRef.current || !panels.length) return;
-    let changed = false;
-    const nodes = current.current.nodes.map((node) => {
-      const panel = panels.find((panel) => panel.id === node.panelId);
-      if (!panel || !node.panelPromptBase) return node;
-      const base = {
-        image: panel.imagePrompt ?? panel.description ?? "",
-        video: panel.videoPrompt ?? "",
-      };
-      if (
-        base.image === node.panelPromptBase.image &&
-        base.video === node.panelPromptBase.video
-      )
-        return node;
-      changed = true;
-      return {
-        ...node,
-        text: node.text === node.panelPromptBase.image ? base.image : node.text,
-        videoText:
-          node.videoText === node.panelPromptBase.video
-            ? base.video
-            : node.videoText,
-        panelPromptBase: base,
-      };
-    });
-    if (changed) replace({ ...current.current, nodes }, false);
-  }, [storyboard, state.loading]);
   useEffect(() => {
     onContextChange(active ? canvasSelection(active) : undefined);
   }, [active?.id, active?.title, active?.panelId, onContextChange]);
@@ -1146,6 +1131,7 @@ export function CanvasWorkspace({
             item.configurationHash = data.preview?.configurationHash ?? data.configurationHash;
             item.requestHash = data.preview?.requestHash ?? data.requestHash;
             item.productionParameters = data.preview?.parameters ?? data.parameters;
+            item.actualReferences = canvasReviewReferences(data.preview?.references ?? data.references);
             const capabilities = data.preview?.capabilities ?? data.capabilities;
             if (capabilities) item.references.push(locale === "en" ? `Native audio: ${capabilities.nativeAudio}; audio control: ${capabilities.audioControl}; reference audio limit: ${capabilities.maxReferenceAudios}. Exact speech, voice and subtitles are prompt constraints.` : `原生声音：${capabilities.nativeAudio === "supported" ? "支持" : capabilities.nativeAudio === "unsupported" ? "不支持" : "未知"}；音频控制：${capabilities.audioControl === "native_parameter" ? "原生参数" : "提示词约束"}；参考音频上限：${capabilities.maxReferenceAudios}。精确台词、音色与字幕为提示词要求。`);
             if (data.issues?.length) item.references.push(...data.issues.map((issue: { message: string }) => issue.message));
@@ -1811,11 +1797,10 @@ export function CanvasWorkspace({
                 }
                 inputs={document.edges
                   .filter((edge) => edge.to === node.id)
-                  .map(
-                    (edge) =>
-                      document.nodes.find((item) => item.id === edge.from)
-                        ?.title,
-                  )
+                  .map((edge) => {
+                    const source = document.nodes.find((item) => item.id === edge.from);
+                    return source ? `${edgeLabel(edge, source, locale)} · ${source.title}` : undefined;
+                  })
                   .filter((title): title is string => !!title)}
                 media={nodeMedia(node, catalog, panels, document)}
                 task={canvasNodeTask(node, snapshot.tasks, catalog, document)}
@@ -1978,13 +1963,14 @@ export function CanvasWorkspace({
                   {item.model?.channelName.trim() ? ` · ${item.model.channelName.trim()}` : ""}
                 </p>
                 <p className="text-xs">
-                  {t("输入：", "Inputs: ")}
+                  {t("画布关系与说明：", "Canvas connections and notes: ")}
                   {item.references.join(" / ") ||
                     t(
-                      "没有画布连线输入；关联镜头仍会使用制作流程中的默认参考。",
-                      "No canvas inputs; linked shots use their production references.",
+                      "没有画布连线。正式镜头参考以下方实际请求为准。",
+                      "No canvas connections. Production shot references are listed below.",
                     )}
                 </p>
+                <CanvasReferencePreview references={item.actualReferences} catalog={catalog} locale={locale} />
                 <details className="mt-2" open>
                   <summary className="cursor-pointer text-xs">
                     {t("实际提示词", "Submitted prompt")}

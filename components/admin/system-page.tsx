@@ -31,12 +31,13 @@ export function SystemPage() {
         </Button>
       }
       description="管理登录注册、邮箱验证、第三方 OAuth 和易支付网关。敏感字段留空时保留原值。"
-      title="系统管理"
+      title="系统设置"
     >
       <AdminSettingsPanel
         formId={ADMIN_SETTINGS_FORM_ID}
         onStatusChange={setStatus}
         showPricing={false}
+        sectioned
       />
     </AdminPage>
   );

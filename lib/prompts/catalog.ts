@@ -421,7 +421,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORY_PACKAGE_GENERATION]: {
     pathStem: "domain/story_package_generation",
-    version: 5,
+    version: 6,
     variables: ["project_context", "episode_count", "generation_task"],
     agent: defineAgent({
       id: "short_drama_story_architect",

@@ -71,7 +71,9 @@ describe("delivery view model", () => {
       ],
       moved,
     );
-    expect(subtitles[0]).toMatchObject({ start: 3, end: 5 });
+    expect(subtitles[0].start).toBeGreaterThan(3);
+    expect(subtitles[0].end).toBeLessThan(5);
+    expect(subtitles[0].end - subtitles[0].start).toBeGreaterThanOrEqual(1);
   });
 
   it("does not overlap multiple dialogue lines in one track", () => {

@@ -44,6 +44,13 @@ describe("model price plan API", () => {
     }
     expect(mocks.save).not.toHaveBeenCalled();
   });
+  it("returns 400 for an empty or truncated JSON request without writing prices", async () => {
+    for (const body of ["", '{"rates":']) {
+      const response = await PUT(new Request("http://localhost/api/billing/prices", { method: "PUT", body }));
+      expect(response.status).toBe(400);
+    }
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
   it("deactivates the entire plan without deleting historical rows", async () => {
     expect((await DELETE(new Request("http://localhost/api/billing/prices?provider=custom&model=fixture&capability=text"))).status).toBe(200);
     expect(mocks.disable).toHaveBeenCalledExactlyOnceWith({ where: { provider: "custom", model: "fixture", capability: "text" }, data: { active: false } });

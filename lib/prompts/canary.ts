@@ -99,9 +99,9 @@ export const PROMPT_CANARY_MANIFEST = {
   "episode_adaptation:en":
     "918448d9c71d83ffd9f146fc7ff313a086b65003767bbe352d2bfc0451112e36",
   "story_package_generation:zh":
-    "7558294319dfe2f927fd60308b18644fa0fab53889ac1dedfbb707b40f731673",
+    "f566f2c37a9805c3f20ccdd4fb94dda602a4dd1ef8bd58d6b061c8d9c75170b0",
   "story_package_generation:en":
-    "dc34b7c28a7eb725518209ea502c6e8b5f0f05f1fd8b3e17bd90b165f4917ece",
+    "75ac0985832cd0bfc7ad5f021032c5f8e8bdb0f119410d6eb464daed07fd3dea",
   "studio_workflow_agent:zh":
     "2ecb2c75267998144bfab55f32f3ebd513bb11ca8551f1379d5f9d31187e3598",
   "studio_workflow_agent:en":

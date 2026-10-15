@@ -62,7 +62,7 @@ export function updateTimelineTrackSettings(
   input: Partial<
     Pick<
       EditorTimeline["tracks"][number],
-      "sourceStart" | "transition" | "transitionDuration" | "volume"
+      "sourceStart" | "transition" | "transitionDuration" | "volume" | "imageFit"
     >
   >,
 ) {
@@ -71,6 +71,7 @@ export function updateTimelineTrackSettings(
       track.id === trackId
         ? {
             ...track,
+            ...(input.imageFit ? { imageFit: input.imageFit } : {}),
             ...(input.sourceStart === undefined
               ? {}
               : { sourceStart: Math.min(300, Math.max(0, input.sourceStart)) }),

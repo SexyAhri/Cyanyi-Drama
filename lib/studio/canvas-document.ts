@@ -43,11 +43,13 @@ export const canvasDocumentSchema = z.object({
           "prop",
         ]),
         title: z.string().max(300),
+        defaultTitle: z.string().max(300).optional(),
         text: z.string().max(30000),
         videoText: z.string().max(30000).optional(),
         x: coordinate,
         y: coordinate,
         panelId: z.string().max(100).optional(),
+        detachedPanelId: z.string().max(100).optional(),
         assetId: z.string().max(100).optional(),
         entityId: z.string().max(100).optional(),
         sourceEpisodeId: z.string().max(100).optional(),
@@ -60,6 +62,10 @@ export const canvasDocumentSchema = z.object({
             video: z.string().max(30000),
           })
           .optional(),
+        assetPromptBase: z.object({
+          entityId: z.string().max(120),
+          prompt: z.string().max(30000),
+        }).optional(),
         promptVersions: z
           .array(
             z.object({
@@ -103,6 +109,15 @@ export function canvasAssetSource(node: CanvasCard, document?: CanvasDocument): 
     .flatMap(edge => document.nodes.filter(source => source.id === edge.from && source.entityId && ["character", "location", "prop"].includes(source.kind)));
   const unique = [...new Map(parents.map(parent => [`${parent.kind}:${parent.entityId}`, parent])).values()];
   return unique.length === 1 ? unique[0] : undefined;
+}
+
+/** Only an explicitly marked asset branch owns output; free references never do. */
+export function canvasAssetTargets(node: CanvasCard, document: CanvasDocument) {
+  if (node.kind !== "image" || node.panelId) return [];
+  const source = canvasAssetSource(node, document);
+  return source?.entityId
+    ? [{ entityType: source.kind as "character" | "location" | "prop", entityId: source.entityId }]
+    : [];
 }
 
 export function canvasEdgePurpose(

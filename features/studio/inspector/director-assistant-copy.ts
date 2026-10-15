@@ -4,7 +4,9 @@ export const directorAssistantCopy = {
   "zh-CN": {
     title: "导演助手",
     description: "读取项目资料，提供创作建议并推进制作。",
-    ask: "检查项目、调整内容，或让我启动制作流程…",
+    ask: "检查项目、讨论修改建议，或提出制作操作…",
+    askAsset: "检查资产设定、参考图与使用情况，或给出修改建议…",
+    assetHint: "助手可提供修改建议；资产设定请在资产编辑中修改。",
     send: "发送",
     selected: "当前选择",
     noSelection: "未选中对象",
@@ -35,7 +37,9 @@ export const directorAssistantCopy = {
   en: {
     title: "Director assistant",
     description: "Review project data, develop ideas, and advance production.",
-    ask: "Review the project, suggest edits, or start a production step…",
+    ask: "Review the project, discuss edits, or propose a production step…",
+    askAsset: "Review asset settings, references and usage, or suggest changes…",
+    assetHint: "The assistant can suggest changes. Apply asset edits in the asset editor.",
     send: "Send",
     selected: "Selected",
     noSelection: "No object selected",
@@ -65,6 +69,20 @@ export const directorAssistantCopy = {
       "Select a canvas card or choose here, then describe your changes.",
   },
 } as const;
+
+export function getDirectorComposerCopy(
+  context: StudioAgentContext,
+  locale: StudioLocale,
+) {
+  const text = directorAssistantCopy[locale];
+  const assetSelected = ["character", "location", "prop"].includes(
+    context.selection?.kind ?? "",
+  );
+  return {
+    placeholder: assetSelected ? text.askAsset : text.ask,
+    hint: assetSelected ? text.assetHint : null,
+  };
+}
 
 export function getDirectorSuggestions(
   context: StudioAgentContext,
