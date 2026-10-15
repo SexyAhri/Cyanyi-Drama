@@ -1,7 +1,7 @@
 import { wrapLanguageModel, type LanguageModel, type LanguageModelMiddleware } from "ai";
 import type { ModelBillingIdentity } from "./context";
 import { reserveModelRequestCharge, settleModelRequestCharge } from "./model-charge";
-import { inputCharacterCount } from "./usage";
+import { inputCharacterCount, sdkTokenUsage } from "./usage";
 
 type GenerateParams = Parameters<NonNullable<LanguageModelMiddleware["wrapGenerate"]>>[0]["params"];
 
@@ -23,6 +23,7 @@ export function billedLanguageModel(model: Exclude<LanguageModel, string>, ident
   const reserve = (params: GenerateParams) => reserveModelRequestCharge({
     identity, model: modelId, capability: "text", action: "chat_completion",
     usage: { requests: 1, inputCharacters: languageModelInputCharacters(params) },
+    estimatedOutputTokens: params.maxOutputTokens,
   });
   return wrapLanguageModel({ model, middleware: {
     specificationVersion: "v4",
@@ -31,7 +32,7 @@ export function billedLanguageModel(model: Exclude<LanguageModel, string>, ident
       let result;
       try { result = await doGenerate(); }
       catch (error) { await settleModelRequestCharge(charge, false); throw error; }
-      await settleModelRequestCharge(charge, result.finishReason.unified !== "error");
+      await settleModelRequestCharge(charge, result.finishReason.unified !== "error", sdkTokenUsage(result.usage));
       return result;
     },
     async wrapStream({ doStream, params }) {
@@ -41,7 +42,7 @@ export function billedLanguageModel(model: Exclude<LanguageModel, string>, ident
       catch (error) { await settleModelRequestCharge(charge, false); throw error; }
       const reader = result.stream.getReader();
       let settlement: ReturnType<typeof settleModelRequestCharge> | undefined;
-      const settle = (success: boolean) => settlement ??= settleModelRequestCharge(charge, success);
+      const settle = (success: boolean, usage?: unknown) => settlement ??= success ? settleModelRequestCharge(charge, true, sdkTokenUsage(usage)) : settleModelRequestCharge(charge, false);
       let failed = false;
       const abort = () => { void settle(false).catch(error => console.error("Stream billing release failed", error)); };
       params.abortSignal?.addEventListener("abort", abort, { once: true });
@@ -54,10 +55,14 @@ export function billedLanguageModel(model: Exclude<LanguageModel, string>, ident
             if (next.done) { await settle(false); cleanup(); controller.close(); return; }
             if (next.value.type === "error") { failed = true; await settle(false); }
             if (next.value.type === "finish") {
-              await settle(!failed && next.value.finishReason.unified !== "error"); cleanup();
+              await settle(!failed && next.value.finishReason.unified !== "error", next.value.usage); cleanup();
             }
             controller.enqueue(next.value);
-          } catch (error) { await settle(false); cleanup(); controller.error(error); }
+          } catch (error) {
+            // A failed settlement remains recoverable in the ledger; still terminate the stream.
+            try { await settle(false); } catch { /* Keep the original provider/billing error. */ }
+            cleanup(); controller.error(error);
+          }
         },
         async cancel(reason) {
           cleanup();

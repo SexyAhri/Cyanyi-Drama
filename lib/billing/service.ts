@@ -7,6 +7,7 @@ import { assertMediaTaskWithinBudgets, getMediaBudgetSummary, MediaBudgetError }
 import { billingTransaction } from "./transaction";
 import { inputCharacterCount } from "./usage";
 import { billingQuantity, CAPABILITY_BILLING_UNITS, priceUsage } from "./pricing";
+import { validatePricePlan, type PriceRate } from "./pricing-contract";
 
 export class BillingError extends Error {
   constructor(
@@ -124,6 +125,30 @@ export async function listUsageCosts(
 export async function listModelPrices() {
   return prisma.modelPrice.findMany({
     orderBy: [{ provider: "asc" }, { model: "asc" }, { capability: "asc" }],
+  });
+}
+
+export async function saveModelPricePlan(input: { provider: string; model: string; capability: string; rates: PriceRate[] }) {
+  const provider = required(input.provider, "BILLING_PROVIDER_REQUIRED");
+  const model = required(input.model, "BILLING_MODEL_REQUIRED");
+  const capability = required(input.capability, "BILLING_CAPABILITY_REQUIRED");
+  try { validatePricePlan(capability, input.rates); }
+  catch (error) { throw new BillingError(error instanceof Error ? error.message : "价格方案无效"); }
+  const rates = input.rates.map(rate => {
+    const unitPrice = decimalAmount(rate.unitPrice);
+    if (!unitPrice.isFinite() || unitPrice.lt(0) || unitPrice.gte("1000000000000") || unitPrice.decimalPlaces() > 6) throw new BillingError("单价必须为非负数，小于一万亿元，最多支持 6 位小数");
+    return { unit: rate.unit, unitPrice };
+  });
+  return billingTransaction(async tx => {
+    // One transaction replaces the effective scheme; old rows and all charge snapshots remain auditable.
+    await tx.modelPrice.updateMany({ where: { provider, model, capability, active: true }, data: { active: false } });
+    const prices = [];
+    for (const rate of rates) prices.push(await tx.modelPrice.upsert({
+      where: { provider_model_capability_unit: { provider, model, capability, unit: rate.unit } },
+      create: { provider, model, capability, ...rate, active: true },
+      update: { unitPrice: rate.unitPrice, active: true },
+    }));
+    return prices;
   });
 }
 

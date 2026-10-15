@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { reserveModelRequestCharge, settleModelRequestCharge, type ModelChargeReceipt } from "@/lib/billing/model-charge";
 import type { ModelBillingIdentity } from "@/lib/billing/context";
-import { inputCharacterCount } from "@/lib/billing/usage";
+import { inputCharacterCount, openAiTokenUsage } from "@/lib/billing/usage";
 import { configureProductionRequest } from "@/lib/production-configuration/request";
 import { currentProductionConfiguration } from "@/lib/production-configuration/context";
 import type { ProductionFallbackProvider } from "@/lib/production-configuration/request";
@@ -23,6 +23,8 @@ export type PromptTokenUsage = {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  cachedInputTokens?: number;
+  cacheWriteTokens?: number;
 };
 
 export type PromptCharacterUsage = {
@@ -459,7 +461,7 @@ async function requestTextAttempt(input: {
     throw error;
   }
   // Settlement failures retain the successful-response marker for reconciliation.
-  const billing = await settleModelRequestCharge(charge, true);
+  const billing = await settleModelRequestCharge(charge, true, parsed.tokenUsage);
   if (!isEventStreamResponse(response, responseText)) input.onTextDelta?.(parsed.text);
   return { ...parsed, billing };
 }
@@ -868,18 +870,7 @@ function normalizeTokenUsage(payload: unknown): PromptTokenUsage | null {
   const usage =
     isRecord(payload) && isRecord(payload.usage) ? payload.usage : null;
   if (!usage) return null;
-  const inputTokens = tokenCount(usage.prompt_tokens ?? usage.input_tokens);
-  const outputTokens = tokenCount(
-    usage.completion_tokens ?? usage.output_tokens,
-  );
-  const reportedTotal = tokenCount(usage.total_tokens);
-  if (inputTokens === null && outputTokens === null && reportedTotal === null)
-    return null;
-  return {
-    inputTokens: inputTokens ?? 0,
-    outputTokens: outputTokens ?? 0,
-    totalTokens: reportedTotal ?? (inputTokens ?? 0) + (outputTokens ?? 0),
-  };
+  return openAiTokenUsage(usage);
 }
 
 function addTokenUsage(
@@ -892,13 +883,9 @@ function addTokenUsage(
     inputTokens: current.inputTokens + next.inputTokens,
     outputTokens: current.outputTokens + next.outputTokens,
     totalTokens: current.totalTokens + next.totalTokens,
+    ...(current.cachedInputTokens !== undefined || next.cachedInputTokens !== undefined ? { cachedInputTokens: (current.cachedInputTokens ?? 0) + (next.cachedInputTokens ?? 0) } : {}),
+    ...(current.cacheWriteTokens !== undefined || next.cacheWriteTokens !== undefined ? { cacheWriteTokens: (current.cacheWriteTokens ?? 0) + (next.cacheWriteTokens ?? 0) } : {}),
   };
-}
-
-function tokenCount(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? Math.floor(value)
-    : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

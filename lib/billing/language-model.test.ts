@@ -3,9 +3,11 @@ const mocks = vi.hoisted(() => ({ reserve: vi.fn(), settle: vi.fn() }));
 vi.mock("./model-charge", () => ({ reserveModelRequestCharge: mocks.reserve, settleModelRequestCharge: mocks.settle }));
 import { billedLanguageModel, languageModelInputCharacters } from "./language-model";
 
-function model(parts: Array<{ type: string; [key: string]: unknown }> = [{ type: "finish", finishReason: { unified: "stop" } }]) {
+const reportedUsage = { inputTokens: { total: 1000, noCache: 750, cacheRead: 200, cacheWrite: 50 }, outputTokens: { total: 100, text: 80, reasoning: 20 } };
+const measuredUsage = { inputTokens: 1000, cachedInputTokens: 200, cacheWriteTokens: 50, outputTokens: 100, totalTokens: 1100 };
+function model(parts: Array<{ type: string; [key: string]: unknown }> = [{ type: "finish", finishReason: { unified: "stop" }, usage: reportedUsage }]) {
   return billedLanguageModel({ specificationVersion: "v4", provider: "fixture", modelId: "fixture-model", supportedUrls: {},
-    doGenerate: async () => ({ content: [{ type: "text", text: "response" }], finishReason: { unified: "stop" }, usage: {}, warnings: [] }),
+    doGenerate: async () => ({ content: [{ type: "text", text: "response" }], finishReason: { unified: "stop" }, usage: reportedUsage, warnings: [] }),
     doStream: async () => ({ stream: new ReadableStream({ start(controller) { parts.forEach(part => controller.enqueue(part)); controller.close(); } }) }),
   } as unknown as Parameters<typeof billedLanguageModel>[0], { userId: "u", provider: "fixture" }, "fixture-model");
 }
@@ -25,14 +27,14 @@ describe("AI SDK wallet middleware", () => {
     await wrapped.doGenerate(params);
     expect(mocks.reserve).toHaveBeenCalledTimes(2);
     expect(mocks.reserve).toHaveBeenCalledWith(expect.objectContaining({ usage: { requests: 1, inputCharacters: 11 } }));
-    expect(mocks.settle).toHaveBeenCalledWith(expect.anything(), true);
+    expect(mocks.settle).toHaveBeenCalledWith(expect.anything(), true, measuredUsage);
   });
   it("settles only once on stream finish", async () => {
     const result = await model().doStream(params);
     const reader = result.stream.getReader();
     while (!(await reader.read()).done) { /* consume */ }
     expect(mocks.settle).toHaveBeenCalledTimes(1);
-    expect(mocks.settle).toHaveBeenCalledWith(expect.anything(), true);
+    expect(mocks.settle).toHaveBeenCalledWith(expect.anything(), true, measuredUsage);
   });
   it("releases canceled streams and provider error events", async () => {
     const result = await model([{ type: "text-delta", id: "t", delta: "hello" }]).doStream(params);
@@ -49,5 +51,11 @@ describe("AI SDK wallet middleware", () => {
     mocks.reserve.mockRejectedValue(new Error("insufficient balance"));
     await expect(model().doGenerate(params)).rejects.toThrow("insufficient balance");
     expect(mocks.settle).not.toHaveBeenCalled();
+  });
+  it("errors the stream when settlement fails without hanging or settling twice", async () => {
+    mocks.settle.mockRejectedValue(new Error("wallet write failed"));
+    const result = await model().doStream(params);
+    await expect(result.stream.getReader().read()).rejects.toThrow("wallet write failed");
+    expect(mocks.settle).toHaveBeenCalledTimes(1);
   });
 });

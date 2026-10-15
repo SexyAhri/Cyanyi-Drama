@@ -1,6 +1,19 @@
 export function billingUnitLabel(unit: string, locale: "zh-CN" | "en" = "zh-CN") {
   if (locale === "en") return unit;
-  return ({ request: "次", image: "张", second: "秒", minute: "分钟", character: "字符", "1k_character": "千字符", task: "任务", mixed: "组合用量", tokens: "令牌", input_tokens: "输入令牌", output_tokens: "输出令牌" } as Record<string, string>)[unit] ?? "用量";
+  return ({ request: "次", image: "张", second: "秒", minute: "分钟", character: "字符", "1k_character": "千字符", "1m_character": "百万字符", "1m_input_tokens": "百万输入 Token", "1m_output_tokens": "百万输出 Token", "1m_cached_input_tokens": "百万缓存读取 Token", "1m_cache_write_tokens": "百万缓存写入 Token", task: "任务", mixed: "组合用量", tokens: "Token", input_tokens: "输入令牌", output_tokens: "输出令牌" } as Record<string, string>)[unit] ?? "用量";
+}
+
+export function billingBreakdownLines(metadata?: string | null, locale: "zh-CN" | "en" = "zh-CN"): string[] {
+  if (!metadata) return [];
+  try {
+    const parsed = JSON.parse(metadata);
+    if (!parsed.tokenMetered || !Array.isArray(parsed.components)) return [];
+    const labels: Record<string, string> = locale === "zh-CN"
+      ? { "1m_input_tokens": "输入（未缓存）", "1m_output_tokens": "输出", "1m_cached_input_tokens": "缓存读取", "1m_cache_write_tokens": "缓存写入" }
+      : { "1m_input_tokens": "Uncached input", "1m_output_tokens": "Output", "1m_cached_input_tokens": "Cache read", "1m_cache_write_tokens": "Cache write" };
+    return parsed.components.filter((component: { unit?: string }) => component && labels[component.unit ?? ""]).map((component: { unit: string; quantity: number; unitPrice: string; amount: string }) =>
+      `${labels[component.unit]} ${Math.round(Number(component.quantity) * 1e6).toLocaleString(locale)} Token × ¥${component.unitPrice}/M = ¥${component.amount}`);
+  } catch { return []; }
 }
 
 const usageCostActionZh: Record<string, string> = {

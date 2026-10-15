@@ -4,7 +4,7 @@ import { BarChart3, LoaderCircle, ReceiptText, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { billingUnitLabel, billingActionLabel } from "@/lib/billing/display";
+import { billingUnitLabel, billingActionLabel, billingBreakdownLines } from "@/lib/billing/display";
 import {
   Dialog,
   DialogContent,
@@ -117,6 +117,7 @@ export function CostsPanel({ locale, projectId }: { locale: StudioLocale; projec
             <div className="flex items-start gap-3"><span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border bg-muted/30"><ReceiptText className="size-3.5" /></span>
               <div className="min-w-0 flex-1"><div className="flex items-start gap-2"><p className="min-w-0 flex-1 truncate text-xs font-medium" title={usageCostActionLabel(cost.action, locale)}>{usageCostActionLabel(cost.action, locale)}</p><span className="shrink-0 font-mono text-xs font-semibold">{formatAmount(cost.cost)}</span></div>
                 <p className="mt-1 truncate text-[11px] text-muted-foreground">{cost.model} · {cost.quantity} {billingUnitLabel(cost.unit, locale)}</p><p className="mt-1 text-[10px] text-muted-foreground/75">{formatStudioDate(locale, cost.createdAt)}</p>
+                {billingBreakdownLines(cost.metadata, locale).map((line, index) => <p className="mt-1 break-words text-[10px] leading-4 text-muted-foreground" key={index}>{line}</p>)}
               </div>
             </div>
           </div>

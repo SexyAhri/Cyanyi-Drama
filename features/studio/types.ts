@@ -412,6 +412,7 @@ export type StudioUsageCost = {
   cost: string;
   sourceType: string | null;
   sourceId: string | null;
+  metadata?: string | null;
   createdAt: string;
 };
 

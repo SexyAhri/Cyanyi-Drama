@@ -1,7 +1,7 @@
 import {
   BillingError,
   listModelPrices,
-  upsertModelPrice,
+  saveModelPricePlan,
 } from "@/lib/billing/service";
 import {
   AdminRequiredError,
@@ -24,29 +24,21 @@ export async function PUT(request: Request) {
     return priceAdminError(error);
   }
   const sessionId = null;
-  const body = (await request.json().catch(() => ({}))) as Record<
-    string,
-    unknown
-  >;
+  const rawBody: unknown = await request.json().catch(() => null);
+  if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody))
+    return Response.json({ message: "价格方案格式无效" }, { status: 400 });
+  const body = rawBody as Record<string, unknown>;
   try {
-    const price = await upsertModelPrice({
+    const rates = body.rates ?? [{ unit: body.unit, unitPrice: body.unitPrice }];
+    if (!Array.isArray(rates) || rates.length > 4 || rates.some(rate => !rate || typeof rate !== "object" || typeof rate.unit !== "string" || !["string", "number"].includes(typeof rate.unitPrice)))
+      return Response.json({ message: "价格方案格式无效" }, { status: 400 });
+    const prices = await saveModelPricePlan({
       provider: typeof body.provider === "string" ? body.provider : "",
       model: typeof body.model === "string" ? body.model : "",
       capability: typeof body.capability === "string" ? body.capability : "",
-      unit: typeof body.unit === "string" ? body.unit : "",
-      unitPrice:
-        typeof body.unitPrice === "number" || typeof body.unitPrice === "string"
-          ? body.unitPrice
-          : "",
-      active: typeof body.active === "boolean" ? body.active : undefined,
-      metadata:
-        body.metadata &&
-        typeof body.metadata === "object" &&
-        !Array.isArray(body.metadata)
-          ? (body.metadata as Record<string, unknown>)
-          : undefined,
+      rates: rates as Array<{ unit: string; unitPrice: string | number }>,
     });
-    return attachSessionCookie(Response.json({ price }), sessionId);
+    return attachSessionCookie(Response.json({ prices, price: prices[0] }), sessionId);
   } catch (error) {
     const status = error instanceof BillingError ? error.status : 500;
     return attachSessionCookie(
@@ -65,9 +57,17 @@ export async function DELETE(request: Request) {
   } catch (error) {
     return priceAdminError(error);
   }
-  const id = new URL(request.url).searchParams.get("id")?.trim();
+  const params = new URL(request.url).searchParams;
+  const provider = params.get("provider")?.trim();
+  const model = params.get("model")?.trim();
+  const capability = params.get("capability")?.trim();
+  if (provider && model && capability) {
+    await prisma.modelPrice.updateMany({ where: { provider, model, capability }, data: { active: false } });
+    return Response.json({ ok: true });
+  }
+  const id = params.get("id")?.trim();
   if (!id) return Response.json({ message: "价格 ID 不能为空" }, { status: 400 });
-  await prisma.modelPrice.deleteMany({ where: { id } });
+  await prisma.modelPrice.updateMany({ where: { id }, data: { active: false } });
   return Response.json({ ok: true });
 }
 

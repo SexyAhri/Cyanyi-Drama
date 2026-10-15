@@ -4,7 +4,8 @@ import { prisma } from "@/lib/server/prisma";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
 import { BillingError } from "./service";
 import { currentModelBilling, type ModelBillingIdentity } from "./context";
-import { priceUsage, type BillingUsage } from "./pricing";
+import { priceUsage, type BillingUsage, type PricingComponent } from "./pricing";
+import { isTokenPriceUnit, validatePricePlan } from "./pricing-contract";
 import { billingTransaction } from "./transaction";
 
 export type ModelChargeReceipt = { id: string; requestId: string; amount: string; quantity: number; unit: string; charged: true };
@@ -18,6 +19,7 @@ export async function reserveModelRequestCharge(input: {
   capability: string;
   action: string;
   usage: BillingUsage;
+  estimatedOutputTokens?: number;
   requestId?: string;
 }): Promise<ModelCharge | null> {
   const identity = { ...currentModelBilling(), ...Object.fromEntries(Object.entries(input.identity ?? {}).filter(([, value]) => value !== undefined)) } as Partial<ModelBillingIdentity>;
@@ -46,14 +48,24 @@ export async function reserveModelRequestCharge(input: {
   });
   if (!prices.length) throw new BillingError(`模型 ${input.model} 尚未配置有效价格，请先配置价格`, 400);
   let pricing: ReturnType<typeof priceUsage>;
-  try { pricing = priceUsage(prices, input.usage); }
+  const tokenMetered = prices.some(price => isTokenPriceUnit(price.unit));
+  if (tokenMetered) {
+    try { validatePricePlan(input.capability, prices.map(price => ({ ...price, unitPrice: price.unitPrice.toString() }))); }
+    catch { throw new BillingError("模型 Token 价格方案不完整或混用了其他计费方式，请重新配置", 400); }
+  }
+  // Reservation is an estimate only. Successful responses settle using reported tokens.
+  const reservationUsage = tokenMetered ? { ...input.usage,
+    inputTokens: Math.max(1, (input.usage.inputCharacters ?? 0) * 3 + 256),
+    outputTokens: input.estimatedOutputTokens ?? 8192, cachedInputTokens: 0, cacheWriteTokens: 0,
+  } : input.usage;
+  try { pricing = priceUsage(prices, reservationUsage); }
   catch { throw new BillingError("模型计费方式或用量无效，已停止调用", 400); }
   const requestId = input.requestId ?? randomUUID();
   const metadata = JSON.stringify({
     provider, model: input.model, capability: input.capability, action: input.action,
     channelId, projectId: identity.projectId, episodeId: identity.episodeId,
     sourceType: identity.sourceType ?? "model_request", sourceId: identity.sourceId ?? requestId,
-    usage: input.usage, components: pricing.components,
+    usage: input.usage, components: pricing.components, ...(tokenMetered ? { tokenMetered: true, reservationUsage } : {}),
   });
   const freeze = await billingTransaction(async tx => {
     const existing = await tx.balanceFreeze.findUnique({ where: { idempotencyKey: `model:${requestId}` } });
@@ -75,13 +87,25 @@ export async function reserveModelRequestCharge(input: {
   return { id: freeze.id, userId: identity.userId };
 }
 
-export async function settleModelRequestCharge(charge: ModelCharge | null, succeeded: boolean): Promise<ModelChargeReceipt | null> {
+export async function settleModelRequestCharge(charge: ModelCharge | null, succeeded: boolean, usage?: BillingUsage | null): Promise<ModelChargeReceipt | null> {
   if (!charge) return null;
   if (succeeded) {
+    const freeze = await prisma.balanceFreeze.findFirst({ where: { id: charge.id, userId: charge.userId, source: "model_request" } });
+    if (!freeze) throw new BillingError("模型计费冻结记录不存在", 404);
+    const snapshot = JSON.parse(freeze.metadata ?? "{}") as { tokenMetered?: boolean; components: PricingComponent[]; requestSucceeded?: boolean };
+    if (snapshot.tokenMetered && freeze.status === "pending" && !snapshot.requestSucceeded) {
+      try { priceUsage(snapshot.components, usage ?? {}); }
+      catch {
+        // Never bill estimated tokens as measured usage. Providers without usage can use a fixed request plan.
+        await settleModelRequestCharge(charge, false);
+        throw new BillingError("模型未返回有效的输入/输出 Token 用量，本次未扣费；请检查渠道用量回传，或将此模型改为按次计费", 502);
+      }
+    }
     // Commit the provider outcome separately so a wallet write outage can be recovered.
     await prisma.$executeRaw(Prisma.sql`UPDATE balance_freezes
-      SET metadata = jsonb_set(COALESCE(metadata, '{}')::jsonb, '{requestSucceeded}', 'true'::jsonb)::text
-      WHERE id = ${charge.id} AND user_id = ${charge.userId} AND source = 'model_request' AND status = 'pending'`);
+      SET metadata = (COALESCE(metadata, '{}')::jsonb || ${JSON.stringify({ requestSucceeded: true, ...(usage ? { actualUsage: usage } : {}) })}::jsonb)::text
+      WHERE id = ${charge.id} AND user_id = ${charge.userId} AND source = 'model_request' AND status = 'pending'
+        AND COALESCE((metadata::jsonb ->> 'requestSucceeded')::boolean, false) = false`);
   }
   return billingTransaction(async tx => {
     const freeze = await tx.balanceFreeze.findFirst({ where: { id: charge.id, userId: charge.userId, source: "model_request" } });
@@ -89,7 +113,9 @@ export async function settleModelRequestCharge(charge: ModelCharge | null, succe
     const metadata = JSON.parse(freeze.metadata ?? "{}") as {
       provider: string; model: string; capability: string; action: string; channelId?: string;
       projectId?: string; episodeId?: string; sourceType: string; sourceId: string;
-      components: Array<{ unit: string; quantity: number }>;
+      components: PricingComponent[];
+      tokenMetered?: boolean;
+      actualUsage?: BillingUsage;
       requestSucceeded?: boolean;
     };
     succeeded ||= metadata.requestSucceeded === true;
@@ -98,30 +124,38 @@ export async function settleModelRequestCharge(charge: ModelCharge | null, succe
       const existing = await tx.usageCost.findUnique({ where: { idempotencyKey } });
       return existing ? receipt(existing, freeze.requestId!) : null;
     }
-    const claimed = await tx.balanceFreeze.updateMany({ where: { id: freeze.id, status: "pending" }, data: { status: succeeded ? "settled" : "released" } });
+    const actual = succeeded && metadata.tokenMetered ? priceUsage(metadata.components, metadata.actualUsage ?? {}) : null;
+    const amount = succeeded ? actual?.amount ?? freeze.amount : new Prisma.Decimal(0);
+    if (actual) metadata.components = actual.components;
+    const settledMetadata = JSON.stringify(metadata);
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM user_balances WHERE user_id = ${charge.userId} FOR UPDATE`);
+    const currentBalance = await tx.userBalance.findUniqueOrThrow({ where: { userId: charge.userId } });
+    if (succeeded && currentBalance.balance.sub(currentBalance.frozenAmount).add(freeze.amount).lt(amount))
+      throw new BillingError("实际 Token 费用超出可用余额，已保留用量记录；充值后可重新对账结算", 402);
+    const claimed = await tx.balanceFreeze.updateMany({ where: { id: freeze.id, status: "pending" }, data: { status: succeeded ? "settled" : "released", metadata: settledMetadata } });
     if (!claimed.count) return null;
     const balance = await tx.userBalance.update({ where: { userId: charge.userId }, data: {
       frozenAmount: { decrement: freeze.amount },
-      ...(succeeded ? { balance: { decrement: freeze.amount }, totalSpent: { increment: freeze.amount } } : {}),
+      ...(succeeded ? { balance: { decrement: amount }, totalSpent: { increment: amount } } : {}),
     } });
     await tx.balanceTransaction.create({ data: {
       userId: charge.userId, type: succeeded ? "charge" : "release",
-      amount: succeeded ? freeze.amount.negated() : new Prisma.Decimal(0),
+      amount: amount.negated(),
       balanceAfter: balance.balance, freezeId: freeze.id, relatedId: freeze.requestId,
       idempotencyKey: `model:${freeze.requestId}:${succeeded ? "charge" : "release"}`,
       projectId: metadata.projectId, episodeId: metadata.episodeId, taskType: metadata.capability,
       description: succeeded ? `${metadata.model} 模型请求扣费` : "模型请求失败，释放冻结",
-      billingMeta: freeze.metadata,
+      billingMeta: settledMetadata,
     } });
     if (!succeeded) return null;
     const component = metadata.components[0];
     const entry = await tx.usageCost.upsert({ where: { idempotencyKey }, create: {
       userId: charge.userId, projectId: metadata.projectId ?? null,
       apiType: metadata.capability, model: metadata.model, action: metadata.action,
-      quantity: metadata.components.length === 1 ? component.quantity : 1,
-      unit: metadata.components.length === 1 ? component.unit : "mixed", cost: freeze.amount,
+      quantity: metadata.tokenMetered ? (metadata.actualUsage?.inputTokens ?? 0) + (metadata.actualUsage?.outputTokens ?? 0) : metadata.components.length === 1 ? component.quantity : 1,
+      unit: metadata.tokenMetered ? "tokens" : metadata.components.length === 1 ? component.unit : "mixed", cost: amount,
       sourceType: metadata.sourceType, sourceId: metadata.sourceId, idempotencyKey,
-      metadata: freeze.metadata,
+      metadata: settledMetadata,
     }, update: {} });
     return receipt(entry, freeze.requestId!);
   });
@@ -129,8 +163,15 @@ export async function settleModelRequestCharge(charge: ModelCharge | null, succe
 
 export async function releaseExpiredModelRequestCharges(now = new Date(), userId?: string) {
   const freezes = await prisma.balanceFreeze.findMany({ where: { source: "model_request", status: "pending", OR: [{ expiresAt: { lte: now } }, { metadata: { contains: '"requestSucceeded"' } }], ...(userId ? { userId } : {}) }, take: 200 });
-  for (const freeze of freezes) await settleModelRequestCharge({ id: freeze.id, userId: freeze.userId }, false);
-  return freezes.length;
+  let settled = 0;
+  for (const freeze of freezes) {
+    try { await settleModelRequestCharge({ id: freeze.id, userId: freeze.userId }, false); settled++; }
+    catch (error) {
+      // One underfunded successful request must not block other users' reconciliation.
+      if (!(error instanceof BillingError) || error.status !== 402) throw error;
+    }
+  }
+  return settled;
 }
 
 function receipt(entry: { id: string; cost: Prisma.Decimal; quantity: number | Prisma.Decimal; unit: string }, requestId: string): ModelChargeReceipt {
