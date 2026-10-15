@@ -63,6 +63,7 @@ export type StoryboardRecord = {
 export type StoryboardPromptDesignDetails = {
   designNotes: string[];
   continuitySafeguards: string[];
+  spatialAudit?: import("@/lib/media/visual-review-contract").SpatialAudit;
 };
 
 export type StoryboardVideoSegmentRecord = {

@@ -500,7 +500,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
   },
   [PROMPT_IDS.STORYBOARD_MEDIA_PROMPT_DESIGN]: {
     pathStem: "domain/storyboard_media_prompt_design",
-    version: 3,
+    version: 4,
     variables: [
       "media_kind",
       "generation_mode",
@@ -509,6 +509,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
       "adjacent_shots_json",
       "asset_profiles_json",
       "current_prompt",
+      "reference_frames_json",
     ],
     agent: defineAgent({
       id: "storyboard_media_prompt_designer",
@@ -519,7 +520,7 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
         "changing approved character, location, prop, performance, camera, timing, VFX, or SFX facts",
         "replacing the project art style",
         "describing invisible motion in an image prompt",
-        "copying dialogue, narration, subtitle text, or full asset and world dossiers into a video prompt",
+        "rewriting approved dialogue or copying full asset and world dossiers into a video prompt",
       ],
       successCriteria: [
         "The prompt can be submitted directly to the selected image or video generator",
@@ -538,6 +539,20 @@ export const PROMPT_CATALOG: Record<PromptId, PromptCatalogEntry> = {
         "Prefer explicit constraints over unsupported invention",
       ],
       contextPolicy: { scope: "episode", trust: "untrusted" },
+      evidencePolicy: { required: true, mode: "input_references" },
+    }),
+  },
+  [PROMPT_IDS.STORYBOARD_VIDEO_REVIEW]: {
+    pathStem: "domain/storyboard_video_review",
+    version: 1,
+    variables: ["shot_json", "reference_frames_json", "sample_frames_json"],
+    agent: defineAgent({
+      id: "storyboard_video_reviewer",
+      responsibility: "Diagnose only visible failures in sampled video frames against approved shot facts and references; propose minimal local repairs.",
+      prohibited: ["claiming full motion or audio verification", "inventing unseen events", "rewriting approved dialogue", "automatically regenerating media"],
+      successCriteria: ["Every finding cites supplied sample frame numbers", "Repairs are local and preserve approved facts", "Sampling and audio limitations are explicit"],
+      qualityGates: ["schema_valid", "sample_evidence_valid", "minimal_repair"],
+      stopRules: ["Return findings, not a new generation or a pass certificate"],
       evidencePolicy: { required: true, mode: "input_references" },
     }),
   },

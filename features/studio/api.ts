@@ -1026,22 +1026,49 @@ export async function designStudioPanelPrompt(
     currentPrompt?: string;
     locale: "en" | "zh";
   },
+  signal?: AbortSignal,
 ) {
-  return request<{
+  return submitPanelAnalysis<{
     design: {
       prompt: string;
       designNotes: string[];
       continuitySafeguards: string[];
+      spatialAudit?: import("@/lib/media/visual-review-contract").SpatialAudit;
     };
     trace: Record<string, unknown>;
   }>(
     `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard/${encodeURIComponent(panelId)}/prompt-design`,
     {
-      body: JSON.stringify(input),
+      body: JSON.stringify({ ...input, async: true }),
       headers: { "Content-Type": "application/json" },
       method: "POST",
+      signal,
     },
   );
+}
+
+export async function reviewStudioPanelVideo(projectId: string, episodeId: string, panelId: string,
+  input: { channelId: string; model: string; locale: "zh" | "en" }, signal?: AbortSignal) {
+  return submitPanelAnalysis<import("@/lib/media/visual-review-contract").VideoVisualReviewResult & { workflowId: string }>(
+    `/api/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard/${encodeURIComponent(panelId)}/prompt-design`,
+    { method: "POST", signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...input, kind: "video", action: "review-video", async: true }) },
+  );
+}
+
+async function submitPanelAnalysis<T>(url: string, init: RequestInit): Promise<T> {
+  const submitted = await request<T & { pending?: boolean; workflowId: string }>(url, init);
+  if (!submitted.pending) return submitted;
+  const deadline = Date.now() + 10 * 60_000;
+  while (Date.now() < deadline) {
+    init.signal?.throwIfAborted();
+    const { workflow } = await request<{ workflow: { status: string; output?: T; error?: { message?: string } } }>(
+      `/api/workflows/${encodeURIComponent(submitted.workflowId)}`, { cache: "no-store", signal: init.signal });
+    if (workflow.status === "succeeded" && workflow.output) return { ...workflow.output, workflowId: submitted.workflowId };
+    if (["failed", "blocked", "canceled", "paused"].includes(workflow.status)) throw new StudioApiError(
+      `${workflow.error?.message || (getRuntimeStudioLocale() === "en" ? "Task needs attention in the task center" : "任务需要在任务中心处理")} (${submitted.workflowId})`, 502);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+  throw new StudioApiError(getRuntimeStudioLocale() === "en" ? `Still processing; check the task center before resubmitting (${submitted.workflowId})` : `等待超时，任务仍可能执行；请先在任务中心查看，勿重复提交 (${submitted.workflowId})`, 504);
 }
 
 export async function generateStudioPanelVideo(

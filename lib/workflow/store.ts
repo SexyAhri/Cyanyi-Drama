@@ -116,7 +116,20 @@ export async function createOrReuseWorkflowRun(
   });
   const normalizedWorkflowType = definition.workflowType.trim();
   const registeredTemplate = getWorkflowTemplate(normalizedWorkflowType);
-  const executionSteps = definition.steps;
+  // Always replace caller-supplied context, including through the generic workflow API.
+  // Step inputs are persisted once; retries never reread edited shot facts or adopted assets.
+  const executionSteps = await Promise.all(definition.steps.map(async (step) => {
+    if (!["design_storyboard_media_prompt", "review_storyboard_video"].includes(step.type)) return step;
+    const stepInput = step.input && typeof step.input === "object" && !Array.isArray(step.input)
+      ? step.input as Record<string, unknown> : {};
+    const merged = { ...workflowInput, ...stepInput };
+    if (!definition.episodeId || typeof merged.panelId !== "string") throw new Error("WORKFLOW_PANEL_REQUIRED");
+    const { captureStoryboardPromptContext } = await import("@/lib/media/storyboard-prompt-design");
+    const capturedContext = await captureStoryboardPromptContext({
+      userId: definition.userId, projectId: definition.projectId, episodeId: definition.episodeId, panelId: merged.panelId,
+    });
+    return { ...step, input: { ...stepInput, capturedContext } };
+  }));
   assertWorkflowDefinition(executionSteps);
   const orchestrationSnapshot = registeredTemplate
     ? {

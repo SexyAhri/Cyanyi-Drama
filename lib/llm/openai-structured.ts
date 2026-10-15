@@ -63,6 +63,7 @@ export async function requestOpenAiText(input: {
   fallbackProvider?: ProductionFallbackProvider;
   prompt: RenderedPrompt;
   imageUrls?: string[];
+  requireVisionModel?: boolean;
   temperature?: number;
   timeoutMs?: number;
   stream?: boolean;
@@ -162,6 +163,7 @@ export async function requestOpenAiStructured<T>(input: {
   normalizeRaw?: (value: unknown) => unknown;
   structuredOutputMode?: StructuredOutputMode;
   imageUrls?: string[];
+  requireVisionModel?: boolean;
   temperature?: number;
   timeoutMs?: number;
   stream?: boolean;

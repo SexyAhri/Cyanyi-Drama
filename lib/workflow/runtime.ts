@@ -13,7 +13,8 @@ import { adaptEpisodeSource } from "@/lib/episodes/adaptation";
 import { splitEpisodesWithAi } from "@/lib/episodes/split";
 import { analyzeManuscript } from "@/lib/episodes/manuscript-analysis";
 import { generateOriginalEpisode } from "@/lib/production/original-episode-generation";
-import { designStoryboardMediaPrompt } from "@/lib/media/storyboard-prompt-design";
+import { designStoryboardMediaPrompt, type StoryboardPromptContext } from "@/lib/media/storyboard-prompt-design";
+import { reviewStoryboardVideo } from "@/lib/media/storyboard-video-review";
 import { enqueueWorkflowJob } from "@/lib/queue/workflow-queue";
 import {
   parseNovelAndPersist,
@@ -872,6 +873,18 @@ async function runStep(
     await runtime.persistArtifact("prompt.trace", targetId, result.trace);
     return { ...result, promptTraces: [result.trace] };
   }
+  if (step.stepType === "review_storyboard_video") {
+    if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
+    const input = mergedStepInput(run.input, step.input);
+    const channelId = getString(input.channelId), model = getString(input.model), panelId = getString(input.panelId);
+    if (!channelId || !model || !panelId) throw new Error("WORKFLOW_VIDEO_REVIEW_INPUT_REQUIRED");
+    const result = await reviewStoryboardVideo({ userId, projectId: run.projectId, episodeId: run.episodeId,
+      panelId, channelId, model, locale: getString(input.locale) === "en" ? "en" : "zh",
+      capturedContext: input.capturedContext as StoryboardPromptContext | undefined });
+    await runtime.persistArtifact("storyboard.video-review", panelId, result);
+    await runtime.persistArtifact("prompt.trace", panelId, result.trace);
+    return { ...result, promptTraces: [result.trace] };
+  }
   if (step.stepType === "design_storyboard_media_prompt") {
     if (!run.episodeId) throw new Error("WORKFLOW_EPISODE_REQUIRED");
     const input = mergedStepInput(run.input, step.input);
@@ -895,6 +908,7 @@ async function runStep(
       channelId,
       model,
       kind: kind as "image" | "video",
+      capturedContext: input.capturedContext as StoryboardPromptContext | undefined,
       mode: mode === "first-last" ? "first-last" : "reference",
       currentPrompt: getString(input.currentPrompt),
       locale: getString(input.locale) === "en" ? "en" : "zh",

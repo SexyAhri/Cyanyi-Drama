@@ -29,10 +29,15 @@ export async function configureProductionRequest<
     maxTransportAttempts?: number;
     maxCorrectionAttempts?: number;
     structuredOutputMode?: "text" | "json_object" | "json_schema";
+    imageUrls?: string[];
+    requireVisionModel?: boolean;
   },
 >(input: T): Promise<T> {
   const context = currentProductionConfiguration();
-  if (!context) return input;
+  if (!context) {
+    await assertVisionInputs(input);
+    return input;
+  }
   const { snapshot, userId } = context;
   const agent = getConfiguredAgentForPrompt(input.prompt, snapshot);
   const configured = {
@@ -85,7 +90,24 @@ export async function configureProductionRequest<
       },
     });
   }
+  await assertVisionInputs(configured);
   return configured;
+}
+
+// Check after Agent overrides: checking only the model selected in the dialog is insufficient.
+async function assertVisionInputs(input: { imageUrls?: string[]; requireVisionModel?: boolean; channelId?: string; model: string }) {
+  if (!input.requireVisionModel || !input.imageUrls?.length) return;
+  const model = input.channelId ? await prisma.providerModel.findFirst({
+    where: { channelId: input.channelId, modelId: input.model, selected: true },
+    select: { capabilitiesJson: true },
+  }) : null;
+  let capabilities: unknown;
+  try { capabilities = JSON.parse(model?.capabilitiesJson ?? "{}"); } catch { capabilities = null; }
+  if (!capabilities || typeof capabilities !== "object" || !("supportsReferenceImages" in capabilities) || capabilities.supportsReferenceImages !== true)
+    throw new Error("VISION_MODEL_REQUIRED: 实际执行模型不支持图片输入，请在全局 Agent 设置或模型选择中配置支持视觉的模型");
+  if ("maxReferenceImages" in capabilities && typeof capabilities.maxReferenceImages === "number" &&
+    capabilities.maxReferenceImages > 0 && input.imageUrls.length > capabilities.maxReferenceImages)
+    throw new Error("VISION_IMAGE_LIMIT: 实际执行模型可接受的图片数不足，请更换视觉模型；不会丢弃采样帧或参考图");
 }
 
 async function compareConfiguredModelPrices(input: {

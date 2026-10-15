@@ -20,6 +20,7 @@ const names: Record<string, [string, string]> = {
   asset_visual_extraction: ["资产视觉提取", "Visual extraction"],
   asset_visual_design: ["资产视觉设计", "Visual design"],
   storyboard_media_prompt_design: ["镜头提示词设计", "Shot prompt design"],
+  storyboard_video_review: ["成片抽帧视觉诊断", "Sampled video diagnosis"],
   character_reference_description: ["角色参考描述", "Character references"],
   episode_split: ["剧集划分", "Episode splitting"],
   episode_adaptation: ["剧集改编", "Episode adaptation"],

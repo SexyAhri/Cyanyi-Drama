@@ -5,6 +5,7 @@ import {
   CirclePause,
   CirclePlay,
   ListChecks,
+  ListRestart,
   RotateCcw,
   ScanSearch,
   Trash2,
@@ -1209,7 +1210,7 @@ function OperationRow({
         {isWorkflowRunRetryActionItem(item) ? (
           <Action
             disabled={busy}
-            icon={RotateCcw}
+            icon={ListRestart}
             label={text.retryRun}
             onClick={() => onAction("retry-run")}
           />

@@ -1,4 +1,6 @@
 import { jsonrepair } from "jsonrepair";
+import { z } from "zod";
+import { listOwnedProjectMediaAssets } from "@/lib/assets/project-store";
 import { currentProductionConfiguration, withProductionConfiguration } from "@/lib/production-configuration/context";
 import { resolveProductionConfiguration } from "@/lib/production-configuration/store";
 import { soundPolicyInstructions } from "@/lib/production-configuration/contract";
@@ -7,7 +9,8 @@ import {
   compileAssetVisualProfile,
   parseAssetVisualProfile,
 } from "@/lib/assets/visual-profile";
-import { requestOpenAiText } from "@/lib/llm/openai-structured";
+import { requestOpenAiText, requestOpenAiStructured } from "@/lib/llm/openai-structured";
+import { spatialAuditContentSchema, type SpatialAudit } from "./visual-review-contract";
 import { getProjectArtStyleDirective } from "@/lib/projects/art-style";
 import { PROMPT_IDS, renderPrompt, type PromptLocale } from "@/lib/prompts";
 import { accessibleChannelWhere } from "@/lib/server/channel-access";
@@ -24,6 +27,7 @@ export type StoryboardMediaPromptDesign = {
   prompt: string;
   designNotes: string[];
   continuitySafeguards: string[];
+  spatialAudit?: SpatialAudit;
 };
 
 export class StoryboardPromptDesignError extends Error {
@@ -35,7 +39,7 @@ export class StoryboardPromptDesignError extends Error {
   }
 }
 
-export async function designStoryboardMediaPrompt(input: {
+export type StoryboardPromptInput = {
   userId: string;
   projectId: string;
   episodeId: string;
@@ -46,6 +50,12 @@ export async function designStoryboardMediaPrompt(input: {
   mode?: StoryboardVideoMode;
   currentPrompt?: string;
   locale?: PromptLocale;
+  capturedContext?: StoryboardPromptContext;
+};
+
+// Called by the workflow store at submission, never accepted from public request bodies.
+export async function captureStoryboardPromptContext(input: {
+  userId: string; projectId: string; episodeId: string; panelId: string;
 }) {
   const panel = await prisma.storyboardPanel.findFirst({
     where: {
@@ -85,12 +95,13 @@ export async function designStoryboardMediaPrompt(input: {
       photographyRules: true,
       sourceEvidenceJson: true,
       imageAssetId: true,
+      videoAssetId: true,
       linkedToNextPanel: true,
     },
   });
   if (!panel) throw new StoryboardPromptDesignError("分镜格不存在", 404);
 
-  const [project, adjacent, provider] = await Promise.all([
+  const [project, adjacent] = await Promise.all([
     prisma.project.findFirst({
       where: { id: input.projectId, userId: input.userId },
       select: { config: { select: { artStyle: true } } },
@@ -115,11 +126,8 @@ export async function designStoryboardMediaPrompt(input: {
         imageAssetId: true,
       },
     }),
-    resolvePromptDesignProvider(input),
   ]);
   if (!project) throw new StoryboardPromptDesignError("项目不存在", 404);
-  const configuration = currentProductionConfiguration()?.snapshot ?? await resolveProductionConfiguration(input.userId, input);
-
   const characters = parseStringList(panel.charactersJson);
   const props = parseStringList(panel.propsJson);
   const assetProfiles = await loadAssetProfiles({
@@ -128,6 +136,36 @@ export async function designStoryboardMediaPrompt(input: {
     props,
     locationName: panel.locationName,
   });
+  return { userId: input.userId, projectId: input.projectId, episodeId: input.episodeId, panel, adjacent, project, assetProfiles };
+}
+
+export type StoryboardPromptContext = Awaited<ReturnType<typeof captureStoryboardPromptContext>>;
+
+export async function resolveStoryboardPromptContext(input: {
+  userId: string; projectId: string; episodeId: string; panelId: string;
+  capturedContext?: StoryboardPromptContext;
+}) {
+  const context = input.capturedContext;
+  if (!context) return captureStoryboardPromptContext(input);
+  if (context.userId !== input.userId || context.projectId !== input.projectId ||
+    context.episodeId !== input.episodeId || context.panel.id !== input.panelId)
+    throw new StoryboardPromptDesignError("镜头快照范围不匹配", 403);
+  // Recheck access, but do not reread mutable production facts or selected media IDs.
+  const allowed = await prisma.storyboardPanel.findFirst({
+    where: { id: input.panelId, storyboard: { projectId: input.projectId, episodeId: input.episodeId, project: { userId: input.userId } } },
+    select: { id: true },
+  });
+  if (!allowed) throw new StoryboardPromptDesignError("分镜格不存在", 404);
+  return context;
+}
+
+export async function designStoryboardMediaPrompt(input: StoryboardPromptInput) {
+  const { panel, adjacent, project, assetProfiles } = await resolveStoryboardPromptContext(input);
+  const provider = await resolvePromptDesignProvider(input);
+  const configuration = currentProductionConfiguration()?.snapshot ?? await resolveProductionConfiguration(input.userId, input);
+  const referenceAssetIds = input.kind === "video" ? promptReferenceAssetIds(panel, adjacent, input.mode) : [];
+  const references = await listOwnedProjectMediaAssets(input.userId, input.projectId, referenceAssetIds, ["image"]);
+  const imageUrls = referenceAssetIds.map((id) => references.find((asset) => asset.id === id)!.url);
   const locale = input.locale === "en" ? "en" : "zh";
   const mode = input.kind === "video" ? input.mode ?? "reference" : "keyframe";
   const currentPrompt =
@@ -150,6 +188,7 @@ export async function designStoryboardMediaPrompt(input: {
       adjacent_shots_json: JSON.stringify(adjacent.map(serializePanel), null, 2),
       asset_profiles_json: JSON.stringify(assetProfiles, null, 2),
       current_prompt: currentPrompt || (locale === "en" ? "Not supplied" : "未提供"),
+      reference_frames_json: JSON.stringify(referenceAssetIds.map((assetId, index) => ({ imageNumber: index + 1, assetId, role: index === 0 ? "first_frame" : "last_frame" }))),
     },
   });
   const prompt = input.kind === "video"
@@ -160,18 +199,35 @@ export async function designStoryboardMediaPrompt(input: {
     prompt.platformContract = [prompt.platformContract, soundContract].filter(Boolean).join("\n\n");
     prompt.text += `\n\n${soundContract}`;
   }
-  const result = await withProductionConfiguration(input.userId, configuration, () => requestOpenAiText({
-    ...provider,
-    prompt,
-    temperature: 0.35,
-  }));
-  const design = parseStoryboardMediaPromptDesignText(result.text);
+  const result = await withProductionConfiguration(input.userId, configuration, () => imageUrls.length
+    ? requestOpenAiStructured({ ...provider, prompt, imageUrls, requireVisionModel: true, temperature: 0.35,
+      schema: z.object({ prompt: z.string().trim().min(1).max(12000),
+        designNotes: z.array(z.string().trim().min(1).max(600)).max(16),
+        continuitySafeguards: z.array(z.string().trim().min(1).max(600)).max(16),
+        spatialAudit: spatialAuditContentSchema }).strict(),
+    })
+    : requestOpenAiText({ ...provider, prompt, temperature: 0.35 }));
+  const design: StoryboardMediaPromptDesign = "data" in result
+    ? { ...result.data, spatialAudit: { ...result.data.spatialAudit, referenceAssetIds } }
+    : parseStoryboardMediaPromptDesignText(result.text);
   if (input.kind === "video") design.prompt = lockVideoAudioPerformance(design.prompt, { ...panel, locale, soundPolicy: configuration.sound });
   return {
     design,
     rawOutput: result.outputText,
     trace: result.trace,
   };
+}
+
+export function promptReferenceAssetIds(
+  panel: { panelIndex: number; imageAssetId: string | null },
+  adjacent: { panelIndex: number; imageAssetId: string | null }[],
+  mode?: StoryboardVideoMode,
+) {
+  const first = panel.imageAssetId;
+  if (mode !== "first-last") return first ? [first] : [];
+  const last = adjacent.find((item) => item.panelIndex === panel.panelIndex + 1)?.imageAssetId;
+  if (!first || !last) throw new StoryboardPromptDesignError("首尾帧设计需要当前镜头和下一镜头已采用的关键帧", 409);
+  return [first, last];
 }
 
 export function parseStoryboardMediaPromptDesignText(
@@ -197,6 +253,7 @@ export function parseStoryboardMediaPromptDesignText(
 export async function resolvePromptDesignProvider(input: {
   userId: string;
   projectId?: string;
+  episodeId?: string;
   channelId: string;
   model: string;
 }) {
@@ -220,7 +277,7 @@ export async function resolvePromptDesignProvider(input: {
   const settings = await loadUserRuntimeSettings(input.userId);
   return {
     baseUrl: channel.baseUrl,
-    billing: { userId: input.userId, projectId: input.projectId },
+    billing: { userId: input.userId, projectId: input.projectId, episodeId: input.episodeId },
     channelId: input.channelId,
     apiKeys,
     model: input.model,
@@ -269,7 +326,7 @@ function profileRecord(input: { name: string; visualProfileJson: string | null }
   };
 }
 
-function serializePanel(panel: Record<string, unknown>) {
+export function serializePanel(panel: Record<string, unknown>) {
   return {
     id: panel.id,
     panelIndex: panel.panelIndex,

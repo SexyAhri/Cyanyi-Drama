@@ -1,6 +1,7 @@
 import { attachSessionCookie, ensureAnonymousUser } from "@/lib/server/auth";
 import { getStoryboard, saveStoryboard } from "@/lib/novel/domain-store";
 import type { StoryboardPromptDesignDetails } from "@/lib/novel/domain-types";
+import { spatialAuditSchema } from "@/lib/media/visual-review-contract";
 import { submitEpisodeProductionRequest } from "@/lib/studio/production-http";
 import { loadStoryboardProgress } from "@/lib/novel/storyboard-progress";
 
@@ -31,6 +32,8 @@ export async function PUT(request: Request, context: Context) {
   const { user, sessionId } = await ensureAnonymousUser();
   const { projectId, episodeId } = await context.params;
   const body = await readObject(request);
+  if (!Array.isArray(body.panels) || body.panels.some((panel) => !isPanelInput(panel)))
+    return attachSessionCookie(Response.json({ message: "分镜或提示词设计数据无效，未保存任何修改" }, { status: 400 }), sessionId);
   const panels = Array.isArray(body.panels)
     ? body.panels.filter(isPanelInput)
     : [];
@@ -120,7 +123,7 @@ function isPromptDesignDetails(
 ): value is StoryboardPromptDesignDetails {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const details = value as Record<string, unknown>;
-  return [details.designNotes, details.continuitySafeguards].every(
+  return (details.spatialAudit === undefined || spatialAuditSchema.safeParse(details.spatialAudit).success) && [details.designNotes, details.continuitySafeguards].every(
     (items) =>
       Array.isArray(items) &&
       items.length <= 16 &&

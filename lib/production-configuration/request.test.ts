@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-const mocks = vi.hoisted(() => ({ provider: vi.fn(), prices: vi.fn() }));
+const mocks = vi.hoisted(() => ({ provider: vi.fn(), prices: vi.fn(), model: vi.fn() }));
 vi.mock("@/lib/episodes/provider", () => ({ resolveEpisodeTextProvider: mocks.provider }));
-vi.mock("@/lib/server/prisma", () => ({ prisma: { modelPrice: { findMany: mocks.prices } } }));
+vi.mock("@/lib/server/prisma", () => ({ prisma: { modelPrice: { findMany: mocks.prices }, providerModel: { findFirst: mocks.model } } }));
 import { PROMPT_IDS, renderPrompt } from "@/lib/prompts";
 import { requestOpenAiStructured } from "@/lib/llm/openai-structured";
 import { withProductionConfiguration } from "./context";
@@ -10,6 +10,15 @@ import { mergeProductionConfigurations } from "./contract";
 const input = { baseUrl: "https://default.test/v1", apiKeys: ["default-key"], model: "default-model", stream: false,
   prompt: renderPrompt({ id: PROMPT_IDS.STORY_CHARACTER_ANALYSIS, variables: { source_text: "saved source", character_library: "[]" } }), schema: z.object({ value: z.number() }) };
 describe("Agent configuration at the actual LLM request boundary", () => {
+  it("rejects a text-only effective Agent override before any paid request", async () => {
+    mocks.provider.mockResolvedValue({ baseUrl: "https://configured.test/v1", apiKeys: ["key"], model: "text-only" });
+    mocks.model.mockResolvedValue({ capabilitiesJson: '{"supportsReferenceImages":false}' });
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    const snapshot = { ...mergeProductionConfigurations([{ agents: { [input.prompt.id]: { channelId: "configured-channel", model: "text-only" } } }]), format: "production-configuration-v1" as const, sources: [] };
+    await expect(withProductionConfiguration("owner", snapshot, () => requestOpenAiStructured({ ...input, channelId: "vision-channel", imageUrls: ["data:image/png;base64,AA=="], requireVisionModel: true }))).rejects.toThrow("VISION_MODEL_REQUIRED");
+    expect(mocks.model).toHaveBeenCalledWith(expect.objectContaining({ where: { channelId: "configured-channel", modelId: "text-only", selected: true } }));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
   afterEach(() => { vi.unstubAllGlobals(); vi.resetAllMocks(); });
   it("sends the published model, instructions, template and parameters to the provider", async () => {
     mocks.provider.mockResolvedValue({ baseUrl: "https://configured.test/v1", apiKeys: ["configured-key"], model: "configured-model", structuredOutputMode: "json_schema" });

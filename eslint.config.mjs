@@ -11,6 +11,7 @@ const eslintConfig = [
       "next-env.d.ts",
       ".backups/**",
       "artifacts/**",
+      "docs/benchmarks/**",
     ],
   },
   ...nextVitals,

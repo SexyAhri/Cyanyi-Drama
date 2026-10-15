@@ -38,6 +38,7 @@ describe("production task Agents", () => {
         adjacent_shots_json: "[]",
         asset_profiles_json: "[]",
         current_prompt: "已有提示词",
+        reference_frames_json: "[]",
       },
     });
     const configured = withProductionRules(original, "video-prompt-generation");

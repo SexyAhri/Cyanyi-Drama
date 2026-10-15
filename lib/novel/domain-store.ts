@@ -8,6 +8,7 @@ import {
 } from "@/lib/assets/canonical-summary";
 import { prisma } from "@/lib/server/prisma";
 import { markAssetDependentPanelsStale, type ChangedProjectAsset } from "@/lib/media/asset-dependencies";
+import { spatialAuditSchema } from "@/lib/media/visual-review-contract";
 import type {
   CharacterAppearanceRecord,
   LocationImageRecord,
@@ -637,6 +638,7 @@ function promptDesignJson(
   return JSON.stringify({
     designNotes: cleanPromptDesignList(value.designNotes),
     continuitySafeguards: cleanPromptDesignList(value.continuitySafeguards),
+    ...(value.spatialAudit ? { spatialAudit: spatialAuditSchema.parse(value.spatialAudit) } : {}),
   });
 }
 
@@ -655,8 +657,9 @@ function parsePromptDesign(
   const continuitySafeguards = cleanPromptDesignList(
     parsed.continuitySafeguards,
   );
-  return designNotes.length || continuitySafeguards.length
-    ? { designNotes, continuitySafeguards }
+  const audit = spatialAuditSchema.safeParse(parsed.spatialAudit);
+  return designNotes.length || continuitySafeguards.length || audit.success
+    ? { designNotes, continuitySafeguards, ...(audit.success ? { spatialAudit: audit.data } : {}) }
     : null;
 }
 

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestOpenAiText = vi.hoisted(() => vi.fn());
+const requestOpenAiStructured = vi.hoisted(() => vi.fn());
+const mediaFindMany = vi.hoisted(() => vi.fn());
 const storyboardPanelFindFirst = vi.hoisted(() => vi.fn());
 const storyboardPanelFindMany = vi.hoisted(() => vi.fn());
 const projectFindFirst = vi.hoisted(() => vi.fn());
@@ -11,7 +13,7 @@ const locationFindFirst = vi.hoisted(() => vi.fn());
 const propFindMany = vi.hoisted(() => vi.fn());
 const configurationFindMany = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/llm/openai-structured", () => ({ requestOpenAiText }));
+vi.mock("@/lib/llm/openai-structured", () => ({ requestOpenAiText, requestOpenAiStructured }));
 vi.mock("@/lib/server/crypto", () => ({
   decryptSecret: () => '["test-key"]',
 }));
@@ -25,6 +27,7 @@ vi.mock("@/lib/settings/runtime-store", () => ({
 vi.mock("@/lib/server/prisma", () => ({
   prisma: {
     productionConfiguration: { findMany: configurationFindMany },
+    mediaAsset: { findMany: mediaFindMany },
     storyboardPanel: {
       findFirst: storyboardPanelFindFirst,
       findMany: storyboardPanelFindMany,
@@ -41,6 +44,7 @@ vi.mock("@/lib/server/prisma", () => ({
 import {
   designStoryboardMediaPrompt,
   parseStoryboardMediaPromptDesignText,
+  captureStoryboardPromptContext,
 } from "./storyboard-prompt-design";
 
 const profile = JSON.stringify({
@@ -135,6 +139,7 @@ beforeEach(() => {
   providerModelFindFirst.mockResolvedValue({
     capabilitiesJson: JSON.stringify({ supportsStructuredOutputs: true }),
   });
+  mediaFindMany.mockImplementation(async ({ where }) => where.id.in.map((id: string) => ({ id, kind: "image", url: `data:image/png;base64,${id}`, storageKey: null })));
   characterFindMany.mockResolvedValue([
     { name: "韩宇", visualProfileJson: profile },
     { name: "韩子枫", visualProfileJson: profile },
@@ -154,6 +159,11 @@ beforeEach(() => {
     outputText,
     trace: { promptId: "storyboard_media_prompt_design" },
   });
+  const data = { ...JSON.parse(outputText), spatialAudit: {
+    observations: ["父子之间铁盒可见，院落背景"], allowedMotion: ["沿递盒方向接住，缓慢推近"],
+    forbiddenAdditions: ["不凭空增加人物"], conflicts: [], timeBudget: "6 秒内完成递接和抬眼",
+  } };
+  requestOpenAiStructured.mockImplementation(async ({ schema }) => ({ data: schema.parse(data), outputText: JSON.stringify(data), trace: { promptId: "storyboard_media_prompt_design" } }));
 });
 
 describe("storyboard media prompt design", () => {
@@ -192,7 +202,11 @@ describe("storyboard media prompt design", () => {
       locale: "zh",
     });
 
-    const text = requestOpenAiText.mock.calls[0][0].prompt.text;
+    const request = requestOpenAiStructured.mock.calls[0][0];
+    const text = request.prompt.text;
+    expect(request.imageUrls).toEqual(["data:image/png;base64,image-2", "data:image/png;base64,image-3"]);
+    expect(request.requireVisionModel).toBe(true);
+    expect(mediaFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ task: { userId: "user-1", projectId: "project-1" }, kind: { in: ["image"] } }) }));
     expect(text).toContain("生成模式：首尾帧");
     expect(text).toContain("韩子枫递出铁盒");
     expect(text).toContain("双手接盒");
@@ -203,6 +217,43 @@ describe("storyboard media prompt design", () => {
     expect(text).toContain("明确只有该角色自然开口，其他人物倾听或回应");
     expect(text).toContain("动作须适合给定时长，避免逐秒命令");
     expect(text).toContain("audioMode 由提交层提供");
+    expect(text).toContain("2–4 个主要、可观察信号");
+  });
+
+  const videoInput = { userId: "user-1", projectId: "project-1", episodeId: "episode-1", panelId: "panel-2", channelId: "channel-1", model: "analysis-model", kind: "video" as const };
+
+  it("uses frozen facts and adopted images after a shot is edited", async () => {
+    const capturedContext = await captureStoryboardPromptContext(videoInput);
+    storyboardPanelFindFirst.mockResolvedValue({ ...panel, description: "edited description", imageAssetId: "replacement" });
+    const result = await designStoryboardMediaPrompt({ ...videoInput, capturedContext });
+    const request = requestOpenAiStructured.mock.calls[0][0];
+    expect(request.imageUrls).toEqual(["data:image/png;base64,image-2"]);
+    expect(request.prompt.text).not.toContain("edited description");
+    expect(result.design.spatialAudit?.referenceAssetIds).toEqual(["image-2"]);
+    expect(result.design.prompt).toContain("这是你母亲留下的。");
+  });
+
+  it("rejects foreign/deleted images and revoked shot access before model requests", async () => {
+    mediaFindMany.mockResolvedValue([]);
+    await expect(designStoryboardMediaPrompt(videoInput)).rejects.toThrow("不属于当前项目");
+    expect(requestOpenAiStructured).not.toHaveBeenCalled();
+    const capturedContext = await captureStoryboardPromptContext(videoInput);
+    storyboardPanelFindFirst.mockResolvedValue(null);
+    await expect(designStoryboardMediaPrompt({ ...videoInput, capturedContext })).rejects.toThrow("分镜格不存在");
+  });
+
+  it("rejects missing tail frames instead of silently downgrading first-last mode", async () => {
+    storyboardPanelFindMany.mockResolvedValue([]);
+    await expect(designStoryboardMediaPrompt({ ...videoInput, mode: "first-last" })).rejects.toThrow("首尾帧设计需要");
+    expect(requestOpenAiStructured).not.toHaveBeenCalled();
+  });
+
+  it("does not claim a visual audit when no keyframe is adopted", async () => {
+    storyboardPanelFindFirst.mockResolvedValue({ ...panel, imageAssetId: null });
+    const result = await designStoryboardMediaPrompt(videoInput);
+    expect(requestOpenAiText).toHaveBeenCalledOnce();
+    expect(requestOpenAiStructured).not.toHaveBeenCalled();
+    expect(result.design.spatialAudit).toBeUndefined();
   });
 
   it("keeps a freeform model response as an editable prompt", () => {

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   resolveConfiguration: vi.fn(),
   assertPreview: vi.fn(),
+  captureContext: vi.fn(),
 }));
 
 vi.mock("@/lib/server/prisma", () => ({ prisma: {
@@ -16,6 +17,7 @@ vi.mock("@/lib/server/prisma", () => ({ prisma: {
 } }));
 vi.mock("@/lib/production-configuration/store", () => ({ resolveProductionConfiguration: mocks.resolveConfiguration }));
 vi.mock("@/lib/production-configuration/execution", () => ({ assertPreviewConfiguration: mocks.assertPreview }));
+vi.mock("@/lib/media/storyboard-prompt-design", () => ({ captureStoryboardPromptContext: mocks.captureContext }));
 
 import { DEFAULT_SOUND_POLICY, DEFAULT_WORKFLOW_POLICY } from "@/lib/production-configuration/contract";
 import { createOrReuseWorkflowRun } from "./store";
@@ -69,6 +71,15 @@ beforeEach(() => {
 });
 
 describe("workflow execution after configuration management removal", () => {
+  it("replaces forged caller snapshots with a server capture in persisted step input", async () => {
+    mocks.captureContext.mockResolvedValue({ panel: { id: "panel", imageAssetId: "owned-image" } });
+    await createOrReuseWorkflowRun({ id: "run-snapshot", userId: "user-1", projectId: "project-1", episodeId: "episode-1", workflowType: "storyboard-prompt-design",
+      input: { panelId: "panel", capturedContext: { panel: { imageAssetId: "foreign" } } },
+      steps: [{ key: "design", type: "design_storyboard_media_prompt", input: { capturedContext: { fake: true } } }],
+    });
+    expect(mocks.captureContext).toHaveBeenCalledWith({ userId: "user-1", projectId: "project-1", episodeId: "episode-1", panelId: "panel" });
+    expect(mocks.create.mock.calls[0][0].data.steps.create[0].input.capturedContext).toEqual({ panel: { id: "panel", imageAssetId: "owned-image" } });
+  });
   it("uses the supplied execution graph and saves the immutable execution snapshot", async () => {
     const result = await createOrReuseWorkflowRun({
       id: "run-1",

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { spatialAuditContentSchema, videoVisualReviewSchema } from "@/lib/media/visual-review-contract";
 import { SourceNotesSchema } from "@/lib/episodes/source-notes-schema";
 
 import { PROMPT_IDS, type PromptId } from "./ids";
@@ -781,6 +782,7 @@ export const assetVisualDesignSchema = z.string().trim().min(1);
 
 export const storyboardMediaPromptDesignSchema = z
   .object({
+    spatialAudit: spatialAuditContentSchema.optional(),
     prompt: z.string().trim().min(20).max(12_000),
     designNotes: z.array(z.string().trim().min(1).max(600)).min(1).max(12),
     continuitySafeguards: z
@@ -869,6 +871,7 @@ export const PROMPT_SCHEMAS: Record<PromptId, z.ZodType> = {
   [PROMPT_IDS.ASSET_VISUAL_DESIGN]: assetVisualDesignSchema,
   [PROMPT_IDS.STORYBOARD_MEDIA_PROMPT_DESIGN]:
     storyboardMediaPromptDesignSchema,
+  [PROMPT_IDS.STORYBOARD_VIDEO_REVIEW]: videoVisualReviewSchema,
   [PROMPT_IDS.CHARACTER_REFERENCE_DESCRIPTION]:
     characterReferenceDescriptionSchema,
   [PROMPT_IDS.EPISODE_SPLIT]: episodeSplitSchema,

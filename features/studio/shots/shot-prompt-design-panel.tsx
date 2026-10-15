@@ -144,6 +144,7 @@ export function ShotPromptDesignPanel({
             </div>
           ) : null}
           <ShotPromptDesignDialog
+            key={`${panel.id}-${kind}-${mode}`}
             analysisModels={analysisModels}
             episodeId={episodeId}
             kind={kind}
