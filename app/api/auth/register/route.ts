@@ -19,13 +19,15 @@ export async function POST(request: Request) {
       sessionId,
     );
   } catch (error) {
-    return Response.json({ message: readableAuthError(error) }, { status: 400 });
+    const status = error instanceof Error && error.message === "INITIAL_SETUP_REQUIRED" ? 409 : 400;
+    return Response.json({ message: readableAuthError(error) }, { status });
   }
 }
 
 function readableAuthError(error: unknown) {
   if (!(error instanceof Error)) return "Registration failed.";
   return ({
+    INITIAL_SETUP_REQUIRED: "请先在首页完成管理员初始化",
     INVALID_EMAIL: "邮箱格式不正确",
     PASSWORD_TOO_SHORT: "密码至少需要 8 位",
     EMAIL_ALREADY_REGISTERED: "邮箱已注册",

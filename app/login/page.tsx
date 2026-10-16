@@ -3,9 +3,11 @@ import { redirect } from "next/navigation";
 import packageJson from "../../package.json";
 
 import { AuthPage } from "@/components/auth/auth-page";
+import { InitialAdminDialog } from "@/components/auth/initial-admin-dialog";
 import { normalizeAuthRedirect } from "@/lib/auth/redirect";
 import { getPublicAuthConfig } from "@/lib/server/auth-config";
 import { getCurrentUser } from "@/lib/server/auth";
+import { isInitialSetupRequired } from "@/lib/server/installation";
 
 export const metadata: Metadata = {
   title: "登录 · Cyanyi Drama",
@@ -25,19 +27,23 @@ export default async function LoginRoute({
   const nextPath = normalizeAuthRedirect(rawNext);
   const user = await getCurrentUser();
   const authConfig = await getPublicAuthConfig();
+  const setupRequired = await isInitialSetupRequired();
 
   if (user && !user.anonymous) {
     redirect(nextPath);
   }
 
   return (
-    <AuthPage
-      appVersion={packageJson.version}
-      authConfig={authConfig}
-      hasAnonymousSession={Boolean(user?.anonymous)}
-      initialMode={rawMode === "register" ? "register" : "login"}
-      nextPath={nextPath}
-      oauthError={rawOauthError}
-    />
+    <>
+      {setupRequired && <InitialAdminDialog />}
+      <AuthPage
+        appVersion={packageJson.version}
+        authConfig={authConfig}
+        hasAnonymousSession={Boolean(user?.anonymous)}
+        initialMode={rawMode === "register" ? "register" : "login"}
+        nextPath={nextPath}
+        oauthError={rawOauthError}
+      />
+    </>
   );
 }

@@ -12,6 +12,7 @@ import {
   verifyRegistrationCode,
 } from "./email-verification";
 import { getPublicAuthConfig } from "./auth-config";
+import { assertInstallationInitialized } from "./installation";
 
 export const SESSION_COOKIE = "cyanyi_session";
 const SESSION_DAYS = 30;
@@ -122,6 +123,7 @@ export async function registerUser(
   displayName?: string,
   verificationCode = "",
 ) {
+  await assertInstallationInitialized();
   const authConfig = await getPublicAuthConfig();
   if (!authConfig.registrationEnabled) throw new Error("REGISTRATION_DISABLED");
   if (!authConfig.emailAuthEnabled) throw new Error("EMAIL_AUTH_DISABLED");
@@ -195,6 +197,7 @@ export async function loginWithExternalIdentity(input: {
   profile?: Record<string, unknown>;
   previousAnonymousUserId?: string;
 }) {
+  await assertInstallationInitialized();
   const normalizedEmail = input.email ? normalizeEmail(input.email) : null;
   const config = await getPublicAuthConfig();
   return prisma.$transaction(
@@ -295,7 +298,7 @@ export async function destroyCurrentSession() {
   }
 }
 
-async function createSession(
+export async function createSession(
   tx: Prisma.TransactionClient | typeof prisma,
   userId: string,
 ) {

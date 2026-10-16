@@ -1,5 +1,16 @@
 # 制作配置与工作流优化交接
 
+## 首次部署管理员初始化（2026-10-16，完成）
+
+- 用户要求首次部署提供设置管理员的弹框。入口放在 `app/page.tsx` 和 `app/login/page.tsx`，共用 `components/auth/initial-admin-dialog.tsx`；仅无正式账号且无初始化完成记录时显示，不加到工作台或后台设置中反复提示。
+- `POST /api/auth/setup` 仅接受本站 Origin 的 JSON，校验名称、邮箱、密码及确认密码，不接受额外 role。服务端明确创建 ADMIN，复用 scrypt 密码及哈希 Session/HttpOnly Cookie；账号、Session、`SystemInstallation` 单例同事务写入，唯一键处理并发争用，失败整体回滚。旧表单遇到已完成初始化提示前往登录。
+- 初始化不依赖普通注册开关或邮箱验证码；普通邮箱注册和 OAuth 在未初始化时由服务端拒绝。完成记录独立于用户，删除账号不会重开；旧库已有正式用户或管理员时迁移回填完成记录，避免开放旧部署的匿名管理员领取入口。
+- 新增 `20261016090000_initial_admin_setup` 已应用于原库及隔离库，原库仍保留 3 项既有历史迁移，不重置/删除；原有 5 个账号的整行聚合 hash 前后相同。首次接手 Git 干净，数据库/Redis/Web 均停机；已启动 Docker 与 Compose，未启动模型 Worker。
+- 验证：新增定向 4 文件/31 项，全量 251 文件/1281 项通过；隔离 HTTP/PostgreSQL 10 项覆盖恶意 Origin/非法输入、Session 写入失败回滚、4 请求并发仅 1 成功、禁止注册/未配 SMTP 初始化、真实 Cookie/后台访问、再次登录、普通用户后续注册和删账号仍关闭入口。浏览器在独立测试库完成真实创建、进入后台与刷新；密码不一致定位、Escape 不关闭、深浅桌面及 390×844 通过（弹框宽度/scrollWidth 同为358，页面宽390），控制台无错误。
+- 证据目录 `artifacts/initial-admin-setup-20261016/`：`verification-summary.json` 记录成功执行的10项接口检查及浏览器结果，`vitest.log`、`build.log`、`eslint.log`、`migration-status.log`、原账号前后校验与深浅/桌面/手机截图均已保存。源码复验入口 `scripts/verify-initial-admin-setup.ts --run` 仅接受本机 `cyanyi_setup_verify_*` 空测试库。最终生产构建（含 TypeScript）、修改文件 ESLint、迁移状态和 diff 检查通过；隔离库 `cyanyi_setup_verify_20261016` 已删除并复核不存在，测试Web已停止，原库保留5用户/1管理员，没有新增真实账号或Session。Docker/PostgreSQL/Redis继续运行，Web与Worker均未留存。
+- 环境限制如实保留：开发 Web 曾因本机内存不足退出，改用仅监听127.0.0.1的Turbopack测试服务完成验收；10项HTTP成功后一次收尾重跑又被本机内存终止，失败日志保存在 `http-postgres-rerun-memory-failure.log`，未把该次重跑记为通过。生产模式HTTP复验的服务启动被自动审批以 `blocked by policy` 拦截，故只确认生产构建通过、开发服务联验通过。旧登录限流 Redis 连接首开短暂503，连接就绪后真实登录通过；复验脚本仅对503作有界重试，不将其标为认证成功。
+- 没有请求任何模型，没有修改原账号权限、口令或业务内容；本轮不改变其他工作流待办状态。
+
 ## 最新界面修订（2026-10-15，进行中）
 
 - 用户追加设置内普通用户模型使用日志及后台用量明细：已实现独立个人页签，共用日志表格和服务端分页，个人接口强制使用Session用户、后台保留requireAdmin；时间显示完整年月日时分秒，Token来自已持久化actualUsage，缺失显示“—”，不使用预估值。数字和费用全部左对齐，移除重复总Token单位。初轮8文件21项定向测试及最新TypeScript/ESLint通过；正在综合验证。后续恢复时浏览器控制工具不可用，Web3000也未监听，需明确区分已做浏览器检查和未完成项，不得把旧截图当最新布局证据。

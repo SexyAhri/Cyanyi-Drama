@@ -193,6 +193,14 @@ model AuthFlow {
   @@map("auth_flows")
 }
 
+// Kept independently of users so removing an account never reopens setup.
+model SystemInstallation {
+  id          String   @id @default("global") @db.VarChar(32)
+  completedAt DateTime @default(now()) @map("completed_at")
+
+  @@map("system_installation")
+}
+
 model SystemSettings {
   id                           String   @id @default("global") @db.VarChar(32)
   registrationEnabled          Boolean  @default(true) @map("registration_enabled")
